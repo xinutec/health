@@ -60,8 +60,17 @@ struct WeightPoint {
 }
 
 #[derive(Debug, Deserialize)]
+struct BodyFatPoint {
+    percentage: Option<f64>,
+    #[serde(rename = "sampleTime")]
+    sample_time: Option<SampleTime>,
+}
+
+#[derive(Debug, Deserialize)]
 struct DataPoint {
     weight: Option<WeightPoint>,
+    #[serde(rename = "bodyFat")]
+    body_fat: Option<BodyFatPoint>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,40 +104,80 @@ pub fn parse_page(body: &str) -> Result<(Vec<Weigh>, Option<String>)> {
         let Some(g) = w.weight_grams.as_ref().and_then(grams) else {
             continue;
         };
-        let Some(date) = w
-            .sample_time
-            .as_ref()
-            .and_then(|s| s.civil_time.as_ref())
-            .and_then(|c| c.date.as_ref())
-        else {
-            continue;
-        };
-        out.push(Weigh {
-            // The same `YYYY-MM-DD` the TypeScript builds by padding. Not routed
-            // through `Verified.Civil.formatDate`: these three integers are
-            // Google's own civil date, already split, so there is no arithmetic
-            // to get wrong — only zero-padding.
-            date: format!("{:04}-{:02}-{:02}", date.year, date.month, date.day),
-            grams: g,
-            ts: w
-                .sample_time
-                .as_ref()
-                .and_then(|s| s.physical_time.clone())
-                .unwrap_or_default(),
-        });
+        if let Some(r) = reading(w.sample_time.as_ref(), g) {
+            out.push(r);
+        }
     }
     Ok((out, page.next_page_token.filter(|t| !t.is_empty())))
 }
 
+/// [`parse_page`] for `body-fat`. Each reading is a [`Weigh`] whose `grams`
+/// holds the percentage in THOUSANDTHS (18.3 % → 18 300), so the same
+/// latest-per-day rule picks the day's value; [`body_fat_pct`] turns it back.
+pub fn parse_body_fat_page(body: &str) -> Result<(Vec<Weigh>, Option<String>)> {
+    let page: ListResponse =
+        serde_json::from_str(body).context("decoding a google body-fat page")?;
+    let mut out = Vec::new();
+    for p in page.data_points.unwrap_or_default() {
+        let Some(f) = p.body_fat else { continue };
+        let Some(pct) = f.percentage.filter(|v| v.is_finite()) else {
+            continue;
+        };
+        if let Some(r) = reading(f.sample_time.as_ref(), (pct * 1000.0).round() as i64) {
+            out.push(r);
+        }
+    }
+    Ok((out, page.next_page_token.filter(|t| !t.is_empty())))
+}
+
+/// A body-fat reading's percentage, from [`parse_body_fat_page`]'s encoding.
+pub fn body_fat_pct(r: &Weigh) -> f64 {
+    r.grams as f64 / 1000.0
+}
+
+/// One dated reading, or `None` when the point cannot name its civil day.
+fn reading(sample_time: Option<&SampleTime>, value: i64) -> Option<Weigh> {
+    let date = sample_time?.civil_time.as_ref()?.date.as_ref()?;
+    Some(Weigh {
+        // The same `YYYY-MM-DD` the TypeScript builds by padding. Not routed
+        // through `Verified.Civil.formatDate`: these three integers are
+        // Google's own civil date, already split, so there is no arithmetic
+        // to get wrong — only zero-padding.
+        date: format!("{:04}-{:02}-{:02}", date.year, date.month, date.day),
+        grams: value,
+        ts: sample_time
+            .and_then(|s| s.physical_time.clone())
+            .unwrap_or_default(),
+    })
+}
+
 /// Every weigh-in for the authenticated user, following pagination.
 pub async fn fetch_all_weight(http: &reqwest::Client, access_token: &str) -> Result<Vec<Weigh>> {
+    fetch_all_readings(http, access_token, "weight", parse_page).await
+}
+
+/// Every body-fat reading (the Hume scale's, via Health Connect), following
+/// pagination. See [`parse_body_fat_page`] for the encoding.
+pub async fn fetch_all_body_fat(http: &reqwest::Client, access_token: &str) -> Result<Vec<Weigh>> {
+    fetch_all_readings(http, access_token, "body-fat", parse_body_fat_page).await
+}
+
+type PageParser = fn(&str) -> Result<(Vec<Weigh>, Option<String>)>;
+
+async fn fetch_all_readings(
+    http: &reqwest::Client,
+    access_token: &str,
+    data_type: &str,
+    parse: PageParser,
+) -> Result<Vec<Weigh>> {
     let mut out = Vec::new();
     let mut page_token: Option<String> = None;
     let mut pages = 0u32;
 
     loop {
-        let mut url = reqwest::Url::parse(&format!("{BASE}/users/me/dataTypes/weight/dataPoints"))
-            .context("building the weight URL")?;
+        let mut url =
+            reqwest::Url::parse(&format!("{BASE}/users/me/dataTypes/{data_type}/dataPoints"))
+                .context("building the readings URL")?;
         url.query_pairs_mut()
             .append_pair("pageSize", &PAGE_SIZE.to_string());
         if let Some(t) = &page_token {
@@ -140,18 +189,21 @@ pub async fn fetch_all_weight(http: &reqwest::Client, access_token: &str) -> Res
             .bearer_auth(access_token)
             .send()
             .await
-            .context("GET google health weight")?;
+            .with_context(|| format!("GET google health {data_type}"))?;
         let status = res.status();
-        let body = res.text().await.context("body of the weight page")?;
+        let body = res
+            .text()
+            .await
+            .with_context(|| format!("body of the {data_type} page"))?;
         if !status.is_success() {
             return Err(anyhow!(
-                "health weight {}: {}",
+                "health {data_type} {}: {}",
                 status.as_u16(),
                 body.chars().take(400).collect::<String>()
             ));
         }
 
-        let (mut points, next) = parse_page(&body)?;
+        let (mut points, next) = parse(&body)?;
         out.append(&mut points);
 
         pages += 1;
@@ -160,11 +212,11 @@ pub async fn fetch_all_weight(http: &reqwest::Client, access_token: &str) -> Res
             // ⚠ A token identical to the one just used is a server-side loop,
             // not more data. Caught explicitly so it reads as what it is.
             Some(t) if Some(&t) == page_token.as_ref() => {
-                return Err(anyhow!("google weight paging repeated its page token"));
+                return Err(anyhow!("google {data_type} paging repeated its page token"));
             }
             Some(_) if pages >= MAX_PAGES => {
                 return Err(anyhow!(
-                    "google weight paging exceeded {MAX_PAGES} pages ({} points so far)",
+                    "google {data_type} paging exceeded {MAX_PAGES} pages ({} points so far)",
                     out.len()
                 ));
             }

@@ -7,7 +7,7 @@
 //!
 //! The masses below are plausible-but-invented numbers. No real measurements.
 
-use backend::google::health::parse_page;
+use backend::google::health::{body_fat_pct, parse_body_fat_page, parse_page};
 use backend::lean::{self, Weigh};
 
 fn w(date: &str, grams: i64, ts: &str) -> Weigh {
@@ -128,4 +128,42 @@ fn the_weight_feed_and_its_dedup() {
     let nothing = lean::dedupe_weigh_ins(&[]).unwrap();
     assert_eq!(nothing.replace_from, None);
     assert!(nothing.kept.is_empty());
+}
+
+/// The scale's body-fat feed: the same page shape with a `bodyFat` point, read
+/// as thousandths of a percent so the weigh-in dedup applies unchanged.
+#[test]
+fn the_body_fat_feed() {
+    let page = r#"{
+      "dataPoints": [
+        {"bodyFat": {"percentage": 18.3,
+                     "sampleTime": {"physicalTime": "2026-08-01T07:12:00Z",
+                                    "civilTime": {"date": {"year": 2026, "month": 8, "day": 1}}}},
+         "dataSource": {"platform": "HEALTH_CONNECT", "recordingMethod": "AUTOMATIC"}},
+        {"bodyFat": {"percentage": 17.95,
+                     "sampleTime": {"civilTime": {"date": {"year": 2026, "month": 8, "day": 2}}}}},
+        {"bodyFat": {"sampleTime": {"civilTime": {"date": {"year": 2026, "month": 8, "day": 3}}}}},
+        {"weight": {"weightGrams": 67300,
+                    "sampleTime": {"civilTime": {"date": {"year": 2026, "month": 8, "day": 4}}}}}
+      ]
+    }"#;
+    let (points, next) = parse_body_fat_page(page).unwrap();
+    assert_eq!(next, None);
+    assert_eq!(
+        points,
+        vec![
+            w("2026-08-01", 18_300, "2026-08-01T07:12:00Z"),
+            w("2026-08-02", 17_950, ""),
+        ],
+        "a point with no percentage, and a weight point, are not body-fat readings"
+    );
+    assert!((body_fat_pct(&points[0]) - 18.3).abs() < 1e-9);
+    // ⚠ The weight parser must not pick up body fat either.
+    assert!(
+        parse_page(page)
+            .unwrap()
+            .0
+            .iter()
+            .all(|p| p.date == "2026-08-04")
+    );
 }

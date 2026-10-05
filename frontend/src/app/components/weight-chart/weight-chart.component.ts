@@ -17,15 +17,23 @@ export class WeightChartComponent {
 
   private static readonly PAD_KG = 1;
   private static readonly MIN_SPAN_KG = 4;
+  /** Body fat's own axis, on the right: padded, and never narrower than this,
+   *  so a 0.3-point wobble does not fill the chart's height. */
+  private static readonly PAD_PCT = 1;
+  private static readonly MIN_SPAN_PCT = 6;
 
   readonly chartData = signal<ChartConfiguration<"line">["data"]>({ datasets: [] });
-  readonly chartOptions = signal<ChartConfiguration<"line">["options"]>(this.buildOptions(60, 80));
+  readonly chartOptions = signal<ChartConfiguration<"line">["options"]>(this.buildOptions(60, 80, null));
 
   // Weigh-ins are sparse and irregular, so the x-axis is a real *linear* time
   // scale keyed on the date (epoch ms) — horizontal distance = elapsed time, so
   // a multi-week gap reads as a gap and clustered daily weigh-ins bunch up.
   // (The other trend charts are daily/contiguous, so they use a category axis.)
-  private buildOptions(min: number, max: number): ChartConfiguration<"line">["options"] {
+  private buildOptions(
+    min: number,
+    max: number,
+    fat: { min: number; max: number } | null,
+  ): ChartConfiguration<"line">["options"] {
     const fmt = (ms: number) => formatDay(localDay(new Date(ms)));
     return {
       responsive: true,
@@ -38,7 +46,10 @@ export class WeightChartComponent {
               const x = items[0]?.parsed.x;
               return x == null ? "" : fmt(x);
             },
-            label: (ctx) => `${(ctx.parsed.y!).toFixed(1)} kg`,
+            label: (ctx) =>
+              ctx.dataset.yAxisID === "fat"
+                ? `Body fat ${(ctx.parsed.y!).toFixed(1)} %`
+                : `${(ctx.parsed.y!).toFixed(1)} kg`,
           },
         },
       },
@@ -60,8 +71,30 @@ export class WeightChartComponent {
           min,
           max,
         },
+        fat: {
+          display: fat !== null,
+          position: "right",
+          ticks: { color: tickColor, callback: (v) => `${v} %` },
+          grid: { display: false },
+          min: fat?.min,
+          max: fat?.max,
+        },
       },
     };
+  }
+
+  /** The body-fat axis bounds, or null when there is nothing to plot. */
+  private fatRange(vals: number[]): { min: number; max: number } | null {
+    if (vals.length === 0) return null;
+    let lo = Math.floor(Math.min(...vals) - WeightChartComponent.PAD_PCT);
+    let hi = Math.ceil(Math.max(...vals) + WeightChartComponent.PAD_PCT);
+    const span = hi - lo;
+    if (span < WeightChartComponent.MIN_SPAN_PCT) {
+      const grow = (WeightChartComponent.MIN_SPAN_PCT - span) / 2;
+      lo = Math.floor(lo - grow);
+      hi = Math.ceil(hi + grow);
+    }
+    return { min: Math.max(0, lo), max: hi };
   }
 
   constructor() {
@@ -70,6 +103,10 @@ export class WeightChartComponent {
       const pts = this.body()
         .map((d) => ({ x: Date.parse(d.date), kg: d.weight_kg == null ? Number.NaN : Number(d.weight_kg) }))
         .filter((d) => Number.isFinite(d.kg) && d.kg > 0 && Number.isFinite(d.x))
+        .sort((a, b) => a.x - b.x);
+      const fatPts = this.body()
+        .map((d) => ({ x: Date.parse(d.date), pct: d.body_fat_pct == null ? Number.NaN : Number(d.body_fat_pct) }))
+        .filter((d) => Number.isFinite(d.pct) && d.pct > 0 && Number.isFinite(d.x))
         .sort((a, b) => a.x - b.x);
 
       if (pts.length === 0) {
@@ -86,7 +123,7 @@ export class WeightChartComponent {
         lo = Math.floor(lo - grow);
         hi = Math.ceil(hi + grow);
       }
-      this.chartOptions.set(this.buildOptions(Math.max(0, lo), hi));
+      this.chartOptions.set(this.buildOptions(Math.max(0, lo), hi, this.fatRange(fatPts.map((d) => d.pct))));
 
       this.chartData.set({
         datasets: [
@@ -99,6 +136,21 @@ export class WeightChartComponent {
             tension: 0.3,
             pointRadius: 2,
           },
+          ...(fatPts.length === 0
+            ? []
+            : [
+                {
+                  label: "Body fat",
+                  data: fatPts.map((d) => ({ x: d.x, y: d.pct })),
+                  yAxisID: "fat",
+                  borderColor: chartColors.amber,
+                  backgroundColor: chartColors.amber,
+                  fill: false,
+                  tension: 0.3,
+                  pointRadius: 2,
+                  borderWidth: 1.5,
+                },
+              ]),
         ],
       });
     });

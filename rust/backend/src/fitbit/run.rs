@@ -400,9 +400,10 @@ async fn google_weight(pool: &MySqlPool, http: &reqwest::Client) {
 
     match crate::google::body::run_google_weight_sync(pool, http, &creds, &user_id, true).await {
         Ok(r) => tracing::info!(
-            "[{user_id}] google weight: {} weigh-in(s) over {} day(s), {} stale row(s) replaced, {} → {}",
+            "[{user_id}] google weight: {} weigh-in(s) over {} day(s), {} with body fat, {} stale row(s) replaced, {} → {}",
             r.fetched,
             r.days,
+            r.fat_days,
             r.deleted_stale,
             r.earliest.as_deref().unwrap_or("-"),
             r.latest.as_deref().unwrap_or("-")

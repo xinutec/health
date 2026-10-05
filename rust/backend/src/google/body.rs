@@ -40,24 +40,33 @@ pub struct WeightSyncResult {
     pub upserted: usize,
     pub earliest: Option<String>,
     pub latest: Option<String>,
+    /// Days given a body-fat percentage.
+    pub fat_days: usize,
 }
 
 /// Reconcile `body` against a set of weigh-ins.
 ///
 /// `apply = false` reports what it would do and writes nothing — the shape the
 /// CLI uses to show a plan before committing to it.
+///
+/// `body_fat` rides in the same transaction. ⚠ It has to: the weight delete
+/// clears whole rows, body-fat column included, so writing fat separately would
+/// leave every tick a window in which it is gone.
 pub async fn sync_google_weight(
     pool: &MySqlPool,
     user_id: &str,
     measurements: &[Weigh],
+    body_fat: &[Weigh],
     apply: bool,
 ) -> Result<WeightSyncResult> {
     let plan = lean::dedupe_weigh_ins(measurements)?;
+    let fat = lean::dedupe_weigh_ins(body_fat)?.kept;
     let mut out = WeightSyncResult {
         fetched: measurements.len(),
         days: plan.kept.len(),
         earliest: plan.kept.first().map(|w| w.date.clone()),
         latest: plan.kept.last().map(|w| w.date.clone()),
+        fat_days: fat.len(),
         ..Default::default()
     };
 
@@ -102,6 +111,19 @@ pub async fn sync_google_weight(
         out.upserted += 1;
     }
 
+    for f in &fat {
+        sqlx::query(
+            "INSERT INTO body (user_id, date, body_fat_pct) VALUES (?, ?, ?) \
+             ON DUPLICATE KEY UPDATE body_fat_pct = VALUES(body_fat_pct)",
+        )
+        .bind(user_id)
+        .bind(&f.date)
+        .bind(health::body_fat_pct(f))
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("writing body fat for {}", f.date))?;
+    }
+
     tx.commit().await.context("committing the weight tx")?;
     Ok(out)
 }
@@ -126,5 +148,8 @@ pub async fn run_google_weight_sync(
 ) -> Result<WeightSyncResult> {
     let token = oauth::access_token(http, creds).await?;
     let weight = health::fetch_all_weight(http, &token).await?;
-    sync_google_weight(pool, user_id, &weight, apply).await
+    // ⚠ A failed body-fat fetch fails the whole tick, weight included: the
+    // weight delete would otherwise wipe the stored fat and put nothing back.
+    let body_fat = health::fetch_all_body_fat(http, &token).await?;
+    sync_google_weight(pool, user_id, &weight, &body_fat, apply).await
 }
