@@ -407,7 +407,14 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
       let na := a.nearField
       let nb := b.nearField
       if na != nb then na
-      -- Two near-field venues: the nearer one is what you are sitting on.
+      -- Two near-field venues: one whose opening hours say it was open beats
+      -- one OSM gives no hours for — inside 12 m the metres are GPS noise, and
+      -- a bike shop at 5 m beat an open café at 10 m for an 85-min midday stay
+      -- (10-05, #325). (A near-field candidate WITH hours scored them ≥ 0.)
+      -- Otherwise the nearer one is what you are sitting on. ⚠ Not the summed
+      -- evidence: that put a phone shop over the 09-30 dinner and broke 05-18.
+      else if na && nb && a.parts.hours.isSome != b.parts.hours.isSome then
+        a.parts.hours.isSome
       else if na && nb && a.landmark.distanceM != b.landmark.distanceM then
         decide (a.landmark.distanceM < b.landmark.distanceM)
       else if a.total != b.total then decide (a.total > b.total)
