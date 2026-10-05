@@ -1759,14 +1759,14 @@
       "stallM": 0.0
     },
     {
-      "startTs": 1784115954,
-      "budgetM": 1057.5,
-      "lenM": 1645.0833063702628,
-      "offPathM": 0.0,
+      "startTs": 1784116320,
+      "budgetM": 1051.5,
+      "lenM": 626.6987293333101,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": null,
-      "speedKmh": 4.0956430863989945,
-      "stallM": 30.64339508392254
+      "speedKmh": 2.088995764444367,
+      "stallM": 14.238548667593165
     },
     {
       "startTs": 1784140008,

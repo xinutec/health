@@ -2872,6 +2872,63 @@ def splitWalksOnDwell (segments : Array Seg) (points : Array PointF)
 
 end Dwell
 
+/-! ## `claimSteplessDepartures`
+
+A walk that leaves a stay begins at its first STEPPED minute. Where the walk's
+head carries no minute of `STEPLESS_MAX_SPM` steps or more — and the stay before
+it had step data, so the watch was counting — the head is still the stay: GPS
+wander out of a building reads as a slow walk the watch never saw (2026-07-15:
+zero steps 12:43–12:50 after the hospital, then a walk from 12:53, served as a
+walk from 12:45). The stay is extended to that minute; the walk keeps its name.
+Absent steps INSIDE the walk nothing moves: no stepped minute is no evidence of
+where walking began. -/
+
+namespace StepDeparture
+
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Geo.Worldline (FeasibilityStepPoint)
+open Shed (PointF segMode walkRemainder)
+
+/-- A minute with fewer steps than this is not walking. -/
+def STEPLESS_MAX_SPM : Float := 20
+/-- The stepless head must last this long to be claimed. -/
+def STEPLESS_MIN_S : Int := 180
+/-- And leave at least this much walk. -/
+def STEPLESS_MIN_REMAINDER_S : Int := 60
+
+/-- Start of the first minute overlapping `[a, b)` with `STEPLESS_MAX_SPM`
+    steps or more. -/
+def firstStepped (steps : List FeasibilityStepPoint) (a b : Int) : Option Int :=
+  steps.foldl (fun m s =>
+    if decide (s.ts + 60 > a) && decide (s.ts < b) && decide (s.steps ≥ STEPLESS_MAX_SPM) then
+      some (match m with | some x => min x s.ts | none => s.ts)
+    else m) none
+
+/-- Move each stay → walk boundary to the walk's first stepped minute. -/
+def claimSteplessDepartures (segments : Array Seg) (points : Array PointF)
+    (steps : List FeasibilityStepPoint) : Array Seg := Id.run do
+  if steps.isEmpty then return segments
+  let mut out := segments
+  for i in [0:segments.size] do
+    if i + 1 < out.size then
+      let stay := out[i]!
+      let walk := out[i + 1]!
+      if segMode stay == "stationary" && segMode walk == "walking" then
+        let stayCounted := steps.any fun s => decide (s.ts + 60 > stay.startTs) && decide (s.ts < walk.startTs)
+        match firstStepped steps walk.startTs walk.endTs with
+        | some t0 =>
+          let t := max t0 walk.startTs
+          if stayCounted && t - walk.startTs ≥ STEPLESS_MIN_S
+              && walk.endTs - t ≥ STEPLESS_MIN_REMAINDER_S then
+            let rest := walkRemainder walk t walk.endTs points false
+            out := (out.set! i { stay with endTs := t }).set! (i + 1)
+              { rest with wayName := walk.wayName, refinedMode := walk.refinedMode
+                          place := walk.place, needsReenrich := false, needsRename := false }
+        | none => pure ()
+  return out
+
+end StepDeparture
+
 section DwellGuards
 
 open Dwell

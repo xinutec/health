@@ -118,6 +118,10 @@ const POST_TS: &[&str] = &[
 /// pharmacy stop, walk) once #185 carved the stop — rows +2, enforceable +3
 /// (the `partial` row enforced nothing), one more journey and one more walking
 /// leg, since a stop of that length splits the walk home in the truth too.
+///
+/// 2026-10-05: 04-29 16:50–17:41 re-derived from `stationary` to `walking` (the
+/// step series shows 95–119/min; the old "zero steps" was read an hour off) —
+/// rows and enforceable unchanged, one more journey and one more walking leg.
 const TS_FILES: usize = 31;
 const TS_ROWS: usize = 400;
 const TS_ENFORCEABLE: usize = 373;
@@ -126,13 +130,13 @@ const TS_UNPARSEABLE: usize = 5;
 /// corpus's first day narrated in Spanish time, 10-03 to 10-05 the next.
 const TS_DECLARED_TZ: usize = 6;
 /// `groundTruthJourneys` over the same corpus, same source, same day.
-const TS_JOURNEYS: usize = 93;
-const TS_LEGS: usize = 229;
+const TS_JOURNEYS: usize = 94;
+const TS_LEGS: usize = 230;
 /// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. The leg total could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
 /// to `stationary`, changes what a leg IS without changing how many there are.
 const TS_LEG_MODES: [(&str, usize); 4] =
-    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 144)];
+    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 145)];
 
 #[test]
 fn the_narrative_corpus_matches_its_blessed_shape() {
