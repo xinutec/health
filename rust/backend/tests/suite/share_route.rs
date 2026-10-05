@@ -92,20 +92,20 @@ async fn a_share_viewer_may_not_write_to_share() {
     init();
     for method in ["POST", "PATCH", "DELETE"] {
         assert!(
-            !backend::lean::may_proceed(true, method, "/api/share").expect("mayProceed"),
+            !backend::lean::may_proceed(true, false, method, "/api/share").expect("mayProceed"),
             "{method} /api/share must be refused for a share viewer"
         );
     }
     // …and the same session may still READ it, which is what makes the refusal
     // a distinction rather than a blanket block.
     assert!(
-        backend::lean::may_proceed(true, "GET", "/api/share").expect("mayProceed"),
+        backend::lean::may_proceed(true, false, "GET", "/api/share").expect("mayProceed"),
         "a share viewer must still be able to read the share it was given"
     );
     // The owner is unrestricted on the same paths.
     for method in ["GET", "POST", "PATCH", "DELETE"] {
         assert!(
-            backend::lean::may_proceed(false, method, "/api/share").expect("mayProceed"),
+            backend::lean::may_proceed(false, false, method, "/api/share").expect("mayProceed"),
             "{method} /api/share must be allowed for the owner"
         );
     }

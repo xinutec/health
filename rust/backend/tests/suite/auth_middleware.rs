@@ -160,6 +160,7 @@ fn share_viewer() -> UserSession {
         user_id: "user".into(),
         display_name: "user".into(),
         share_viewer: Some(("2026-08-11".into(), "2026-08-17".into())),
+        hides_location: false,
     }
 }
 
@@ -168,6 +169,7 @@ fn owner() -> UserSession {
         user_id: "user".into(),
         display_name: "user".into(),
         share_viewer: None,
+        hides_location: false,
     }
 }
 
@@ -234,5 +236,82 @@ async fn no_session_at_this_layer_is_a_mounting_bug_not_an_anonymous_user() {
         status(None, "POST", "/api/settings").await,
         StatusCode::INTERNAL_SERVER_ERROR,
         "passing this through would make require_session's position optional,          and a read-only share link could write"
+    );
+}
+
+/// The rule behind `nest("/api", …)`, the way `routes::mod` mounts it.
+///
+/// ⚠ A nested router sees its URI with the prefix STRIPPED, so the middleware
+/// must judge the original path. Judging the stripped one refused every share
+/// viewer's `POST /api/telemetry` in production (measured 2026-10-05), and
+/// would let a link with location off read `/api/velocity`.
+fn nested_app(session: UserSession) -> Router {
+    Router::new().nest(
+        "/api",
+        Router::new()
+            .route("/velocity", get(|| async { "ok" }))
+            .route("/locations", get(|| async { "ok" }))
+            .route("/hrv", get(|| async { "ok" }))
+            .route("/telemetry", post(|| async { "ok" }))
+            .layer(middleware::from_fn(
+                backend::auth::middleware::require_may_proceed,
+            ))
+            .layer(middleware::from_fn(
+                move |mut req: axum::extract::Request, next: axum::middleware::Next| {
+                    let session = session.clone();
+                    async move {
+                        req.extensions_mut().insert(session);
+                        next.run(req).await
+                    }
+                },
+            )),
+    )
+}
+
+async fn nested_status(session: UserSession, method: &str, path: &str) -> StatusCode {
+    nested_app(session)
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn behind_the_api_prefix_a_share_viewer_may_still_send_telemetry() {
+    backend::lean::init().expect("the Lean runtime must start");
+    assert_eq!(
+        nested_status(share_viewer(), "POST", "/api/telemetry").await,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_link_with_location_off_reads_health_but_not_where_the_owner_was() {
+    backend::lean::init().expect("the Lean runtime must start");
+    let hidden = UserSession {
+        hides_location: true,
+        ..share_viewer()
+    };
+    for path in ["/api/velocity", "/api/locations"] {
+        assert_eq!(
+            nested_status(hidden.clone(), "GET", path).await,
+            StatusCode::FORBIDDEN,
+            "{path} must be refused to a link with location off"
+        );
+    }
+    assert_eq!(
+        nested_status(hidden, "GET", "/api/hrv").await,
+        StatusCode::OK
+    );
+    // The same link with location on reads it.
+    assert_eq!(
+        nested_status(share_viewer(), "GET", "/api/velocity").await,
+        StatusCode::OK
     );
 }

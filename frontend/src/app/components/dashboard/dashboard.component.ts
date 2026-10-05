@@ -156,6 +156,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	/** Tab index for `<mat-tab-group [selectedIndex]>`, derived from `view`. */
 	readonly tabIndex = computed(() => (this.view() === "today" ? 0 : this.view() === "trends" ? 1 : 2));
 	readonly selectedDate = signal(todayLocal());
+	/** False on a share link whose owner turned location off: no Map tab, no
+	 *  day timeline, and none of their requests (the server refuses them). */
+	readonly showsLocation = computed(() => this.health.user()?.shareWindow?.location ?? true);
 	/** Map toggle: snap walking legs onto the pavement network (pedestrian
 	 *  map-matching). Off renders the raw walks, for an A/B comparison. Drives
 	 *  `dayData`, so toggling refetches the velocity. */
@@ -246,7 +249,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
 				timed(this.health.getSleepStages(date, abortSignal).catch(() => [] as SleepStage[])),
 				timed(this.health.getHeartRateIntraday(date, abortSignal).catch(() => [] as HeartRatePoint[])),
 				timed(
-					this.health.getVelocity(date, abortSignal, walkMatch).catch((e: unknown) => {
+					!this.showsLocation()
+						? Promise.resolve(null)
+						: this.health.getVelocity(date, abortSignal, walkMatch).catch((e: unknown) => {
 						// Distinguish a genuine load failure from an empty day so the
 						// view can offer a retry instead of silently rendering "no
 						// data". An aborted request (superseded day-navigation) is not
@@ -381,7 +386,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 				return;
 			}
 			// Off the Map tab: keep the last fix, just stop polling.
-			if (this.view() !== "map") return;
+			if (this.view() !== "map" || !this.showsLocation()) return;
 			const poll = (): void => {
 				void this.health.getLatestFix().then((f) => {
 					this.liveFix.set(f);
@@ -447,7 +452,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	/** Validate a `?tab=` query parameter. Null (absent or junk) lets
 	 *  the caller fall back to the default tab. */
 	private parseTabParam(raw: string | null): "today" | "trends" | "map" | null {
-		return raw === "today" || raw === "trends" || raw === "map" ? raw : null;
+		if (raw === "map") return this.showsLocation() ? raw : null;
+		return raw === "today" || raw === "trends" ? raw : null;
 	}
 
 	/** Validate a `?trendDays=N` query parameter. Returns null for absent

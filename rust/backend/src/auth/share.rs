@@ -24,16 +24,18 @@ use crate::lean;
 pub struct ShareRow {
     pub user_id: String,
     pub days_back: i64,
+    pub share_location: bool,
 }
 
 /// Look a token up. `None` for unknown or revoked — rotation is DELETE +
 /// INSERT, so a leaked old token stops working the moment it is rotated.
 pub async fn by_token(pool: &MySqlPool, token: &str) -> Result<Option<ShareRow>> {
-    let row = sqlx::query("SELECT user_id, days_back FROM share_tokens WHERE token = ?")
-        .bind(token)
-        .fetch_optional(pool)
-        .await
-        .context("reading share_tokens")?;
+    let row =
+        sqlx::query("SELECT user_id, days_back, share_location FROM share_tokens WHERE token = ?")
+            .bind(token)
+            .fetch_optional(pool)
+            .await
+            .context("reading share_tokens")?;
     let Some(row) = row else {
         return Ok(None);
     };
@@ -43,6 +45,9 @@ pub async fn by_token(pool: &MySqlPool, token: &str) -> Result<Option<ShareRow>>
     Ok(Some(ShareRow {
         user_id: row.try_get("user_id").context("share_tokens.user_id")?,
         days_back: row.try_get("days_back").context("share_tokens.days_back")?,
+        share_location: row
+            .try_get("share_location")
+            .context("share_tokens.share_location")?,
     }))
 }
 
@@ -89,5 +94,6 @@ pub async fn resolve(pool: &MySqlPool, token: &str, today: &str) -> Result<Optio
         display_name: row.user_id.clone(),
         user_id: row.user_id,
         share_viewer: Some((from, to)),
+        hides_location: !row.share_location,
     }))
 }

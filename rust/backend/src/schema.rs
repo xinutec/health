@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 92] = [
+    let migrations: [&str; 93] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -755,6 +755,10 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (code_version, memo_key)
   )"#,
+        // What a share link shows beyond the health tables. On by default, so
+        // every link issued before this keeps showing what it showed.
+        r#"ALTER TABLE share_tokens
+     ADD COLUMN IF NOT EXISTS share_location BOOLEAN NOT NULL DEFAULT TRUE"#,
     ];
 
     sqlx::query(

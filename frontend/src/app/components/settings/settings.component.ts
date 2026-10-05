@@ -2,6 +2,7 @@ import { Component, OnInit, inject, signal, ChangeDetectionStrategy } from "@ang
 import { FormsModule } from "@angular/forms";
 import { MatButtonModule } from "@angular/material/button";
 import { MatCardModule } from "@angular/material/card";
+import { MatCheckboxModule } from "@angular/material/checkbox";
 import { MatFormFieldModule } from "@angular/material/form-field";
 import { MatIconModule } from "@angular/material/icon";
 import { MatInputModule } from "@angular/material/input";
@@ -34,6 +35,7 @@ import { HealthService } from "../../services/health.service";
 		FormsModule,
 		MatButtonModule,
 		MatCardModule,
+		MatCheckboxModule,
 		MatFormFieldModule,
 		MatIconModule,
 		MatInputModule,
@@ -52,6 +54,8 @@ export class SettingsComponent implements OnInit {
 	readonly loading = signal(true);
 	readonly error = signal<string | null>(null);
 	daysInput = 7;
+	/** Location for a link not created yet. */
+	locationInput = true;
 	/** Editable day-window for an ALREADY-active share — seeded from the
 	 *  loaded status so "Update days" can change it without rotating. */
 	readonly editDays = signal(7);
@@ -85,7 +89,7 @@ export class SettingsComponent implements OnInit {
 	async create(): Promise<void> {
 		this.error.set(null);
 		try {
-			await this.health.createOrRotateShare(this.daysInput);
+			await this.health.createOrRotateShare(this.daysInput, this.locationInput);
 		} catch (e) {
 			this.error.set(errorText(e));
 		}
@@ -106,6 +110,17 @@ export class SettingsComponent implements OnInit {
 		try {
 			await this.health.updateShareDays(this.editDays());
 			this.snackBar.open("Share window updated", "Dismiss", { duration: 2000 });
+		} catch (e) {
+			this.error.set(errorText(e));
+		}
+	}
+
+	/** Turn the live link's location on or off — same link. */
+	async setLocation(on: boolean): Promise<void> {
+		this.error.set(null);
+		try {
+			await this.health.updateShareLocation(on);
+			this.snackBar.open(on ? "Location shared" : "Location hidden", "Dismiss", { duration: 2000 });
 		} catch (e) {
 			this.error.set(errorText(e));
 		}

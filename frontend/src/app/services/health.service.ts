@@ -323,7 +323,7 @@ export interface UserInfo {
    *  server" instead of "not a share view". The wire join caught the `?`
    *  (DL-WIRE-ROUTE-DRIFT: "optionality disagrees with the wire"). Readers use
    *  `?.` on the VALUE, which is unaffected. */
-  shareWindow: { from: string; to: string } | null;
+  shareWindow: { from: string; to: string; location: boolean } | null;
 }
 
 export interface HrvDay {
@@ -362,6 +362,8 @@ export interface ShareStatus {
   token?: string;
   url?: string;
   daysBack?: number;
+  /** Whether the link shows the day's timeline and the map. */
+  shareLocation?: boolean;
   createdAt?: string;
   lastAccessedAt?: string | null;
 }
@@ -556,11 +558,12 @@ export class HealthService {
     this.shareStatus.set(await this.getShareStatus());
   }
 
-  async createOrRotateShare(daysBack: number): Promise<ShareStatus> {
+  /** `shareLocation` omitted keeps a rotated link's setting (on for a new one). */
+  async createOrRotateShare(daysBack: number, shareLocation?: boolean): Promise<ShareStatus> {
     const res = await this.fetch("/api/share", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ daysBack }),
+      body: JSON.stringify({ daysBack, shareLocation }),
     });
     if (!res.ok) throw new Error(`share create failed: ${res.status}`);
     const status = await HealthService.body<ShareStatus>(res);
@@ -575,6 +578,20 @@ export class HealthService {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ daysBack }),
+    });
+    if (!res.ok) throw new Error(`share update failed: ${res.status}`);
+    const status = await HealthService.body<ShareStatus>(res);
+    this.shareStatus.set(status);
+    return status;
+  }
+
+  /** Turn the link's location (the day's timeline and the map) on or off —
+   *  same link. */
+  async updateShareLocation(shareLocation: boolean): Promise<ShareStatus> {
+    const res = await this.fetch("/api/share", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shareLocation }),
     });
     if (!res.ok) throw new Error(`share update failed: ${res.status}`);
     const status = await HealthService.body<ShareStatus>(res);

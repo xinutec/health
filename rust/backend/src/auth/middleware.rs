@@ -21,7 +21,7 @@
 //! Collapsing them would mean a route that forgets one gets the other for free,
 //! which reads as safety and is not: the missing one is silent.
 
-use axum::extract::{Request, State};
+use axum::extract::{OriginalUri, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -159,9 +159,16 @@ pub async fn require_may_proceed(req: Request, next: Next) -> Response {
     };
     let is_share_viewer = session.share_viewer.is_some();
     let method = req.method().as_str().to_string();
-    let path = req.uri().path().to_string();
+    // ⚠ The ORIGINAL path. Behind `nest("/api", …)` the request's own URI has
+    // the prefix stripped, so `/api/telemetry` arrived here as `/telemetry` and
+    // matched no rule written against full paths.
+    let path = req
+        .extensions()
+        .get::<OriginalUri>()
+        .map_or_else(|| req.uri().path(), |o| o.0.path())
+        .to_string();
 
-    match crate::lean::may_proceed(is_share_viewer, &method, &path) {
+    match crate::lean::may_proceed(is_share_viewer, session.hides_location, &method, &path) {
         // ⚠ An error REFUSES. This asks Lean whether the request is allowed, so
         // a question that could not be answered must not be treated as a yes.
         Err(e) => {
@@ -172,11 +179,14 @@ pub async fn require_may_proceed(req: Request, next: Next) -> Response {
             )
                 .into_response()
         }
-        Ok(false) => (
-            StatusCode::FORBIDDEN,
-            axum::Json(json!({ "error": "read_only_share" })),
-        )
-            .into_response(),
+        Ok(false) => {
+            let error = if method == "GET" {
+                "location_not_shared"
+            } else {
+                "read_only_share"
+            };
+            (StatusCode::FORBIDDEN, axum::Json(json!({ "error": error }))).into_response()
+        }
         Ok(true) => next.run(req).await,
     }
 }

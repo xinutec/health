@@ -53,7 +53,7 @@ fn a_session_expiring_exactly_now_is_still_valid() {
 #[test]
 fn a_share_viewer_may_read_everything_and_write_nothing() {
     lean::init().expect("the Lean runtime must start");
-    let viewer = |m: &str, p: &str| lean::may_proceed(true, m, p).unwrap();
+    let viewer = |m: &str, p: &str| lean::may_proceed(true, false, m, p).unwrap();
 
     assert!(viewer("GET", "/api/velocity"));
     assert!(!viewer("POST", "/api/settings"));
@@ -71,18 +71,18 @@ fn telemetry_is_the_one_path_a_share_viewer_may_post_to_and_it_is_exact() {
     // It writes to the LOG, not the database, so it is outside the rule's
     // subject rather than an exception to it — and it is the only way to know
     // what a share recipient saw.
-    assert!(lean::may_proceed(true, "POST", "/api/telemetry").unwrap());
+    assert!(lean::may_proceed(true, false, "POST", "/api/telemetry").unwrap());
     // ⚠ EXACT, not a prefix. A route mounted underneath is a different route,
     // and prefix-matching here would open every one of them.
-    assert!(!lean::may_proceed(true, "POST", "/api/telemetry/bulk").unwrap());
-    assert!(!lean::may_proceed(true, "POST", "/api/telemetryX").unwrap());
+    assert!(!lean::may_proceed(true, false, "POST", "/api/telemetry/bulk").unwrap());
+    assert!(!lean::may_proceed(true, false, "POST", "/api/telemetryX").unwrap());
 }
 
 #[test]
 fn the_owner_is_unrestricted() {
     lean::init().expect("the Lean runtime must start");
-    assert!(lean::may_proceed(false, "POST", "/api/settings").unwrap());
-    assert!(lean::may_proceed(false, "DELETE", "/api/share").unwrap());
+    assert!(lean::may_proceed(false, false, "POST", "/api/settings").unwrap());
+    assert!(lean::may_proceed(false, false, "DELETE", "/api/share").unwrap());
 }
 
 #[test]

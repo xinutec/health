@@ -622,9 +622,19 @@ pub fn session_is_valid(expires_at_ms: i64, now_ms: i64) -> Result<bool> {
 /// this path. An unauthenticated request is not a share viewer, so this returns
 /// `true` for one — and `true` here is not permission. The caller's own "is
 /// there a session" gate must run first.
-pub fn may_proceed(is_share_viewer: bool, method: &str, path: &str) -> Result<bool> {
+///
+/// `hides_location`: the viewer's link has location turned off
+/// (`Verified.Session.mayProceedSharing`). `path` must be the ORIGINAL request
+/// path, `/api` included.
+pub fn may_proceed(
+    is_share_viewer: bool,
+    hides_location: bool,
+    method: &str,
+    path: &str,
+) -> Result<bool> {
     let w: BoolWire = call_json(&serde_json::json!({
         "op": "mayProceed", "isShareViewer": is_share_viewer,
+        "hidesLocation": hides_location,
         "method": method, "path": path,
     }))?;
     Ok(w.value)

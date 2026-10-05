@@ -55,6 +55,9 @@ const DEFAULT_DAYS_BACK: i64 = 7;
 pub struct Body {
     #[serde(rename = "daysBack")]
     days_back: Option<Value>,
+    /// Whether the link shows the day's timeline and the map.
+    #[serde(rename = "shareLocation")]
+    share_location: Option<bool>,
 }
 
 /// `daysBack` from a JSON body, as `clampShareDaysBack` sees it.
@@ -99,6 +102,8 @@ pub struct ShareStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub days_back: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub share_location: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_accessed_at: Option<Option<String>>,
@@ -112,6 +117,7 @@ impl ShareStatus {
             token: None,
             url: None,
             days_back: None,
+            share_location: None,
             created_at: None,
             last_accessed_at: None,
         }
@@ -121,6 +127,7 @@ impl ShareStatus {
 fn share_json(st: &AppState, row: &MySqlRow) -> anyhow::Result<ShareStatus> {
     let token: String = row.try_get("token")?;
     let days_back: i64 = row.try_get("days_back")?;
+    let share_location: bool = row.try_get("share_location")?;
     let created: chrono::NaiveDateTime = row.try_get_unchecked("created_at")?;
     let last: Option<chrono::NaiveDateTime> = row.try_get_unchecked("last_accessed_at")?;
     Ok(ShareStatus {
@@ -128,6 +135,7 @@ fn share_json(st: &AppState, row: &MySqlRow) -> anyhow::Result<ShareStatus> {
         url: Some(lean::build_share_url(&st.cfg.public_base_url, &token)?),
         token: Some(token),
         days_back: Some(days_back),
+        share_location: Some(share_location),
         created_at: Some(row_json::format_date_time_iso(created)),
         last_accessed_at: Some(last.map(row_json::format_date_time_iso)),
     })
@@ -180,7 +188,23 @@ pub async fn post(
         Err(e) => return oops(&e),
     };
 
-    match rotate(&st, &session.user_id, days_back).await {
+    // A rotation keeps the link's location setting unless the request says.
+    let requested_location = body.as_ref().and_then(|Json(b)| b.share_location);
+    let share_location = match requested_location {
+        Some(v) => v,
+        None => match fetch(&st, &session.user_id).await {
+            Err(e) => return oops(&e),
+            Ok(row) => match row
+                .map(|r| r.try_get::<bool, _>("share_location"))
+                .transpose()
+            {
+                Err(e) => return oops(&anyhow::Error::from(e)),
+                Ok(v) => v.unwrap_or(true),
+            },
+        },
+    };
+
+    match rotate(&st, &session.user_id, days_back, share_location).await {
         Err(e) => oops(&e),
         Ok(row) => match share_json(&st, &row) {
             Ok(v) => Json(v).into_response(),
@@ -194,19 +218,27 @@ pub async fn post(
 /// ⚠ The transaction is not ceremony. Without it a concurrent read lands
 /// between the two statements, finds no row, and tells the user their share is
 /// revoked — which is exactly the moment they are looking at the settings page.
-async fn rotate(st: &AppState, user_id: &str, days_back: i64) -> anyhow::Result<MySqlRow> {
+async fn rotate(
+    st: &AppState,
+    user_id: &str,
+    days_back: i64,
+    share_location: bool,
+) -> anyhow::Result<MySqlRow> {
     let token = crate::auth::session::mint_share_token()?;
     let mut tx = st.pool.begin().await?;
     sqlx::query("DELETE FROM share_tokens WHERE user_id = ?")
         .bind(user_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("INSERT INTO share_tokens (user_id, token, days_back) VALUES (?, ?, ?)")
-        .bind(user_id)
-        .bind(&token)
-        .bind(days_back)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT INTO share_tokens (user_id, token, days_back, share_location) VALUES (?, ?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(&token)
+    .bind(days_back)
+    .bind(share_location)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     fetch(st, user_id)
         .await?
@@ -220,12 +252,17 @@ pub async fn patch(
     Extension(session): Extension<UserSession>,
     body: Option<Json<Body>>,
 ) -> Response {
-    let requested = days_back_of(body.as_ref().map(|Json(b)| b));
+    let body = body.map(|Json(b)| b);
+    let share_location = body.as_ref().and_then(|b| b.share_location);
+    let asks_days = body.as_ref().is_some_and(|b| b.days_back.is_some());
+    let requested = days_back_of(body.as_ref());
     // ⚠ REJECTS where POST defaults. A PATCH is aimed at a live link, and
     // quietly retuning it to seven days because the body was malformed would
-    // change what a recipient can see without anyone asking for it.
+    // change what a recipient can see without anyone asking for it. A body
+    // that only sets `shareLocation` leaves the window as it is.
     let days_back = match lean::clamp_share_days_back(requested) {
         Err(e) => return oops(&e),
+        Ok(None) if !asks_days && share_location.is_some() => None,
         Ok(None) => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -235,15 +272,19 @@ pub async fn patch(
             )
                 .into_response();
         }
-        Ok(Some(d)) => d,
+        Ok(Some(d)) => Some(d),
     };
 
     let updated = async {
-        sqlx::query("UPDATE share_tokens SET days_back = ? WHERE user_id = ?")
-            .bind(days_back)
-            .bind(&session.user_id)
-            .execute(&st.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE share_tokens SET days_back = COALESCE(?, days_back), \
+             share_location = COALESCE(?, share_location) WHERE user_id = ?",
+        )
+        .bind(days_back)
+        .bind(share_location)
+        .bind(&session.user_id)
+        .execute(&st.pool)
+        .await?;
         fetch(&st, &session.user_id).await
     }
     .await;

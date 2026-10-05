@@ -27,6 +27,8 @@ pub struct UserSession {
     pub user_id: String,
     pub display_name: String,
     pub share_viewer: Option<(String, String)>,
+    /// The viewer's link has location turned off. Always `false` for the owner.
+    pub hides_location: bool,
 }
 
 /// A fresh session id: 32 bytes of OS entropy, hex.
@@ -181,6 +183,7 @@ pub async fn get(
         user_id,
         display_name,
         share_viewer: None,
+        hides_location: false,
     }))
 }
 

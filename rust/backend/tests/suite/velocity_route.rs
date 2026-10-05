@@ -93,6 +93,7 @@ fn viewer() -> UserSession {
         user_id: "user".into(),
         display_name: "user".into(),
         share_viewer: Some(("2026-08-11".into(), "2026-08-17".into())),
+        hides_location: false,
     }
 }
 
@@ -246,6 +247,7 @@ async fn a_share_viewers_write_is_refused_only_because_the_session_is_establishe
         user_id: "user".into(),
         display_name: "user".into(),
         share_viewer: None,
+        hides_location: false,
     };
     let res = api_stack_with_a_write_route(owner)
         .oneshot(

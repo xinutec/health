@@ -51,6 +51,8 @@ pub struct Connections {
 pub struct ShareWindow {
     pub from: String,
     pub to: String,
+    /// Whether this link shows the day's timeline and the map.
+    pub location: bool,
 }
 
 /// `GET /me`'s answer.
@@ -113,6 +115,7 @@ async fn run(st: &AppState, session: &UserSession) -> Result<Json<MeResponse>, A
     let share_window = session.share_viewer.as_ref().map(|(from, to)| ShareWindow {
         from: from.clone(),
         to: to.clone(),
+        location: !session.hides_location,
     });
 
     Ok(Json(MeResponse {

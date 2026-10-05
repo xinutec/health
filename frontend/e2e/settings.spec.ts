@@ -26,6 +26,7 @@ const SHARE_ACTIVE = {
 	token: "demo-token",
 	url: "http://localhost:4200/share/demo-token",
 	daysBack: 7,
+	shareLocation: false,
 	createdAt: "2026-06-01T10:00:00.000Z",
 	lastAccessedAt: "2026-06-08T21:00:03.000Z",
 } satisfies ShareStatus;

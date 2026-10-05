@@ -355,10 +355,11 @@ def dispatch (j : Json) : Json :=
   -- permission — the caller's own session gate runs first.
   | some "mayProceed" =>
     match j.getObjVal? "isShareViewer" >>= (·.getBool?) |>.toOption,
+          j.getObjVal? "hidesLocation" >>= (·.getBool?) |>.toOption,
           str? j "method", str? j "path" with
-    | some sv, some m, some p =>
-      Json.mkObj [("value", Json.bool (Verified.Session.mayProceed sv m p))]
-    | _, _, _ => err "mayProceed: isShareViewer, method, path required"
+    | some sv, some hl, some m, some p =>
+      Json.mkObj [("value", Json.bool (Verified.Session.mayProceedSharing sv hl m p))]
+    | _, _, _, _ => err "mayProceed: isShareViewer, hidesLocation, method, path required"
   -- ⚠ `daysBack ≤ 0` and an unparsable `today` BOTH answer null, and the caller
   -- must treat that as "share disabled" rather than "no window". The TypeScript
   -- produced `NaN`-shaped garbage for the second, which formatted as

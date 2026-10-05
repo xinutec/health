@@ -88,6 +88,20 @@ safe when the API grows. -/
 def mayProceed (isShareViewer : Bool) (method path : String) : Bool :=
   !isShareViewer || method == "GET" || WRITES_ONLY_TO_THE_LOG.contains path
 
+/-- Paths that show where the owner is or has been: the day's timeline and
+everything the map draws.
+
+⚠ FULL paths, `/api` included. The host must pass the ORIGINAL request path,
+not the one a nested router sees with its prefix stripped. -/
+def LOCATION_PATHS : List String :=
+  ["/api/velocity", "/api/locations", "/api/location/latest", "/api/location/tail"]
+
+/-- `mayProceed`, and a share link whose owner turned location off reads none of
+`LOCATION_PATHS`. The owner is never restricted by their own link's setting. -/
+def mayProceedSharing (isShareViewer hidesLocation : Bool) (method path : String) : Bool :=
+  mayProceed isShareViewer method path &&
+    !(isShareViewer && hidesLocation && LOCATION_PATHS.contains path)
+
 /-! ## Guards
 
 The framing cases are what `verifyValue` returned under Node; regenerate with
@@ -126,5 +140,18 @@ The framing cases are what `verifyValue` returned under Node; regenerate with
 -- ⚠ EXACT path, not a prefix. A route mounted under it is a different route.
 #guard mayProceed true "POST" "/api/telemetry/bulk" == false
 #guard mayProceed true "POST" "/api/telemetryX" == false
+-- A link without location reads health but not where the owner was.
+#guard mayProceedSharing true true "GET" "/api/hrv" == true
+#guard mayProceedSharing true true "GET" "/api/velocity" == false
+#guard mayProceedSharing true true "GET" "/api/locations" == false
+#guard mayProceedSharing true true "GET" "/api/location/latest" == false
+#guard mayProceedSharing true true "GET" "/api/location/tail" == false
+#guard mayProceedSharing true false "GET" "/api/velocity" == true
+-- The owner's own requests ignore the link's setting.
+#guard mayProceedSharing false true "GET" "/api/velocity" == true
+-- ⚠ A prefix-stripped path would slip past; the host passes the original.
+#guard mayProceedSharing true true "GET" "/velocity" == true
+-- Still read-only with location on.
+#guard mayProceedSharing true false "POST" "/api/settings" == false
 
 end Verified.Session

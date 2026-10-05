@@ -24,6 +24,7 @@ fn no_link_omits_every_conditional_key() {
         token: None,
         url: None,
         days_back: None,
+        share_location: None,
         created_at: None,
         last_accessed_at: None,
     })
@@ -42,6 +43,7 @@ fn an_unopened_link_carries_an_explicit_null() {
         token: Some("tok".into()),
         url: Some("https://example/s/tok".into()),
         days_back: Some(7),
+        share_location: Some(false),
         created_at: Some("2026-01-01T00:00:00Z".into()),
         last_accessed_at: Some(None),
     })

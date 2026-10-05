@@ -56,7 +56,9 @@
 						<div class="section">
 							<app-intraday-hr [points]="intradayHr()" />
 						</div>
-						@if (velocityError()) {
+						@if (!showsLocation()) {
+							<!-- The owner shares health only: no timeline to draw. -->
+						} @else if (velocityError()) {
 							<div class="section velocity-error">
 								<p>Couldn't load your location, transport and timeline for this day.</p>
 								<button mat-stroked-button (click)="retryDay()">Retry</button>
@@ -164,6 +166,7 @@
 				</div>
 			</div>
 		</mat-tab>
+		@if (showsLocation()) {
 		<mat-tab label="Map">
 			<ng-template matTabContent>
 				<div class="tab-content">
@@ -188,6 +191,7 @@
 				</div>
 			</ng-template>
 		</mat-tab>
+		}
 	</mat-tab-group>
 	</app-pull-to-refresh>
 }

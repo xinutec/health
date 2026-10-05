@@ -72,11 +72,13 @@ interface HealthMock {
  *  signed-in, Fitbit-linked owner. `getVelocity` is deferred per date so
  *  a test can resolve day-loads in any order; everything else resolves
  *  immediately. */
-function makeHealthMock(opts: { activity?: ActivityDay[]; sleep?: SleepLog[] } = {}): HealthMock {
+function makeHealthMock(
+	opts: { activity?: ActivityDay[]; sleep?: SleepLog[]; shareWindow?: { from: string; to: string; location: boolean } } = {},
+): HealthMock {
 	const pending = new Map<string, Deferred<VelocityData>>();
 	const activityDaysSeen: number[] = [];
 	const health = {
-		user: signal({ fitbitLinked: true }),
+		user: signal({ fitbitLinked: true, shareWindow: opts.shareWindow ?? null }),
 		shareToken: signal(null),
 		// The real service is async; these stubs only have to satisfy that
 		// signature, so they return a settled promise rather than pretending to
@@ -390,5 +392,35 @@ describe("DashboardComponent — velocity load failure", () => {
 		expect(cmp.velocityError(), "error cleared after successful retry").toBe(false);
 		expect(q(fixture, ".velocity-error"), "retry banner gone").toBeFalsy();
 		expect(q(fixture, "app-timeline"), "timeline chart restored").toBeTruthy();
+	});
+});
+
+describe("DashboardComponent — a share link with location off", () => {
+	beforeEach(() => TestBed.resetTestingModule());
+
+	const tabLabels = (fixture: ComponentFixture<unknown>): string[] =>
+		Array.from((fixture.nativeElement as HTMLElement).querySelectorAll(".mdc-tab__text-label")).map(
+			(e) => e.textContent?.trim() ?? "",
+		);
+	const window = (location: boolean) => ({ from: "2026-01-01", to: "2099-12-31", location });
+
+	it("shows no Map tab and never asks for the day's timeline", async () => {
+		const mock = makeHealthMock({ shareWindow: window(false) });
+		const fixture = setup(mock);
+		await boot(fixture);
+		await pump(fixture);
+
+		expect(mock.pending.size, "no velocity request").toBe(0);
+		expect(tabLabels(fixture)).toEqual(["Day", "Trends"]);
+	});
+
+	it("the same link with location on keeps the Map tab", async () => {
+		const mock = makeHealthMock({ shareWindow: window(true) });
+		const fixture = setup(mock);
+		await boot(fixture);
+		mock.pending.get(todayLocal())?.resolve(vel());
+		await pump(fixture);
+
+		expect(tabLabels(fixture)).toEqual(["Day", "Trends", "Map"]);
 	});
 });
