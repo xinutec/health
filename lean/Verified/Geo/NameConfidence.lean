@@ -27,8 +27,8 @@ namespace Verified.Geo.NameConfidence
 /-- `(source, right, graded)` over the corpus's graded stay rows. -/
 def COUNTS : List (String × Nat × Nat) :=
   [("home", 53, 53), ("sleep", 39, 39), ("enclosing", 31, 32), ("work", 18, 18),
-   ("nearField", 15, 20), ("ranked", 5, 11), ("lodging", 15, 15), ("station", 5, 5),
-   ("geocodeVenue", 3, 5), ("openSpace", 0, 1)]
+   ("nearField", 15, 20), ("ranked", 6, 11), ("lodging", 15, 15), ("station", 5, 5),
+   ("geocodeVenue", 3, 5), ("openSpace", 1, 1)]
 
 /-- The chance a name from `source` is right: the rule of succession over its
     graded rows. -/
@@ -38,7 +38,7 @@ def confidence (source : String) : Float :=
   | none => 0.5
 
 #guard confidence "enclosing" == 32 / 34
-#guard confidence "ranked" == 6 / 13
+#guard confidence "ranked" == 7 / 13
 #guard confidence "address" == 0.5
 
 end Verified.Geo.NameConfidence
