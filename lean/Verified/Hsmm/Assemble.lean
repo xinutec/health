@@ -149,14 +149,48 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
       let connGraph := RouteModel.toConnGraph model
       let trainStates := (buildStateSpace (places.map (·.1)) KNOWN_LINES
         ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_TRAIN_STATE] else [])).filter (·.mode == .train)
-      (obs.foldl (fun (acc : Array (Std.HashMap String Float) ×
-            Std.HashMap (Bool × Option Int × Option Int) (Std.HashMap String Float)) o =>
-        let key := RouteModel.railKey o
+      -- Walked minutes (cadence at `INTERCHANGE_CADENCE_SPM` or more) and the
+      -- run each belongs to. An INTERCHANGE minute is a walked minute whose run
+      -- lies ENTIRELY inside the gap: a run touching the gap's first bookend
+      -- is the walk to the platform (06-09: 20:21–20:28 past the 20:26 fix),
+      -- one touching its last is the walk off the train. No length is asked
+      -- of it — the interchange at King's Cross was a walk–pause–walk whose
+      -- minutes never ran three in a row. Rows are one a minute from the first
+      -- row's `ts`, so a bookend's row is arithmetic (`Observation.bucketIndex`).
+      let walked : Array Bool := obs.map fun o => (o.cadence.getD 0) ≥ RouteModel.INTERCHANGE_CADENCE_SPM
+      let runOf : Array (Nat × Nat) := Id.run do  -- (start, end) of each walked minute's run
+        let mut out := Array.replicate walked.size (0, 0)
+        let mut i := 0
+        while i < walked.size do
+          if walked.getD i false then
+            let mut j := i
+            while j + 1 < walked.size && walked.getD (j + 1) false do j := j + 1
+            for k in [i:j + 1] do out := out.setIfInBounds k (i, j)
+            i := j + 1
+          else i := i + 1
+        return out
+      let t0 : Int := (obs[0]?.map (·.ts)).getD 0
+      let rowOf := fun (ts : Int) => ((ts - t0) / 60).toNat
+      -- An interchange strictly between rows `lo` and `hi`.
+      let walkedIn := fun (lo hi : Nat) => Id.run do
+        if hi ≤ lo + 1 then return false
+        for k in [lo + 1:hi] do
+          if walked.getD k false then
+            let (rs, re) := runOf.getD k (0, 0)
+            if rs > lo && re < hi then return true
+        return false
+      (obs.zipIdx.foldl (fun (acc : Array (Std.HashMap String Float) ×
+            Std.HashMap (Bool × Option Int × Option Int × Bool × Bool) (Std.HashMap String Float)) (o, i) =>
+        let (before, after) := match o.gps, o.prevGpsFix, o.nextGpsFix with
+          | none, some p, some n => (walkedIn (rowOf p.ts) i, walkedIn i (rowOf n.ts))
+          | _, _, _ => (false, false)
+        let (g?, pts, nts) := RouteModel.railKey o
+        let key := (g?, pts, nts, before, after)
         match acc.2.get? key with
         | some m => (acc.1.push m, acc.2)
         | none =>
           let m := trainStates.foldl (fun (m : Std.HashMap String Float) st =>
-            let v := RouteModel.routeRailEvidence model connGraph st o false
+            let v := RouteModel.routeRailEvidence model connGraph st o false before after
             if v == 0 then m else m.insert (StateSpace.stateKey st) v) {}
           (acc.1.push m, acc.2.insert key m)) (#[], {})).1 }
 

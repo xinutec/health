@@ -34,6 +34,9 @@ def MIN_GAP_DURATION_S : Int := 300
 def MAX_GAP_DURATION_S : Int := 5400
 def MIN_GAP_DISTANCE_M : Float := 1000
 def UNDERGROUND_BOOST : Float := 3.5
+/-- Steps a minute at or above which a dark minute inside a GPS gap is a
+    WALKED minute (#238). -/
+def INTERCHANGE_CADENCE_SPM : Float := 60
 
 /-- A parsed route edge with the attributes the factors read. Node ids are the
     shell's `toFixed` topology keys (opaque here). -/
@@ -118,7 +121,8 @@ def railKey (o : ObsRow) : Bool × Option Int × Option Int :=
 /-- `buildRouteRailEvidence`'s per-state verdict, with the route-graph facts
     computed in Lean. `isCovered` (train-generator coverage) stays caller-side. -/
 def routeRailEvidence (g : RouteGraphModel) (cg : RouteConnectivity.Graph)
-    (s : State) (o : ObsRow) (isCovered : Bool) : Float :=
+    (s : State) (o : ObsRow) (isCovered : Bool)
+    (walkedBefore walkedAfter : Bool := false) : Float :=
   if s.mode != .train then 0.0
   else if isCovered then 0.0
   else match s.lineName with
@@ -132,14 +136,29 @@ def routeRailEvidence (g : RouteGraphModel) (cg : RouteConnectivity.Graph)
           else if next.ts - prev.ts > MAX_GAP_DURATION_S then 0.0
           else if haversineMeters prev.lat prev.lon next.lat next.lon < MIN_GAP_DISTANCE_M then 0.0
           else
+            -- A WALKED minute inside the gap is an interchange (#238, 06-09:
+            -- Victoria → King's Cross, a step burst, King's Cross → Baker
+            -- Street, all dark). The ride this minute belongs to then reaches
+            -- only ONE bookend — the one on its side of the walk — so the line
+            -- is asked to be present and underground there alone, and the
+            -- end-to-end connectivity (which only a line spanning the whole
+            -- gap could pass: the Circle, on both rides) is not asked. A minute
+            -- walked on BOTH sides (a platform descent after the fix, then the
+            -- interchange) keeps the whole-gap rule: measured 2026-10-06, scoring
+            -- it as bookend-less cost 06-09 its first ride's mode.
             let pe := computeFixLineEvidence g prev.lat prev.lon
             let ne := computeFixLineEvidence g next.lat next.lon
-            if !pe.linesPresent.contains line || !ne.linesPresent.contains line then 0.0
-            else if !pe.linesUnderground.contains line || !ne.linesUnderground.contains line then 0.0
-            else if !RouteConnectivity.pathExistsOnLine cg line
-                      (edgesNearOnLine g line prev.lat prev.lon)
-                      (edgesNearOnLine g line next.lat next.lon) then 0.0
-            else UNDERGROUND_BOOST
+            let lineAt := fun (e : FixLineEvidence) =>
+              e.linesPresent.contains line && e.linesUnderground.contains line
+            match walkedBefore, walkedAfter with
+            | true, false => if lineAt ne then UNDERGROUND_BOOST else 0.0
+            | false, true => if lineAt pe then UNDERGROUND_BOOST else 0.0
+            | _, _ =>
+              if !(lineAt pe) || !(lineAt ne) then 0.0
+              else if !RouteConnectivity.pathExistsOnLine cg line
+                        (edgesNearOnLine g line prev.lat prev.lon)
+                        (edgesNearOnLine g line next.lat next.lon) then 0.0
+              else UNDERGROUND_BOOST
         | _, _ => 0.0
 
 -- Parity with the real `buildRouteRailEvidence` over a built graph (Node/V8).
