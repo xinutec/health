@@ -296,6 +296,7 @@ ssh root@isis.xinutec.org "bash -s" > /tmp/velocity-smoke.log 2>&1 <<-REMOTE || 
 	kubectl -n health logs job/$SMOKE_NAME | grep -E '^(fold|high-water|cgroup peak|         timing)'
 	kubectl -n health delete job $SMOKE_NAME >/dev/null
 REMOTE
+# scripts/smoke-summary.py reads this log: per day, the host ledger beside Lean's waits.
 cat /tmp/velocity-smoke.log
 smoke_peak=$(sed -nE 's/^cgroup peak +([0-9]+) MiB.*/\1/p' /tmp/velocity-smoke.log | tail -1)
 smoke_oom=$(sed -nE 's/^cgroup peak .*oom_kill ([0-9]+).*/\1/p' /tmp/velocity-smoke.log | tail -1)
