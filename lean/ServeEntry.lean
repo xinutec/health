@@ -1000,9 +1000,14 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
           -- only what depends on it (`chainContext` is this composition, #1774).
           let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
           let mut rowr : Array Nat := Array.replicate T 0
-          for ((cm, covered), t) in minutes.zipIdx do
+          -- A counter, not `minutes.zipIdx`: that built a fresh array of T
+          -- tuples for EVERY eligible pair — the allocation churn that was a
+          -- quarter of the build's samples (#1774, 2026-10-06).
+          let mut t := 0
+          for (cm, covered) in minutes do
             let cv := Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine src dst covered pb cm
             rowr := rowr.set! t (← encScore pOB (quant (base + cv)))
+            t := t + 1
           ovPairs := ovPairs.push (a, b)
           transRows := transRows.push rowr
   let nRows := transRows.size
