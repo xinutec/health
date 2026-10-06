@@ -45,6 +45,14 @@ private def negInf : Float := -1.0 / 0.0
 
 /-- JS `x || 1`: zero and NaN are falsy. -/
 private def orOne (x : Float) : Float := if x == 0 || x.isNaN then 1 else x
+/-! Float literals used inside loop bodies and branches, as module-level cells:
+a literal there is rebuilt by `Float.ofScientific` on every pass (see
+`JsNum.toFixedN`), and `projMetric` runs per segment probe of every lookup. -/
+private def ZERO : Float := 0
+private def ONE : Float := 1
+private def FOUR : Float := 4
+/-- Stands in for a zero-length segment's `len2`, so its parameter is finite. -/
+private def EPS_LEN2 : Float := 1e-9
 open Verified.JsNum (jsRound)
 private def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
 private def hyp (x y : Float) : Float := Float.sqrt (x * x + y * y)
@@ -115,15 +123,15 @@ def diagOfA {n : Nat} (d : Vector Float n) (wAcc : Float) (wEdge : Float := 0) :
     Vector Float n := Id.run do
   let mut out := Vector.replicate n 0.0
   for h : i in [0:n] do
-    let mut ltl := 0.0
+    let mut ltl := ZERO
     -- `i ≤ n-3`, `0 ≤ i-1 ≤ n-3`, `0 ≤ i-2 ≤ n-3` — written additively because
     -- Nat subtraction truncates where the JS number goes negative.
-    if i + 3 ≤ n then ltl := ltl + 1
-    if i ≥ 1 && i + 2 ≤ n then ltl := ltl + 4
-    if i ≥ 2 && i + 1 ≤ n then ltl := ltl + 1
-    let mut d1 := 0.0
-    if i + 2 ≤ n then d1 := d1 + 1
-    if i ≥ 1 then d1 := d1 + 1
+    if i + 3 ≤ n then ltl := ltl + ONE
+    if i ≥ 1 && i + 2 ≤ n then ltl := ltl + FOUR
+    if i ≥ 2 && i + 1 ≤ n then ltl := ltl + ONE
+    let mut d1 := ZERO
+    if i + 2 ≤ n then d1 := d1 + ONE
+    if i ≥ 1 then d1 := d1 + ONE
     out := out.set i (d[i] + wAcc * ltl + wEdge * d1)
   return out
 
@@ -389,7 +397,7 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
       let (bx, by') := toXY matchedPath[i]
       let dx := bx - ax
       let dy := by' - ay
-      let len2 := if dx * dx + dy * dy == 0 then 1e-9 else dx * dx + dy * dy
+      let len2 := if dx * dx + dy * dy == 0 then EPS_LEN2 else dx * dx + dy * dy
       let t := max 0 (min 1 (((px - ax) * dx + (py - ay) * dy) / len2))
       let dd := hyp (px - (ax + t * dx)) (py - (ay + t * dy))
       if dd < bestD then
@@ -402,7 +410,7 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
     let (bx, by') := toXY b
     let dx := bx - ax
     let dy := by' - ay
-    let len2 := if dx * dx + dy * dy == 0 then 1e-9 else dx * dx + dy * dy
+    let len2 := if dx * dx + dy * dy == 0 then EPS_LEN2 else dx * dx + dy * dy
     let t := max 0 (min 1 (((px - ax) * dx + (py - ay) * dy) / len2))
     hyp (px - (ax + t * dx)) (py - (ay + t * dy))
   let arcs := clamped.map (fun p => arcOf p.pt)
@@ -580,9 +588,9 @@ structure MetricProj where
 def projMetric (px py ax ay bx by' : Float) : MetricProj :=
   let dx := bx - ax
   let dy := by' - ay
-  let len2 := if dx * dx + dy * dy == 0 then 1e-9 else dx * dx + dy * dy
+  let len2 := if dx * dx + dy * dy == 0 then EPS_LEN2 else dx * dx + dy * dy
   let t0 := ((px - ax) * dx + (py - ay) * dy) / len2
-  let t := if t0 < 0 then 0 else if t0 > 1 then 1 else t0
+  let t := if t0 < 0 then ZERO else if t0 > 1 then ONE else t0
   let x := ax + t * dx
   let y := ay + t * dy
   let ex := px - x
