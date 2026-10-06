@@ -105,3 +105,60 @@ fn a_high_latitude_stretches_the_longitude_half_of_the_box() {
     let r = row(69.9, 70.1, 19.9, 20.1, Some(1));
     assert!(osm_covered(70.0, 20.0, 500.0, &[r], NOW, false).expect("the bridge answers"));
 }
+
+/// The mirror ships only the rows whose box contains the query POINT (#1921:
+/// 476 calls a day, each carrying every box the bucket had). The claim that
+/// this changes no verdict is the module's to make and this test's to check:
+/// random rows, random points, every radius, both `hasLocalData` arms, with
+/// stale and legacy rows mixed in — the filtered list and the full list must
+/// agree every time.
+#[test]
+fn the_point_prefilter_changes_no_coverage_verdict() {
+    use backend::mirror_source::MirrorSource;
+    // A fixed-seed LCG: the cases are reproducible and need no crate.
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let mut agreed = 0usize;
+    let mut covered = 0usize;
+    for _ in 0..400 {
+        let n = (next() * 12.0) as usize;
+        let rows: Vec<CoverageRow> = (0..n)
+            .map(|_| {
+                // Boxes from a few hundred metres to several kilometres, near
+                // London, so some contain the point, some only straddle it.
+                let (lat, lon) = (51.4 + next() * 0.2, -0.2 + next() * 0.2);
+                let (d_lat, d_lon) = (0.001 + next() * 0.03, 0.001 + next() * 0.05);
+                let age = match (next() * 4.0) as u8 {
+                    0 => None,
+                    1 => Some(FRESH_DAYS + 1 + (next() * 100.0) as i64),
+                    _ => Some((next() * 100.0) as i64),
+                };
+                row(lat - d_lat, lat + d_lat, lon - d_lon, lon + d_lon, age)
+            })
+            .collect();
+        let (lat, lon) = (51.4 + next() * 0.2, -0.2 + next() * 0.2);
+        let radius_m = [50.0, 150.0, 500.0, 1500.0][(next() * 4.0) as usize];
+        let around = MirrorSource::boxes_around(lat, lon, &rows);
+        assert!(around.len() <= rows.len());
+        for has_local in [false, true] {
+            let full = osm_covered(lat, lon, radius_m, &rows, NOW, has_local).expect("the bridge");
+            let few = osm_covered(lat, lon, radius_m, &around, NOW, has_local).expect("the bridge");
+            assert_eq!(
+                full, few,
+                "rows {rows:?} at ({lat}, {lon}) r={radius_m} local={has_local}"
+            );
+            agreed += 1;
+            covered += usize::from(full);
+        }
+    }
+    // Both verdicts must occur, or the comparison proved nothing.
+    assert!(
+        covered > 50 && covered < agreed - 50,
+        "covered {covered} of {agreed}"
+    );
+}

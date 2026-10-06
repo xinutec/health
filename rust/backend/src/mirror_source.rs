@@ -358,6 +358,25 @@ impl MirrorSource {
         Ok(&self.coverage[bucket])
     }
 
+    /// The coverage rows that can decide a question at `(lat, lon)`: those
+    /// whose box contains the point.
+    ///
+    /// ⚠ A PRE-FILTER, NOT THE RULE. `decideCoverage` says covered when some
+    /// FRESH row contains the whole query box; a row that contains the query
+    /// box contains its centre, so dropping rows that miss the centre drops no
+    /// row the rule could accept, and the staleness test is per row. The rule
+    /// stays Lean's; this only stops the host serialising three hundred boxes
+    /// to ask about one point. `tests/suite/osm_coverage.rs` checks the two
+    /// verdicts agree on random rows.
+    pub fn boxes_around(lat: f64, lon: f64, rows: &[CoverageRow]) -> Vec<CoverageRow> {
+        rows.iter()
+            .filter(|c| {
+                c.min_lat <= lat && lat <= c.max_lat && c.min_lon <= lon && lon <= c.max_lon
+            })
+            .copied()
+            .collect()
+    }
+
     /// "Do we have ANY data here for this bucket?" — `hasLocalData`, one indexed
     /// `LIMIT 1` per table, lines first so a hit short-circuits the second.
     ///
@@ -419,11 +438,12 @@ impl MirrorSource {
             return Ok(*v);
         }
         let now = self.now_ms;
-        let boxes = self.coverage_rows(bucket)?.to_vec();
+        let boxes = Self::boxes_around(lat, lon, self.coverage_rows(bucket)?);
         // ⚠ TIMED, and not under `foldLeanMs`: that timer is the scoring of
         // candidate rows. This is a second Lean round trip per (bucket, point),
-        // shipping every coverage box the bucket has, and it was the largest
-        // unmeasured piece of an ask (#1921).
+        // and it was the largest unmeasured piece of an ask (#1921): shipping
+        // every box the bucket had — 97 to 306 on the pod — it cost 2 ms a call,
+        // 476 calls and 950 ms on the heaviest smoke day.
         let t0 = std::time::Instant::now();
         let mut covered = lean::osm_covered(lat, lon, radius_m, &boxes, now, false)
             .with_context(|| format!("coverage gate for {bucket}"))?;
