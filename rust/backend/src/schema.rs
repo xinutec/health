@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 93] = [
+    let migrations: [&str; 94] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -759,6 +759,11 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // every link issued before this keeps showing what it showed.
         r#"ALTER TABLE share_tokens
      ADD COLUMN IF NOT EXISTS share_location BOOLEAN NOT NULL DEFAULT TRUE"#,
+        // `stationsOnLine` reads every distinct railway line name once per fold
+        // (`MirrorSource::rail_line_names`). With `feature_type` and `name`
+        // indexed separately that was a 130 ms row scan on the pod every fold
+        // (#1921, 2026-10-06); together they serve it from the index alone.
+        r#"ALTER TABLE osm_lines ADD INDEX IF NOT EXISTS idx_osm_lines_type_name (feature_type, name)"#,
     ];
 
     sqlx::query(
