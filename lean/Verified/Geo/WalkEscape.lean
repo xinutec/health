@@ -135,8 +135,18 @@ exact only up to that `cos`-latitude approximation — a linear scan would be a
 different function, not the same one implemented better.
 -/
 
+/-- One way segment in a grid bucket, with its place in way order — the tie
+    rule `nearestWalkable` and `snapWithWay` break on (first wins). -/
+structure GridSeg where
+  a : Pt
+  b : Pt
+  way : Nat
+  /-- Index of `a` within its way. -/
+  i : Nat
+  deriving Inhabited
+
 structure WaySegmentGrid where
-  buckets : Std.HashMap (Int × Int) (Array (Pt × Pt))
+  buckets : Std.HashMap (Int × Int) (Array GridSeg)
   cellLat : Float
   cellLon : Float
   /-- Largest radius (m) `within` may be asked for — fixed at build time. -/
@@ -151,8 +161,9 @@ def mkWaySegmentGrid (ways : Ways) (maxQueryM : Float) : WaySegmentGrid := Id.ru
       | some p => p.lat
   let cellLat := maxQueryM / 111320.0
   let cellLon := maxQueryM / (111320.0 * Float.cos (refLat * pi / 180))
-  let mut buckets : Std.HashMap (Int × Int) (Array (Pt × Pt)) := {}
-  for w in ways do
+  let mut buckets : Std.HashMap (Int × Int) (Array GridSeg) := {}
+  for hw : wi in [0:ways.size] do
+    let w := ways[wi]'hw.upper
     for hm_i : i in [1:w.size] do
       have hb_i : i < w.size := hm_i.upper
       let a := w[i - 1]
@@ -167,7 +178,8 @@ def mkWaySegmentGrid (ways : Ways) (maxQueryM : Float) : WaySegmentGrid := Id.ru
         while cx <= hiLon do
           -- `alter`, not `insert (getD … |>.push …)`: the latter holds a second
           -- reference to the bucket while pushing, so every push copies it.
-          buckets := buckets.alter (cy, cx) fun o => some ((o.getD #[]).push (a, b))
+          buckets := buckets.alter (cy, cx) fun o =>
+            some ((o.getD #[]).push { a, b, way := wi, i := i - 1 })
           cx := cx + 1
         cy := cy + 1
   return { buckets, cellLat, cellLon, maxQueryM }
@@ -179,9 +191,34 @@ def WaySegmentGrid.within (g : WaySegmentGrid) (p : Pt) (maxM : Float) : Bool :=
   for dy in [0:3] do
     for dx in [0:3] do
       let key := (cy + Int.ofNat dy - 1, cx + Int.ofNat dx - 1)
-      for (a, b) in g.buckets.getD key #[] do
-        if (projectPointToSegment p a b).distM <= maxM then return true
+      for s in g.buckets.getD key #[] do
+        if (projectPointToSegment p s.a s.b).distM <= maxM then return true
   return false
+
+/-- The nearest way segment within `maxM` of `p`, ranked as the linear scans
+    rank: least distance, then way order (`nearestWalkable`'s strict `<` keeps
+    the first). `none` when nothing is that near. ⚠ Exact only for
+    `maxM ≤ maxQueryM` — the 3×3 probe reaches exactly one cell; a caller with a
+    wider radius must scan. A segment filed in several of the nine cells is met
+    again at the same distance and order, and does not win twice. -/
+def WaySegmentGrid.nearestWithin (g : WaySegmentGrid) (p : Pt) (maxM : Float) :
+    Option (Proj × GridSeg) := Id.run do
+  let cy := floorInt (p.lat / g.cellLat)
+  let cx := floorInt (p.lon / g.cellLon)
+  let mut best : Option (Proj × GridSeg) := none
+  for dy in [0:3] do
+    for dx in [0:3] do
+      let key := (cy + Int.ofNat dy - 1, cx + Int.ofNat dx - 1)
+      for s in g.buckets.getD key #[] do
+        let proj := projectPointToSegment p s.a s.b
+        if proj.distM <= maxM then
+          let better := match best with
+            | none => true
+            | some (bp, bs) =>
+              proj.distM < bp.distM
+                || (proj.distM == bp.distM && (s.way < bs.way || (s.way == bs.way && s.i < bs.i)))
+          if better then best := some (proj, s)
+  return best
 
 /-! ## Case 1 + case 3: per-vertex escape -/
 
@@ -192,11 +229,11 @@ structure EscapeOptions where
   streetSnapRadiusM : Float := 20
   deriving Inhabited
 
-/-- The escaped position for `p`, or `none` when it is not inside a building or
-    there is no near-side street to move it onto (case 3 — trust the GPS). -/
-def escapedPosition (p : Pt) (walkable : Ways) (buildings : Array Ring)
-    (opts : EscapeOptions) : Option Pt :=
-  match containingBuilding p buildings with
+/-- The escape from `ring?` (the footprint `p` is inside, if any), given how
+    the nearest street is found — the linear scan, or a context's index. -/
+def escapedFrom (ring? : Option Ring) (p : Pt) (opts : EscapeOptions)
+    (nearest : Pt → Option NearPt) : Option Pt :=
+  match ring? with
   | none => none
   | some ring =>
     match nearestOnRing p ring with
@@ -211,9 +248,15 @@ def escapedPosition (p : Pt) (walkable : Ways) (buildings : Array Ring)
         let outside : Pt :=
           ⟨wall.lat + ((dyN / norm) * opts.wallMarginM) / 111320.0,
            wall.lon + ((dxE / norm) * opts.wallMarginM) / (111320.0 * cosLat)⟩
-        match nearestWalkable outside walkable with
+        match nearest outside with
         | some near => if near.distM <= opts.streetSnapRadiusM then some ⟨near.lat, near.lon⟩ else none
         | none => none
+
+/-- The escaped position for `p`, or `none` when it is not inside a building or
+    there is no near-side street to move it onto (case 3 — trust the GPS). -/
+def escapedPosition (p : Pt) (walkable : Ways) (buildings : Array Ring)
+    (opts : EscapeOptions) : Option Pt :=
+  escapedFrom (containingBuilding p buildings) p opts (nearestWalkable · walkable)
 
 /-- Apply the escape to a drawn line. Only `lat`/`lon` are rewritten; the TS is
     generic over the vertex type so every other field rides through — that
@@ -261,6 +304,15 @@ structure Footprint where
     network in scope. -/
 structure RingCtx where
   footprints : Array Footprint
+  /-- Footprint indices by cell of their (expanded) box — every cell the box
+      meets, in index order. A point that passes a box test lies in a cell that
+      box was filed in, so the point's own cell holds every footprint the
+      linear scans would test (`cellDeg` is in degrees, as the boxes are; no
+      metre enters). A box with a non-finite bound (an empty ring) or one too
+      large to file goes to `unfiled`, which every query also reads. -/
+  cellDeg : Float := 0.0005
+  grid : Std.HashMap (Int × Int) (Array Nat) := {}
+  unfiled : Array Nat := #[]
   deriving Inhabited
 
 /-- The footprints alone, for callers that route around rings. -/
@@ -294,8 +346,34 @@ def ringBoxes (buildings : Array Ring) (expandM : Float) : Array Box :=
              minLon := minLon - dLon, maxLon := maxLon + dLon }
 
 /-- Each building with its bbox expanded by `expandM`. -/
-def RingCtx.ofRings (buildings : Array Ring) (expandM : Float) : RingCtx :=
-  { footprints := (buildings.zip (ringBoxes buildings expandM)).map fun (ring, box) => { ring, box } }
+def RingCtx.ofRings (buildings : Array Ring) (expandM : Float) : RingCtx := Id.run do
+  let footprints : Array Footprint :=
+    (buildings.zip (ringBoxes buildings expandM)).map fun (ring, box) => { ring, box }
+  let cellDeg : Float := 0.0005
+  let mut grid : Std.HashMap (Int × Int) (Array Nat) := {}
+  let mut unfiled : Array Nat := #[]
+  for i in [0:footprints.size] do
+    let b := (footprints.getD i default).box
+    let finite := b.minLat.isFinite && b.maxLat.isFinite && b.minLon.isFinite && b.maxLon.isFinite
+    let cy0 := floorInt (b.minLat / cellDeg)
+    let cy1 := floorInt (b.maxLat / cellDeg)
+    let cx0 := floorInt (b.minLon / cellDeg)
+    let cx1 := floorInt (b.maxLon / cellDeg)
+    if finite && (cy1 - cy0 + 1) * (cx1 - cx0 + 1) ≤ 4096 then
+      let mut cy := cy0
+      while cy ≤ cy1 do
+        let mut cx := cx0
+        while cx ≤ cx1 do
+          grid := grid.alter (cy, cx) fun o => some ((o.getD #[]).push i)
+          cx := cx + 1
+        cy := cy + 1
+    else unfiled := unfiled.push i
+  return { footprints, cellDeg, grid, unfiled }
+
+/-- The footprints whose box can contain `p`: its cell's bucket, then the
+    unfiled ones; each in index order. -/
+@[inline] def RingCtx.candidates (ctx : RingCtx) (p : Pt) : Array Nat × Array Nat :=
+  (ctx.grid.getD (floorInt (p.lat / ctx.cellDeg), floorInt (p.lon / ctx.cellDeg)) #[], ctx.unfiled)
 
 def makeBadnessCtx (walkable : Ways) (buildings : Array Ring) (opts : CorrectOptions) : BadnessCtx :=
   { ring := RingCtx.ofRings buildings opts.buildingProxM
@@ -303,26 +381,65 @@ def makeBadnessCtx (walkable : Ways) (buildings : Array Ring) (opts : CorrectOpt
     grid := mkWaySegmentGrid walkable (max opts.onWayM opts.offNetworkM)
     opts }
 
-/-- Is `p` inside a building? The bbox prefilter rejects almost every ring
-    before the ray cast. -/
+/-- Is `p` inside a building? One cell's footprints, boxes first, then the
+    ray cast. -/
 def insideBuildingCtx (p : Pt) (ctx : RingCtx) : Bool := Id.run do
-  for f in ctx.footprints do
-    let b := f.box
-    if p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon then
-      continue
-    if pointInRing p f.ring then return true
+  let (cell, rest) := ctx.candidates p
+  for cands in #[cell, rest] do
+    for i in cands do
+      let f := ctx.footprints.getD i default
+      let b := f.box
+      if p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon then
+        continue
+      if pointInRing p f.ring then return true
   return false
+
+/-- `containingBuilding` through the index: the lowest-indexed footprint whose
+    ring contains `p` — a ring containing `p` has its box containing `p`, so it
+    is among the candidates. -/
+def containingBuildingIn (p : Pt) (ctx : RingCtx) : Option Ring := Id.run do
+  let (cell, rest) := ctx.candidates p
+  let mut best : Option Nat := none
+  for i in cell do
+    if pointInRing p (ctx.footprints.getD i default).ring then
+      best := some i
+      break
+  for i in rest do
+    if (match best with | some b => i < b | none => true)
+        && pointInRing p (ctx.footprints.getD i default).ring then
+      best := some i
+  return best.map fun i => (ctx.footprints.getD i default).ring
+
+/-- `escapedPosition` through the context's indices: the footprint from the
+    ring grid, the street from the way grid when the snap radius is within its
+    reach (it is, at the defaults: 20 m against 25 m cells), else the scan. -/
+def escapedPositionIn (p : Pt) (ctx : BadnessCtx) (opts : EscapeOptions) : Option Pt :=
+  escapedFrom (containingBuildingIn p ctx.ring) p opts fun q =>
+    if opts.streetSnapRadiusM ≤ ctx.grid.maxQueryM then
+      (ctx.grid.nearestWithin q opts.streetSnapRadiusM).map fun (pr, _) => ⟨pr.lat, pr.lon, pr.distM⟩
+    else nearestWalkable q ctx.walkable
+
+/-- `escapeBuildings` through the context's indices. -/
+def escapeBuildingsIn (drawn : Array TPt) (ctx : BadnessCtx) (opts : EscapeOptions) : Array TPt :=
+  if ctx.ring.footprints.isEmpty then drawn
+  else drawn.map fun p =>
+    match escapedPositionIn p.pt ctx opts with
+    | some m => { p with lat := m.lat, lon := m.lon }
+    | none => p
 
 /-- Is a building within `buildingProxM` of `p` (or `p` inside one)? -/
 def nearBuilding (p : Pt) (ctx : BadnessCtx) : Bool := Id.run do
-  for f in ctx.ring.footprints do
-    let b := f.box
-    if p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon then
-      continue
-    if pointInRing p f.ring then return true
-    match nearestOnRing p f.ring with
-    | some near => if near.distM <= ctx.opts.buildingProxM then return true
-    | none => pure ()
+  let (cell, rest) := ctx.ring.candidates p
+  for cands in #[cell, rest] do
+    for i in cands do
+      let f := ctx.ring.footprints.getD i default
+      let b := f.box
+      if p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon then
+        continue
+      if pointInRing p f.ring then return true
+      match nearestOnRing p f.ring with
+      | some near => if near.distM <= ctx.opts.buildingProxM then return true
+      | none => pure ()
   return false
 
 /-- `Math.max(1, Math.ceil(x))` as both the float divisor and the loop count. -/
@@ -659,10 +776,10 @@ Honesty invariants, all enforced here: a reroute needs a route that is at most
 corrected line must cross LESS building than the input; and a correction may not
 take the leg from within its pedometer budget to beyond it.
 -/
-def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
+def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
     (opts : CorrectOptions := {}) : Array TPt × Array RunDiag := Id.run do
-  if drawn.size < 2 || buildings.isEmpty then return (drawn, #[])
-  let ctx := makeBadnessCtx ways buildings opts
+  if drawn.size < 2 || ctx.ring.footprints.isEmpty then return (drawn, #[])
+  let ways := ctx.walkable
   -- Fast path: nothing implausible → the common clean walk is returned
   -- untouched and un-densified after one sampling sweep.
   let originalBadM := pathBadnessM (drawn.map PathPt.pt) ctx
@@ -707,7 +824,7 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
       -- routing from inside a footprint would start the path dishonestly.
       let mut a := rs
       let inBuilding (k : Nat) : Bool := match pts[k]? with
-        | some x => (containingBuilding x.pt buildings).isSome
+        | some x => (containingBuildingIn x.pt ctx.ring).isSome
         | none => false
       while a > i && inBuilding a do
         a := a - 1
@@ -805,7 +922,7 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
       -- whole-leg budget the routes draw from. Else CASE 3: the gap stands.
       if !replaced then
         let gap := pts.extract a (b+1)
-        let escaped := escapeBuildings gap ways buildings opts.toEscapeOptions
+        let escaped := escapeBuildingsIn gap ctx opts.toEscapeOptions
         let lenOf (xs : Array TPt) : Float := polylineLenM (xs.map PathPt.pt)
         let addedM := lenOf escaped - lenOf gap
         let mut kept := gap
@@ -852,6 +969,11 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
         return (drawn, diags)
   return (out, diags)
 
+/-- `correctWalkPathIn` over a context built for this one call. -/
+def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
+    (opts : CorrectOptions := {}) : Array TPt × Array RunDiag :=
+  correctWalkPathIn (makeBadnessCtx ways buildings opts) drawn opts
+
 /-! ## Passage snap -/
 
 /-- Furthest a passage-snap may MOVE a point (m). Qualification uses `onWayM`
@@ -887,6 +1009,18 @@ def snapWithWay (q : Pt) (ways : Ways) : Option SnapWay := Id.run do
         best := some ⟨proj.lat, proj.lon, proj.distM, w, (i-1).toFloat + min 1 f⟩
   return best
 
+/-- `snapWithWay` for an answer that is only read within `maxM` — the way grid's
+    bounded nearest when `maxM` is inside its reach, else the scan. Beyond
+    `maxM` the scan's answer and `none` are the same answer to every caller
+    here, so the two agree where it matters. -/
+def snapWithWayIn (q : Pt) (ctx : BadnessCtx) (maxM : Float) : Option SnapWay :=
+  if maxM ≤ ctx.grid.maxQueryM then
+    (ctx.grid.nearestWithin q maxM).map fun (proj, s) =>
+      let segLen := orOne (metersBetween s.a s.b)
+      let f := metersBetween s.a ⟨proj.lat, proj.lon⟩ / segLen
+      ⟨proj.lat, proj.lon, proj.distM, s.way, s.i.toFloat + min 1 f⟩
+  else snapWithWay q ctx.walkable
+
 /--
 The drawing half of the mapped-passage exemption. The badness metric exempts a
 line riding an OSM way through a building, but the exemption tolerates `onWayM`
@@ -899,10 +1033,8 @@ snaps must be COHERENT — same way, monotone along it — which is what travers
 a passage looks like. Incoherent snaps would zigzag, so the stretch is left
 alone instead.
 -/
-def snapPassages (pts : Array TPt) (walkable : Ways) (buildings : Array Ring)
-    (opts : CorrectOptions := {}) : Array TPt := Id.run do
-  if walkable.isEmpty || buildings.isEmpty || pts.size < 2 then return pts
-  let ctx := makeBadnessCtx walkable buildings opts
+def snapPassagesIn (ctx : BadnessCtx) (pts : Array TPt) : Array TPt := Id.run do
+  if ctx.walkable.isEmpty || ctx.ring.footprints.isEmpty || pts.size < 2 then return pts
   let mut out : Array TPt := #[]
   for hm_i : i in [0:pts.size] do
     have hb_i : i < pts.size := hm_i.upper
@@ -932,7 +1064,7 @@ def snapPassages (pts : Array TPt) (walkable : Ways) (buildings : Array Ring)
           let q : TPt := ⟨a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f,
                           a.ts + (b.ts - a.ts) * f⟩
           if insideBuildingCtx q.pt ctx.ring then
-            match snapWithWay q.pt ctx.walkable with
+            match snapWithWayIn q.pt ctx PASSAGE_SNAP_REACH_M with
             | none => coherent := false
             | some near =>
               if near.distM > PASSAGE_SNAP_REACH_M then coherent := false
@@ -955,7 +1087,7 @@ def snapPassages (pts : Array TPt) (walkable : Ways) (buildings : Array Ring)
           for q in snapped do out := out.push q
     let p := pts[i]
     if insideBuildingCtx p.pt ctx.ring then
-      match snapWithWay p.pt ctx.walkable with
+      match snapWithWayIn p.pt ctx PASSAGE_SNAP_REACH_M with
       | some near =>
         if near.distM ≤ PASSAGE_SNAP_REACH_M then
           out := out.push { p with lat := near.lat, lon := near.lon }
@@ -963,6 +1095,11 @@ def snapPassages (pts : Array TPt) (walkable : Ways) (buildings : Array Ring)
       | none => out := out.push p
     else out := out.push p
   return out
+
+/-- `snapPassagesIn` over a context built for this one call. -/
+def snapPassages (pts : Array TPt) (walkable : Ways) (buildings : Array Ring)
+    (opts : CorrectOptions := {}) : Array TPt :=
+  snapPassagesIn (makeBadnessCtx walkable buildings opts) pts
 
 /-- Nudge each vertex fully onto its nearest walkable way when that way is
     within `nudgeReachM`, and otherwise leave it EXACTLY where the GPS put it.
@@ -1286,5 +1423,38 @@ private def PASSAGE_DRAWN : Array TPt := #[T 0 50 1000, T 20 50 1020, T 100 50 1
 -- Without a way through the footprint nothing is in reach, so the in-building
 -- vertex keeps its place: the exemption's drawing half is strictly scoped.
 #guard tptsApprox (snapPassages PASSAGE_DRAWN STREETS #[HOUSE]) PASSAGE_DRAWN.toList
+
+/-! ### The indexed lookups are the linear scans
+
+Over a 5 m lattice across the reference block and 10 m outside it: the footprint
+grid answers containment and the first containing ring as the scans do, and the
+bounded way lookup agrees with `nearestWalkable` wherever the scan's answer is
+within reach — and says `none` exactly where it is not. -/
+
+private def SWEEP : Array Pt := Id.run do
+  let mut out : Array Pt := #[]
+  for n in [0:25] do
+    for e in [0:25] do
+      out := out.push (P (n.toFloat * 5 - 10) (e.toFloat * 5 - 10))
+  return out
+private def SWEEP_RINGS : Array Ring := #[HOUSE, BLOCKHOUSE, LOWHOUSE]
+private def SWEEP_CTX : BadnessCtx := makeBadnessCtx PASSAGE_WAYS SWEEP_RINGS {}
+
+#guard SWEEP.all fun p =>
+  insideBuildingCtx p SWEEP_CTX.ring == SWEEP_RINGS.any (pointInRing p ·)
+#guard SWEEP.all fun p =>
+  containingBuildingIn p SWEEP_CTX.ring == containingBuilding p SWEEP_RINGS
+#guard SWEEP.all fun p =>
+  match SWEEP_CTX.grid.nearestWithin p 20, nearestWalkable p PASSAGE_WAYS with
+  | some (pr, _), some n => n.distM ≤ 20 && pr.distM == n.distM && pr.lat == n.lat && pr.lon == n.lon
+  | none, some n => n.distM > 20
+  | none, none => true
+  | some _, none => false
+-- The sweep exercises both answers.
+#guard (SWEEP.filter fun p => insideBuildingCtx p SWEEP_CTX.ring).size > 50
+#guard (SWEEP.filter fun p => (SWEEP_CTX.grid.nearestWithin p 20).isNone).size > 10
+-- `escapeBuildings` through the context is `escapeBuildings`.
+#guard (escapeBuildingsIn (SWEEP.map fun p => TP p 0) SWEEP_CTX {})
+  == escapeBuildings (SWEEP.map fun p => TP p 0) PASSAGE_WAYS SWEEP_RINGS {}
 
 end Verified.Geo.WalkEscape

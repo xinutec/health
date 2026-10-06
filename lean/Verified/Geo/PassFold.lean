@@ -155,8 +155,8 @@ structure Env where
       matcher := fun _ _ _ => none
       reconstruct := fun _ _ _ _ => none
       refineMatched := fun _ _ => none
-      correct := fun drawn _ _ _ => drawn
-      snapPassages := fun drawn _ _ => drawn }
+      correct := fun drawn _ _ => drawn
+      snapPassages := fun drawn _ => drawn }
   /-- The DISPLAY fixes — a different series from `points`, carrying the
   phone's self-reported accuracy the walk draw weighs. -/
   displayFixes : Array Verified.Geo.WalkAnnotate.PedFix := #[]

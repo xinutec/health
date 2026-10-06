@@ -703,16 +703,15 @@ private def parseEnv (j : Json) : Except String Env := do
       -- `Env` field never modelled it and why dropping `.2` here is not a loss.
       -- `stepBudgetM := none` is the TS's `correctOpts = undefined`: the same
       -- defaults with the budget invariant switched off, not a budget of zero.
-      correct := fun drawn ways buildings budget => DayEntry.Host.timed "walk.correct" fun _ =>
-        (Verified.Geo.WalkEscape.correctWalkPath drawn ways buildings
-          { stepBudgetM := budget }).1
+      correct := fun drawn ctx budget => DayEntry.Host.timed "walk.correct" fun _ =>
+        (Verified.Geo.WalkEscape.correctWalkPathIn ctx drawn { stepBudgetM := budget }).1
       -- A walk's remembered result (#1921). Only the serving host keeps
       -- any; a replay answers nothing and every walk is drawn.
       memoGet := fun key => DayEntry.Host.askAs "memo.walkGet" key parseWalkPatch
       memoPut := fun key patch =>
         DayEntry.Host.tell "memo.walkPut" (key ++ "|" ++ (walkPatchJson patch).compress) patch
-      snapPassages := fun drawn ways buildings => DayEntry.Host.timed "walk.snapPassages" fun _ =>
-        Verified.Geo.WalkEscape.snapPassages drawn ways buildings }
+      snapPassages := fun drawn ctx => DayEntry.Host.timed "walk.snapPassages" fun _ =>
+        Verified.Geo.WalkEscape.snapPassagesIn ctx drawn }
     -- Computed, not injected, as of #430 — see `Verified.Geo.BestPlace`.
     bestPlace := fun lat lon s e m => namer.name lat lon (some (s, e, m)) false
     -- The host answers from a polygon set; where it declines (open sea, a

@@ -66,7 +66,7 @@ namespace Verified.Geo.WalkAnnotate
 
 open Verified.Geo.WalkableRoute (Pt Ways)
 open Verified.Geo.OsmCorridor (Way)
-open Verified.Geo.WalkEscape (Ring TPt makeBadnessCtx pathBadnessM)
+open Verified.Geo.WalkEscape (Ring TPt BadnessCtx makeBadnessCtx pathBadnessM)
 open Verified.Geo.WalkSmooth (WalkFix WalkEvidence countSharpTurns)
 open Verified.Geo.DisplayGate (MPt matchImprovesDisplay spliceMatchedWithDivergentRuns)
 open Verified.Geo.BiometricWindows (StepPoint stepsInWindow)
@@ -204,10 +204,12 @@ structure Env where
   /-- `refineMatchedPath(walkFixes, base)`. -/
   refineMatched : Array WalkFix → Array Pt → Option (Array TPt)
   /-- `correctWalkPath(drawn, { ways }, buildings, opts)` — the diagnostics sink
-  is a debug-only side channel and is not modelled. -/
-  correct : Array TPt → Ways → Array Ring → Option Float → Array TPt
-  /-- `snapPassages(drawn, { ways }, buildings)`. -/
-  snapPassages : Array TPt → Ways → Array Ring → Array TPt
+  is a debug-only side channel and is not modelled. The ways and buildings
+  arrive as the walk's one `BadnessCtx` (way grid, footprint grid), built once
+  per walk and shared with the display gate and the passage snap. -/
+  correct : Array TPt → BadnessCtx → Option Float → Array TPt
+  /-- `snapPassages(drawn, { ways }, buildings)`, over the same context. -/
+  snapPassages : Array TPt → BadnessCtx → Array TPt
   /-- A walk's remembered result by key, or `none`: the default, and what
   every replay answers, so a gate always draws. -/
   memoGet : String → Option WalkPatch := fun _ => none
@@ -457,7 +459,8 @@ matcher wanted to go this way and we overrode it" is exactly what a bracket
 needs to see. A reader must therefore not infer from a non-empty report that
 the drawn line follows it. -/
 private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (buildings : Array Ring)
-    (clean held : Array PedFix) (ev : WalkEvidence) (cascadeName : Option String) :
+    (badCtx : BadnessCtx) (clean held : Array PedFix) (ev : WalkEvidence)
+    (cascadeName : Option String) :
     Array TPt × Bool × Bool × Option String × Array (String × Nat) := Id.run do
   let geom : Ways := ways.map Way.coords
   let fixes := clean.map PedFix.pathPt
@@ -471,7 +474,6 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
   -- judge (`coarsePath`), for #369 decision parity — the gate, the salvage and
   -- the refinement must agree about the route, and reading a different line
   -- here would break that for one clause only.
-  let badCtx := makeBadnessCtx geom buildings {}
   let rawBuildingM := pathBadnessM (fixes.map PathPt.pt) badCtx
   let decision := result.map fun r =>
     matchImprovesDisplay (fixes.map PathPt.pt) (r.coarsePath.map PathPt.pt) geom
@@ -587,23 +589,28 @@ def drawWalk (env : Env) (draw : Draw) (flags : Flags) (inWin : Array PedFix) (w
     (cascadeName : Option String) : WalkPatch := Id.run do
   let clean := despike inWin
   let held := hold clean
+  -- The walk's one badness context — the way grid and the footprint grid —
+  -- for the display gate, the corrector and the passage snap alike (it was
+  -- built three times a walk, 77 ms each on a dense city walk, #1921). A
+  -- thunk, so the recon arm without building escape never builds it.
+  let badCtx : Thunk BadnessCtx := Thunk.mk fun _ => makeBadnessCtx (ways.map Way.coords) buildings {}
   let (drawn0, useMatch, smoothed0, matchName, wayUm) := match draw with
     | .recon =>
       -- ⚠ The recon arm runs NO matcher, so it has no identity report —
       -- empty here means "not measured", not "the route named nothing".
       let (d, s) := drawRecon env (ways.map Way.coords) buildings held ev
       (d, false, s, none, #[])
-    | .matcher => drawMatcher env flags ways buildings clean held ev cascadeName
+    | .matcher => drawMatcher env flags ways buildings badCtx.get clean held ev cascadeName
   let mut drawn := drawn0
   let mut corrected := false
   if flags.buildingEscape && !buildings.isEmpty then
     let budget := stepsWalked.map (· * STEP_STRIDE_M * STEP_SLACK_RATIO)
-    let fixed := env.correct drawn (ways.map Way.coords) buildings budget
+    let fixed := env.correct drawn badCtx.get budget
     corrected := changed drawn fixed
     if corrected then drawn := fixed
     -- The passage snap runs LAST, on the final line, so it cannot
     -- perturb the gate's or the corrector's accept/reject decisions.
-    let snapped := env.snapPassages drawn (ways.map Way.coords) buildings
+    let snapped := env.snapPassages drawn badCtx.get
     if changed drawn snapped then
       drawn := snapped
       corrected := true
@@ -854,8 +861,8 @@ private def mkEnv (ways : Ways) (key : Float × Float × Int)
       if wfKey fx == pedKey heldIn && ev.stepsWalked.isNone then rec else none
     refineMatched := fun fx b =>
       if wfKey fx == pedKey cleanIn && b == refBase then ref else none
-    correct := fun d _ _ _ => d
-    snapPassages := fun d _ _ => d }
+    correct := fun d _ _ => d
+    snapPassages := fun d _ => d }
 
 private def outOf (segs : Array Seg) : Array (Option (Array TPt) × Option (Array TPt)) :=
   segs.map fun s => (s.walkMatchedPath, s.walkSmoothedPath)
@@ -1080,8 +1087,8 @@ private def OFF_FIXED : Array TPt := OFF_RAW.map fun p => { p with lon := -0.145
 /-- The snap's edit, applied to the CORRECTOR's output. -/
 private def OFF_SNAPPED : Array TPt := OFF_FIXED.map fun p => { p with lat := p.lat + 0.00001 }
 
-private def envOff (correct : Array TPt → Ways → Array Ring → Option Float → Array TPt)
-    (snap : Array TPt → Ways → Array Ring → Array TPt) : Env :=
+private def envOff (correct : Array TPt → BadnessCtx → Option Float → Array TPt)
+    (snap : Array TPt → BadnessCtx → Array TPt) : Env :=
   { (mkEnv STREETS (51.501, -0.1455, 231) #[] OFF_HELD none none #[] none) with
       buildingsNear := fun la lo r =>
         some (if (la, lo, r) == (51.501, -0.1455, 231) then BLOCK else #[])
@@ -1091,34 +1098,34 @@ private def envOff (correct : Array TPt → Ways → Array Ring → Option Float
 -- The matcher bailed and the corrector changed nothing: the leg keeps its raw
 -- rendering even though buildings were read.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] OFFROAD anySpeed
-  (envOff (fun d _ _ _ => d) (fun d _ _ => d))) == RAW
+  (envOff (fun d _ _ => d) (fun d _ => d))) == RAW
 -- The corrector changed it: `walkMatchedPath`, with no match anywhere in sight.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] OFFROAD anySpeed
-  (envOff (fun _ _ _ _ => OFF_FIXED) (fun d _ _ => d))) == #[(some OFF_FIXED, none)]
+  (envOff (fun _ _ _ => OFF_FIXED) (fun d _ => d))) == #[(some OFF_FIXED, none)]
 -- The snap runs LAST, on the corrector's output.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] OFFROAD anySpeed
-  (envOff (fun _ _ _ _ => OFF_FIXED)
-    (fun d _ _ => if d == OFF_FIXED then OFF_SNAPPED else d))) == #[(some OFF_SNAPPED, none)]
+  (envOff (fun _ _ _ => OFF_FIXED)
+    (fun d _ => if d == OFF_FIXED then OFF_SNAPPED else d))) == #[(some OFF_SNAPPED, none)]
 -- …and can attach a leg the corrector left alone.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] OFFROAD anySpeed
-  (envOff (fun d _ _ _ => d) (fun _ _ _ => OFF_SNAPPED))) == #[(some OFF_SNAPPED, none)]
+  (envOff (fun d _ _ => d) (fun _ _ => OFF_SNAPPED))) == #[(some OFF_SNAPPED, none)]
 -- Both leaves are behind one switch.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] OFFROAD anySpeed
-  (envOff (fun _ _ _ _ => OFF_FIXED) (fun _ _ _ => OFF_SNAPPED)) [] .matcher
+  (envOff (fun _ _ _ => OFF_FIXED) (fun _ _ => OFF_SNAPPED)) [] .matcher
   { buildingEscape := false }) == RAW
 -- A LENGTH change counts as changed even when every surviving vertex is where
 -- it was: the test is `!==` on the count OR on any coordinate.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] OFFROAD anySpeed
-  (envOff (fun d _ _ _ => d.push (tp 51.502 (-0.1455) 1240)) (fun d _ _ => d)))
+  (envOff (fun d _ _ => d.push (tp 51.502 (-0.1455) 1240)) (fun d _ => d)))
   == #[(some (OFF_RAW.push (tp 51.502 (-0.1455) 1240)), none)]
 -- A `ts`-only change does NOT: the comparison reads lat/lon only.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] OFFROAD anySpeed
-  (envOff (fun d _ _ _ => d.map fun p => { p with ts := p.ts + 1 }) (fun d _ _ => d))) == RAW
+  (envOff (fun d _ _ => d.map fun p => { p with ts := p.ts + 1 }) (fun d _ => d))) == RAW
 
 /-- 330 steps in the window × 0.75 m stride × 1.4 slack. -/
 private def STEPS : List StepPoint := [⟨1020, 100⟩, ⟨1080, 120⟩, ⟨1140, 110⟩]
 private def budgetProbe : Env :=
-  envOff (fun d _ _ b => if b == some 346.5 then OFF_FIXED else d) (fun d _ _ => d)
+  envOff (fun d _ b => if b == some 346.5 then OFF_FIXED else d) (fun d _ => d)
 
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] OFFROAD anySpeed budgetProbe STEPS)
   == #[(some OFF_FIXED, none)]
@@ -1127,7 +1134,7 @@ private def budgetProbe : Env :=
 -- Steps outside the leg's window leave a budget of zero, which is still a
 -- budget — the presence of rows for the day is what makes it one.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] OFFROAD anySpeed
-  (envOff (fun d _ _ b => if b == some 0 then OFF_FIXED else d) (fun d _ _ => d))
+  (envOff (fun d _ b => if b == some 0 then OFF_FIXED else d) (fun d _ => d))
   [⟨1020, 0⟩]) == #[(some OFF_FIXED, none)]
 
 /-! ### Two legs -/
@@ -1320,7 +1327,7 @@ private def SPIKE_CLEAN : Array PedFix :=
 private def echoEnv (key : Float × Float × Int) : Env :=
   { mkEnv STREETS key #[] #[] none none #[] none with
       buildingsNear := fun la lo r => some (if (la, lo, r) == key then BLOCK else #[])
-      correct := fun d _ _ _ => nudge d }
+      correct := fun d _ _ => nudge d }
 
 -- The matcher bailed: the drawn line is the HELD fixes, not the despiked ones.
 -- On the teleported leg those differ — five against three.
@@ -1390,11 +1397,11 @@ back to its own defaults.
 
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
   { echoEnv (51.504599999999996, -0.14, 631) with
-      correct := fun d _ _ b => if b.isNone then nudge d else d })
+      correct := fun d _ b => if b.isNone then nudge d else d })
   == #[(some (nudge (TELE_HELD.map PedFix.pathPt)), none)]
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
   { echoEnv (51.504599999999996, -0.14, 631) with
-      correct := fun d _ _ b => if b.isNone then nudge d else d } STEPS330) == RAW
+      correct := fun d _ b => if b.isNone then nudge d else d } STEPS330) == RAW
 
 /-! ### The remaining orchestration edges
 
@@ -1413,7 +1420,7 @@ private def envSBad : Env :=
       (some { path := S_BADLINE, coarsePath := S_BADLINE }) none #[] none with
       buildingsNear := fun la lo r =>
         some (if (la, lo, r) == (51.501, -0.13940000000000002, 320) then BLOCK else #[])
-      correct := fun d _ _ _ => nudge d }
+      correct := fun d _ _ => nudge d }
 
 #guard !(matchImprovesDisplay ((S_CLEAN.map PedFix.pathPt).map PathPt.pt) (S_BADLINE.map PathPt.pt) STREETS
   WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M (S_BADLINE.map PathPt.pt) none WALK_MATCH_MAX_STALL_M WALK_MATCH_MAX_BUDGET_RATIO).use
@@ -1431,7 +1438,7 @@ private def envSBad : Env :=
 -- only the length test sees the change. (In the TS the same test is what keeps
 -- the coordinate scan from indexing past the end.)
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
-  { echoEnv (51.504599999999996, -0.14, 631) with correct := fun d _ _ _ => d.pop })
+  { echoEnv (51.504599999999996, -0.14, 631) with correct := fun d _ _ => d.pop })
   == #[(some ((TELE_HELD.map PedFix.pathPt).pop), none)]
 
 -- A leg whose ways came back empty is returned untouched even where the
