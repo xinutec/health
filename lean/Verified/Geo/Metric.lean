@@ -456,6 +456,15 @@ theorem cosQLowerBound_le {m e : Int} (hm : m.natAbs ≤ e.natAbs)
   refine Int.ofNat_le.mpr (Nat.div_le_div_right (Nat.add_le_add_right ?_ _))
   exact Nat.mul_le_mul (Nat.sub_le _ _) hmono
 
+/-- `qDist` with the cosine at the pair's mid-latitude supplied — for a caller
+that has just computed it (`qDistC_eq`). -/
+def qDistC (a b : QPt) (c : Int) : Nat :=
+  let dlaAbs : Nat := (b.la - a.la).natAbs * 11132
+  let yAbs : Nat := (b.lo - a.lo).natAbs * 11132 * c.natAbs
+  let negY : Bool := decide ((b.lo - a.lo) < 0) != decide (c < 0)
+  let dloAbs : Nat := if negY then (yAbs + 1048575) / 1048576 else yAbs / 1048576
+  isqrt (dlaAbs * dlaAbs + dloAbs * dloAbs)
+
 /-- µm between two points, cos at the mid-latitude — mirrors
 `metersBetween` (`map-match-core.ts`). One latitude unit = 11 132 µm
 exactly. -/
@@ -472,6 +481,8 @@ def qDist (a b : QPt) : Nat :=
   let negY : Bool := decide ((b.lo - a.lo) < 0) != decide (c < 0)
   let dloAbs : Nat := if negY then (yAbs + 1048575) / 1048576 else yAbs / 1048576
   isqrt (dlaAbs * dlaAbs + dloAbs * dloAbs)
+
+theorem qDistC_eq (a b : QPt) : qDistC a b (cosQ ((a.la + b.la).tdiv 2)) = qDist a b := rfl
 
 /-- **Per-axis under-estimates compose into a distance under-estimate.** `qDist`
 is `isqrt` of the sum of two squared axis components, so anything that

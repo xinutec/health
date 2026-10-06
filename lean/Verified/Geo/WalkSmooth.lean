@@ -591,7 +591,8 @@ def projMetric (px py ax ay bx by' : Float) : MetricProj :=
 
 /-- One building ring in the metric frame: flat `[x,y,…]` plus its bbox. -/
 structure MetricRing where
-  pts : Array Float
+  /-- The ring's vertices as `(x, y)` pairs, once — every lookup reads them. -/
+  pts : Array (Float × Float)
   minx : Float
   miny : Float
   maxx : Float
@@ -657,12 +658,12 @@ def mkWalkGrid (segs : Array (Array Float)) (ringPts : Array (Array Float)) (cel
   let mut rings : Array MetricRing := #[]
   let mut ringCells : Std.HashMap Int (Array Nat) := {}
   for hm_r : r in [0:ringPts.size] do
-    let pts := ringPts[r]
+    let pts := flatPairs ringPts[r]
     let mut minx := posInf
     let mut miny := posInf
     let mut maxx := negInf
     let mut maxy := negInf
-    for (x, y) in flatPairs pts do
+    for (x, y) in pts do
       minx := min minx x
       maxx := max maxx x
       miny := min miny y
@@ -727,9 +728,8 @@ structure Clearance where
   inside : Bool
   deriving Inhabited, Repr
 
-/-- Even-odd ray cast against a flat metric ring. -/
-private def ringContains (pts : Array Float) (px py : Float) : Bool := Id.run do
-  let ps := flatPairs pts
+/-- Even-odd ray cast against a metric ring. -/
+private def ringContains (ps : Array (Float × Float)) (px py : Float) : Bool := Id.run do
   -- `j` is the previous vertex, starting from the last: the ring is closed.
   let some last := ps.back? | return false
   let mut ins := false
@@ -765,7 +765,7 @@ def WalkGrid.clearanceTarget (g : WalkGrid) (px py clearM : Float) : Option Clea
           if px ≥ ring.minx && px ≤ ring.maxx && py ≥ ring.miny && py ≤ ring.maxy then
             if ringContains pts px py then inside := true
           -- Every edge, from the last vertex round to the first.
-          let ps := flatPairs pts
+          let ps := pts
           let some last := ps.back? | continue
           let mut pj := last
           for pi in ps do

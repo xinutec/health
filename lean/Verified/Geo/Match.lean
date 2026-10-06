@@ -936,12 +936,12 @@ def buildQGraph (ways : Array QWay) (co : QCorridor) (bld : Option QBuildings)
       adj := adj.setIfInBounds j ((adj.getD j #[]).push (i, w))
   return { vertices, segments, g := ⟨adj⟩ }
 
-/-- One edge's weight — `edgeWeightScaled × factor` — with `qDist a b` taken
-once (both factors need it) and the endpoints' sample verdicts read from the
-per-vertex memo `vBad` (see `factorMemo`). -/
+/-- One edge's weight — `edgeWeightScaled × factor` — with `len = qDist a b`
+taken once by the caller (both factors need it, and so does the segment) and
+the endpoints' sample verdicts read from the per-vertex memo `vBad` (see
+`factorMemo`). -/
 def edgeWeightMemo (co : QCorridor) (bld : Option QBuildings) (vBad : Array Bool)
-    (ia ib : Nat) (a b : QPt) : Nat :=
-  let len := qDist a b
+    (ia ib : Nat) (a b : QPt) (len : Nat) : Nat :=
   let mid : QPt := { la := (a.la + b.la).tdiv 2, lo := (a.lo + b.lo).tdiv 2, ts := 0 }
   let f : Nat := match bld with
     | some bl => bl.factorMemo a b len (vBad.getD ia false) (vBad.getD ib false)
@@ -996,13 +996,14 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
   for (a, id, name) in wayEdges do
     let pa := vertices.getD a default
     let pb := vertices.getD id default
-    let w := edgeWeightMemo co bld vBad a id pa pb
+    let len := qDist pa pb
+    let w := edgeWeightMemo co bld vBad a id pa pb len
     -- `modify`, not `setIfInBounds (getD … |>.push …)`: the latter holds a
     -- second reference to the row while pushing, so every push reallocates
     -- and copies the whole row. Same value, one owner.
     adj := adj.modify a (·.push (id, w))
     adj := adj.modify id (·.push (a, w))
-    segments := segments.push { u := a, v := id, lenUm := qDist pa pb, name }
+    segments := segments.push { u := a, v := id, lenUm := len, name }
   -- bridgeGaps via a spatial grid.
   -- Everything below the cell index is carried as a `Nat` magnitude with the
   -- sign in the shape: these products reach ~10^13 (cells) and ~10^15 (the gap
@@ -1052,7 +1053,8 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
       let dlo : Nat := if negY then (y + 1048575) / 1048576 else y / 1048576
       if dla * dla + dlo * dlo > gapSq then continue
       if (adj.getD i #[]).any (fun e => e.1 == j) then continue
-      let w := edgeWeightMemo co bld vBad i j vi vj
+      -- `c` is `qDist`'s own cosine for this pair (same mid-latitude).
+      let w := edgeWeightMemo co bld vBad i j vi vj (qDistC vi vj c)
       adj := adj.modify i (·.push (j, w))
       adj := adj.modify j (·.push (i, w))
   return { vertices, segments, g := ⟨adj⟩ }
@@ -1960,6 +1962,8 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
   let n := graph.vertices.size
   let fuel := totalOut graph.g + 1
   let mut routeCache : RouteCache := Array.replicate n none
+  -- The sources whose cache entry may be `some` — kept from the last layer.
+  let mut live : Array Nat := #[]
 
   -- Score scale 2σ²β. null = −∞ (modelled as `Option Int`, `none`).
   let sig2x2 := 2 * P.sigmaUm * P.sigmaUm
@@ -2001,7 +2005,18 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
     let keep : Array Nat := cur.cands.foldl (init := #[]) fun acc c =>
       let s := graph.segments.getD c.si default
       (acc.push s.u).push s.v
-    routeCache := routeCache.mapIdx fun i o => if keep.contains i then o else none
+    -- Only an entry this layer searched from, or one kept before, can be
+    -- `some`: clear those not kept and remember the rest. The same array
+    -- `mapIdx` produced, without rebuilding all `n` entries a layer (40k × 85
+    -- on a dense walk, #1921).
+    let sources : Array Nat := prev.cands.foldl (init := live) fun acc c =>
+      let s := graph.segments.getD c.si default
+      (acc.push s.u).push s.v
+    live := #[]
+    for src in sources do
+      if keep.contains src then
+        if !live.contains src then live := live.push src
+      else routeCache := routeCache.setIfInBounds src none
   let routeOf := routeAcc
 
   -- Phase B — the concrete first-order max-sum trellis (`MatchViterbi`): node
