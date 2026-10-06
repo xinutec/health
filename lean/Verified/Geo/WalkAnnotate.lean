@@ -159,8 +159,8 @@ def arr {α : Type} (f : MemoKey → α → MemoKey) (k : MemoKey) (xs : Array �
   xs.foldl f (k.nat xs.size)
 def pt (k : MemoKey) (p : Pt) : MemoKey := (k.float p.lat).float p.lon
 private def hex16 (x : UInt64) : String :=
-  let s := String.mk (Nat.toDigits 16 x.toNat)
-  String.mk (List.replicate (16 - s.length) '0') ++ s
+  let s := String.ofList (Nat.toDigits 16 x.toNat)
+  String.ofList (List.replicate (16 - s.length) '0') ++ s
 def render (k : MemoKey) : String := hex16 k.a ++ hex16 k.b
 end MemoKey
 

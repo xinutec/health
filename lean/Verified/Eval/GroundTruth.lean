@@ -259,7 +259,7 @@ def parseTruthCell (text : String) : Option Truth := Id.run do
 
   -- "(qualifier)" alone — the "stationary (unlabelled sliver)" case.
   if rest.startsWith "(" && rest.endsWith ")" then
-    let inner := (rest.drop 1).toString.dropRight 1
+    let inner := (rest.drop 1).dropEnd 1 |>.toString
     if !inner.isEmpty && !(inner.toList.contains ')') then
       return some { mode, placeQualifier := some inner.trimAscii.toString }
 
@@ -315,7 +315,7 @@ def splitTableRow (line : String) : Array String := Id.run do
   let mut parts := (line.splitOn "|").toArray
   if (parts[0]?.map (·.trimAscii.toString.isEmpty)).getD false then
     parts := parts.extract 1 parts.size
-  if line.trimRight.endsWith "|"
+  if line.trimAsciiEnd.toString.endsWith "|"
      && (parts.back?.map (·.trimAscii.toString.isEmpty)).getD false then
     parts := parts.extract 0 (parts.size - 1)
   return parts

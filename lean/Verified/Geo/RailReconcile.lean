@@ -61,7 +61,8 @@ re-summarise the walk it trims and the summary is derived from `speedKmh`
 (#424). The two differ in that field alone. -/
 abbrev Fix := Verified.Geo.RailAbsorbers.Fix
 
-def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
+-- `refinedMode ?? mode` — `SegmentMerge.effectiveMode`, the one definition.
+export Verified.Geo.SegmentMerge (effectiveMode)
 
 /-! ## `mergeAdjacentSameRouteTrains` -/
 

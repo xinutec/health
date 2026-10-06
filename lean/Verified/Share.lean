@@ -36,7 +36,7 @@ a base URL of `https://h.example//` is a configuration mistake, and collapsing i
 here would hide the mistake while producing a URL that works — which is how the
 mistake survives to the next reader. -/
 def buildShareUrl (baseUrl : String) (token : String) : String :=
-  let trimmed := if baseUrl.endsWith "/" then baseUrl.dropRight 1 else baseUrl
+  let trimmed := if baseUrl.endsWith "/" then (baseUrl.dropEnd 1).toString else baseUrl
   trimmed ++ "/share/" ++ token
 
 /-- Inclusive `[from, to]` date range for a share with this `days_back`.

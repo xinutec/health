@@ -319,10 +319,8 @@ open Verified.Geo.SegmentMerge (Seg)
 open Verified.Geo.Segments (PedFix isStationaryIncoherent pedestrianCoreDisplacementM)
 open Verified.Hsmm.FloatScore (haversineMeters)
 
-/-- `refinedMode ?? mode` — the TS `effectiveMode` that velocity.ts imports from
-`passes/vehicle-identity.ts`. The same rule as `SegmentPasses.effectiveMode` and
-`Shed.segMode`, restated here because each is typed on its own record. -/
-private def effectiveMode (s : Seg) : String := s.refinedMode.getD s.mode
+-- `refinedMode ?? mode` — `SegmentMerge.effectiveMode`, the one definition.
+export Verified.Geo.SegmentMerge (effectiveMode)
 
 /-- A Kalman fix as this pass reads it. -/
 structure Fix where

@@ -42,7 +42,8 @@ structure WalkAnchor where
   sigmaM : Float
   deriving Inhabited, BEq, Repr
 
-def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
+-- `refinedMode ?? mode` — `SegmentMerge.effectiveMode`, the one definition.
+export Verified.Geo.SegmentMerge (effectiveMode)
 
 /-- Beyond this a neighbour no longer testifies about the walk's endpoint. -/
 def ANCHOR_MAX_GAP_S : Int := 180

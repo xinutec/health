@@ -113,8 +113,8 @@ def MATCH_MAX_STRAY_M : Float := 40
 
 /-! ## The pieces -/
 
-/-- `refinedMode ?? mode` — `segment-util.ts`'s `effectiveMode`. -/
-def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
+-- `refinedMode ?? mode` — `SegmentMerge.effectiveMode`, the one definition.
+export Verified.Geo.SegmentMerge (effectiveMode)
 
 /-- Fixes inside a segment's window, INCLUSIVE both ends
 (`segment-util.ts`'s `samplesInWindow`). -/

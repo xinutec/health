@@ -42,10 +42,9 @@ it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
 value to every pass in the cascade without a lossy projection at each hop. -/
 abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
-/-- `refinedMode ?? mode` — `segment-util.ts`'s `effectiveMode`. Never read
-`refinedMode` directly; a forgotten fallback silently ignores every refinement
-the cascade made. -/
-def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
+-- `refinedMode ?? mode`: `SegmentMerge.effectiveMode`, the one definition. Never
+-- read `refinedMode` directly; a forgotten fallback ignores every refinement.
+export Verified.Geo.SegmentMerge (effectiveMode)
 
 /-! ## `repairVehicleHandoff` -/
 

@@ -162,8 +162,8 @@ it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
 value to every pass in the cascade without a lossy projection at each hop. -/
 abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
-/-- `refinedMode ?? mode`. -/
-private def effectiveMode (s : Seg) : String := s.refinedMode.getD s.mode
+-- `refinedMode ?? mode` — `SegmentMerge.effectiveMode`, the one definition.
+export Verified.Geo.SegmentMerge (effectiveMode)
 
 /-- `samplesInWindow` — inclusive on both ends. -/
 private def samplesInWindow (points : Array Fix) (startTs endTs : Int) : Array Fix :=

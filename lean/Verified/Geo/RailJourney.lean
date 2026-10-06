@@ -106,7 +106,8 @@ it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
 value to every pass in the cascade without a lossy projection at each hop. -/
 abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
-def effectiveMode (s : Seg) : String := Verified.Geo.RailReconcile.effectiveMode s
+-- `refinedMode ?? mode` — `SegmentMerge.effectiveMode`, the one definition.
+export Verified.Geo.SegmentMerge (effectiveMode)
 
 /-- One OSM read, recorded in order. The pass's cost and its cache behaviour are
 both properties of this list, so it is part of the output the guards check —

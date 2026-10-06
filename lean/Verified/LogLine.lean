@@ -83,7 +83,7 @@ private def collapse (cs : List Char) : List Char :=
 POINTS. -/
 def oneLine (raw : String) (max : Nat) : String :=
   let flattened := raw.toList.map (fun c => if isControlLike c then ' ' else c)
-  String.mk ((collapse flattened).take max)
+  String.ofList ((collapse flattened).take max)
 
 /-! ## Guards -/
 

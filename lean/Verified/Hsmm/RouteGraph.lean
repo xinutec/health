@@ -1,5 +1,6 @@
 import Std.Data.HashMap
 import Verified.JsNum
+import Verified.Hsmm.FloatScore
 /-!
 # Route-graph primitives (implementation-first port of `route-graph.ts`)
 
@@ -194,16 +195,9 @@ the reference values below come from driving `buildRouteGraph` and reading the
 episode-geometry port used for its three private helpers.
 -/
 
-/-- Great-circle metres. `route-graph.ts` carries its own copy of the same
-formula `place-snap.ts` exports; identical constants, identical result. -/
-def haversineMeters (lat1 lon1 lat2 lon2 : Float) : Float :=
-  let R := 6371000.0
-  let dLat := (lat2 - lat1) * pi / 180.0
-  let dLon := (lon2 - lon1) * pi / 180.0
-  let sLat := Float.sin (dLat / 2.0)
-  let sLon := Float.sin (dLon / 2.0)
-  let a := sLat * sLat + Float.cos (lat1 * pi / 180.0) * Float.cos (lat2 * pi / 180.0) * sLon * sLon
-  R * 2.0 * Float.atan2 (Float.sqrt a) (Float.sqrt (1.0 - a))
+-- Great-circle metres — `route-graph.ts` carried its own copy of `place-snap.ts`'s
+-- formula, identical constants and association; one definition serves both.
+export Verified.Hsmm.FloatScore (haversineMeters)
 
 /-- JS `Number(s)` narrowed to what an OSM `layer` value can be: an optional
 minus sign and digits. Anything else is `NaN` in the TS, and every comparison
