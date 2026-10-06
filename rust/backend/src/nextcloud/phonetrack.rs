@@ -242,34 +242,46 @@ impl PhoneTrack {
         max_ts: i64,
     ) -> Result<TrackFetch, NcError> {
         let mut out = TrackFetch::default();
-        for session in &self.sessions {
-            let Some(devices) = &session.devices else {
-                continue;
-            };
-            for device in devices.values() {
-                match self
-                    .fetch_device_window(pool, session.id, device.id, min_ts, max_ts)
-                    .await
-                {
-                    // An empty body is an empty device-day, not a failure.
-                    Ok((points, capped)) => {
-                        out.points.extend(points);
-                        out.capped_windows += capped;
-                    }
-                    // ⚠ A revoked app password is NOT a per-device problem and
-                    // must not be swallowed device by device: every remaining
-                    // call would fail the same way, and the durable answer the
-                    // user needs ("relink Nextcloud") would be buried under a
-                    // warning per device. It propagates.
-                    Err(e @ (NcError::ReauthRequired | NcError::NotLinked)) => return Err(e),
-                    Err(e) => {
-                        out.failed_devices += 1;
-                        tracing::warn!(
-                            "phonetrack: session {}/device {} points fetch failed: {e:#}",
-                            session.id,
-                            device.id
-                        );
-                    }
+        // ⚠ EVERY DEVICE AT ONCE, in a fixed order. One request per device per
+        // window, awaited one after the other, was the day's `load.phonetrack`
+        // — 0.5 to 1.2 s on the pod (#1921, 2026-10-06), a round trip at a
+        // time. The requests are independent GETs under basic auth, so they go
+        // out together; the RESULTS are read back in the order the devices
+        // were listed, so the stable sort below sees the same insertion order
+        // and fixes at an equal timestamp come out as they always did.
+        let devices: Vec<(i64, i64)> = self
+            .sessions
+            .iter()
+            .flat_map(|s| {
+                s.devices
+                    .iter()
+                    .flat_map(move |d| d.values().map(move |dev| (s.id, dev.id)))
+            })
+            .collect();
+        let fetched = futures_util::future::join_all(
+            devices
+                .iter()
+                .map(|(s, d)| self.fetch_device_window(pool, *s, *d, min_ts, max_ts)),
+        )
+        .await;
+        for ((session_id, device_id), got) in devices.iter().zip(fetched) {
+            match got {
+                // An empty body is an empty device-day, not a failure.
+                Ok((points, capped)) => {
+                    out.points.extend(points);
+                    out.capped_windows += capped;
+                }
+                // ⚠ A revoked app password is NOT a per-device problem and
+                // must not be swallowed device by device: every other call
+                // fails the same way, and the durable answer the user needs
+                // ("relink Nextcloud") would be buried under a warning per
+                // device. It propagates.
+                Err(e @ (NcError::ReauthRequired | NcError::NotLinked)) => return Err(e),
+                Err(e) => {
+                    out.failed_devices += 1;
+                    tracing::warn!(
+                        "phonetrack: session {session_id}/device {device_id} points fetch failed: {e:#}"
+                    );
                 }
             }
         }

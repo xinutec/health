@@ -1253,12 +1253,24 @@ async fn phonetrack_windows(
     let prior_evening = (midnight(&prev_day)?, midnight(date)?);
     let tail = (day_end_utc, day_end_utc + BATTERY_TAIL_LOOKAHEAD_H * 3600);
 
-    let mut fetched = Vec::with_capacity(4);
-    for (a, b) in [today, morning, prior_evening, tail] {
-        let f = pt
-            .fetch_window(pool, a, b)
+    // ⚠ THE FOUR WINDOWS GO OUT TOGETHER (#1921). Awaited in turn they were
+    // four rounds of a round trip per device; the pod spent 0.5–1.2 s a day
+    // here. Each window is still read back in its own place below.
+    let pt = &pt;
+    let fetch = |(a, b): (i64, i64)| async move {
+        pt.fetch_window(pool, a, b)
             .await
-            .with_context(|| format!("fetching PhoneTrack fixes for [{a}, {b}]"))?;
+            .with_context(|| format!("fetching PhoneTrack fixes for [{a}, {b}]"))
+            .map(|f| (a, b, f))
+    };
+    let windows = tokio::try_join!(
+        fetch(today),
+        fetch(morning),
+        fetch(prior_evening),
+        fetch(tail)
+    )?;
+    let mut fetched = Vec::with_capacity(4);
+    for (a, b, f) in [windows.0, windows.1, windows.2, windows.3] {
         // ⚠ A PARTIAL WALK IS SAID OUT LOUD. `failed_devices` is the difference
         // between "the phone was off" and "one device 500ed", and the whole
         // pipeline reads absence of fixes as evidence about where someone was.

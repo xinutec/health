@@ -21,6 +21,10 @@ sqlx = { version = "0.9", default-features = false, features = [
     "migrate",
 ] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+# `join_all` over a variable number of borrowed futures — the PhoneTrack
+# device fan-out (#1921). Already in the lockfile via reqwest and sqlx; no
+# new crate builds for it.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # The fleet's HTTP stack, matching the sibling repos. `fs` because this serves the
 # built Angular app from ./public alongside the API.
 axum = "0.8"
