@@ -359,9 +359,36 @@ can serve the pair is, and that is #238's half. -/
 def Env.servedStations (e : Env) : String → Array Verified.Geo.LineMembership.ServedStation :=
   fun line => (e.stationsOnLine line).map fun s => ⟨s.name⟩
 
-/-- Name and coordinate, as a list: what the interchange splicer declares. -/
+/-- The normalised names the line's RELATIONS stop at, or `none` when the
+mirror holds no relation for the line — unknown is not evidence. -/
+def Env.relationStops (e : Env) (line : String) : Option (Array String) :=
+  let rels := Verified.Geo.LineStoppingPattern.railRelationsForLine e.railStops line
+  if rels.isEmpty then none
+  else some (rels.flatMap fun r => r.stops.filterMap fun st =>
+    st.name.map Verified.Geo.LineStoppingPattern.normalizeStationName)
+
+/-- Name and coordinate, as a list: what the interchange splicer declares.
+
+⚠ FILTERED TO THE STATIONS THE LINE'S RELATIONS STOP AT (#238, 2026-10-06).
+`stationsOnLine` is every station POINT near the line's ways, so at an
+interchange complex it holds the mainline station beside the tube one — the
+Victoria line's list carried "London King's Cross" as well as "King's Cross
+St Pancras", and the splicer, matching names across both lines, could pick
+the mainline station for a Victoria → Metropolitan change; 06-09's served
+day then named both legs after it, while the decoder's chain (which pays
+`NOT_SERVED` for exactly this) named the tube station — two graders, two
+names for one change. A line with no relation in the mirror keeps every
+point, and so does a line whose filter would leave none. -/
 def Env.interchangeStations (e : Env) : String → List Verified.Geo.Interchange.Station :=
-  fun line => ((e.stationsOnLine line).map fun s => ⟨s.name, s.lat, s.lon⟩).toList
+  fun line =>
+    let all := (e.stationsOnLine line).map fun s =>
+      (⟨s.name, s.lat, s.lon⟩ : Verified.Geo.Interchange.Station)
+    match e.relationStops line with
+    | none => all.toList
+    | some served =>
+      let kept := all.filter fun st =>
+        served.contains (Verified.Geo.LineStoppingPattern.normalizeStationName st.name)
+      (if kept.isEmpty then all else kept).toList
 
 /-- The journey assembler's own shell record. Its radius is an `Int` where the
 env's is a `Float`; widening, so nothing is lost. -/
