@@ -1373,6 +1373,43 @@ private def assembleSegmentsResult (j : Json) : Json :=
                 (Verified.Hsmm.StationChain.resolveStationChain g chainSegs c.obs rels
                     Verified.Hsmm.Assemble.KNOWN_LINES).foldl
                   (fun m (i, res) => m.insert i res) {}
+              -- `"chainDebug": true`: every pair the chain weighed, per leg, with
+              -- its max-marginal — the instrument for a wrong line (#238).
+              if (j.getObjVal? "chainDebug" >>= (·.getBool?)).toOption == some true then
+                let marg := Verified.Hsmm.StationChain.chainMarginals g chainSegs c.obs rels
+                  Verified.Hsmm.Assemble.KNOWN_LINES
+                let dbg := Json.arr (marg.map fun (leg, through) =>
+                  Json.mkObj [
+                    ("segIndex", Lean.toJson leg.segIndex),
+                    ("decodedLine", Json.str leg.decodedLine),
+                    ("startTs", Lean.toJson leg.startTs), ("endTs", Lean.toJson leg.endTs),
+                    ("pairs", Json.arr (leg.pairs.zipIdx.map fun (p, k) =>
+                      Json.mkObj [
+                        ("line", Json.str p.line),
+                        ("board", optStrJson p.board.node.stationName),
+                        ("alight", optStrJson p.alight.node.stationName),
+                        ("legScore", Lean.toJson p.legScore),
+                        ("through", Lean.toJson ((through[k]?).getD 0)),
+                        ("pathM", match Verified.Hsmm.StationChain.linePathMeters g p.line
+                            p.board.node p.alight.node with
+                          | some m => Lean.toJson m | none => Json.null),
+                        ("calls", match rels, p.board.node.stationName, p.alight.node.stationName with
+                          | some rs, some bn, some an =>
+                            match Verified.Hsmm.ServedStations.intermediateCalls rs p.line bn an with
+                            | some cs => Lean.toJson cs.size | none => Json.null
+                          | _, _, _ => Json.null),
+                        ("boardAnchor", Lean.toJson p.board.anchorPen),
+                        ("alightAnchor", Lean.toJson p.alight.anchorPen),
+                        ("boardDwell", Lean.toJson p.board.dwellPen),
+                        ("alightDwell", Lean.toJson p.alight.dwellPen),
+                        ("boardServed", Lean.toJson p.board.servedPen),
+                        ("alightServed", Lean.toJson p.alight.servedPen),
+                        ("boardTraj", match p.board.trajPen with | some t => Lean.toJson t | none => Json.null),
+                        ("alightTraj", match p.alight.trajPen with | some t => Lean.toJson t | none => Json.null),
+                        ("durPen", Lean.toJson p.durPen),
+                        ("passPen", Lean.toJson p.passPen)]))])
+                pure #[Json.mkObj [("chainDebug", dbg)]]
+              else
               pure (segs.mapIdx (fun i s =>
                 let base : List (String × Json) :=
                   [ ("startTs", Lean.toJson s.startTs)

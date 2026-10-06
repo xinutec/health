@@ -293,9 +293,10 @@ inductive Side where
 /-- Seconds to minutes, on the `Int` timestamps the TS carries as numbers. -/
 private def mins (a b : Int) : Float := Float.ofInt (a - b) / 60
 
-/-- `−z²/2` with σ widened in quadrature by anchor staleness, clamped. -/
-def slopZPenalty (distM sigmaM slopMin clamp : Float) : Float :=
-  let slop := SLOP_SPEED_M_PER_MIN * slopMin
+/-- `−z²/2` with σ widened in quadrature by anchor staleness, clamped. `pace`
+    is the anchor's (`Anchor.pace`); the default is the unpaced slop. -/
+def slopZPenalty (distM sigmaM slopMin clamp : Float) (pace : Float := SLOP_SPEED_M_PER_MIN) : Float :=
+  let slop := pace * slopMin
   let sigma := Float.sqrt (sigmaM * sigmaM + slop * slop)
   let z := distM / sigma
   max clamp (-0.5 * z * z)
@@ -418,6 +419,14 @@ def chainPenalty (prevAlight board : ChainNode) (gapMin : Float) : Float :=
 
 /-! ## Anchors: the observed fix each side of the leg is measured against -/
 
+/-- The resolver's view of a decoded segment. -/
+structure ChainSeg where
+  mode : String
+  lineName : Option String
+  startTs : Int
+  endTs : Int
+  deriving Inhabited, Repr
+
 /-- Where a side's candidates are measured from, and how stale that measurement
     is. `slopMin` widens both the admission radius and the penalty's sigma, so a
     boundary the phone never observed cannot masquerade as a precise one. -/
@@ -426,7 +435,24 @@ structure Anchor where
   lon : Float
   /-- Minutes between the fix and the leg boundary it anchors. -/
   slopMin : Float
+  /-- How far a minute of slop can carry (m/min): `SLOP_SPEED_M_PER_MIN` unless
+      the whole slop lies inside an adjacent WALKING segment, where it is a
+      walker's pace — the decoder saw him walk there, so a station two
+      kilometres off is not where he boarded (#238, 06-09: the chain weighed
+      South Kensington for a ride boarded at Victoria three minutes after a fix
+      at Victoria, because 500 m/min × 3 min reaches it). Measured alone on the
+      live scoreboard 2026-10-06: stations 15 → 16, nothing else moved. -/
+  pace : Float := SLOP_SPEED_M_PER_MIN
   deriving Inhabited, Repr
+
+/-- The anchor's slop at walking pace when `walk` is an adjacent walking
+    segment that contains the anchor's fix, else unchanged. `fixTs` is the fix's
+    own time; the fix is the segment's when it falls inside its window. -/
+def Anchor.pacedBy (a : Anchor) (fixTs : Int) (walk : Option ChainSeg) : Anchor :=
+  match walk with
+  | some w => if w.mode == "walking" && w.startTs ≤ fixTs && fixTs ≤ w.endTs
+      then { a with pace := TRANSFER_WALK_M_PER_MIN } else a
+  | none => a
 
 /-- Last observed fix strictly BEFORE the leg (board side).
 
@@ -436,39 +462,45 @@ structure Anchor where
     aggregator already reached back for. Note the index: the fallback reads
     `firstIdx`, not `firstIdx - 1`, so a leg whose every prior minute is dark
     still anchors from the bookend rather than from nothing. -/
-def boardAnchor (obs : Array ObsRow) (firstIdx : Nat) (legStartTs : Int) : Option Anchor :=
-  let rec scan (i : Nat) : Option Anchor :=
+def boardAnchorAt (obs : Array ObsRow) (firstIdx : Nat) (legStartTs : Int) : Option (Anchor × Int) :=
+  let rec scan (i : Nat) : Option (Anchor × Int) :=
     match i with
     | 0 => none
     | j + 1 =>
       match obs[j]? with
       | none => none
       | some o => match o.gps with
-        | some g => some ⟨g.lat, g.lon, max 0 (mins legStartTs o.ts)⟩
+        | some g => some (⟨g.lat, g.lon, max 0 (mins legStartTs o.ts), SLOP_SPEED_M_PER_MIN⟩, o.ts)
         | none => scan j
   match scan firstIdx with
   | some a => some a
   | none => match (obs[firstIdx]?).bind (·.prevGpsFix) with
     | none => none
-    | some b => some ⟨b.lat, b.lon, max 0 (mins legStartTs b.ts)⟩
+    | some b => some (⟨b.lat, b.lon, max 0 (mins legStartTs b.ts), SLOP_SPEED_M_PER_MIN⟩, b.ts)
+
+def boardAnchor (obs : Array ObsRow) (firstIdx : Nat) (legStartTs : Int) : Option Anchor :=
+  (boardAnchorAt obs firstIdx legStartTs).map (·.1)
 
 /-- First observed fix at/after the leg end (alight side) — `boardAnchor`
     mirrored, with `nextGpsFix` off the leg's LAST row as the bookend. -/
-def alightAnchor (obs : Array ObsRow) (lastIdx : Nat) (legEndTs : Int) : Option Anchor :=
-  let rec scan (i : Nat) (fuel : Nat) : Option Anchor :=
+def alightAnchorAt (obs : Array ObsRow) (lastIdx : Nat) (legEndTs : Int) : Option (Anchor × Int) :=
+  let rec scan (i : Nat) (fuel : Nat) : Option (Anchor × Int) :=
     match fuel with
     | 0 => none
     | f + 1 =>
       match obs[i]? with
       | none => none
       | some o => match o.gps with
-        | some g => some ⟨g.lat, g.lon, max 0 (mins o.ts legEndTs)⟩
+        | some g => some (⟨g.lat, g.lon, max 0 (mins o.ts legEndTs), SLOP_SPEED_M_PER_MIN⟩, o.ts)
         | none => scan (i + 1) f
   match scan (lastIdx + 1) obs.size with
   | some a => some a
   | none => match (obs[lastIdx]?).bind (·.nextGpsFix) with
     | none => none
-    | some b => some ⟨b.lat, b.lon, max 0 (mins b.ts legEndTs)⟩
+    | some b => some (⟨b.lat, b.lon, max 0 (mins b.ts legEndTs), SLOP_SPEED_M_PER_MIN⟩, b.ts)
+
+def alightAnchor (obs : Array ObsRow) (lastIdx : Nat) (legEndTs : Int) : Option Anchor :=
+  (alightAnchorAt obs lastIdx legEndTs).map (·.1)
 
 /-! ## Side candidates: which stations one end of a leg may be -/
 
@@ -523,10 +555,10 @@ def sideCandidates (g : ChainGraph) (line : String) (anchor : Option Anchor)
         | some _ => if (stationLineMemberships g n).contains line then admitCand st n 0 else st)
         byNameEmpty
     | some a =>
-      let radius := CAND_BASE_RADIUS_M + SLOP_SPEED_M_PER_MIN * a.slopMin
+      let radius := CAND_BASE_RADIUS_M + a.pace * a.slopMin
       (stationsNear g a.lat a.lon radius).foldl (fun st nd =>
         if (stationLineMemberships g nd.1).contains line then
-          admitCand st nd.1 (slopZPenalty nd.2 STATION_SIGMA_M a.slopMin ANCHOR_CLAMP)
+          admitCand st nd.1 (slopZPenalty nd.2 STATION_SIGMA_M a.slopMin ANCHOR_CLAMP a.pace)
         else st) byNameEmpty
   -- Descending by penalty, STABLY: `mergeSort` is left-biased on `≤`, so ties
   -- keep the graph order the dedupe left them in — the same guarantee V8 gives
@@ -547,7 +579,7 @@ def sideCandidates (g : ChainGraph) (line : String) (anchor : Option Anchor)
         let p := match anchor with
           | none => 0
           | some a =>
-            slopZPenalty (haversineMeters a.lat a.lon n.lat n.lon) STATION_SIGMA_M a.slopMin ANCHOR_CLAMP
+            slopZPenalty (haversineMeters a.lat a.lon n.lat n.lon) STATION_SIGMA_M a.slopMin ANCHOR_CLAMP a.pace
         { order := st.order.push name, best := st.best.insert name ⟨n, p⟩ }) capped)
 
 /-! ## Trajectory: the fixes' own vote, projected onto the line's track -/
@@ -676,14 +708,6 @@ def trajectoryAdmits (g : ChainGraph) (line : String) (trackFixes : Array TrackF
 
 /-! ## The resolver: pair Viterbi over the chain, then the emission gates -/
 
-/-- The resolver's view of a decoded segment. -/
-structure ChainSeg where
-  mode : String
-  lineName : Option String
-  startTs : Int
-  endTs : Int
-  deriving Inhabited, Repr
-
 /-- One side of one candidate pair, with its four independent penalty channels
     kept SEPARATE — `legScore` sums them, but the emission gates read
     `anchorPen`, `trajPen` and `dwellPen` individually. -/
@@ -705,6 +729,10 @@ structure PairCandidate where
       when the caller offers alternatives, on every other line that connects
       a board candidate to an alight candidate (#238). -/
   line : String := ""
+  /-- The duration and pass terms, kept apart for the debug arm (`legScore`
+      already sums them). -/
+  durPen : Float := 0
+  passPen : Float := 0
   deriving Inhabited, Repr
 
 structure ChainLeg where
@@ -748,6 +776,12 @@ private def evalSide (g : ChainGraph) (line : String) (served : Option (Std.Hash
     trajPen :=
       if trackFixes.isEmpty then none
       else trajectoryPenalty trackFixes (footprintSssp g line c.node) legStartTs legEndTs side
+    -- Served by NAME (`stationNameServed`, which also sees through the
+    -- National Rail "London " prefix, #238). ⚠ NOT by proximity to a served
+    -- node: measured 2026-10-06, counting a station served because a served
+    -- one stands within `SAME_STATION_M` took the scoreboard's stations from
+    -- 15 to 5 — the served term is what separates co-located stations of
+    -- different names, and ties there fall silent.
     servedPen := match served, c.node.stationName with
       | some sv, some nm => if stationNameServed sv nm then 0 else NOT_SERVED_PENALTY
       | _, _ => 0 }
@@ -756,15 +790,26 @@ private def evalSide (g : ChainGraph) (line : String) (served : Option (Std.Hash
     of pairs that survive the same-station and minimum-path filters. -/
 private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (Std.HashSet String))
     (callsBetween : String → String → Option (Array Verified.Hsmm.ServedStations.RailStop))
-    (segIndex : Nat) (seg : ChainSeg) (line : String) (firstIdx lastIdx : Nat) : ChainLeg :=
-  let bAnchor := boardAnchor obs firstIdx seg.startTs
-  let aAnchor := alightAnchor obs lastIdx seg.endTs
+    (segIndex : Nat) (seg : ChainSeg) (line : String) (firstIdx lastIdx : Nat)
+    (prev next : Option ChainSeg := none) : ChainLeg :=
+  let bAnchor := (boardAnchorAt obs firstIdx seg.startTs).map fun (a, ts) => a.pacedBy ts prev
+  let aAnchor := (alightAnchorAt obs lastIdx seg.endTs).map fun (a, ts) => a.pacedBy ts next
   let observedMin := mins seg.endTs seg.startTs
-  -- A missing anchor is unobserved by definition; a stale one is unobserved by
-  -- measurement. Both widen the duration term's tolerance.
-  let boundaryUnobserved := match bAnchor, aAnchor with
-    | some b, some a => b.slopMin > BOUNDARY_UNOBSERVED_MIN || a.slopMin > BOUNDARY_UNOBSERVED_MIN
-    | _, _ => true
+  -- A boundary is OBSERVED when a fresh fix sits at it, or when the segment
+  -- beside it carries its own evidence — a walk (steps, speed) or a stay. Only
+  -- a boundary against a ride, an unknown stretch or nothing at all is
+  -- unobserved, and widens the duration term's tolerance. (#238, 06-09: a
+  -- 14-call Circle route fitted a 9-minute leg for free because its board
+  -- anchor was a 16-minute-stale fix — while the decoder had put a
+  -- step-cadence walk right before the leg.) Measured alone on the live
+  -- scoreboard 2026-10-06: no count moved; kept as the honest model.
+  let evidenced := fun (s : Option ChainSeg) => match s with
+    | some s => s.mode == "walking" || s.mode == "stationary" || s.mode == "cycling"
+    | none => false
+  let sideObserved := fun (a : Option Anchor) (neighbour : Option ChainSeg) => match a with
+    | some a => a.slopMin ≤ BOUNDARY_UNOBSERVED_MIN || evidenced neighbour
+    | none => evidenced neighbour
+  let boundaryUnobserved := !(sideObserved bAnchor prev && sideObserved aAnchor next)
   let inLegFixes : Array InLegFix :=
     (List.range (lastIdx + 1 - firstIdx)).foldl (fun acc k =>
       match obs[firstIdx + k]? with
@@ -792,15 +837,17 @@ private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (S
         | none => acc
         | some pathM =>
           if pathM < MIN_PATH_M then acc
-          else acc.push
-            { board := b, alight := a, line
+          else
+            let calls := match b.node.stationName, a.node.stationName with
+              | some bn, some an => callsBetween bn an
+              | _, _ => none
+            let durPen := durationPenalty observedMin pathM boundaryUnobserved (calls.map (·.size))
+            let passPen := (calls.map (passPenalty moving)).getD 0
+            acc.push
+            { board := b, alight := a, line, durPen, passPen
               legScore := b.anchorPen + b.dwellPen + (b.trajPen.getD 0) + b.servedPen
                 + a.anchorPen + a.dwellPen + (a.trajPen.getD 0) + a.servedPen
-                + (let calls := match b.node.stationName, a.node.stationName with
-                      | some bn, some an => callsBetween bn an
-                      | _, _ => none
-                   durationPenalty observedMin pathM boundaryUnobserved (calls.map (·.size))
-                     + (calls.map (passPenalty moving)).getD 0) }) acc) #[]
+                + durPen + passPen }) acc) #[]
   { segIndex, startTs := seg.startTs, endTs := seg.endTs, pairs, decodedLine := line }
 
 /-- `buildLegOn` for the decoded line, then for each alternative in order — the
@@ -809,12 +856,13 @@ private def buildLeg (g : ChainGraph) (obs : Array ObsRow)
     (servedFor : String → Option (Std.HashSet String))
     (stopsFor : String → String → String → Option (Array Verified.Hsmm.ServedStations.RailStop))
     (segIndex : Nat) (seg : ChainSeg)
-    (line : String) (altLines : List String) (firstIdx lastIdx : Nat) : ChainLeg :=
-  let own := buildLegOn g obs (servedFor line) (stopsFor line) segIndex seg line firstIdx lastIdx
+    (line : String) (altLines : List String) (firstIdx lastIdx : Nat)
+    (prev next : Option ChainSeg := none) : ChainLeg :=
+  let own := buildLegOn g obs (servedFor line) (stopsFor line) segIndex seg line firstIdx lastIdx prev next
   altLines.foldl (fun leg alt =>
     if alt == line then leg
     else { leg with pairs := leg.pairs ++
-      (buildLegOn g obs (servedFor alt) (stopsFor alt) segIndex seg alt firstIdx lastIdx).pairs }) own
+      (buildLegOn g obs (servedFor alt) (stopsFor alt) segIndex seg alt firstIdx lastIdx prev next).pairs }) own
 
 /-- Forward Viterbi over pairs. `best = 0` at the chain head is NOT a neutral
     element standing in for an empty max — it is the TS's own initialisation,
@@ -931,29 +979,13 @@ private def emitLeg (leg : ChainLeg) (through : Array Float) : Option (Nat × Re
     | some (i, r) => some (i, { r with line := some candidate })
     | none => on leg.decodedLine
 
-/--
-Resolve stations for every named-line train leg in `segs`.
-
-Returns segment index → resolved pair, in segment order; a side that cannot be
-resolved confidently is `none`, and a leg with neither side resolved is absent
-entirely.
-
-`altLines` (#238, 2026-09-29): lines a leg may be re-lined to. Each leg then
-carries candidate pairs on every one of them that connects its two sides, the
-chain Viterbi runs over all of them, and the leg takes the best pair's line when
-it clears `MARGIN_NATS` over its decoded line (`emitLeg`). The decoder picks a
-ride's line minute by minute from proximity; this is where the ride's TIMING
-against each line's path, its anchors and the transfer to the next leg get a
-say. Empty = the decoded line only, the behaviour before.
-
-The TS memoises `servedStationSet`, `linePathMeters` and the footprint SSSP.
-Those caches are pure memoisation of pure functions, so omitting them is exact
-rather than approximate — they buy speed on a real day's cross product and
-carry no semantics.
--/
-def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
+/-- Every resolvable leg with its max-marginals — the best chain total passing
+    through each pair — in segment order. `resolveStationChain` emits from this;
+    the debug arm of `assemblesegments` prints it, so a wrong line or a silent
+    station can be read off the pairs the chain actually weighed (#238). -/
+def chainMarginals (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
     (railStopRelations : Option (Array RailStopRelation))
-    (altLines : List String := []) : Array (Nat × ResolvedStations) :=
+    (altLines : List String := []) : Array (ChainLeg × Array Float) :=
   if obs.isEmpty then #[] else
   -- Later duplicates win, as `Map.set` does.
   let idxByTs : Std.HashMap Int Nat :=
@@ -976,7 +1008,8 @@ def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array Ob
         if line == "unknown_rail" then skip
         else match idxByTs.get? seg.startTs, idxByTs.get? (seg.endTs - 60) with
           | some firstIdx, some lastIdx =>
-            (acc.1.push (buildLeg g obs servedFor stopsFor i seg line altLines firstIdx lastIdx), i + 1)
+            (acc.1.push (buildLeg g obs servedFor stopsFor i seg line altLines firstIdx lastIdx
+              (if i == 0 then none else segs[i - 1]?) segs[i + 1]?), i + 1)
           | _, _ => skip) (#[], 0)).1
   -- A leg with no valid pair stays unresolved AND breaks the chain: its
   -- neighbours must not hand over across an opaque ride.
@@ -1001,9 +1034,35 @@ def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array Ob
         let f := (fwd[i.val]?.bind (·[p.val]?)).getD 0
         let b := (bwd[i.val]?.bind (·[p.val]?)).getD 0
         acc.push (f + b - leg.pairs[p].legScore)) #[]
-      match emitLeg leg through with
-      | none => out
-      | some r => out.push r) out) #[]
+      out.push (leg, through)) out) #[]
+
+/--
+Resolve stations for every named-line train leg in `segs`.
+
+Returns segment index → resolved pair, in segment order; a side that cannot be
+resolved confidently is `none`, and a leg with neither side resolved is absent
+entirely.
+
+`altLines` (#238, 2026-09-29): lines a leg may be re-lined to. Each leg then
+carries candidate pairs on every one of them that connects its two sides, the
+chain Viterbi runs over all of them, and the leg takes the best pair's line when
+it clears `MARGIN_NATS` over its decoded line (`emitLeg`). The decoder picks a
+ride's line minute by minute from proximity; this is where the ride's TIMING
+against each line's path, its anchors and the transfer to the next leg get a
+say. Empty = the decoded line only, the behaviour before.
+
+The TS memoises `servedStationSet`, `linePathMeters` and the footprint SSSP.
+Those caches are pure memoisation of pure functions, so omitting them is exact
+rather than approximate — they buy speed on a real day's cross product and
+carry no semantics.
+-/
+def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
+    (railStopRelations : Option (Array RailStopRelation))
+    (altLines : List String := []) : Array (Nat × ResolvedStations) :=
+  (chainMarginals g segs obs railStopRelations altLines).foldl (fun out (leg, through) =>
+    match emitLeg leg through with
+    | none => out
+    | some r => out.push r) #[]
 
 /-! ## Guards — the synthetic line from `lean/experiments/station-chain-refs.mts`
 

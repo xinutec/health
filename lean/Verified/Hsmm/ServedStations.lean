@@ -115,6 +115,11 @@ def stationNameServed (served : Std.HashSet String) (stationName : String) : Boo
   else if norm.length < MIN_CONTAINMENT_CHARS then false
   else
     -- Order-independent: any match answers `true`. See the module docstring.
+    -- ⚠ NOT with a National Rail "London " prefix stripped (#238, 2026-10-06):
+    -- "London King's Cross" vs the relation's "King's Cross St. Pancras" is a
+    -- real miss, but stripping the prefix on either side (length-guarded) took
+    -- the live scoreboard's stations from 15 to 7 — at the mainline complexes
+    -- the served term is what separates co-located names, and ties fall silent.
     served.fold (fun acc s =>
       if acc then true
       else if min s.length norm.length < MIN_CONTAINMENT_CHARS then false
