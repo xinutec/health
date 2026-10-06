@@ -805,19 +805,47 @@ def QBuildings.fixSupports (bld : QBuildings) (p : QPt) : Bool := Id.run do
     if qDist p f ≤ bld.supportUm then return true
   return false
 
-/-- The 3 m sample scan: `crossFactor` if any grid-quantised sample lands
-in a footprint without a nearby fix, else `1` (`QBuildings.factorOnce`;
-the memo of the twin is transparency-only). -/
-def QBuildings.factor (bld : QBuildings) (a b : QPt) : Nat := Id.run do
-  let len := qDist a b
+/-- One sample's verdict: in a footprint, and no fix within `supportUm`. -/
+def QBuildings.sampleBad (bld : QBuildings) (s : QPt) : Bool :=
+  bld.inAnyRingFast s && !bld.fixSupports s
+
+/-- The number of 3 m steps `factor` samples `a → b` at: `⌈len / 3 m⌉`, at least 1. -/
+def QBuildings.sampleSteps (len : Nat) : Nat :=
   let step : Nat := 3000000
-  let mut n : Nat := (len + step - 1) / step
-  if n < 1 then n := 1
-  for k in [0:n + 1] do
-    let s : QPt := { la := a.la + roundDiv ((k : Int) * (b.la - a.la)) (n : Int)
-                     lo := a.lo + roundDiv ((k : Int) * (b.lo - a.lo)) (n : Int), ts := 0 }
-    if bld.inAnyRingFast s && !bld.fixSupports s then return bld.crossFactor
-  return 1
+  let n : Nat := (len + step - 1) / step
+  if n < 1 then 1 else n
+
+/-- The `k`-th of `n` steps along `a → b`, on the coordinate grid. `k = 0` is
+`a` itself and `k = n` is `b` itself (`roundDiv` of an exact multiple). -/
+def QBuildings.sampleAt (a b : QPt) (n k : Nat) : QPt :=
+  { la := a.la + roundDiv ((k : Int) * (b.la - a.la)) (n : Int)
+    lo := a.lo + roundDiv ((k : Int) * (b.lo - a.lo)) (n : Int), ts := 0 }
+
+/-- The sample scan over the steps `lo ≤ k < hi` only. -/
+def QBuildings.anyBad (bld : QBuildings) (a b : QPt) (n lo hi : Nat) : Bool := Id.run do
+  for k in [lo:hi] do
+    if bld.sampleBad (QBuildings.sampleAt a b n k) then return true
+  return false
+
+/-- The 3 m sample scan with the edge length already known (`factorLen a b
+(qDist a b)` is `factor`): `crossFactor` if any grid-quantised sample lands in a
+footprint without a nearby fix, else `1` (`QBuildings.factorOnce`; the memo of
+the twin is transparency-only). -/
+def QBuildings.factorLen (bld : QBuildings) (a b : QPt) (len : Nat) : Nat :=
+  let n := QBuildings.sampleSteps len
+  if bld.anyBad a b n 0 (n + 1) then bld.crossFactor else 1
+
+def QBuildings.factor (bld : QBuildings) (a b : QPt) : Nat := bld.factorLen a b (qDist a b)
+
+/-- `factorLen` with the two END samples read from a per-vertex memo
+(`badA = sampleBad a`, `badB = sampleBad b`) and only the interior sampled. The
+scan is a disjunction over the samples, so where it starts does not matter —
+and in a graph every vertex ends many edges (24 on a dense walk, #1921), so its
+own verdict is worth computing once. Same value as `factorLen` whenever the
+memo is honest; `#guard`ed below, and the corpus gate re-verifies. -/
+def QBuildings.factorMemo (bld : QBuildings) (a b : QPt) (len : Nat) (badA badB : Bool) : Nat :=
+  let n := QBuildings.sampleSteps len
+  if badA || badB || bld.anyBad a b n 1 n then bld.crossFactor else 1
 
 /-! ## Graph build (part 2)
 
@@ -908,6 +936,18 @@ def buildQGraph (ways : Array QWay) (co : QCorridor) (bld : Option QBuildings)
       adj := adj.setIfInBounds j ((adj.getD j #[]).push (i, w))
   return { vertices, segments, g := ⟨adj⟩ }
 
+/-- One edge's weight — `edgeWeightScaled × factor` — with `qDist a b` taken
+once (both factors need it) and the endpoints' sample verdicts read from the
+per-vertex memo `vBad` (see `factorMemo`). -/
+def edgeWeightMemo (co : QCorridor) (bld : Option QBuildings) (vBad : Array Bool)
+    (ia ib : Nat) (a b : QPt) : Nat :=
+  let len := qDist a b
+  let mid : QPt := { la := (a.la + b.la).tdiv 2, lo := (a.lo + b.lo).tdiv 2, ts := 0 }
+  let f : Nat := match bld with
+    | some bl => bl.factorMemo a b len (vBad.getD ia false) (vBad.getD ib false)
+    | none => 1
+  len * co.penScaled (co.distToFast mid) * f
+
 /-- **The O(V) executable twin of `buildQGraph`.** Same graph, byte-identical,
 but linear instead of quadratic: the two O(V²) hotspots of `buildQGraph` are
 replaced by hash indices.
@@ -932,11 +972,14 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
   let mut adj : Array (Array (Nat × Nat)) := #[]
   let mut segments : Array QSeg := #[]
   let mut vidx : Std.HashMap (Int × Int) Nat := ∅
-  let wt := fun (ap bp : QPt) =>
-    co.edgeWeightScaled ap bp * (match bld with | some bl => bl.factor ap bp | none => 1)
+  -- The way edges, by vertex id, in way order; weighed below once every vertex
+  -- is known, so each endpoint's building verdict is computed once (`vBad`)
+  -- rather than once per edge it ends. A way vertex IS its graph vertex (same
+  -- `la`/`lo`; the weight and the length read nothing else), so the edge can
+  -- be weighed from `vertices` later.
+  let mut wayEdges : Array (Nat × Nat × Option String) := #[]
   for way in ways do
     let mut prev : Int := -1
-    let mut prevPt : QPt := default
     for p in way.coords do
       let found := vidx.get? (p.la, p.lo)
       let id : Nat := found.getD vertices.size
@@ -945,16 +988,21 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
         adj := adj.push #[]
         vidx := vidx.insert (p.la, p.lo) id
       if prev ≥ 0 && (id : Int) ≠ prev then
-        let a := prev.toNat
-        let w := wt prevPt p
-        -- `modify`, not `setIfInBounds (getD … |>.push …)`: the latter holds a
-        -- second reference to the row while pushing, so every push reallocates
-        -- and copies the whole row. Same value, one owner.
-        adj := adj.modify a (·.push (id, w))
-        adj := adj.modify id (·.push (a, w))
-        segments := segments.push { u := a, v := id, lenUm := qDist prevPt p, name := way.name }
+        wayEdges := wayEdges.push (prev.toNat, id, way.name)
       prev := (id : Int)
-      prevPt := p
+  let vBad : Array Bool := match bld with
+    | some bl => vertices.map bl.sampleBad
+    | none => #[]
+  for (a, id, name) in wayEdges do
+    let pa := vertices.getD a default
+    let pb := vertices.getD id default
+    let w := edgeWeightMemo co bld vBad a id pa pb
+    -- `modify`, not `setIfInBounds (getD … |>.push …)`: the latter holds a
+    -- second reference to the row while pushing, so every push reallocates
+    -- and copies the whole row. Same value, one owner.
+    adj := adj.modify a (·.push (id, w))
+    adj := adj.modify id (·.push (a, w))
+    segments := segments.push { u := a, v := id, lenUm := qDist pa pb, name }
   -- bridgeGaps via a spatial grid.
   -- Everything below the cell index is carried as a `Nat` magnitude with the
   -- sign in the shape: these products reach ~10^13 (cells) and ~10^15 (the gap
@@ -991,7 +1039,10 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
       for dx in [(-1 : Int), 0, 1] do
         for j in grid.getD (cellKeyN (byc + dy) (bxc + dx)) #[] do
           if j > i then cand := cand.push j
-    for j in cand.qsort (· < ·) do
+    -- A few dozen distinct ids from nine already-ascending buckets: an
+    -- insertion sort, not a quicksort (the same order; `qsort`'s partitioning
+    -- was 7% of the build on a dense walk).
+    for j in cand.insertionSort (· < ·) do
       let vj := vertices.getD j default
       let dla : Nat := (vj.la - vi.la).natAbs * 11132
       if dla > gapUm then continue
@@ -1001,10 +1052,61 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
       let dlo : Nat := if negY then (y + 1048575) / 1048576 else y / 1048576
       if dla * dla + dlo * dlo > gapSq then continue
       if (adj.getD i #[]).any (fun e => e.1 == j) then continue
-      let w := wt vi vj
+      let w := edgeWeightMemo co bld vBad i j vi vj
       adj := adj.modify i (·.push (j, w))
       adj := adj.modify j (·.push (i, w))
   return { vertices, segments, g := ⟨adj⟩ }
+
+/-! ### `buildQGraphFast` is `buildQGraph`, on an instance with every arm live
+
+A corridor, footprints a fix supports and footprints none does, ways that share
+vertices, and vertices within the gap of each other: the memoised weights and
+the two-pass way loop must reproduce the spec's graph edge for edge, weight for
+weight. The corpus gate is the referee on real walks; this is the one that
+fails at build time. -/
+
+private def gwWays : Array QWay := #[
+  { coords := #[⟨515000000, -1300000, 0⟩, ⟨515005000, -1300000, 0⟩, ⟨515010000, -1300000, 0⟩,
+      ⟨515015000, -1300000, 0⟩], name := some "Main Street" },
+  -- Shares the second vertex; its far end is ~15 m from Main Street's third,
+  -- so the gap bridge connects them.
+  { coords := #[⟨515005000, -1300000, 0⟩, ⟨515005000, -1294000, 0⟩, ⟨515011000, -1298500, 0⟩],
+    name := some "Side Street" },
+  -- Through the unsupported footprint.
+  { coords := #[⟨515008000, -1305000, 0⟩, ⟨515008000, -1295000, 0⟩], name := none }]
+
+private def gwFixes : Array QPt := #[⟨515000000, -1300000, 0⟩, ⟨515005000, -1300000, 60⟩,
+  ⟨515010000, -1300000, 120⟩, ⟨515005000, -1294000, 180⟩]
+
+private def gwRings : Array (Array QPt) := #[
+  -- Around the second fix, within its 15 m support: no penalty from it.
+  #[⟨515004000, -1301000, 0⟩, ⟨515004000, -1299000, 0⟩, ⟨515006000, -1299000, 0⟩,
+    ⟨515006000, -1301000, 0⟩],
+  -- On the unnamed way, 22 m and more from every fix: the penalty fires on its edge.
+  #[⟨515007000, -1302000, 0⟩, ⟨515007000, -1298000, 0⟩, ⟨515009000, -1298000, 0⟩,
+    ⟨515009000, -1302000, 0⟩]]
+
+private def gwCo : QCorridor := mkQCorridor gwFixes 25000000 80000000 40
+private def gwBld : QBuildings := mkQBuildings gwRings gwFixes 25 15000000
+
+private def graphEq (a b : QGraph) : Bool :=
+  a.vertices == b.vertices && a.g.adj == b.g.adj
+    && a.segments.size == b.segments.size
+    && (a.segments.zip b.segments).all fun (s, t) =>
+      s.u == t.u && s.v == t.v && s.lenUm == t.lenUm && s.name == t.name
+
+#guard graphEq (buildQGraphFast gwWays gwCo (some gwBld) 18000000)
+  (buildQGraph gwWays gwCo (some gwBld) 18000000)
+#guard graphEq (buildQGraphFast gwWays gwCo none 18000000) (buildQGraph gwWays gwCo none 18000000)
+-- The instance exercises what it claims: a shared vertex, a bridge, and a
+-- penalised edge next to an unpenalised one.
+#guard (buildQGraphFast gwWays gwCo (some gwBld) 18000000).vertices.size == 8
+#guard totalOut (buildQGraphFast gwWays gwCo (some gwBld) 18000000).g
+  > 2 * (buildQGraphFast gwWays gwCo (some gwBld) 18000000).segments.size
+#guard (buildQGraphFast gwWays gwCo (some gwBld) 18000000).g.adj.any fun row =>
+  row.any fun (_, w) => w % 25 == 0 && w > 0
+#guard gwBld.factor ⟨515008000, -1305000, 0⟩ ⟨515008000, -1295000, 0⟩ == 25
+#guard gwBld.factor ⟨515000000, -1300000, 0⟩ ⟨515005000, -1300000, 0⟩ == 1
 
 /-! ## Candidates -/
 

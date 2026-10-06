@@ -136,6 +136,23 @@ answers with an empty line; nothing here reads it. -/
 @[implemented_by tellImpl]
 def tell {α : Type} (_what _key : String) (v : α) : α := v
 
+initialize dumpCounter : IO.Ref Nat ← IO.mkRef 0
+
+unsafe def dumpImpl {α : Type} (what : String) (payload : Unit → String) (v : α) : α :=
+  let io : IO Unit := do
+    let some dir ← IO.getEnv "LEAN_DUMP_DIR" | return
+    let n ← dumpCounter.modifyGet fun n => (n, n + 1)
+    IO.FS.writeFile s!"{dir}/{what}-{n}.json" (payload ())
+  match unsafeBaseIO io.toBaseIO with
+  | .ok _ => v
+  | .error _ => dbgTrace s!"lean: dumping {what} failed" fun _ => v
+
+/-- With `LEAN_DUMP_DIR` set, write `payload ()` to `<dir>/<what>-<n>.json`
+and go on with `v`; without it, `v`. A solver's input, captured where it is
+called, so a profiler (`verified_cli matchprof`) can replay exactly that call. -/
+@[implemented_by dumpImpl]
+def dump {α : Type} (_what : String) (_payload : Unit → String) (v : α) : α := v
+
 /-- One question to the host. See the module header for the wire. -/
 @[implemented_by askImpl]
 opaque ask (what key : String) : Option Json

@@ -624,7 +624,9 @@ private def insertBox (m : Std.HashMap Int (Array Nat)) (cell : Float) (id : Nat
     let mut cy := loY
     while cy ≤ hiY do
       let k := gridKey cx cy
-      m := m.insert k ((m.getD k #[]).push id)
+      -- `alter`, not `insert (getD … |>.push …)`: the latter holds a second
+      -- reference to the bucket while pushing, so every push copies it.
+      m := m.alter k fun o => some ((o.getD #[]).push id)
       cy := cy + 1
     cx := cx + 1
   return m

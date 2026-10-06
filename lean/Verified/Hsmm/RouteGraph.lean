@@ -156,7 +156,7 @@ def edgeCells (e : Edge) : List (Int × Int) :=
 /-- Bucket every edge (by index) into each cell it touches, in edge order. -/
 def buildCellIndex (edges : Array Edge) : Std.HashMap (Int × Int) (Array Nat) :=
   (List.finRange edges.size).foldl (fun idx i =>
-    (edgeCells edges[i]).foldl (fun idx c => idx.insert c ((idx.getD c #[]).push i.val)) idx)
+    (edgeCells edges[i]).foldl (fun idx c => idx.alter c fun o => some ((o.getD #[]).push i.val)) idx)
     {}
 
 /-- Edges whose geometry passes within `radiusM` of `(lat, lon)`. Scans the 3×3

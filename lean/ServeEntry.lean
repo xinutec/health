@@ -468,7 +468,7 @@ private def matchProfMain (input : String) : IO UInt32 := do
     let co ← IO.lazyPure fun _ =>
       Verified.Geo.mkQCorridor fixes P.corridorNearUm P.corridorFarUm P.corridorMaxPenalty
     let t1 ← IO.monoMsNow
-    let bld ← IO.lazyPure fun _ =>
+    let bld : Option Verified.Geo.QBuildings ← IO.lazyPure fun _ =>
       if P.buildingCrossFactor > 1 && buildings.size > 0 then
         some (Verified.Geo.mkQBuildings buildings fixes P.buildingCrossFactor P.buildingSupportUm)
       else none
@@ -488,20 +488,93 @@ private def matchProfMain (input : String) : IO UInt32 := do
         (Verified.Geo.mkQCorridor #[] P.corridorNearUm P.corridorFarUm P.corridorMaxPenalty)
         none P.gapBridgeUm).segments.size
     let t3d ← IO.monoMsNow
+    -- Two more, splitting the buildings penalty: footprints reduced to their
+    -- boxes (a 4-vertex ray cast), and no fixes (no support scan).
+    let _ ← IO.lazyPure fun _ =>
+      match bld with
+      | some b =>
+        let boxRings := b.boxes.map fun (bx : Verified.Geo.QBox) => #[
+          ({ la := bx.minLa, lo := bx.minLo, ts := 0 } : Verified.Geo.QPt),
+          { la := bx.minLa, lo := bx.maxLo, ts := 0 },
+          { la := bx.maxLa, lo := bx.maxLo, ts := 0 },
+          { la := bx.maxLa, lo := bx.minLo, ts := 0 }]
+        (Verified.Geo.buildQGraphFast ways co (some { b with rings := boxRings })
+          P.gapBridgeUm).segments.size
+      | none => 0
+    let t3e ← IO.monoMsNow
+    let _ ← IO.lazyPure fun _ =>
+      match bld with
+      | some b =>
+        (Verified.Geo.buildQGraphFast ways co (some { b with fixes := #[] }) P.gapBridgeUm).segments.size
+      | none => 0
+    let t3f ← IO.monoMsNow
     let t4 ← IO.monoMsNow
-    let nCand ← IO.lazyPure fun _ =>
-      fixes.foldl (init := 0) fun acc f =>
-        acc + (Verified.Geo.qCandidatesForFixFast f graph idx P.radiusUm P.maxCandidatesPerFix).size
+    let obs ← IO.lazyPure fun _ =>
+      fixes.foldl (init := (#[] : Array Verified.Geo.QObs)) fun acc f =>
+        let cands := Verified.Geo.qCandidatesForFixFast f graph idx P.radiusUm P.maxCandidatesPerFix
+        if cands.size == 0 then acc else acc.push { fix := f, cands }
+    let nCand := obs.foldl (init := 0) fun acc o => acc + o.cands.size
     let t5 ← IO.monoMsNow
+    -- Phase A of `qMatchTrajectory`, replayed here on its own: the route matrix
+    -- over the same candidates, in the same `(t, j, i)` order, with the same
+    -- per-layer cache pruning. Its cost is the route searches'.
+    let (nRoutes, nSources, nSettled) ← IO.lazyPure fun _ => Id.run do
+      let mut maxStep : Nat := 0
+      for i in [1:obs.size] do
+        let d := Verified.Geo.qDist (obs.getD (i - 1) default).fix (obs.getD i default).fix
+        if d > maxStep then maxStep := d
+      let maxR := (maxStep * P.detourFactor + P.detourSlackUm) * P.corridorMaxPenalty * co.S
+      let n := graph.vertices.size
+      let fuel := Verified.Geo.totalOut graph.g + 1
+      let mut routeCache : Verified.Geo.RouteCache := Array.replicate n none
+      let mut nRoutes := 0
+      let mut sources : Std.HashSet Nat := ∅
+      let mut nSettled := 0
+      for t in [1:obs.size] do
+        let prev := obs.getD (t - 1) default
+        let cur := obs.getD t default
+        for j in [0:cur.cands.size] do
+          for i in [0:prev.cands.size] do
+            let (_, rc) := Verified.Geo.qRouteBetween (prev.cands.getD i default)
+              (cur.cands.getD j default) graph bld co.S maxR fuel routeCache
+            routeCache := rc
+            nRoutes := nRoutes + 1
+        for c in prev.cands do
+          let s := graph.segments.getD c.si default
+          sources := (sources.insert s.u).insert s.v
+        let keep : Array Nat := cur.cands.foldl (init := #[]) fun acc c =>
+          let s := graph.segments.getD c.si default
+          (acc.push s.u).push s.v
+        for i in [0:n] do
+          match routeCache.getD i none with
+          | some st => if !keep.contains i then nSettled := nSettled + st.done.foldl (fun k d => if d then k + 1 else k) 0
+          | none => pure ()
+        routeCache := routeCache.mapIdx fun i o => if keep.contains i then o else none
+      for st? in routeCache do
+        match st? with
+        | some st => nSettled := nSettled + st.done.foldl (fun k d => if d then k + 1 else k) 0
+        | none => pure ()
+      return (nRoutes, sources.size, nSettled)
+    let t5b ← IO.monoMsNow
     let full ← IO.lazyPure fun _ => Verified.Geo.qMatchWalkSegment fixes ways buildings
     let t6 ← IO.monoMsNow
+    -- The float-side badness context the drawing builds around the matcher
+    -- (`makeBadnessCtx`: the way grid and the footprint boxes), on this input.
+    let fpt := fun (q : Verified.Geo.QPt) => Verified.Geo.WalkMatchAdapt.fromQ q
+    let fways : Verified.Geo.WalkableRoute.Ways := ways.map fun w => w.coords.map fun q => (fpt q).pt
+    let fbld : Array Verified.Geo.WalkEscape.Ring := buildings.map fun r => r.map fun q => (fpt q).pt
+    let _ ← IO.lazyPure fun _ =>
+      (Verified.Geo.WalkEscape.makeBadnessCtx fways fbld {}).ring.footprints.size
+    let t7 ← IO.monoMsNow
+    IO.println s!"badness-ctx={t7 - t6}ms"
     IO.println s!"fixes={fixes.size} ways={ways.size} rings={buildings.size} \
 vertices={graph.vertices.size} segments={graph.segments.size} \
 edges={Verified.Geo.totalOut graph.g} chords={co.chords.size} cands={nCand} \
-matched={full.isSome}"
+routes={nRoutes} sources={nSources} settled={nSettled} matched={full.isSome}"
     IO.println s!"corridor={t1 - t0}ms buildings={t2 - t1}ms graph={t3 - t2}ms \
-segidx={t3b - t3}ms cands={t5 - t4}ms full={t6 - t5}ms"
-    IO.println s!"graph-no-buildings={t3c - t3b}ms graph-no-corridor={t3d - t3c}ms"
+segidx={t3b - t3}ms cands={t5 - t4}ms routes={t5b - t5}ms full={t6 - t5b}ms"
+    IO.println s!"graph-no-buildings={t3c - t3b}ms graph-no-corridor={t3d - t3c}ms \
+graph-box-rings={t3e - t3d}ms graph-no-fixes={t3f - t3e}ms"
     let stat (name : String) (g : Std.HashMap Nat (Array Nat)) : String :=
       let tot := g.fold (init := 0) fun a _ v => a + v.size
       let mx := g.fold (init := 0) fun a _ v => max a v.size
@@ -511,7 +584,7 @@ segidx={t3b - t3}ms cands={t5 - t4}ms full={t6 - t5}ms"
     match bld with
     | some b => IO.println (stat "building-grid" b.grid)
     | none => pure ()
-    return 0
+    return (0 : UInt32)
 
 /-- The certified rail shortest-path as a pure result: any returned path is
 theorem-backed (`dijkstraC_correct`); a certification failure degrades to

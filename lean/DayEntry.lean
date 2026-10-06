@@ -613,6 +613,21 @@ private def patchRT (p : Verified.Geo.WalkAnnotate.WalkPatch) : Bool :=
 #guard patchRT (.smoothed #[{ lat := -0.0, lon := 0.1, ts := 0 }] #[])
 #guard patchRT (.plain none #[("A", 1)])
 
+/-- One matcher call's input, quantised as the matcher sees it, in the shape
+`verified_cli matchprof` reads (`parseMatch` in `ServeEntry`). -/
+private def matchInputJson (fixes : Array Verified.Geo.PathPt)
+    (ways : Array Verified.Geo.OsmCorridor.Way)
+    (buildings : Array Verified.Geo.WalkEscape.Ring) : String :=
+  open Verified.Geo.WalkMatchAdapt in
+  let pt := fun (p : Verified.Geo.QPt) => Json.arr #[Lean.toJson p.la, Lean.toJson p.lo, Lean.toJson p.ts]
+  let ll := fun (p : Verified.Geo.QPt) => Json.arr #[Lean.toJson p.la, Lean.toJson p.lo]
+  (Json.mkObj [
+    ("fixes", Json.arr (fixes.map fun f => pt (pathPtToQ f))),
+    ("ways", Json.arr ((waysToQ ways).map fun w =>
+      Json.mkObj (("coords", Json.arr (w.coords.map ll)) ::
+        match w.name with | some n => [("name", Json.str n)] | none => []))),
+    ("buildings", Json.arr ((ringsToQ buildings).map fun r => Json.arr (r.map ll)))]).compress
+
 private def parseEnv (j : Json) : Except String Env := do
   let namer ← namerOf j
   let homeTz ← (← j.getObjVal? "homeTz").getStr?
@@ -661,7 +676,11 @@ private def parseEnv (j : Json) : Except String Env := do
       -- The real pedestrian matcher, through the quantisation adapter
       -- (`Verified.Geo.WalkMatchAdapt`). It draws NOTHING without ways, so a
       -- host that declines `walkableRoads` gets the raw leg back.
-      matcher := Verified.Geo.WalkMatchAdapt.matcher
+      -- Each solver leaf is timed under `walk.<leaf>`, so a slow walkMatch
+      -- pass says WHICH solver took the time (#1921).
+      matcher := fun fixes ways buildings => DayEntry.Host.timed "walk.matcher" fun _ =>
+        DayEntry.Host.dump "match" (fun _ => matchInputJson fixes ways buildings)
+          (Verified.Geo.WalkMatchAdapt.matcher fixes ways buildings)
       -- The four smoothing/correction leaves. Every one of them was ALREADY
       -- PORTED — `WalkSmooth.reconstructWalk`, `WalkSmooth.refineMatchedPath`,
       -- `WalkEscape.correctWalkPath`, `WalkEscape.snapPassages` — and each
@@ -675,15 +694,16 @@ private def parseEnv (j : Json) : Except String Env := do
       -- to `walkSmoothedPath`. Both were THESE stubs: the corrector attaching a
       -- changed raw line, and the reconstruction swap claiming a leg. Neither
       -- was the matcher and neither was the orchestrator.
-      reconstruct := fun fixes ways buildings ev =>
+      reconstruct := fun fixes ways buildings ev => DayEntry.Host.timed "walk.reconstruct" fun _ =>
         Verified.Geo.WalkSmooth.reconstructWalk fixes ways buildings {} ev
-      refineMatched := fun fixes base => Verified.Geo.WalkSmooth.refineMatchedPath fixes base
+      refineMatched := fun fixes base => DayEntry.Host.timed "walk.refine" fun _ =>
+        Verified.Geo.WalkSmooth.refineMatchedPath fixes base
       -- The diagnostics arm of `correctWalkPath` is `WALK_CORRECT_DIAG=1` on the
       -- TS side — a debug side channel that decides nothing, which is why the
       -- `Env` field never modelled it and why dropping `.2` here is not a loss.
       -- `stepBudgetM := none` is the TS's `correctOpts = undefined`: the same
       -- defaults with the budget invariant switched off, not a budget of zero.
-      correct := fun drawn ways buildings budget =>
+      correct := fun drawn ways buildings budget => DayEntry.Host.timed "walk.correct" fun _ =>
         (Verified.Geo.WalkEscape.correctWalkPath drawn ways buildings
           { stepBudgetM := budget }).1
       -- A walk's remembered result (#1921). Only the serving host keeps
@@ -691,7 +711,7 @@ private def parseEnv (j : Json) : Except String Env := do
       memoGet := fun key => DayEntry.Host.askAs "memo.walkGet" key parseWalkPatch
       memoPut := fun key patch =>
         DayEntry.Host.tell "memo.walkPut" (key ++ "|" ++ (walkPatchJson patch).compress) patch
-      snapPassages := fun drawn ways buildings =>
+      snapPassages := fun drawn ways buildings => DayEntry.Host.timed "walk.snapPassages" fun _ =>
         Verified.Geo.WalkEscape.snapPassages drawn ways buildings }
     -- Computed, not injected, as of #430 — see `Verified.Geo.BestPlace`.
     bestPlace := fun lat lon s e m => namer.name lat lon (some (s, e, m)) false

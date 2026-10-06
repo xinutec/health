@@ -207,6 +207,46 @@ theorem isqrt_le {k n : Nat} (h : n < (k + 1) * (k + 1)) : isqrt n ≤ k :=
 theorem isqrt_le_isqrt {m n : Nat} (h : m ≤ n) : isqrt m ≤ isqrt n :=
   le_isqrt (Nat.le_trans (isqrt_isSqrt m).1 h)
 
+/-- `isqrt`, compiled: the hardware square root as a GUESS, checked against the
+bracket `IsSqrt` in exact `Nat` arithmetic, and `isqrt`'s own descent when the
+guess misses (a sum past 2^53 rounds in the `Float`, or a float `sqrt` is off by
+one). The bracket pins the value (`IsSqrt.unique`), so this IS `isqrt` — the
+float is never trusted, only tried. Newton from the power-of-two seed cost ~4
+big divisions and a `log2` per call, and `qDist` is called several times per
+graph edge (#1921). -/
+def isqrtFast (n : Nat) : Nat :=
+  -- Past 2^53 the conversion rounds `n`, so the guess can be off by one either
+  -- way (µm² of a 100 m distance is already 10^16); both neighbours are tried
+  -- before the descent.
+  let r := (Float.sqrt n.toFloat).toUInt64.toNat
+  if r * r ≤ n ∧ n < (r + 1) * (r + 1) then r
+  else if (r + 1) * (r + 1) ≤ n ∧ n < (r + 1 + 1) * (r + 1 + 1) then r + 1
+  else if 1 ≤ r ∧ (r - 1) * (r - 1) ≤ n ∧ n < r * r then r - 1
+  else isqrt n
+
+@[csimp] theorem isqrt_eq_fast : @isqrt = @isqrtFast := by
+  funext n
+  simp only [isqrtFast]
+  split
+  · rename_i h
+    exact IsSqrt.unique (isqrt_isSqrt n) ⟨h.1, h.2⟩
+  · split
+    · rename_i h
+      exact IsSqrt.unique (isqrt_isSqrt n) ⟨h.1, h.2⟩
+    · split
+      · rename_i h
+        have e : (Float.sqrt n.toFloat).toUInt64.toNat - 1 + 1
+            = (Float.sqrt n.toFloat).toUInt64.toNat := by omega
+        exact IsSqrt.unique (isqrt_isSqrt n) ⟨h.2.1, by rw [e]; exact h.2.2⟩
+      · rfl
+
+-- The three fast arms and the descent agree on both sides of 2^53.
+#guard isqrtFast 0 == 0 && isqrtFast 1 == 1 && isqrtFast 2 == 1 && isqrtFast 3 == 1
+#guard isqrtFast 4 == 2 && isqrtFast 99 == 9 && isqrtFast 100 == 10
+#guard isqrtFast (10 ^ 18) == 10 ^ 9 && isqrtFast (10 ^ 18 - 1) == 10 ^ 9 - 1
+#guard isqrtFast (2 ^ 62 + 12345) == isqrt (2 ^ 62 + 12345)
+#guard (List.range 2000).all fun k => let n := 9007199254740993 + k * 7919; isqrtFast n == isqrt n
+
 /-- The one wide multiply inside `cosQ`: `|la| · 19190098069` reaches ≈ 2⁶³
 (for a real latitude `|la| ≤ 9·10⁸`), which tips `Nat` off its unboxed range
 and onto a GMP bignum on every call — the dominant matcher hotspot. Done in

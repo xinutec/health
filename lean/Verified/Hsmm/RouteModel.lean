@@ -64,7 +64,7 @@ def edgeCells (e : RouteEdge) : List (Int × Int) :=
 /-- Build the spatial (cell) + adjacency (node→edges) indices from parsed edges. -/
 def buildRouteGraphModel (edges : Array RouteEdge) : RouteGraphModel :=
   let cellIndex := (List.finRange edges.size).foldl (fun idx i =>
-    (edgeCells edges[i]).foldl (fun idx c => idx.insert c ((idx.getD c #[]).push i)) idx) {}
+    (edgeCells edges[i]).foldl (fun idx c => idx.alter c fun o => some ((o.getD #[]).push i)) idx) {}
   let nodeEdges := (List.finRange edges.size).foldl (fun ne i =>
     let e := edges[i]
     let ne := ne.insert e.startNode (appendDistinct (ne.getD e.startNode []) e.id)

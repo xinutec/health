@@ -165,7 +165,9 @@ def mkWaySegmentGrid (ways : Ways) (maxQueryM : Float) : WaySegmentGrid := Id.ru
       while cy <= hiLat do
         let mut cx := loLon
         while cx <= hiLon do
-          buckets := buckets.insert (cy, cx) ((buckets.getD (cy, cx) #[]).push (a, b))
+          -- `alter`, not `insert (getD … |>.push …)`: the latter holds a second
+          -- reference to the bucket while pushing, so every push copies it.
+          buckets := buckets.alter (cy, cx) fun o => some ((o.getD #[]).push (a, b))
           cx := cx + 1
         cy := cy + 1
   return { buckets, cellLat, cellLon, maxQueryM }
