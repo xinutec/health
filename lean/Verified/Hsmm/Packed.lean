@@ -40,12 +40,12 @@ parse*) would dominate the whole decode. -/
 /-- Emission magnitude bound, `2^49`. Emissions carry the model's soft-`-∞`
 penalty cells (measured ≈2^48.3 on real days ×2²⁰-quantised) and are the one
 tensor a path pays every minute. -/
-def pEB : Nat := 562949953421312
+@[noinline] def pEB : Nat := 562949953421312
 #guard pEB = 2 ^ 49
 
 /-- Magnitude bound for every other tensor (trans/dur/init/entry), `2^45`
 (measured ≈2^24 on real days). -/
-def pOB : Nat := 35184372088832
+@[noinline] def pOB : Nat := 35184372088832
 #guard pOB = 2 ^ 45
 
 /-- Day-length bound: `T ≤ pTMax` keeps every accumulated cell below

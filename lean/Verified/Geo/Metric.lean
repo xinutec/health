@@ -247,6 +247,20 @@ def isqrtFast (n : Nat) : Nat :=
 #guard isqrtFast (2 ^ 62 + 12345) == isqrt (2 ^ 62 + 12345)
 #guard (List.range 2000).all fun k => let n := 9007199254740993 + k * 7919; isqrtFast n == isqrt n
 
+/-- `cosMul`'s two constants — `round(π/180 · 2^40)` and `2^20 · 10^7` — by name.
+
+⚠ `@[noinline]`, and that is the point of the definitions: a `def` whose body
+is a bare literal is inlined back into every caller, and the C emitter spells
+a `Nat` or `UInt64` literal ≥ 2^32 as a GMP string parse (`lean_cstr_to_nat`)
+on EVERY evaluation. `cosQ` paid two per bridge pair (sampled 2026-10-06);
+`Hsmm.pOff` carries the attribute for the same reason. Oracle: grep
+`lean_cstr_to_nat(` in `.lake/build/ir/<Module>.c` outside `_init_`. -/
+@[noinline] def COS_K : UInt64 := 19190098069
+@[noinline] def COS_D : UInt64 := 10485760000000
+@[noinline] def COS_K_N : Nat := 19190098069
+@[noinline] def COS_D_N : Nat := 10485760000000
+
+
 /-- The one wide multiply inside `cosQ`: `|la| · 19190098069` reaches ≈ 2⁶³
 (for a real latitude `|la| ≤ 9·10⁸`), which tips `Nat` off its unboxed range
 and onto a GMP bignum on every call — the dominant matcher hotspot. Done in
@@ -255,11 +269,11 @@ and allocation-free; past that bound it falls back to `Nat` so the value is
 unconditionally the same (`cosMul_eq`). -/
 @[inline] def cosMul (la : Int) : Nat :=
   if la.natAbs ≤ 900000000 then
-    (la.natAbs.toUInt64 * 19190098069 / 10485760000000).toNat
-  else la.natAbs * 19190098069 / 10485760000000
+    (la.natAbs.toUInt64 * COS_K / COS_D).toNat
+  else la.natAbs * COS_K_N / COS_D_N
 
 theorem cosMul_eq (la : Int) : cosMul la = la.natAbs * 19190098069 / 10485760000000 := by
-  unfold cosMul
+  unfold cosMul COS_K COS_D COS_K_N COS_D_N
   split
   · next h =>
     have hn : la.natAbs < 18446744073709551616 := by omega

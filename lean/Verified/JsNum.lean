@@ -46,19 +46,29 @@ structure Decomposed where
   e : Int
   deriving Repr, BEq
 
+/-- The IEEE-754 fraction mask (2^52 − 1) and implicit bit (2^52), by name:
+`@[noinline]` for the reason `Verified.Geo.COS_K` states — a bare literal this
+wide is a GMP parse per call, and `decompose` runs under every `toFixed` key
+the walk graph builds. -/
+@[noinline] def FRAC_MASK : UInt64 := 0xFFFFFFFFFFFFF
+@[noinline] def IMPLICIT_BIT : Nat := 0x10000000000000
+
+
 /-- Split a double into `(sign, m, e)` with `|x| = m · 2^e`. Meaningful only for
     finite `x`; callers check first (`toFixed` handles NaN and ±∞ before
     reaching here). -/
 def decompose (x : Float) : Decomposed :=
-  let bits := x.toBits.toNat
+  -- `UInt64` until the fields are read out: a negative double's bits are
+  -- ≥ 2^63, which as a `Nat` is a GMP bignum for every shift and mask.
+  let bits := x.toBits
   let neg := bits >>> 63 == 1
-  let expo := (bits >>> 52) &&& 0x7FF
-  let frac := bits &&& 0xFFFFFFFFFFFFF
+  let expo := ((bits >>> 52) &&& 0x7FF).toNat
+  let frac := (bits &&& FRAC_MASK).toNat
   if expo == 0 then
     -- Subnormal: no implicit leading bit, fixed exponent.
     { neg, m := frac, e := -1074 }
   else
-    { neg, m := frac + 0x10000000000000, e := Int.ofNat expo - 1075 }
+    { neg, m := frac + IMPLICIT_BIT, e := Int.ofNat expo - 1075 }
 
 /-! ## `Math.round`
 
