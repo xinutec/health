@@ -97,6 +97,13 @@ structure WalkGraph where
     load-bearing: it fixes graph-node numbering and breaks nearest-edge ties. -/
 abbrev Ways := Array (Array Pt)
 
+/-- Shortest edge the graph keeps (m) — module-level, not inline: a float
+    literal in a loop body is rebuilt by `Float.ofScientific` on every pass
+    (see `JsNum.toFixedN`). -/
+private def MIN_EDGE_M : Float := 1e-3
+/-- Below this a backtracked vertex coincides with the previous one (m). -/
+private def DEDUPE_M : Float := 0.5
+
 /-- Build the walkable graph: one node per distinct way coordinate, an
     undirected edge per consecutive pair. Ways connect where they share a
     junction coordinate — `toFixed(7)` equality, ported exactly in
@@ -137,7 +144,7 @@ def buildWalkGraph (ways : Ways) : WalkGraph := Id.run do
             have hab := hn.2.2.2
             -- The FUSED node coordinates, not the way's raw ones.
             let d := metersBetween nodes[a] nodes[b]
-            if d ≥ 1e-3 then
+            if d ≥ MIN_EDGE_M then
               -- Dedupe: ways can overlap on a shared stretch.
               if !(adj[a].any (fun e => e.1 == b)) then adj := adj.set a (adj[a].push (b, d)) haa
               if hab' : b < adj.size then
@@ -376,7 +383,7 @@ def routeOnWalkableIn (graph : WalkGraph) (a b : Pt) (ways : Ways) (opts : Route
   for p in path do
     let keep := match out.back? with
       | none => true
-      | some prevPt => metersBetween prevPt p > 0.5
+      | some prevPt => metersBetween prevPt p > DEDUPE_M
     if keep then out := out.push p
   return if out.size ≥ 2 then some out else none
 

@@ -169,6 +169,11 @@ private def NearGrid.probe (g : NearGrid) (key : Nat) (p : Pt) (best : Float) : 
       | none => pure ()
     return best
 
+/-- The ring at which no unscanned cell can hold a closer chord, in cells
+    short of `k` — module-level, since a literal in the loop body is rebuilt
+    by `Float.ofScientific` on every pass (see `JsNum.toFixedN`). -/
+private def RING_STOP_MARGIN : Float := 1.5
+
 /-- Exact `min(distance to nearest chord, clampM)`. Rings are scanned outward
     until no unscanned chord can beat the best projection found. -/
 def NearGrid.nearestDist (g : NearGrid) (lat lon : Float) (clampM : Float := posInf) : Float :=
@@ -188,7 +193,7 @@ def NearGrid.nearestDist (g : NearGrid) (lat lon : Float) (clampM : Float := pos
     let mut best := posInf
     for kn in [minK.toNat:maxK.toNat + 1] do
       let k : Int := Int.ofNat kn
-      if (Float.ofInt k - 1.5) * g.cellM ≥ min best clampM then break
+      if (Float.ofInt k - RING_STOP_MARGIN) * g.cellM ≥ min best clampM then break
       -- Cells at Chebyshev distance exactly k, INTERSECTED with the occupied
       -- box. Clipping is what bounds the work: a ring at distance k has 8k
       -- cells, so a far probe walking whole rings stays quadratic in the

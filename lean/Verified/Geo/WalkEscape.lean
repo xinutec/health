@@ -54,6 +54,16 @@ private def jsSign (x : Float) : Float :=
 /-- A closed building footprint ring (the last→first edge is implicit). -/
 abbrev Ring := Array Pt
 
+/-! Float literals used inside loop bodies, as module-level cells: a literal in
+a loop body is rebuilt by `Float.ofScientific` on every pass (see
+`JsNum.toFixedN`), and these loops run per 2 m sample of every leg. -/
+private def ONE : Float := 1
+private def TWO : Float := 2
+private def THREE : Float := 3
+private def HALF : Float := 0.5
+/-- Side of a footprint-index cell (degrees). -/
+private def RING_CELL_DEG : Float := 0.0005
+
 
 /-- A drawn walk vertex (`CorrectedPoint`) — the shared drawn-path vertex. -/
 abbrev TPt := Verified.Geo.PathPt
@@ -310,7 +320,7 @@ structure RingCtx where
       linear scans would test (`cellDeg` is in degrees, as the boxes are; no
       metre enters). A box with a non-finite bound (an empty ring) or one too
       large to file goes to `unfiled`, which every query also reads. -/
-  cellDeg : Float := 0.0005
+  cellDeg : Float := RING_CELL_DEG
   grid : Std.HashMap (Int × Int) (Array Nat) := {}
   unfiled : Array Nat := #[]
   deriving Inhabited
@@ -349,7 +359,7 @@ def ringBoxes (buildings : Array Ring) (expandM : Float) : Array Box :=
 def RingCtx.ofRings (buildings : Array Ring) (expandM : Float) : RingCtx := Id.run do
   let footprints : Array Footprint :=
     (buildings.zip (ringBoxes buildings expandM)).map fun (ring, box) => { ring, box }
-  let cellDeg : Float := 0.0005
+  let cellDeg := RING_CELL_DEG
   let mut grid : Std.HashMap (Int × Int) (Array Nat) := {}
   let mut unfiled : Array Nat := #[]
   for i in [0:footprints.size] do
@@ -444,7 +454,7 @@ def nearBuilding (p : Pt) (ctx : BadnessCtx) : Bool := Id.run do
 
 /-- `Math.max(1, Math.ceil(x))` as both the float divisor and the loop count. -/
 private def sampleSteps (x : Float) : Float × Nat :=
-  let f := max 1 (Float.ceil x)
+  let f := max ONE (Float.ceil x)
   (f, f.toUInt64.toNat)
 
 /--
@@ -461,10 +471,10 @@ Open-ground samples (off-network, no buildings near) contribute nothing.
 def segBadnessM (a b : Pt) (ctx : BadnessCtx) : Float := Id.run do
   let segLen := metersBetween a b
   if segLen == 0 || ctx.ring.footprints.isEmpty then return 0
-  let (stepsF, stepsN) := sampleSteps (segLen / 2)
+  let (stepsF, stepsN) := sampleSteps (segLen / TWO)
   let mut bad := 0.0
   for k in [0:stepsN] do
-    let f := (k.toFloat + 0.5) / stepsF
+    let f := (k.toFloat + HALF) / stepsF
     let mid : Pt := ⟨a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f⟩
     if insideBuildingCtx mid ctx.ring then
       if !ctx.grid.within mid ctx.opts.onWayM then bad := bad + segLen / stepsF
@@ -1042,7 +1052,7 @@ def snapPassagesIn (ctx : BadnessCtx) (pts : Array TPt) : Array TPt := Id.run do
       let a := pts[i - 1]
       let b := pts[i]
       let segLen := metersBetween a.pt b.pt
-      let (stepsF, stepsN) := sampleSteps (segLen / 2)
+      let (stepsF, stepsN) := sampleSteps (segLen / TWO)
       -- A line that merely nicks a footprint corner beside the pavement must
       -- not be yanked onto the way.
       let mut insideM := 0.0
@@ -1052,7 +1062,7 @@ def snapPassagesIn (ctx : BadnessCtx) (pts : Array TPt) : Array TPt := Id.run do
         if insideBuildingCtx mid ctx.ring && ctx.grid.within mid ctx.opts.onWayM then
           insideM := insideM + segLen / (stepsF + 1)
       if insideM ≥ ctx.opts.minCrossingM then
-        let (nF, nN) := sampleSteps (segLen / 3)
+        let (nF, nN) := sampleSteps (segLen / THREE)
         let mut snapped : Array TPt := #[]
         let mut coherent := true
         let mut wayIdx : Int := -1

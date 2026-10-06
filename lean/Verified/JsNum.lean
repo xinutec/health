@@ -106,6 +106,15 @@ def toFixedNExact (x : Float) (f : Nat) : Nat :=
     -- and flooring then lands on the LARGER candidate, as the spec requires.
     (2 * n + den) / (2 * den)
 
+/-! ⚠ A float literal inside a branch or a loop body is NOT hoisted by the
+compiler: it compiles to a `Float.ofScientific` call — big-integer shifts and
+a GMP allocation — on every pass (a quarter of `toFixedN`'s time, #1921; read
+the generated C for `l_Float_ofScientific(` inside the function). A module-level
+`def` compiles to one cell, filled once. -/
+private def TEN_POW_7 : Float := 10000000.0
+private def HALF : Float := 0.5
+private def TIE_BAND : Float := 1e-6
+
 /-- `toFixedNExact`, with a floating-point fast path for the coordinate case
 (`f = 7`, `|x| < 200`). There `y = |x|·10⁷ < 2³¹`, so the product is within
 2.2·10⁻⁷ of the exact one and `y + 0.5` is exact; away from a tie — `y`'s
@@ -115,9 +124,9 @@ walk graph's dominant cost (#1921): two keys per segment, 33,000 segments on a
 long walk. -/
 def toFixedN (x : Float) (f : Nat) : Nat :=
   if f == 7 && x.abs < 200 then
-    let y := x.abs * 10000000.0
+    let y := x.abs * TEN_POW_7
     let r := y - Float.floor y
-    if Float.abs (r - 0.5) > 1e-6 then (Float.floor (y + 0.5)).toUInt64.toNat
+    if Float.abs (r - HALF) > TIE_BAND then (Float.floor (y + HALF)).toUInt64.toNat
     else toFixedNExact x f
   else toFixedNExact x f
 
