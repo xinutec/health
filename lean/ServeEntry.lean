@@ -566,7 +566,9 @@ private def matchProfMain (input : String) : IO UInt32 := do
     let _ ← IO.lazyPure fun _ =>
       (Verified.Geo.WalkEscape.makeBadnessCtx fways fbld {}).ring.footprints.size
     let t7 ← IO.monoMsNow
-    IO.println s!"badness-ctx={t7 - t6}ms"
+    let _ ← IO.lazyPure fun _ => (Verified.Geo.WalkableRoute.buildWalkGraph fways).nodes.size
+    let t8 ← IO.monoMsNow
+    IO.println s!"badness-ctx={t7 - t6}ms walk-graph={t8 - t7}ms"
     IO.println s!"fixes={fixes.size} ways={ways.size} rings={buildings.size} \
 vertices={graph.vertices.size} segments={graph.segments.size} \
 edges={Verified.Geo.totalOut graph.g} chords={co.chords.size} cands={nCand} \

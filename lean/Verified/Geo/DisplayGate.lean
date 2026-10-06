@@ -151,25 +151,23 @@ def NearGrid.ofTrack (pts : Array Pt) (cellM : Float) : Option NearGrid := Id.ru
   let some p0 := pts[0]? | return none
   return some (NearGrid.ofChords chords cellM p0.lat)
 
-/-- Probe one cell: the min over its not-yet-seen chords, and the updated seen
-    set. -/
-private def NearGrid.probe (g : NearGrid) (key : Nat) (p : Pt) (best : Float)
-    (seen : Std.HashSet Nat) : Float × Std.HashSet Nat := Id.run do
+/-- Probe one cell: the min over its chords. A chord filed in several cells is
+    measured again at the same distance, which a min does not see — so no
+    seen-set (one was carried per query, and `maxPolylineOffRoad` queries every
+    15 m of two lines a leg). -/
+private def NearGrid.probe (g : NearGrid) (key : Nat) (p : Pt) (best : Float) : Float := Id.run do
   match g.buckets[key]? with
-  | none => return (best, seen)
+  | none => return best
   | some bucket =>
     let mut best := best
-    let mut seen := seen
     for i in bucket do
-      if seen.contains i then continue
-      seen := seen.insert i
       -- A bucket holds chord indices; one off the end (unreachable) is skipped.
       match g.chords[i]? with
       | some c =>
         let d := segmentDistM p c.a c.b
         if d < best then best := d
       | none => pure ()
-    return (best, seen)
+    return best
 
 /-- Exact `min(distance to nearest chord, clampM)`. Rings are scanned outward
     until no unscanned chord can beat the best projection found. -/
@@ -188,7 +186,6 @@ def NearGrid.nearestDist (g : NearGrid) (lat lon : Float) (clampM : Float := pos
       max 0 (max (g.minCy - cy) (max (cy - g.maxCy) (max (g.minCx - cx) (cx - g.maxCx))))
     let p : Pt := ⟨lat, lon⟩
     let mut best := posInf
-    let mut seen : Std.HashSet Nat := {}
     for kn in [minK.toNat:maxK.toNat + 1] do
       let k : Int := Int.ofNat kn
       if (Float.ofInt k - 1.5) * g.cellM ≥ min best clampM then break
@@ -206,15 +203,13 @@ def NearGrid.nearestDist (g : NearGrid) (lat lon : Float) (clampM : Float := pos
         if yLo ≤ g.maxCy then
           for xi in [0:xCount] do
             let x := xFrom + Int.ofNat xi
-            let (b1, s1) := g.probe (cellKeyN yLo x) p best seen
-            best := b1; seen := s1
+            best := g.probe (cellKeyN yLo x) p best
       if kn > 0 then
         if yHi ≥ g.minCy then
           if yHi ≤ g.maxCy then
             for xi in [0:xCount] do
               let x := xFrom + Int.ofNat xi
-              let (b2, s2) := g.probe (cellKeyN yHi x) p best seen
-              best := b2; seen := s2
+              best := g.probe (cellKeyN yHi x) p best
       let yFrom := max (yLo + 1) g.minCy
       let yTo := min (yHi - 1) g.maxCy
       let yCount := (yTo - yFrom + 1).toNat
@@ -223,11 +218,9 @@ def NearGrid.nearestDist (g : NearGrid) (lat lon : Float) (clampM : Float := pos
       for yi in [0:yCount] do
         let y := yFrom + Int.ofNat yi
         if leftInBox then
-          let (b1, s1) := g.probe (cellKeyN y (cx - k)) p best seen
-          best := b1; seen := s1
+          best := g.probe (cellKeyN y (cx - k)) p best
         if rightInBox then
-          let (b2, s2) := g.probe (cellKeyN y (cx + k)) p best seen
-          best := b2; seen := s2
+          best := g.probe (cellKeyN y (cx + k)) p best
     return min best clampM
 
 /-! ## Off-network metrics -/

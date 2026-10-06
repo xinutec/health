@@ -694,14 +694,14 @@ def WalkGrid.nearest (g : WalkGrid) (px py maxR : Float) : Option NearSeg := Id.
   let mut bestSeg : Int := -1
   -- The winning segment's endpoints, carried so the tangent needs no re-read.
   let mut bestQuad := (0.0, 0.0, 0.0, 0.0)
-  let mut seen : Std.HashSet Nat := {}
+  -- A segment filed in several cells is met again at the same distance; the
+  -- strict `<` keeps the first, so no seen-set is needed (one was allocated
+  -- per lookup, thousands of lookups a leg).
   let mut cx := cx0 - R
   while cx ≤ cx0 + R do
     let mut cy := cy0 - R
     while cy ≤ cy0 + R do
       for i in g.segCells.getD (gridKey cx cy) #[] do
-        if !seen.contains i then
-          seen := seen.insert i
           -- The cell index holds only segments the table has.
           let some q@(ax, ay, qbx, qby) := g.segAt i | continue
           let p := projMetric px py ax ay qbx qby
@@ -751,14 +751,13 @@ def WalkGrid.clearanceTarget (g : WalkGrid) (px py clearM : Float) : Option Clea
   let mut wx := 0.0
   let mut wy := 0.0
   let mut found := false
-  let mut seen : Std.HashSet Nat := {}
+  -- No seen-set: a ring met twice gives the same `inside` and cannot beat its
+  -- own distance under the strict `<`.
   let mut cx := cx0 - 1
   while cx ≤ cx0 + 1 do
     let mut cy := cy0 - 1
     while cy ≤ cy0 + 1 do
       for r in g.ringCells.getD (gridKey cx cy) #[] do
-        if !seen.contains r then
-          seen := seen.insert r
           -- The cell index holds only rings the table has.
           let some ring := g.rings[r]? | continue
           let pts := ring.pts
@@ -794,14 +793,13 @@ def WalkGrid.ringContaining (g : WalkGrid) (px py : Float) : Int := Id.run do
   let c := g.cell
   let cx0 := floorInt (px / c)
   let cy0 := floorInt (py / c)
-  let mut seen : Std.HashSet Nat := {}
+  -- No seen-set: a ring that contains the point returns at its first cell; one
+  -- that does not fails again at its next.
   let mut cx := cx0 - 1
   while cx ≤ cx0 + 1 do
     let mut cy := cy0 - 1
     while cy ≤ cy0 + 1 do
       for r in g.ringCells.getD (gridKey cx cy) #[] do
-        if !seen.contains r then
-          seen := seen.insert r
           let some ring := g.rings[r]? | continue
           if !(px < ring.minx || px > ring.maxx || py < ring.miny || py > ring.maxy) then
             if ringContains ring.pts px py then return Int.ofNat r
