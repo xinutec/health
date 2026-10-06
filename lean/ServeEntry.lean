@@ -1317,6 +1317,9 @@ private def assembleSegmentsResult (j : Json) : Json :=
                     ("segIndex", Lean.toJson leg.segIndex),
                     ("decodedLine", Json.str leg.decodedLine),
                     ("startTs", Lean.toJson leg.startTs), ("endTs", Lean.toJson leg.endTs),
+                    ("sides", Json.arr (leg.sides.map fun sd => Json.mkObj [
+                      ("line", Json.str sd.line), ("side", Json.str sd.side), ("name", Json.str sd.name),
+                      ("nodeId", Json.str sd.nodeId), ("anchorPen", Lean.toJson sd.anchorPen)])),
                     ("pairs", Json.arr (leg.pairs.zipIdx.map fun (p, k) =>
                       Json.mkObj [
                         ("line", Json.str p.line),

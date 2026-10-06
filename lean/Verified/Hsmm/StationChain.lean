@@ -507,7 +507,16 @@ def alightAnchor (obs : Array ObsRow) (lastIdx : Nat) (legEndTs : Int) : Option 
 structure SideCandidate where
   node : ChainNode
   anchorPenalty : Float
+  /-- The node sits on one of the line's own edges, so its footprint seeds
+      itself and an along-line path exists. See `admitCand`. -/
+  onLine : Bool := false
   deriving Inhabited, Repr
+
+/-- Does one of the node's own edges carry the line? -/
+def nodeOnLine (g : ChainGraph) (line : String) (n : ChainNode) : Bool :=
+  n.edgeIds.any fun eid => match g.edgeById.get? eid with
+    | some e => e.lineMemberships.contains line
+    | none => false
 
 /-- A name→candidate map that remembers INSERTION order, mirroring the JS `Map`
     the TS builds. Updating an existing name must NOT move it, which is exactly
@@ -521,16 +530,29 @@ private def byNameEmpty : ByName := ⟨#[], {}⟩
 private def byNameOut (st : ByName) : Array SideCandidate :=
   st.order.filterMap (fun name => st.best.get? name)
 
-/-- Keep the BEST-scoring node per station name. Penalties are ≤ 0, so "greater"
-    is "closer to the anchor"; the comparison is STRICT, so a later node tying
-    the incumbent does not displace it and the name keeps its first position. -/
-private def admitCand (st : ByName) (node : ChainNode) (p : Float) : ByName :=
+/-- Keep the BEST node per station name: ON THE LINE first, then closest to
+    the anchor. Penalties are ≤ 0, so "greater" is "closer"; the comparison is
+    STRICT, so a later node tying the incumbent does not displace it and the
+    name keeps its first position.
+
+    ⚠ ON THE LINE FIRST (#238, 2026-10-06). A station is several OSM nodes, and
+    the one nearest the anchor can be the complex's own point with no edge at
+    all. Its footprint then needs a line endpoint within `STATION_FOOTPRINT_M`,
+    and when none is, the pair is dropped for want of a path — while a node of
+    the same name ON the line, a few metres further from the anchor, would have
+    seeded itself. 06-09: "King's Cross St Pancras" was admitted on the alight
+    side at a better anchor penalty than the mainline-named node beside it and
+    formed no pair; the ride then alighted "London King's Cross" and paid
+    `NOT_SERVED_PENALTY`. -/
+private def admitCand (st : ByName) (node : ChainNode) (p : Float) (onLine : Bool := false) : ByName :=
   match node.stationName with
   | none => st
   | some name =>
     match st.best.get? name with
-    | some prev => if p > prev.anchorPenalty then { st with best := st.best.insert name ⟨node, p⟩ } else st
-    | none => { order := st.order.push name, best := st.best.insert name ⟨node, p⟩ }
+    | some prev =>
+      let better := (onLine && !prev.onLine) || (onLine == prev.onLine && p > prev.anchorPenalty)
+      if better then { st with best := st.best.insert name ⟨node, p, onLine⟩ } else st
+    | none => { order := st.order.push name, best := st.best.insert name ⟨node, p, onLine⟩ }
 
 /-- Stations on `line` admissible for one side of a leg, scored against the
     anchor and DEDUPED BY NAME — one real station is several OSM nodes
@@ -552,13 +574,14 @@ def sideCandidates (g : ChainGraph) (line : String) (anchor : Option Anchor)
       g.nodes.foldl (fun st n =>
         match n.stationName with
         | none => st
-        | some _ => if (stationLineMemberships g n).contains line then admitCand st n 0 else st)
+        | some _ => if (stationLineMemberships g n).contains line then admitCand st n 0 (nodeOnLine g line n) else st)
         byNameEmpty
     | some a =>
       let radius := CAND_BASE_RADIUS_M + a.pace * a.slopMin
       (stationsNear g a.lat a.lon radius).foldl (fun st nd =>
         if (stationLineMemberships g nd.1).contains line then
           admitCand st nd.1 (slopZPenalty nd.2 STATION_SIGMA_M a.slopMin ANCHOR_CLAMP a.pace)
+            (nodeOnLine g line nd.1)
         else st) byNameEmpty
   -- Descending by penalty, STABLY: `mergeSort` is left-biased on `≤`, so ties
   -- keep the graph order the dedupe left them in — the same guarantee V8 gives
@@ -580,7 +603,7 @@ def sideCandidates (g : ChainGraph) (line : String) (anchor : Option Anchor)
           | none => 0
           | some a =>
             slopZPenalty (haversineMeters a.lat a.lon n.lat n.lon) STATION_SIGMA_M a.slopMin ANCHOR_CLAMP a.pace
-        { order := st.order.push name, best := st.best.insert name ⟨n, p⟩ }) capped)
+        { order := st.order.push name, best := st.best.insert name ⟨n, p, nodeOnLine g line n⟩ }) capped)
 
 /-! ## Trajectory: the fixes' own vote, projected onto the line's track -/
 
@@ -735,6 +758,18 @@ structure PairCandidate where
   passPen : Float := 0
   deriving Inhabited, Repr
 
+/-- One side's admitted candidates for one line, for the chain debug: the
+    station name, the node the per-name dedupe kept, and its anchor penalty.
+    A candidate here that forms no pair was dropped by the pair filters
+    (same name, no along-line path, or a path under `MIN_PATH_M`). -/
+structure SideDebug where
+  line : String
+  side : String
+  name : String
+  nodeId : String
+  anchorPen : Float
+  deriving Inhabited, Repr
+
 structure ChainLeg where
   segIndex : Nat
   startTs : Int
@@ -742,6 +777,9 @@ structure ChainLeg where
   pairs : Array PairCandidate
   /-- The line the decoder labelled this leg with. -/
   decodedLine : String := ""
+  /-- Every admitted candidate per line and side (debug only; read by nothing
+      that decides). -/
+  sides : Array SideDebug := #[]
   deriving Inhabited, Repr
 
 structure ResolvedStations where
@@ -848,7 +886,11 @@ private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (S
               legScore := b.anchorPen + b.dwellPen + (b.trajPen.getD 0) + b.servedPen
                 + a.anchorPen + a.dwellPen + (a.trajPen.getD 0) + a.servedPen
                 + durPen + passPen }) acc) #[]
-  { segIndex, startTs := seg.startTs, endTs := seg.endTs, pairs, decodedLine := line }
+  let sideDbg := fun (tag : String) (cs : Array SideCandidate) => cs.map fun c =>
+    ({ line, side := tag, name := c.node.stationName.getD "", nodeId := c.node.id,
+       anchorPen := c.anchorPenalty } : SideDebug)
+  { segIndex, startTs := seg.startTs, endTs := seg.endTs, pairs, decodedLine := line,
+    sides := sideDbg "board" boards ++ sideDbg "alight" alights }
 
 /-- `buildLegOn` for the decoded line, then for each alternative in order — the
     decoded line's pairs FIRST, so the first-wins argmax keeps it on a tie. -/
@@ -861,8 +903,9 @@ private def buildLeg (g : ChainGraph) (obs : Array ObsRow)
   let own := buildLegOn g obs (servedFor line) (stopsFor line) segIndex seg line firstIdx lastIdx prev next
   altLines.foldl (fun leg alt =>
     if alt == line then leg
-    else { leg with pairs := leg.pairs ++
-      (buildLegOn g obs (servedFor alt) (stopsFor alt) segIndex seg alt firstIdx lastIdx prev next).pairs }) own
+    else
+      let other := buildLegOn g obs (servedFor alt) (stopsFor alt) segIndex seg alt firstIdx lastIdx prev next
+      { leg with pairs := leg.pairs ++ other.pairs, sides := leg.sides ++ other.sides }) own
 
 /-- Forward Viterbi over pairs. `best = 0` at the chain head is NOT a neutral
     element standing in for an empty max — it is the TS's own initialisation,
