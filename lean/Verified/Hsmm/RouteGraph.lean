@@ -24,7 +24,7 @@ UNPROVEN; pinned by the `#guard`s.
 namespace Verified.Hsmm.RouteGraph
 
 def M_PER_DEG_LAT : Float := 111320
-open Verified.FloatConst (pi)
+open Verified.FloatConst (pi posInf)
 
 /-- Directional suffixes OSM appends to distinguish parallel tracks; the line
     membership is the same either way. Order matters (first match wins). -/
@@ -102,9 +102,15 @@ def pointToSegmentMeters (lat lon : Float) (a b : LatLon) : Float :=
 /-- Min distance (m) from a point to a polyline: the minimum over its segments.
     Empty / single-vertex geometry has no segment → `+∞` (as in TS). -/
 def pointToPolylineMeters (lat lon : Float) (geometry : List LatLon) : Float :=
-  ((geometry.zip (geometry.drop 1)).foldl (fun best (a, b) =>
-    let d := pointToSegmentMeters lat lon a b
-    if d < best then d else best) (1.0 / 0.0))
+  -- One pass carrying the previous vertex: the same segments in the same
+  -- order as zipping the list with its tail, without building that list —
+  -- this runs per edge near a fix, per minute (#1774).
+  match geometry with
+  | [] => posInf
+  | a0 :: rest =>
+    (rest.foldl (fun (acc : Float × LatLon) b =>
+      let d := pointToSegmentMeters lat lon acc.2 b
+      (if d < acc.1 then d else acc.1, b)) (posInf, a0)).1
 
 /-- ULP tolerance for the `hypot` / `cos` wobble (see module header). -/
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-6
@@ -230,8 +236,11 @@ with fewer than two vertices has no leg and measures 0 — unreachable through
 `buildRouteGraph`, which drops such a way before building an edge at all, so
 that arm is stated by the definition rather than pinned against V8. -/
 def geometryLengthM (geom : List LatLon) : Float :=
-  (geom.zip (geom.drop 1)).foldl
-    (fun total (a, b) => total + haversineMeters a.lat a.lon b.lat b.lon) 0
+  match geom with
+  | [] => 0
+  | a0 :: rest =>
+    (rest.foldl (fun (acc : Float × LatLon) b =>
+      (acc.1 + haversineMeters acc.2.lat acc.2.lon b.lat b.lon, b)) (0, a0)).1
 
 -- Parity via `buildRouteGraph`'s published `attrs` (Node/V8).
 private def undergroundOf (tunnel layer covered subway subtype : Option String) : Bool :=
