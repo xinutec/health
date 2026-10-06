@@ -1,5 +1,6 @@
 import Verified.Geo.TubeHop
 import Verified.Geo.LineMembership
+import Verified.FloatConst
 /-!
 # Underground line reconstruction (port of `reconstructUndergroundRun`,
 `src/geo/underground-rail.ts`)
@@ -86,7 +87,7 @@ station: accuracy in `[100, 800]`. A `none` accuracy is NOT coarse. -/
 def isCoarse (f : CoarseFix) : Bool :=
   f.accuracy.any fun a => a ≥ COARSE_ACCURACY_M && a ≤ COARSE_ACCURACY_MAX_M
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 /-- This module's own metric: equirectangular with `cos` taken at the FIRST
 point. The same form as `Verified.Geo.EpisodeGeometry.equirectMeters`, and NOT

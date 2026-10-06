@@ -1,6 +1,7 @@
 import Std.Data.HashMap
 import Verified.JsNum
 import Verified.Hsmm.FloatScore
+import Verified.FloatConst
 /-!
 # Route-graph primitives (implementation-first port of `route-graph.ts`)
 
@@ -23,7 +24,7 @@ UNPROVEN; pinned by the `#guard`s.
 namespace Verified.Hsmm.RouteGraph
 
 def M_PER_DEG_LAT : Float := 111320
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 /-- Directional suffixes OSM appends to distinguish parallel tracks; the line
     membership is the same either way. Order matters (first match wins). -/

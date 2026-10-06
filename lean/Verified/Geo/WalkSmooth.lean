@@ -2,6 +2,7 @@ import Verified.Geo.WalkEscape
 import Std.Data.HashMap
 import Std.Data.HashSet
 import Verified.JsNum
+import Verified.FloatConst
 
 /-!
 # Continuous MAP walk reconstruction (port of `src/geo/walk-smooth-map.ts`)
@@ -39,12 +40,8 @@ open Verified.Geo.WalkableRoute (Pt Ways metersBetween projectPointToSegment)
 open Verified.Geo.WalkEscape (Ring TPt nearestWalkable routeChordAroundBuildings
   routeChordAroundBuildingsIn RingCtx)
 
-private def pi : Float := 3.14159265358979323846
-private def posInf : Float := 1.0 / 0.0
-private def negInf : Float := -1.0 / 0.0
+open Verified.FloatConst (pi posInf negInf orOne floorInt hyp)
 
-/-- JS `x || 1`: zero and NaN are falsy. -/
-private def orOne (x : Float) : Float := if x == 0 || x.isNaN then 1 else x
 /-! Float literals used inside loop bodies and branches, as module-level cells:
 a literal there is rebuilt by `Float.ofScientific` on every pass (see
 `JsNum.toFixedN`), and `projMetric` runs per segment probe of every lookup. -/
@@ -54,8 +51,6 @@ private def FOUR : Float := 4
 /-- Stands in for a zero-length segment's `len2`, so its parameter is finite. -/
 private def EPS_LEN2 : Float := 1e-9
 open Verified.JsNum (jsRound)
-private def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
-private def hyp (x y : Float) : Float := Float.sqrt (x * x + y * y)
 
 /-- The local equirectangular frame (metres) a leg is solved in, anchored at its
     first fix. Both entry points build the same one; it is a structure so the four

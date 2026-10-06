@@ -5,6 +5,7 @@ import Verified.Geo.RefineMode
 import Verified.Geo.StaySplit
 import Verified.Geo.SegmentUtil
 import Verified.JsNum
+import Verified.FloatConst
 /-!
 # Underground run annotation (port of `annotateUndergroundRuns`,
 `src/geo/underground-rail.ts`)
@@ -71,8 +72,7 @@ def RAIL_ARROW : String := "→"
 
 open Verified.JsNum (jsRound)
 
-/-- `?? Infinity` for an absent distance: it loses every comparison. -/
-private def posInf : Float := 1.0 / 0.0
+open Verified.FloatConst (posInf)
 
 /-- Any fix that marks the GPS-dark window — a coarse cell-network fix OR a
 total-loss fix. **No upper bound**, unlike `isCoarse`; see the module note. -/

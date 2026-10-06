@@ -1,6 +1,7 @@
 import Verified.Geo.PathPoint
 import Verified.Hsmm.FloatScore
 import Verified.JsNum
+import Verified.FloatConst
 /-!
 # Segment-list rewrites (port of the pure passes in `src/geo/passes/moving.ts`
 and `src/geo/passes/stays.ts`)
@@ -607,7 +608,7 @@ def planJitterStayRuns (segments : Array Seg) : Array (Nat × Nat) := Id.run do
 
 /-! ## Guards (V8 reference values, `lean/experiments/stay-passes-refs.mts`) -/
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 private def lat0 : Float := 51.52
 private def lon0 : Float := -0.13
 private def mlat : Float := 1 / 111320

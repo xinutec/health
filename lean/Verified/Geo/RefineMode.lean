@@ -1,4 +1,5 @@
 import Verified.Geo.Factors
+import Verified.FloatConst
 /-!
 # The legacy refine-mode cascade (port of `refineModeLegacyCascade`,
 `src/geo/osm.ts`)
@@ -73,7 +74,7 @@ def WALK_NAME_BORROW_MAX_M : Float := 30
 /-- Pace below which a nearby unnamed footway is plausibly the pavement. -/
 def WALK_NAME_BORROW_MAX_KMH : Float := 10
 
-private def posInf : Float := 1.0 / 0.0
+open Verified.FloatConst (posInf)
 
 /-- `w.distanceM ?? Infinity` — an absent distance loses every comparison, which
 is the TS's own reading of a missing measurement. -/

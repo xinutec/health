@@ -1,4 +1,5 @@
 import Verified.Hsmm.Observation
+import Verified.FloatConst
 /-!
 # HMM GPS outlier filter (implementation-first port of `gps-outliers.ts`)
 
@@ -40,7 +41,7 @@ def MAX_DEVIATION_M : Float := 2000
 def MIN_CLUSTER_SIZE : Nat := 5
 
 def M_PER_DEG_LAT : Float := 111320
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 /-- Equirectangular distance (m) — fine at the city scale we filter at. -/
 def approxDistanceMeters (lat1 lon1 lat2 lon2 : Float) : Float :=

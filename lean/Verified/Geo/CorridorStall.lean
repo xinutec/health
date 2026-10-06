@@ -1,4 +1,5 @@
 import Verified.Geo.WalkableRoute
+import Verified.FloatConst
 
 /-!
 # Corridor stall — how far a drawn line travels without advancing along the GPS
@@ -38,10 +39,8 @@ namespace Verified.Geo.CorridorStall
 
 open Verified.Geo.WalkableRoute (Pt metersBetween)
 
-private def posInf : Float := 1.0 / 0.0
+open Verified.FloatConst (posInf hyp pi)
 private def clamp01 (t : Float) : Float := max 0 (min 1 t)
-private def hyp (x y : Float) : Float := Float.sqrt (x * x + y * y)
-private def pi : Float := 3.14159265358979323846
 
 /-- The DP allocates `V*S` floats TWICE (`dist`, `arc`). Above this it declines
 to answer.

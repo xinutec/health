@@ -2,6 +2,7 @@ import Verified.Geo.SegmentMerge
 import Verified.Geo.StaySplit
 import Verified.Hsmm.FloatScore
 import Verified.JsNum
+import Verified.FloatConst
 
 /-!
 # Reversal detection — a ride that doubles back is two rides
@@ -120,7 +121,7 @@ open Shed (PointF)
 open Verified.JsNum (jsRound)
 open Verified.Hsmm.FloatScore (haversineMeters)
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 /-- How far the track must travel either side of a point before its direction is
 worth reading. Under this, platform scatter and a tunnel-mouth reacquire

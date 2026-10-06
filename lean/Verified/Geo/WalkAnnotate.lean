@@ -6,6 +6,7 @@ import Verified.Geo.DisplayGate
 import Verified.Geo.EpisodeGeometry
 import Verified.Geo.BiometricWindows
 import Verified.JsNum
+import Verified.FloatConst
 /-!
 # The walk-annotation pass (port of `annotateWalkMatches`, `pedestrian-match-annotate.ts`)
 
@@ -264,7 +265,7 @@ def STEP_SLACK_RATIO : Float := 1.4
 
 /-! ## Local geometry -/
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 /-- Great-circle metres. NOT `WalkableRoute.metersBetween` — this pass keeps its
 own haversine, as the TS does, and the two disagree beyond the flat-earth
@@ -439,7 +440,6 @@ pedometer count. -/
 def evidenceFor (segments : Array Seg) (si : Nat) (stepsWalked : Option Float) : WalkEvidence :=
   let (s, e) := Verified.Geo.WalkAnchors.walkEndpointAnchors segments si
   { start := s.map toSmoothAnchor, finish := e.map toSmoothAnchor, stepsWalked := stepsWalked }
-
 
 /-! ## The pass -/
 

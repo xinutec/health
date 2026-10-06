@@ -1,3 +1,4 @@
+import Verified.FloatConst
 /-!
 # GPS Kalman filter (implementation-first port of `src/geo/kalman.ts`)
 
@@ -35,7 +36,7 @@ off `Float` entirely.
 namespace Verified.Geo.Kalman
 
 def R_EARTH : Float := 6371000
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 def metersToDegreesLat (m : Float) : Float := m / (R_EARTH * (pi / 180))
 def metersToDegreesLon (m lat : Float) : Float := m / (R_EARTH * Float.cos (lat * (pi / 180)) * (pi / 180))

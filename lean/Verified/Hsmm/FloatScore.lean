@@ -1,3 +1,4 @@
+import Verified.FloatConst
 /-!
 # Float scoring primitives (implementation-first port of `src/hmm/emissions.ts`)
 
@@ -18,8 +19,7 @@ libm, so the primitives agree to the ULP on these inputs).
 
 namespace Verified.Hsmm.FloatScore
 
-/-- IEEE −∞, matching TS `Number.NEGATIVE_INFINITY`. -/
-def negInf : Float := (-1.0) / 0.0
+export Verified.FloatConst (negInf)
 
 def LOG_2PI : Float := Float.log (2.0 * 3.141592653589793)
 

@@ -1,5 +1,6 @@
 import Verified.Geo.Prefilter
 import Verified.Geo.ModeBiometrics
+import Verified.FloatConst
 /-!
 # Episode geometry — the map's half of "one day, two renderers"
 
@@ -195,7 +196,7 @@ def ROAD_MATCH_MODES : List Mode := ["driving", "bus", "cycling"]
 
 /-! ## Geometry -/
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 /-- Equirectangular metres, `cos` at the FIRST point and `sqrt` (not `hypot`).
 See the module docstring: this is NOT `metersBetween`. -/
@@ -461,7 +462,6 @@ def buildEpisodes (states : Array State) (segments : Array Seg) (points : Array 
     episodes := episodes.push
       (resolveEpisode (states.getD i default) i states segments points episodes rawFixes)
   return episodes
-
 
 /-! ## Smoke tests
 

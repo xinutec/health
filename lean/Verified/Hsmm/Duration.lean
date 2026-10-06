@@ -1,4 +1,5 @@
 import Verified.Hsmm.Emissions
+import Verified.FloatConst
 /-!
 # Duration log-probabilities (implementation-first port of `src/hmm/duration-dist.ts`)
 
@@ -35,7 +36,7 @@ structure GammaFit where
   beta : Float
   sampleCount : Nat
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 /-- `LANCZOS_C` (g = 7). -/
 def lanczosC : Array Float :=

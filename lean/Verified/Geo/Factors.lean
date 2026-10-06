@@ -1,6 +1,7 @@
 import Verified.JsNum
 import Verified.Geo.Segments
 import Verified.Geo.ModeBiometrics
+import Verified.FloatConst
 /-!
 # Factor-decomposed mode scoring (port of `src/geo/factors/`)
 
@@ -43,8 +44,7 @@ namespace Verified.Geo.Factors
 open Verified.Geo.Segments (WindowFeatures ModeScore scoreWindow)
 open Verified.Geo.ModeBiometrics (MinuteObservation ModeStats scoreModeLogLikelihood)
 
-private def negInf : Float := -(1.0 / 0.0)
-private def posInf : Float := 1.0 / 0.0
+open Verified.FloatConst (negInf posInf)
 
 /-! ## Shapes -/
 
@@ -812,6 +812,5 @@ private def bioAt (cadence speed : Option Float) : Option BiometricContext :=
   == "walking|Example Rise|residential|8  walking|-|-|-"
 
 end CandidateGuards
-
 
 end Verified.Geo.Factors

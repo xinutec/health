@@ -1,4 +1,5 @@
 import Verified.Hsmm.FloatScore
+import Verified.FloatConst
 /-!
 # Rail-run leaves (port of the pure functions in `src/geo/passes/rail-runs.ts`)
 
@@ -268,7 +269,7 @@ def findRunBoardingFix (points : Array Fix) (startTs : Int)
 
 /-! ## Guards (V8 reference values) -/
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 private def lat0 : Float := 51.52
 private def lon0 : Float := -0.13
 private def mlat : Float := 1 / 111320

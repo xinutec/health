@@ -4,6 +4,7 @@ import Verified.Geo.WalkableRoute
 import Verified.Geo.CellKey
 import Std.Data.HashMap
 import Std.Data.HashSet
+import Verified.FloatConst
 
 /-!
 # Display-acceptance gate (port of the off-network cluster in `src/geo/map-match-core.ts`)
@@ -42,11 +43,7 @@ namespace Verified.Geo.DisplayGate
 open Verified.Geo (cellKeyN)
 open Verified.Geo.WalkableRoute (Pt Proj metersBetween projectPointToSegment)
 
-private def pi : Float := 3.14159265358979323846
-private def posInf : Float := 1.0 / 0.0
-
-/-- `Math.floor` into an `Int`, the JS grid-cell index. -/
-private def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
+open Verified.FloatConst (pi posInf floorInt)
 
 /-- A way network as coordinate lists, in way-iteration order —
     `RoadGeometry.ways.map(w => w.coords)`. Way order is the tie-break for the

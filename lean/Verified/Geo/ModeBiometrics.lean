@@ -1,3 +1,4 @@
+import Verified.FloatConst
 /-!
 # Per-user biometric mode signatures (port of the pure core of `src/geo/mode-biometrics.ts`)
 
@@ -21,7 +22,7 @@ per IEEE) ⇒ EXACT. UNPROVEN; pinned by the `#guard`s against Node/V8.
 
 namespace Verified.Geo.ModeBiometrics
 
-private def negInf : Float := -1.0 / 0.0
+open Verified.FloatConst (negInf)
 
 /-! ## Constants -/
 def HR_STD_FLOOR_BPM : Float := 5

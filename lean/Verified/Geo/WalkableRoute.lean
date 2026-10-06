@@ -1,5 +1,6 @@
 import Verified.JsNum
 import Std.Data.HashMap
+import Verified.FloatConst
 
 /-!
 # Point-to-point routing on the walkable network (port of `src/geo/walkable-route.ts`)
@@ -43,7 +44,7 @@ Node/V8 (`lean/experiments/walkable-route-refs.mts`).
 
 namespace Verified.Geo.WalkableRoute
 
-private def pi : Float := 3.14159265358979323846
+open Verified.FloatConst (pi posInf)
 
 structure Pt where
   lat : Float
@@ -273,8 +274,6 @@ structure RouteOptions where
   maxRouteM : Float := 1200
   deriving Inhabited
 
-private def posInf : Float := 1.0 / 0.0
-
 /--
 Shortest walkable path from `a` to `b`:
 `[snapped-a, …graph nodes…, snapped-b]`, or `none`.
@@ -386,7 +385,6 @@ def routeOnWalkableIn (graph : WalkGraph) (a b : Pt) (ways : Ways) (opts : Route
       | some prevPt => metersBetween prevPt p > DEDUPE_M
     if keep then out := out.push p
   return if out.size ≥ 2 then some out else none
-
 
 /-- `routeOnWalkableIn` over a graph built for this one call. -/
 def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) : Option (Array Pt) :=

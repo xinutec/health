@@ -1,4 +1,5 @@
 import Verified.Hsmm.FloatScore
+import Verified.FloatConst
 /-!
 # Worldline feasibility invariants (port of `src/eval/worldline-feasibility.ts`)
 
@@ -39,7 +40,7 @@ def PEDESTRIAN_ASSERTED_VEHICLE_MODES : List String := ["train"]
 def RAIL_STATION_SEP : String := " → "
 def RAIL_LINE_SEP : String := " · "
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 /-! ## Shapes -/
 

@@ -1,4 +1,5 @@
 import Verified.Geo.CorridorStall
+import Verified.FloatConst
 
 /-!
 # Walk-geometry referee metrics (#1048 Group B)
@@ -96,10 +97,7 @@ equirectangular approximation is exact to well under the metric's resolution,
 and it is what the TypeScript used, so changing it here would move every value
 in the blessed baseline. -/
 
-private def pi : Float := 3.14159265358979323846
-
-/-- `Math.hypot(x, y)`. See the ULP caveat in the module header. -/
-private def hyp (x y : Float) : Float := Float.sqrt (x * x + y * y)
+open Verified.FloatConst (pi hyp posInf)
 
 /-- Metres between two points, planar, with `cos` taken at the midpoint
 latitude. -/
@@ -115,8 +113,6 @@ private def ceilSteps (x : Float) : Nat :=
 
 /-- Clamp to `[0, 1]` — `Math.max(0, Math.min(1, t))`. -/
 private def clamp01 (t : Float) : Float := max 0 (min 1 t)
-
-private def posInf : Float := 1.0 / 0.0
 
 /-- Total drawn length (m). -/
 def pathLength (pts : Array LatLon) : Float := Id.run do
@@ -170,7 +166,6 @@ def pedometerDistanceM (steps : Array PedStep) (from_ to : Float)
     let hi := min to (s.ts + 60)
     if hi > lo then n := n + s.steps * ((hi - lo) / 60)
   return n * strideM
-
 
 /-! ## Step budget
 
@@ -912,7 +907,6 @@ private def spiked : Array LatLon := fixes.push (P 51.6 (-0.12))
 #guard (fixCoverage spiked line 0.5 50).1 < 50
 #guard fixCoverage #[] line 0.9 50 == (0, 0)
 
-
 -- ⚠ ONE CONSTANT IN THIS FILE IS UNWITNESSED, stated here rather than left to
 -- be discovered: the DP's 1 m BACKTRACK TOLERANCE (`sMax := arc + 1`). Setting
 -- it to 0 leaves every guard above green, so nothing here constrains it.
@@ -972,7 +966,6 @@ private def spiked : Array LatLon := fixes.push (P 51.6 (-0.12))
 -- metric declining to answer, and the gate treats the two differently.
 #guard (onNamedWayFraction line #[] ways).isNone
 #guard (onNamedWayFraction line #["Example Rise"] { ways := #[] }).isNone
-
 
 /-! ### Step budget
 

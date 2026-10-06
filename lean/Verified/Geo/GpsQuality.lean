@@ -1,4 +1,5 @@
 import Verified.Geo.Kalman
+import Verified.FloatConst
 /-!
 # GPS quality-control pre-filter (implementation-first port of `src/geo/gps-quality.ts`)
 
@@ -35,7 +36,7 @@ are. Beyond the distance at which this module distinguishes "here" from "a
 station away" (`MIN_TRANSIT_DISPLACEMENT_M`, the resolution of its own
 decision), the measurement cannot inform any question asked of it. -/
 def ACCURACY_UNINFORMATIVE_M : Float := MIN_TRANSIT_DISPLACEMENT_M
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 def distanceM (a b : GpsPoint) : Float :=
   let dLatM := (b.lat - a.lat) * 111320

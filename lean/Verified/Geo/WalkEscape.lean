@@ -1,6 +1,7 @@
 import Verified.Geo.PathPoint
 import Verified.Geo.WalkableRoute
 import Std.Data.HashMap
+import Verified.FloatConst
 
 /-!
 # Building-escape walk corrector (port of `src/geo/walk-building-escape.ts`)
@@ -37,15 +38,7 @@ open Verified.Geo.WalkableRoute
   (Pt Proj Ways metersBetween projectPointToSegment WalkGraph RouteOptions routeOnWalkable
    routeOnWalkableIn buildWalkGraph)
 
-private def pi : Float := 3.14159265358979323846
-private def posInf : Float := 1.0 / 0.0
-private def negInf : Float := -1.0 / 0.0
-
-/-- `Math.floor` into an `Int`, the JS grid-cell index. -/
-private def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
-
-/-- JS `x || 1`: zero and NaN are falsy. -/
-private def orOne (x : Float) : Float := if x == 0 || x.isNaN then 1 else x
+open Verified.FloatConst (pi posInf negInf floorInt orOne)
 
 /-- `Math.sign`. -/
 private def jsSign (x : Float) : Float :=
@@ -63,7 +56,6 @@ private def THREE : Float := 3
 private def HALF : Float := 0.5
 /-- Side of a footprint-index cell (degrees). -/
 private def RING_CELL_DEG : Float := 0.0005
-
 
 /-- A drawn walk vertex (`CorrectedPoint`) — the shared drawn-path vertex. -/
 abbrev TPt := Verified.Geo.PathPt

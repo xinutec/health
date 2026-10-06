@@ -1,3 +1,4 @@
+import Verified.FloatConst
 /-!
 # JS numeric formatting (port of `Number.prototype.toFixed`)
 
@@ -305,7 +306,7 @@ private def chk (x : Float) (f : Nat) (expect : String) : Bool := toFixed x f ==
 -- Coordinate keys, in the frame the geometry harnesses use.
 private def lat0 : Float := 51.52
 private def lon0 : Float := -0.13
-private def pi : Float := 3.14159265358979323846
+open Verified.FloatConst (pi)
 private def mlat : Float := 1 / 111320.0
 private def mlon : Float := 1 / (111320.0 * Float.cos (lat0 * pi / 180))
 private def kLat (n : Float) : Option String := toFixed (lat0 + n * mlat) 7

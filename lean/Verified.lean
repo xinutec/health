@@ -95,6 +95,7 @@ import Verified.Geo.CorridorStall
 import Verified.Geo.DisplayGate
 import Verified.Geo.RailSnap
 import Verified.JsNum
+import Verified.FloatConst
 import Verified.Geo.EpisodeGeometry
 import Verified.Geo.WireVocab
 import Verified.Geo.SegmentPasses

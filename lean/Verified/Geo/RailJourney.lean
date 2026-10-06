@@ -3,6 +3,7 @@ import Verified.Geo.RailReconcile
 import Verified.Geo.RailRuns
 import Verified.Geo.RailAbsorbers
 import Verified.Geo.BiometricWindows
+import Verified.FloatConst
 
 /-!
 # `assembleRailJourney` — the rail-journey assembler
@@ -173,7 +174,7 @@ atan2 …`, NOT the `2 * R * asin …` form the walk passes use. The two agree t
 well under a millimetre but not bit-for-bit, and this pass compares against a
 400 m and a 2000 m threshold, so the form is pinned rather than shared. -/
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 def haversineMeters (lat1 lon1 lat2 lon2 : Float) : Float :=
   let R := 6371000.0
@@ -1027,7 +1028,6 @@ private def S17_SEGS : Array Seg :=
   #[.lines 51.50749999999999 (-38.10000000000000002) 800, .stations "Alpha Line",
     .lines 51.50749999999999 (-38.10000000000000002) 800,
     .lines 51.50749999999999 (-38.10000000000000002) 800]
-
 
 /-! ### S18 — gate 2 needs the EXPANSION, not the raw label
 

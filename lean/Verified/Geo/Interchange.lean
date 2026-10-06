@@ -1,6 +1,7 @@
 import Verified.Geo.SegmentMerge
 import Verified.Hsmm.FloatScore
 import Verified.JsNum
+import Verified.FloatConst
 /-!
 # Interchange decomposition kernels (port of the pure exports of `src/geo/interchange-split.ts`)
 
@@ -33,7 +34,7 @@ namespace Verified.Geo.Interchange
 
 open Verified.Hsmm.FloatScore (haversineMeters)
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 /-! ## Burst detection -/
 def BURST_MIN_CADENCE : Int := 40
@@ -382,7 +383,6 @@ private def tailSeg : Seg :=
 #guard (trimRideTailAtWalk #[tailSeg] tailFixes [⟨480, 5⟩]).size == 1
 -- Not a train leg, not ours.
 #guard (trimRideTailAtWalk #[{ tailSeg with mode := "driving" }] tailFixes tailSteps).size == 1
-
 
 private def cleanSteps : List StepPoint :=
   [⟨60, 5⟩, ⟨300, 112⟩, ⟨360, 113⟩, ⟨420, 110⟩, ⟨600, 4⟩, ⟨1140, 8⟩]

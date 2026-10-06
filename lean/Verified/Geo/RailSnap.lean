@@ -3,6 +3,7 @@ import Verified.Geo.WalkableRoute
 import Verified.Geo.Worldline
 import Verified.JsNum
 import Std.Data.HashMap
+import Verified.FloatConst
 
 /-!
 # Fix-cloud-weighted rail snapper (port of `src/geo/rail-snap.ts`)
@@ -42,11 +43,7 @@ namespace Verified.Geo.RailSnap
 open Verified.Geo.WalkableRoute (Pt metersBetween)
 open Verified.Geo.Worldline (RailTriple parseRailWayName)
 
-private def pi : Float := 3.14159265358979323846
-private def posInf : Float := 1.0 / 0.0
-
-/-- `Math.floor` into an `Int`, the JS grid-cell index. -/
-private def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
+open Verified.FloatConst (pi posInf floorInt)
 
 open Verified.JsNum (jsRound)
 

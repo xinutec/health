@@ -1,3 +1,4 @@
+import Verified.FloatConst
 /-!
 # Local OSM mirror coverage (implementation-first port of `src/geo/osm-local.ts`)
 
@@ -48,7 +49,7 @@ namespace Verified.Geo.OsmCoverage
 sharing one would change which queries count as covered. -/
 def METERS_PER_DEG_LAT : Float := 111000
 
-private def pi : Float := 3.141592653589793
+open Verified.FloatConst (pi)
 
 /-- Metres per degree of longitude at a latitude. -/
 def metersPerDegLon (lat : Float) : Float :=
