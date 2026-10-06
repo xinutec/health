@@ -305,18 +305,22 @@ impl MirrorSource {
     /// ⚠ A FAILED QUERY IS AN ERROR, never a decline and never an empty answer.
     /// health #976 is that distinction going wrong — a database that is down
     /// producing the same answer as an area with no roads.
-    fn block<T, E, F>(&self, f: F) -> Result<T>
+    fn block<T, E, F>(&self, label: &str, f: F) -> Result<T>
     where
         F: std::future::Future<Output = Result<T, E>>,
         E: Into<anyhow::Error>,
     {
         // Counted here rather than at each call site: every query this source
         // makes goes through this one boundary, so the count cannot drift from
-        // the queries.
+        // the queries. `label` names the statement kind for the fold's ledger
+        // (`db.<label>`), so a day's SQL time can be read per query rather
+        // than as one total.
         QUERIES.fetch_add(1, Ordering::Relaxed);
         let t0 = std::time::Instant::now();
         let out = self.handle.block_on(f);
-        DB_NANOS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        let ns = t0.elapsed().as_nanos() as u64;
+        DB_NANOS.fetch_add(ns, Ordering::Relaxed);
+        crate::fold::LEDGER.charge(&format!("db.{label}"), ns);
         out.map_err(Into::into)
     }
 
@@ -344,10 +348,11 @@ impl MirrorSource {
             let pool = self.pool.clone();
             let b = bucket.to_string();
             let out = self
-                .block(async move {
+                .block("coverageRows", async move {
                     crate::osm_mirror::coverage_rows(&pool, &b, vocab.as_deref()).await
                 })
                 .with_context(|| format!("reading osm_coverage for {bucket}"))?;
+            crate::fold::LEDGER.count(&format!("boxes.{bucket}"), out.len() as u64);
             self.coverage.insert(bucket.to_string(), out);
         }
         Ok(&self.coverage[bucket])
@@ -370,6 +375,7 @@ impl MirrorSource {
         let poly = Self::mbr_box_wkt(lat, lon, radius_m);
         let in_lines = self
             .block(
+                "probeLines",
                 sqlx::query(
                     "SELECT 1 FROM osm_lines WHERE feature_type = ? \
                      AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) LIMIT 1",
@@ -384,6 +390,7 @@ impl MirrorSource {
         }
         let in_points = self
             .block(
+                "probePoints",
                 sqlx::query(
                     "SELECT 1 FROM osm_points WHERE feature_type = ? \
                      AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) LIMIT 1",
@@ -413,8 +420,14 @@ impl MirrorSource {
         }
         let now = self.now_ms;
         let boxes = self.coverage_rows(bucket)?.to_vec();
+        // ⚠ TIMED, and not under `foldLeanMs`: that timer is the scoring of
+        // candidate rows. This is a second Lean round trip per (bucket, point),
+        // shipping every coverage box the bucket has, and it was the largest
+        // unmeasured piece of an ask (#1921).
+        let t0 = std::time::Instant::now();
         let mut covered = lean::osm_covered(lat, lon, radius_m, &boxes, now, false)
             .with_context(|| format!("coverage gate for {bucket}"))?;
+        crate::fold::LEDGER.charge("cover", t0.elapsed().as_nanos() as u64);
         // ⚠ NOT for the landmark bucket. The probe exists because a SIBLING
         // bucket's fetch can leave rows without a coverage box; nothing but the
         // landmark fetch writes landmarks, so for them it is only a bypass of
@@ -429,8 +442,10 @@ impl MirrorSource {
             // `hasLocalData` short-circuits staleness as well as containment,
             // and that trade is a rule — it belongs in `decideCoverage`, not in
             // a `||` on this line.
+            let t0 = std::time::Instant::now();
             covered = lean::osm_covered(lat, lon, radius_m, &boxes, now, true)
                 .with_context(|| format!("coverage gate for {bucket} with local data"))?;
+            crate::fold::LEDGER.charge("cover", t0.elapsed().as_nanos() as u64);
         }
         // ⚠ **RECORDED, NOT FETCHED** — the same trade `geocode` makes below,
         // for the same reason. A decline used to leave no trace at all, so
@@ -448,7 +463,7 @@ impl MirrorSource {
             let pool = self.pool.clone();
             let kind = crate::osm_mirror::queue_kind(bucket);
             let key = crate::osm_mirror::queue_key(lat, lon, radius_m);
-            self.block(async move {
+            self.block("queue", async move {
                 crate::fetch_queue::record(&pool, &kind, &key).await;
                 Ok::<(), anyhow::Error>(())
             })?;
@@ -530,7 +545,7 @@ impl MirrorSource {
         }
         q = q.bind(&poly).bind(CANDIDATE_LIMIT);
         let rows = self
-            .block(q.fetch_all(&self.pool))
+            .block("ways", q.fetch_all(&self.pool))
             .context("reading osm_lines for a matcher corridor")?;
         if Self::matcher_backstop(rows.len(), "osm_lines", "highway corridor", radius_m) {
             return Ok(None);
@@ -589,7 +604,7 @@ impl RowSource for MirrorSource {
         }
         q = q.bind(&poly).bind(CANDIDATE_LIMIT);
         let rows = self
-            .block(q.fetch_all(&self.pool))
+            .block("buildings", q.fetch_all(&self.pool))
             .context("reading osm_lines for buildings")?;
         if Self::matcher_backstop(rows.len(), "osm_lines", "building", radius_m) {
             return Ok(None);
@@ -628,6 +643,7 @@ impl RowSource for MirrorSource {
         let poly = Self::mbr_box_wkt(lat, lon, radius_m);
         let rows = self
             .block(
+                "lineRows",
                 sqlx::query(
                     // ⚠ `tags_json` too. `nearbyLandmarks` needs the FULL tag
                     // map — it spawns one landmark per tag key — and while this
@@ -701,6 +717,7 @@ impl RowSource for MirrorSource {
         let poly = Self::mbr_box_wkt(lat, lon, radius_m);
         let rows = self
             .block(
+                "pointRows",
                 sqlx::query(
                     "SELECT osm_id, subtype, name, tags_json, \
                             ST_X(geom) AS lon, ST_Y(geom) AS lat FROM osm_points \
@@ -791,7 +808,7 @@ impl RowSource for MirrorSource {
         // coordinate — which reads as "fewer roads here", not as an error.
         let cap = CANDIDATE_LIMIT * buckets.len() as i64;
         let rows = self
-            .block(q.bind(&poly).bind(cap).fetch_all(&self.pool))
+            .block("linesMulti", q.bind(&poly).bind(cap).fetch_all(&self.pool))
             .context("reading osm_lines for the nearbyWays buckets")?;
         Self::check_limit_at(rows.len(), "osm_lines", "nearbyWays buckets", cap)?;
 
@@ -841,6 +858,7 @@ impl RowSource for MirrorSource {
         if self.rail_names.is_none() {
             let rows = self
                 .block(
+                    "railNames",
                     sqlx::query(
                         "SELECT DISTINCT name FROM osm_lines \
                          WHERE feature_type = 'railway' AND name IS NOT NULL",
@@ -883,7 +901,7 @@ impl RowSource for MirrorSource {
             q = q.bind(n);
         }
         let rows = self
-            .block(q.fetch_all(&self.pool))
+            .block("railWays", q.fetch_all(&self.pool))
             .context("reading railway way geometry")?;
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
@@ -907,6 +925,7 @@ impl RowSource for MirrorSource {
             // answer, which is the one thing a port must not do.
             let rows = self
                 .block(
+                    "railStations",
                     sqlx::query(
                         "SELECT name, ST_Y(geom) AS lat, ST_X(geom) AS lon FROM osm_points \
                          WHERE feature_type = 'railway' AND subtype = 'station'",
@@ -954,8 +973,9 @@ impl RowSource for MirrorSource {
     /// is a claim about the world made out of a network error (#976).
     fn geocode(&mut self, lat: f64, lon: f64, zoom: i64) -> Result<Option<Value>> {
         let pool = self.pool.clone();
-        let found =
-            self.block(async move { crate::nominatim::cache_get(&pool, zoom, lat, lon).await })?;
+        let found = self.block("geocode", async move {
+            crate::nominatim::cache_get(&pool, zoom, lat, lon).await
+        })?;
         Ok(match found {
             Some(crate::nominatim::Cached::Answer(Some(g))) => Some(serde_json::to_value(g)?),
             // ⚠ Nominatim answering "nothing is here" IS an answer, and the fold
@@ -971,7 +991,7 @@ impl RowSource for MirrorSource {
                 let pool = self.pool.clone();
                 let kind = crate::nominatim::query_type(zoom);
                 let key = crate::nominatim::queue_key(lat, lon);
-                self.block(async move {
+                self.block("geocodeRecord", async move {
                     crate::fetch_queue::record(&pool, &kind, &key).await;
                     Ok::<(), anyhow::Error>(())
                 })?;

@@ -323,11 +323,22 @@ pub async fn compute_with(
     mirror_source::take_queries();
     mirror_source::take_db_nanos();
     crate::rowset_answerer::take_lean_nanos();
+    crate::fold::LEDGER.take();
     let folded =
         mirror_source::fold_from_mirror(st.pool.clone(), cap, inputs.clone(), now_ms).await?;
     let mirror_queries = mirror_source::take_queries();
     let db_ms = mirror_source::take_db_nanos() / 1_000_000;
     let lean_ms = crate::rowset_answerer::take_lean_nanos() / 1_000_000;
+    // The host side of every ask, by label (`fold.<label>` ms, `.n` count) —
+    // see `fold::Ledger`. Read beside `lean.ask.<table>.wait`, never summed
+    // with it: `answer.<table>` is inside that wait.
+    let mut ledger = serde_json::Map::new();
+    for (label, (n, nanos)) in crate::fold::LEDGER.take() {
+        if nanos > 0 {
+            ledger.insert(format!("fold.{label}"), json!(nanos / 1_000_000));
+        }
+        ledger.insert(format!("fold.{label}.n"), json!(n));
+    }
 
     // ⚠ THE SIGNAL THAT WAS MISSING FOR WEEKS (#1619). `walkableRoads`,
     // `buildingsNear` and `drivableRoads` answer an EMPTY Vec when the mirror
@@ -365,6 +376,7 @@ pub async fn compute_with(
             timing.insert(format!("lean.{k}"), v.clone());
         }
     }
+    timing.append(&mut ledger);
     let segments = out.get("segs").cloned().unwrap_or_else(|| json!([]));
 
     // ⚠ Drawn geometry ships ONCE, in `episodes`. The segment-level path arrays

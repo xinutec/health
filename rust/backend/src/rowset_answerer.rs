@@ -178,10 +178,15 @@ pub trait RowSource {
 /// mirror, and that is what [`RowSource`] abstracts.
 pub struct OsmAnswerer<S: RowSource> {
     source: S,
-    /// The zone lookup, built lazily — `tzf-rs` decompresses its polygon set on
-    /// construction, so a day that never asks for a zone must not pay for it.
-    zones: Option<PolygonLookup>,
 }
+
+/// The zone lookup, built once per PROCESS on the first `tzAt`.
+///
+/// ⚠ Was a field, built per answerer — and an answerer lives for one fold, so
+/// `tzf-rs` decompressed its polygon set on every day served: a flat ~190 ms
+/// under `tzAt` on all six smoke days (#1921, 2026-10-06). The zone at a
+/// coordinate does not depend on the day, so neither should the cost.
+static ZONES: std::sync::OnceLock<PolygonLookup> = std::sync::OnceLock::new();
 
 /// Answering from the row set a golden fixture carries.
 ///
@@ -235,7 +240,6 @@ pub fn decline_key(method: &str, bucket: &str, lat: f64, lon: f64, radius_m: f64
 impl<'a> OsmAnswerer<RowSetSource<'a>> {
     pub fn new(row_set: &'a Value) -> Result<Self> {
         Ok(Self {
-            zones: None,
             source: RowSetSource::new(row_set)?,
         })
     }
@@ -302,10 +306,7 @@ impl<S: RowSource> OsmAnswerer<S> {
     /// `tests/suite/row_source.rs` uses to reach the decline path a fixture's
     /// complete row set can never produce.
     pub fn with_source(source: S) -> Self {
-        Self {
-            source,
-            zones: None,
-        }
+        Self { source }
     }
 }
 
@@ -804,6 +805,21 @@ fn key_parts(key: &str) -> Vec<&str> {
 
 impl<S: RowSource> crate::lean::Answerer for OsmAnswerer<S> {
     fn answer(&mut self, miss: &Ask) -> Result<Option<Value>> {
+        // The whole answer — SQL, shaping, scoring, the coverage gate — under
+        // `answer.<table>`, so the fold's ledger can be read beside Lean's own
+        // `ask.<table>.wait`: what is left between the two is the pipe.
+        let t0 = std::time::Instant::now();
+        let out = self.answer_inner(miss);
+        crate::fold::LEDGER.charge(
+            &format!("answer.{}", miss.what),
+            t0.elapsed().as_nanos() as u64,
+        );
+        out
+    }
+}
+
+impl<S: RowSource> OsmAnswerer<S> {
+    fn answer_inner(&mut self, miss: &Ask) -> Result<Option<Value>> {
         // ⚠ BEFORE the coordinate-key guard. `stationsOnLine` is keyed by a bare
         // LINE NAME, so it has no `|` and never survives `key_parts` — which is
         // exactly how it went unanswered 13 times a day while every other table
@@ -896,7 +912,7 @@ impl<S: RowSource> crate::lean::Answerer for OsmAnswerer<S> {
             // a default. Mid-ocean returns nothing, and "UTC" would be a claim
             // about where the phone was.
             "tzAt" => {
-                let finder = self.zones.get_or_insert_with(PolygonLookup::new);
+                let finder = ZONES.get_or_init(PolygonLookup::new);
                 match finder.zone(flat, flon) {
                     Some(tz) => Ok(Some(json!([lat, lon, tz]))),
                     None => Ok(None),

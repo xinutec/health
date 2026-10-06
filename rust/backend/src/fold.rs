@@ -32,6 +32,58 @@ use crate::lean::{self, Answerer, Ask};
 /// The three matcher reads' table names — see [`crate::osm_trace::MatcherRead`].
 pub const OSM_READS: [&str; 3] = ["walkableRoads", "buildingsNear", "drivableRoads"];
 
+/// Where a fold's host-side time went, by label: `{label: (count, nanos)}`,
+/// process-wide, read and reset per request by the route that reports it.
+///
+/// ⚠ Exists because `foldDbMs` and `foldLeanMs` left ~1.7 s of a heavy day's
+/// asks unaccounted for (#1921, 2026-10-06: asks 3.5 s, SQL 1.3 s, scoring
+/// 0.5 s). A total that two timers do not add up to is a question; this is
+/// where it is answered rather than guessed at. Labels: `db.<query>` for each
+/// statement kind, `cover` for the coverage gate's nested Lean calls,
+/// `answer.<table>` for the whole of one ask's answer, `reply` for serialising
+/// it onto the pipe, `boxes.<bucket>` for how many coverage rows the gate
+/// ships per call (a count, no time).
+pub struct Ledger(std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>>);
+
+impl Ledger {
+    const fn new() -> Self {
+        Self(std::sync::Mutex::new(std::collections::BTreeMap::new()))
+    }
+
+    fn entry(&self, label: &str, n: u64, nanos: u64) {
+        let mut m = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let e = m.entry(label.to_string()).or_insert((0, 0));
+        e.0 += n;
+        e.1 += nanos;
+    }
+
+    /// One occurrence of `label`, costing `nanos`.
+    pub fn charge(&self, label: &str, nanos: u64) {
+        self.entry(label, 1, nanos);
+    }
+
+    /// `n` of something under `label`, with no time attached.
+    pub fn count(&self, label: &str, n: u64) {
+        self.entry(label, n, 0);
+    }
+
+    /// Everything charged since the last take, and reset.
+    pub fn take(&self) -> std::collections::BTreeMap<String, (u64, u64)> {
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+}
+
+/// The one ledger. See [`Ledger`].
+pub static LEDGER: Ledger = Ledger::new();
+
 /// What one fold produced.
 #[derive(Debug)]
 pub struct Folded {

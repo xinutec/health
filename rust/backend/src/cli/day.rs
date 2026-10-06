@@ -151,6 +151,17 @@ pub(crate) fn day(fixture: &str) -> Result<()> {
     for m in &declined {
         eprintln!("  DECLINED {}({})", m.what, m.key);
     }
+    // The host side of the asks, by label (`fold::Ledger`), on stderr with the
+    // counts: the fixture path has no `timing` map to carry it, and stdout is
+    // the timeline.
+    let ledger = backend::fold::LEDGER.take();
+    if !ledger.is_empty() {
+        let parts: Vec<String> = ledger
+            .iter()
+            .map(|(k, (n, ns))| format!("{k} {} ms ×{n}", ns / 1_000_000))
+            .collect();
+        eprintln!("  host: {}", parts.join(", "));
+    }
     println!("{}", r.out);
     Ok(())
 }

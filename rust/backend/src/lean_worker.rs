@@ -308,10 +308,12 @@ impl Worker {
                             .answer(&ask)
                             .with_context(|| format!("answering {}({})", ask.what, ask.key))?;
                         let answered = answer.is_some();
+                        let t0 = std::time::Instant::now();
                         let reply: std::sync::Arc<str> =
                             serde_json::json!({ "answer": answer.unwrap_or(Value::Null) })
                                 .to_string()
                                 .into();
+                        crate::fold::LEDGER.charge("reply", t0.elapsed().as_nanos() as u64);
                         memo.insert(ask.clone(), (std::sync::Arc::clone(&reply), answered));
                         (reply, answered)
                     }
