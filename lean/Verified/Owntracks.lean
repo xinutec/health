@@ -36,8 +36,6 @@ namespace Verified.Owntracks
 
 open Verified.Hsmm.FloatScore (haversineMeters)
 
-/-- Fewest fixes before a walking claim is allowed. -/
-def MIN_WALKING_FIXES : Nat := 3
 def WALKING_MIN_KMH : Float := 2
 def WALKING_MAX_KMH : Float := 8
 /-- Net displacement over path length. Below this the trace is wandering, which
@@ -45,6 +43,7 @@ is a stationary phone's GPS noise rather than someone walking somewhere. -/
 def WALKING_MIN_STRAIGHTNESS : Float := 0.5
 def TRANSIT_KMH : Float := 30
 def TRANSIT_FAST_KMH : Float := 80
+
 
 /-- How far back the history window reaches: long enough to gather
 Significant-mode fixes, which can be minutes apart, short enough that

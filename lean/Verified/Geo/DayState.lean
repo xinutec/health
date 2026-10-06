@@ -305,10 +305,6 @@ def clipInferredFuture (states : List DayState) (nowTs : Int) : List DayState :=
 
 /-! ## Sleep-place attribution -/
 
-/-- Which side of the sleep window a candidate stay sits on. Smaller rank wins:
-    `overlap` is direct evidence, the bedtime side is where you lay down, the
-    wake side is only where you were found afterwards. -/
-private def sideRank (r : Nat) : Nat := r
 
 private def PLACE_FALLBACK_MAX_GAP_SEC : Int := 6 * 3600
 

@@ -1151,18 +1151,6 @@ def consolidateJitterStays (segments : Array Seg)
 
 section ConsolidateGuards
 
-/-- The V8 harness read the queried coordinate back out of the resolved LABEL,
-naming its landmark after the point it was asked about. That trick does not
-survive the crossing — Lean and V8 render a `Float` differently — so the same
-question is asked the other way round: the stub answers only at the coordinate
-V8 was observed to query, and `none` anywhere else. A pass that computes a
-different centre therefore falls back to the base's own place, which is
-distinguishable. Same discrimination, no float formatting.
-
-It carries NO city, so the `?? base.city` fallback is what decides. -/
-private def resolvesAt (atLat atLon : Float) (label : String) :
-    Float → Float → Int → Int → String → Option ResolvedPlace :=
-  fun lat lon _ _ _ => if lat == atLat && lon == atLon then some { label } else none
 
 /-- The centre V8 asked about for `runOf3`, and for the second run of the
 two-run day. -/

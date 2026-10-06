@@ -203,10 +203,6 @@ def corridorWays (query : Float → Float → Float → Option (Array Way))
       acc := unionById acc ws
   return if answered then some acc else none
 
-/-- `corridorWays` with the read trace discarded. -/
-def corridorWaysOf (query : Float → Float → Float → Option (Array Way))
-    (track : Array Pt) (stepM radiusM : Float) : Option (Array Way) :=
-  (corridorWays query track stepM radiusM).run' #[]
 
 /-! ## Guards (V8 reference values)
 

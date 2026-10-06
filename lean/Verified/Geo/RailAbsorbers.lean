@@ -1121,15 +1121,6 @@ private def aStations : Float → Float → Array NearbyStation := fun lat lon =
   else if lat == 51.5059 then #[{ name := "Baker Street", subtype := "station", distanceM := 15 }]
   else #[]
 
-/-- Directional and combined relation names on purpose: the corridor test
-intersects EXPANDED components, not the raw strings. -/
-private def aLines : Float → Float → Array String := fun lat _ =>
-  if lat == 51.5 then #["Metropolitan Line Northbound"]
-  else if lat == 51.5001 then #[METLINE]
-  else if lat == 51.5028 then #["Circle, Hammersmith & City and Metropolitan Lines"]
-  else if lat == 51.5031 then #[METLINE]
-  else if lat == 51.5059 then #[METLINE]
-  else #[]
 
 /-- The EMPTY line name answers a non-empty list excluding every station here,
 so a caller that consults the mirror for a PRESENT-but-empty label gets a veto.

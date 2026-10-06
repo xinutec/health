@@ -36,7 +36,6 @@ says so where it sits.
 namespace Verified.Geo.DwellContinuation
 
 def MIN_ESTABLISH_DAYS : Int := 5
-def CONFIDENCE_FLOOR : Float := 0.5
 
 structure DwellPlace where
   totalDwellSec : Float
