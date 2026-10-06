@@ -1595,7 +1595,8 @@ private def parsePoi (j : Json) : Except String Verified.Geo.BestPlace.Poi := do
   }
 
 private def bestPlaceResult (j : Json) : Json :=
-  let parsed : Except String (Option Verified.Geo.SegmentMerge.ResolvedPlace) := do
+  let parsed : Except String
+      (Option Verified.Geo.SegmentMerge.ResolvedPlace × List Verified.Geo.VenuePrior.VenueCandidateScore) := do
     let pois ← (← (← j.getObjVal? "landmarks").getArr?).mapM parsePoi
     -- The geocode is a TABLE keyed by zoom, so the chain's two asks (18 then,
     -- only on one branch, 16) are answered from data rather than recomputed.
@@ -1621,15 +1622,30 @@ private def bestPlaceResult (j : Json) : Json :=
           }
           pure (some st)
     let priors ← parsePriorsPlain j
-    return Verified.Geo.BestPlace.resolve
+    let resolved := Verified.Geo.BestPlace.resolve
       { landmarks := pois.toList, geocode := geo, samples := samples.toList }
       stay priors (optBool j "preferResidential")
+    -- The ranker's view of the same candidates beside the chain's answer, so
+    -- a census over dumped namings (`LEAN_DUMP_DIR`, `place-N.json`) can say
+    -- what lost and by which term (#325).
+    let ranked := Verified.Geo.VenuePrior.rankVenues
+      (pois.toList.map (Verified.Geo.BestPlace.toLandmark samples.toList stay.isSome)) stay priors
+    return (resolved, ranked)
+  let optF : Option Float → Json := fun o =>
+    match o with | none => Json.null | some v => Lean.toJson v
+  let rankedJson := fun (ranked : List Verified.Geo.VenuePrior.VenueCandidateScore) =>
+    Json.arr ((ranked.map fun c => Json.mkObj [
+      ("name", Json.str c.landmark.name), ("subtype", Json.str c.landmark.subtype),
+      ("distanceM", Lean.toJson c.landmark.distanceM), ("openFraction", optF c.landmark.openFraction),
+      ("total", Lean.toJson c.total), ("hours", optF c.parts.hours),
+      ("nearField", Json.bool c.nearField), ("enclosing", Json.bool c.landmark.enclosing)]).toArray)
   match parsed with
   | .error e => Json.mkObj [("error", Json.str e)]
-  | .ok none => Json.mkObj [("label", Json.null)]
-  | .ok (some r) =>
+  | .ok (none, ranked) => Json.mkObj [("label", Json.null), ("ranked", rankedJson ranked)]
+  | .ok (some r, ranked) =>
     Json.mkObj [("label", Json.str r.label),
-                ("city", match r.city with | none => Json.null | some c => Json.str c)]
+                ("city", match r.city with | none => Json.null | some c => Json.str c),
+                ("ranked", rankedJson ranked)]
 
 private def rankVenuesResult (j : Json) : Json :=
   let parsed : Except String (List Verified.Geo.VenuePrior.VenueCandidateScore) := do

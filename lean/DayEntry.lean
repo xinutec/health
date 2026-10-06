@@ -523,6 +523,47 @@ private def namerOf (j : Json) : Except String Namer := do
     priors := ← parseVenuePriors j
   }
 
+/-- One naming's input in the shape `verified_cli serve` mode `bestplace`
+reads (`bestPlaceResult` in `ServeEntry`), so a census can replay exactly the
+question the fold asked (#325). Floats cross as plain numbers there. -/
+private def placeInputJson (pois : List Verified.Geo.BestPlace.Poi)
+    (geo : Int → Option Verified.Geo.BestPlace.Result) (samples : List (Nat × Nat))
+    (stay : Option Verified.Geo.VenuePrior.StayShape)
+    (priors : Option Verified.Geo.VenuePrior.VenuePriors) (preferResidential : Bool) : String :=
+  let optS := fun (o : Option String) => match o with | none => Json.null | some v => Json.str v
+  let addr := fun (a : Verified.Geo.Enrich.Address) => Json.mkObj
+    [("amenity", optS a.amenity), ("tourism", optS a.tourism), ("leisure", optS a.leisure),
+     ("shop", optS a.shop), ("building", optS a.building), ("houseNumber", optS a.houseNumber),
+     ("road", optS a.road), ("pedestrian", optS a.pedestrian),
+     ("neighbourhood", optS a.neighbourhood), ("suburb", optS a.suburb),
+     ("stateDistrict", optS a.stateDistrict), ("city", optS a.city), ("town", optS a.town),
+     ("village", optS a.village), ("municipality", optS a.municipality)]
+  let res := fun (z : Int) => match geo z with
+    | none => Json.null
+    | some r => Json.mkObj [("displayName", Json.str r.displayName), ("type", Json.str r.type),
+                            ("category", Json.str r.category), ("address", addr r.address)]
+  let stats := fun (st : Verified.Geo.VenuePrior.VenueTypeStats) => Json.mkObj
+    [("visits", Lean.toJson st.visits), ("dwell", Json.arr (st.dwell.map Lean.toJson).toArray),
+     ("hours", Json.arr (st.hours.map Lean.toJson).toArray)]
+  let pairs := fun (xs : List (String × Verified.Geo.VenuePrior.VenueTypeStats)) =>
+    Json.arr (xs.map fun (k, v) => Json.arr #[Json.str k, stats v]).toArray
+  (Json.mkObj [
+    ("landmarks", Json.arr (pois.map fun p => Json.mkObj
+      [("name", Json.str p.name), ("type", Json.str p.type), ("subtype", Json.str p.subtype),
+       ("distanceM", Lean.toJson p.distanceM), ("openingHours", optS p.openingHours),
+       ("enclosing", Json.bool p.enclosing), ("inside", Json.bool p.inside)]).toArray),
+    ("geocode", Json.mkObj [("18", res 18), ("16", res 16)]),
+    ("samples", Json.arr (samples.map fun (w, m) => Json.arr #[Lean.toJson w, Lean.toJson m]).toArray),
+    ("stay", match stay with
+      | none => Json.null
+      | some st => Json.mkObj [("startUnix", Lean.toJson st.startUnix), ("endUnix", Lean.toJson st.endUnix),
+                               ("localHour", Lean.toJson st.localHour)]),
+    ("priors", match priors with
+      | none => Json.null
+      | some pr => Json.mkObj [("bySubtype", pairs pr.bySubtype), ("byCategory", pairs pr.byCategory),
+                               ("totalVisits", Lean.toJson pr.totalVisits)]),
+    ("preferResidential", Json.bool preferResidential)]).compress
+
 /-- Name one coordinate.
 
 `stay` is `(startUnix, endUnix, tz)` when there is a window to weigh and `none`
@@ -532,14 +573,18 @@ naming with no window cannot fail on a key it was never going to need. -/
 private def Namer.name (n : Namer) (lat lon : Float) (stay : Option (Int × Int × String))
     (preferResidential : Bool) : Option Verified.Geo.SegmentMerge.ResolvedPlace :=
   let ctx := stay.map fun (s, e, tz) => n.stayCtx lat lon s e tz
-  Verified.Geo.BestPlace.resolve
-    { landmarks := (n.landmarksAt lat lon).toList
-      geocode := n.geocodeAt lat lon
-      samples := (ctx.map (·.1)).getD [] }
-    (stay.map fun (s, e, _) =>
-      ({ startUnix := s, endUnix := e, localHour := (ctx.map (·.2)).getD 0 } :
-        Verified.Geo.VenuePrior.StayShape))
-    n.priors preferResidential
+  let pois := (n.landmarksAt lat lon).toList
+  let samples := (ctx.map (·.1)).getD []
+  let shape := stay.map fun (s, e, _) =>
+    ({ startUnix := s, endUnix := e, localHour := (ctx.map (·.2)).getD 0 } :
+      Verified.Geo.VenuePrior.StayShape)
+  -- ⚠ The dump is inert without `LEAN_DUMP_DIR`; with it, the geocode TABLE
+  -- is read at both zooms, which may ask the host a zoom the chain would not.
+  DayEntry.Host.dump "place"
+    (fun _ => placeInputJson pois (n.geocodeAt lat lon) samples shape n.priors preferResidential)
+    (Verified.Geo.BestPlace.resolve
+      { landmarks := pois, geocode := n.geocodeAt lat lon, samples := samples }
+      shape n.priors preferResidential)
 
 private def parseChain (j : Json) (segs : Array Seg)
     (points : Array Shed.PointF) (display : Array Verified.Geo.WalkAnnotate.PedFix) :
