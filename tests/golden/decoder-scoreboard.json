@@ -67,8 +67,8 @@
 		"legLineScorable": 2,
 		"legLineMatching": 2,
 		"stationsAsserted": 4,
-		"stationsMatching": 1,
-		"stationsMissing": 2,
+		"stationsMatching": 3,
+		"stationsMissing": 1,
 		"phantomRides": 0
 	},
 	"2026-06-12": {
