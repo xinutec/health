@@ -325,6 +325,78 @@ def prepFor (seg : Seg) (displayFixes : Array PedFix) (speedByTs : Int → Optio
         if d > m then d else m) 0.0
       some ⟨inWin, cLat, cLon, (jsRound (maxDist + WALK_QUERY_SLACK_M)).toInt64.toInt⟩
 
+/-! ## The band around the track
+
+A leg's disc read (`prepFor`: the farthest fix from the centroid, plus 120 m)
+brings the whole neighbourhood: 2026-09-30's Paris walk fetched 11,746 ways and
+4,055 footprints, of which 2,775 and 944 lie within 300 m of any fix. Nothing
+the drawing does reaches that far — the matcher's detour budget keeps a route
+within ~150 m of its chords by its own corridor penalty, the gate's and the
+corrector's radii are tens of metres, the reconstruction's attraction 15 m — so
+the rest only costs: the routing graph, every grid, the walk graph, each four
+times their size (#1921). Filtered here, AFTER the ask (its key is the disc,
+and a fixture answers the disc) and BEFORE the memo key (the drawing reads the
+filtered set, so the key hashes it).
+
+Cells, not distances: the chords between consecutive fixes are rasterised into
+`BAND_CELL_M` cells and dilated by enough cells to cover `BAND_M`, so one
+lookup decides a vertex; a way or ring with any vertex in the band stays whole.
+A superset of the true band, never a subset. Not exact in the strict sense —
+vertex numbering and heap contents change where far ways go — and judged by
+the corpus gate, which it passed unchanged. -/
+
+/-- How far from the track a way or footprint is still read (m). -/
+def BAND_M : Float := 300
+/-- Side of a band cell (m). -/
+def BAND_CELL_M : Float := 100
+
+structure TrackBand where
+  cellLat : Float
+  cellLon : Float
+  cells : Std.HashSet (Int × Int)
+
+private def bandCell (lat lon cellLat cellLon : Float) : Int × Int :=
+  ((Float.floor (lat / cellLat)).toInt64.toInt, (Float.floor (lon / cellLon)).toInt64.toInt)
+
+/-- The cells within `BAND_M` of the track through `fixes` (and then some). -/
+def trackBand (fixes : Array PedFix) : TrackBand := Id.run do
+  let lat0 := (fixes.getD 0 default).lat
+  let cellLat := BAND_CELL_M / 111320.0
+  let cellLon := BAND_CELL_M / (111320.0 * Float.cos (lat0 * pi / 180))
+  -- Cells to each side: the band in cells, plus one for the point's own cell
+  -- and one for the half-cell rasterisation step.
+  let r : Int := (Float.ceil (BAND_M / BAND_CELL_M)).toInt64.toInt + 1
+  let mut cells : Std.HashSet (Int × Int) := {}
+  for h : i in [0:fixes.size] do
+    let a := fixes[i]'h.upper
+    let b := fixes.getD (i + 1) a
+    let steps := max 1 (Float.ceil (metersBetween a.lat a.lon b.lat b.lon / (BAND_CELL_M / 2)))
+    let n := steps.toUInt64.toNat
+    for k in [0:n + 1] do
+      let f := k.toFloat / steps
+      let (cy, cx) := bandCell (a.lat + (b.lat - a.lat) * f) (a.lon + (b.lon - a.lon) * f) cellLat cellLon
+      let mut dy := -r
+      while dy ≤ r do
+        let mut dx := -r
+        while dx ≤ r do
+          cells := cells.insert (cy + dy, cx + dx)
+          dx := dx + 1
+        dy := dy + 1
+  return { cellLat, cellLon, cells }
+
+def TrackBand.holds (b : TrackBand) (p : Pt) : Bool :=
+  b.cells.contains (bandCell p.lat p.lon b.cellLat b.cellLon)
+
+/-- The ways with a vertex in the band; all of them when none has (a leg off
+    every mapped way draws from what the disc gave, as before). -/
+def waysInBand (b : TrackBand) (ways : Array Way) : Array Way :=
+  let kept := ways.filter fun w => w.coords.any b.holds
+  if kept.isEmpty then ways else kept
+
+/-- The footprints with a vertex in the band. -/
+def ringsInBand (b : TrackBand) (rings : Array Ring) : Array Ring :=
+  rings.filter fun r => r.any b.holds
+
 /-! ## The fix pipelines -/
 
 open Verified.Geo (rejectSpikes holdSpeed)
@@ -687,6 +759,10 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
           -- evidence the robust kernel keeps.
           let stepsWalked := stepsInWindow stepPoints seg.startTs seg.endTs
           let ev := evidenceFor segments si stepsWalked
+          -- Only the band around the track reaches the drawing (and the key).
+          let band := trackBand p.inWin
+          let ways := waysInBand band ways
+          let buildings := ringsInBand band buildings
           -- Remembered, or drawn and offered to the host (#1921). A replay
           -- remembers nothing, so every gate draws.
           let key := walkMemoKey draw flags p.inWin ways buildings stepsWalked ev seg.wayName

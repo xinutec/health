@@ -63,6 +63,35 @@ enum Store {
 
 static STORE: OnceLock<Store> = OnceLock::new();
 
+/// What the in-memory store has been asked, for the test that proves the
+/// second replay READ it: `memo.walkGet`s served, `memo.walkGet`s missed,
+/// `memo.walkPut`s. A clock cannot say that — once drawing is fast, "four
+/// times faster when remembered" is noise (#1921).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct MemStats {
+    pub served: u64,
+    pub missed: u64,
+    pub puts: u64,
+}
+
+static MEM_STATS: std::sync::Mutex<MemStats> = std::sync::Mutex::new(MemStats {
+    served: 0,
+    missed: 0,
+    puts: 0,
+});
+
+/// The in-memory store's counters so far, and reset them.
+pub fn take_mem_stats() -> MemStats {
+    let mut s = MEM_STATS.lock().expect("walk memo stats");
+    std::mem::take(&mut *s)
+}
+
+fn count(f: impl FnOnce(&mut MemStats)) {
+    if let Ok(mut s) = MEM_STATS.lock() {
+        f(&mut s);
+    }
+}
+
 /// A store in memory, for this process. For tests only: nothing outlives the
 /// process, and no code version is needed because the code cannot change.
 pub fn init_in_memory() {
@@ -114,12 +143,23 @@ pub fn answer(ask: &Ask) -> Option<Value> {
         Store::Mem(map) => {
             let mut map = map.lock().ok()?;
             match ask.what.as_str() {
-                "memo.walkGet" => map.get(&ask.key).and_then(|t| serde_json::from_str(t).ok()),
+                "memo.walkGet" => {
+                    let hit = map.get(&ask.key).and_then(|t| serde_json::from_str(t).ok());
+                    count(|s| {
+                        if hit.is_some() {
+                            s.served += 1
+                        } else {
+                            s.missed += 1
+                        }
+                    });
+                    hit
+                }
                 "memo.walkPut" => {
                     if let Some((key, value)) = ask.key.split_once('|') {
                         map.entry(key.to_string())
                             .or_insert_with(|| value.to_string());
                     }
+                    count(|s| s.puts += 1);
                     None
                 }
                 _ => None,

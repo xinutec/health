@@ -74,19 +74,29 @@ fn a_remembered_walk_is_the_drawn_walk() {
     }
     backend::walk_memo::init_in_memory();
     for (day, path) in dates.iter().zip(&paths) {
+        backend::walk_memo::take_mem_stats();
         let (drawn, drawn_ms) = replay(path);
+        let first = backend::walk_memo::take_mem_stats();
         let (remembered, remembered_ms) = replay(path);
+        let second = backend::walk_memo::take_mem_stats();
         assert!(
             drawn == remembered,
             "{day}: the day with remembered walks differs from the day that drew them"
         );
+        // The store was READ, counted rather than timed: the first replay
+        // missed every walk and offered each; the second was served every
+        // one and offered none.
         assert!(
-            remembered_ms * 4 < drawn_ms.max(40),
-            "{day}: the second replay took {remembered_ms} ms drawing walks against \
-             {drawn_ms} ms — the store was not read"
+            first.puts > 0 && first.served == 0 && first.missed == first.puts,
+            "{day}: the first replay should draw and offer every walk, got {first:?}"
+        );
+        assert!(
+            second.served == first.puts && second.missed == 0 && second.puts == 0,
+            "{day}: the second replay should be served every walk it drew, got {second:?}"
         );
         eprintln!(
-            "walk memo {day}: walks drawn in {drawn_ms} ms, remembered in {remembered_ms} ms"
+            "walk memo {day}: {} walk(s) drawn in {drawn_ms} ms, remembered in {remembered_ms} ms",
+            first.puts
         );
     }
 }

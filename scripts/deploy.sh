@@ -293,7 +293,7 @@ ssh root@isis.xinutec.org "bash -s" > /tmp/velocity-smoke.log 2>&1 <<-REMOTE || 
 		kubectl -n health delete job $SMOKE_NAME >/dev/null || true
 		exit 1
 	fi
-	kubectl -n health logs job/$SMOKE_NAME | grep -E '^(fold|high-water|cgroup peak)'
+	kubectl -n health logs job/$SMOKE_NAME | grep -E '^(fold|high-water|cgroup peak|         timing)'
 	kubectl -n health delete job $SMOKE_NAME >/dev/null
 REMOTE
 cat /tmp/velocity-smoke.log
