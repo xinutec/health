@@ -312,72 +312,6 @@ def substituteLines (e : Env) (segs : Array Seg) : Array Seg :=
         | _ => s
       | _ => s
 
-/-- The stops `line` calls at strictly between `a` and `b`, one sorted list per
-relation calling at both, so two directions of one service read the same. -/
-def Env.stopsBetween (e : Env) (line a b : String) : Array (Array String) :=
-  let norm := Verified.Geo.LineStoppingPattern.normalizeStationName
-  (Verified.Geo.LineStoppingPattern.railRelationsForLine e.railStops line).filterMap fun r =>
-    let names := r.stops.filterMap (·.name.map norm)
-    match names.findIdx? (· == norm a), names.findIdx? (· == norm b) with
-    | some i, some j => some ((names.extract (min i j + 1) (max i j)).qsort (· < ·))
-    | _, _ => none
-
-/-- A rail leg labelled with a bare station pair that several lines hold takes
-the line the decoder rode, when the decoder has a train on one of those lines
-over most of the leg AND no other of them calls at the same stops between the
-pair. The pair alone cannot choose (Wembley Park → Baker Street is the
-Metropolitan's, nonstop past Finchley Road, and the Jubilee's, seven stops,
-05-20), and dark tunnels leave no fixes for the stopping pattern; the decoder
-reads the ride's duration and the walk either side. Where lines share the track
-(Circle, Hammersmith & City and Metropolitan from Euston Square to King's Cross)
-nothing can tell them apart, and the bare pair stays: naming one would be a
-claim nobody can check. A decoder line no relation gives the pair is not
-taken. -/
-def decoderLines (e : Env) (segs : Array Seg) : Array Seg :=
-  if e.hmmDecode.isEmpty then segs else
-  let tok := fun (l : String) => (Verified.Geo.LineStoppingPattern.lineBaseToken l).toLower
-  segs.map fun s =>
-    if Verified.Geo.RailReconcile.effectiveMode s != "train" then s else
-    match s.wayName.map (·.splitOn Verified.Geo.RailAbsorbers.RAIL_LINE_SEP) with
-    | some [pair] =>
-      match pair.splitOn "→" with
-      | [a0, b0] =>
-        let a := a0.trimAscii.toString
-        let b := b0.trimAscii.toString
-        let serving := e.linesServingPair a b
-        if serving.size < 2 then s else
-        -- Seconds of decoded train on each line inside the leg.
-        let votes : Array (String × Int) := e.hmmDecode.foldl (fun acc h =>
-          match h.lineName with
-          | some l =>
-            let ov := min h.endTs s.endTs - max h.startTs s.startTs
-            if h.mode != "train" || ov ≤ 0 then acc
-            else match acc.findIdx? (·.1 == l) with
-              | some i => acc.modify i fun (n, t) => (n, t + ov)
-              | none => acc.push (l, ov)
-          | none => acc) #[]
-        let best := votes.foldl (fun b v => match b with
-          | some w => if v.2 > w.2 then some v else b
-          | none => some v) none
-        match best with
-        | some (l, t) =>
-          match serving.find? (tok · == tok l) with
-          | some line =>
-            let own := e.stopsBetween line a b
-            let shared := serving.any fun o =>
-              tok o != tok line && (e.stopsBetween o a b).any own.contains
-            if 2 * t ≤ s.endTs - s.startTs || shared || own.isEmpty then s
-            else
-              let why := s!"{serving.size} lines hold the pair; the decoder rode {line}"
-              { s with wayName := some s!"{a} → {b} · {line}"
-                       refinedReason := some (match s.refinedReason with
-                         | some r => s!"{r}; {why}"
-                         | none => why) }
-          | none => s
-        | none => s
-      | _ => s
-    | _ => s
-
 /-- The normalised names the line's RELATIONS stop at, or `none` when the
 mirror holds no relation for the line — unknown is not evidence. -/
 def Env.relationStops (e : Env) (line : String) : Option (Array String) :=
@@ -1043,9 +977,6 @@ def passes (e : Env) : Array Pass := #[
   -- can (#238). After the labels are final, before the changeover reads them.
   ("lineSubstitute", fun segs => substituteLines e segs),
 
-  -- A pair several lines hold takes the decoder's line.
-  ("decoderLine", fun segs => decoderLines e segs),
-
   -- The changeover window between two rides contains the RIDE, not just a
   -- platform walk. HERE and not earlier: after `railReconcile2`, so both
   -- neighbours carry their final station-pair labels, and after the anchors,
@@ -1173,7 +1104,7 @@ private def PAIR_MIRROR : Env :=
     "rideHeadClaim", "stayArrivalClaim", "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
     "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
-    "repairHandoff", "railReconcile2", "lineSubstitute", "decoderLine", "changeoverWindow", "interchangeStayLabel",
+    "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "interchangeStayLabel",
     "boardingStayLabel", "boardAtWait", "alightAfterHold", "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
@@ -1194,7 +1125,7 @@ def TS_CASCADE : Array String := #[
   "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel", "vehicleSplit",
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
-  -- `walkDwell`, `stayEdgeWalk`, `lineSubstitute`, `decoderLine`, `boardingStayLabel`,
+  -- `walkDwell`, `stayEdgeWalk`, `lineSubstitute`, `boardingStayLabel`,
   -- `railThrough`, `boardAtWait` and `alightAfterHold` are Lean-only (#1694,
   -- #1855, #238, #325, #1891); they sit here so the containment check keeps holding for the order
   -- the TS had.
@@ -1202,10 +1133,10 @@ def TS_CASCADE : Array String := #[
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
   "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
-  "lineSubstitute", "decoderLine", "changeoverWindow", "interchangeStayLabel", "boardingStayLabel",
+  "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "boardingStayLabel",
   "boardAtWait", "alightAfterHold", "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 52
+#guard TS_CASCADE.size == 51
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1329,33 +1260,6 @@ private def wayOf (e : Env) (w : String) : Option String := (substituteLines e #
 #guard (substituteLines SUB #[{ leg "Euston Square → King's Cross St Pancras · Victoria Line" with mode := "driving" }])[0]!.wayName
   == some "Euston Square → King's Cross St Pancras · Victoria Line"
 #guard wayOf SUB "Euston Square → King's Cross St Pancras" == some "Euston Square → King's Cross St Pancras"
-
--- `decoderLines`: the Metropolitan and the Jubilee both hold the pair, calling
--- at different stops between; the Circle and the Metropolitan share the track
--- from Euston Square to King's Cross.
-private def DEC_RAILS : Env := { NO_LOOKUPS with railStops := #[
-  relOf "Metropolitan" "Metropolitan line: Aldgate → Amersham"
-    ["Euston Square", "King's Cross St. Pancras", "Baker Street", "Finchley Road", "Wembley Park"],
-  relOf "Jubilee" "Jubilee line: Stanmore → Stratford"
-    ["Wembley Park", "Neasden", "Dollis Hill", "Baker Street"],
-  relOf "Circle" "Circle line: Edgware Road → Hammersmith"
-    ["Euston Square", "King's Cross St. Pancras", "Farringdon"] ] }
-private def DEC (line : String) (endTs : Int := 500) : Env :=
-  { DEC_RAILS with hmmDecode := #[{ startTs := 0, endTs, mode := "train", lineName := some line }] }
-private def decOf (e : Env) (w : String) : Option String := (decoderLines e #[leg w])[0]!.wayName
-private def BARE : String := "Wembley Park → Baker Street"
-private def SHARED : String := "Euston Square → King's Cross St Pancras"
--- The decoder rode one of the pair's lines over most of the leg: taken.
-#guard decOf (DEC "Metropolitan Line") BARE == some s!"{BARE} · Metropolitan Line"
-#guard decOf (DEC "Jubilee Line") BARE == some s!"{BARE} · Jubilee Line"
--- ⚠ Shared track: no evidence tells the lines apart, so none is named.
-#guard decOf (DEC "Metropolitan Line") SHARED == some SHARED
--- A line no relation gives the pair is not taken.
-#guard decOf (DEC "Victoria Line") BARE == some BARE
--- Under half the leg is not the decoder's ride.
-#guard decOf (DEC "Metropolitan Line" 300) BARE == some BARE
--- A labelled leg is `substituteLines`' to judge.
-#guard decOf (DEC "Jubilee Line") s!"{BARE} · Metropolitan Line" == some s!"{BARE} · Metropolitan Line"
 
 end FoldGuards
 
@@ -2139,9 +2043,7 @@ def witnessed : Array String :=
 
 -- `lineSubstitute` fires on a leg whose line the relations rule out.
 #guard fires SUB "lineSubstitute" #[leg "Euston Square → King's Cross St Pancras · Victoria Line"]
--- `decoderLine` fires on a bare pair two lines hold, with the decoder on one.
-#guard fires (DEC "Metropolitan Line") "decoderLine" #[leg BARE]
-#guard witnessed.size == 52
+#guard witnessed.size == 51
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
