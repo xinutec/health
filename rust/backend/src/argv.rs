@@ -191,6 +191,8 @@ pub enum Command {
         out: String,
         display_tz: Option<String>,
     },
+    /// re-record ONLY a golden fixture's walkableRoads from the live mirror, in place
+    RecaptureWalkable { user: String, fixture: String },
     /// time the HSMM decoder per frozen day, model build excluded (#1714)
     DecodeBench {
         #[arg(long, default_value_t = 5)]

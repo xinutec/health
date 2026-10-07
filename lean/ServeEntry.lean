@@ -1650,6 +1650,9 @@ private def parsePoi (j : Json) : Except String Verified.Geo.BestPlace.Poi := do
     distanceM := ← num (← j.getObjVal? "distanceM")
     openingHours := optStr j "openingHours"
     enclosing := optBool j "enclosing"
+    -- Without it an open-space stay replays as whatever venue ranked, not as
+    -- the park the fold named.
+    inside := optBool j "inside"
   }
 
 private def bestPlaceResult (j : Json) : Json :=

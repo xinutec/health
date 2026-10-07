@@ -240,6 +240,7 @@ async fn main() -> Result<()> {
             out,
             display_tz,
         } => capture_day(&user, &date, display_tz.as_deref(), &out).await,
+        C::RecaptureWalkable { user, fixture } => recapture_walkable(&user, &fixture).await,
         // #1714: the decoder's cost, apart from its model build.
         C::DecodeBench { runs, days } => decode_bench(runs, &days),
         C::DayLive(d) => day_live(&d.user, &d.date, d.display_tz.as_deref(), false).await,

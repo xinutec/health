@@ -85,7 +85,7 @@ pub const ROAD_CORRIDOR_MARGIN_M: f64 = 400.0;
 /// As above, for building outlines around a walk.
 const BUILDING_QUERY_MARGIN_M: f64 = 100.0;
 
-const WALKABLE_ROAD_SUBTYPES: &[&str] = &[
+pub const WALKABLE_ROAD_SUBTYPES: &[&str] = &[
     "footway",
     "path",
     "pedestrian",
@@ -1166,6 +1166,74 @@ pub async fn fold_from_mirror_recording(
         let geocodes = recorded.geocode_section();
         drop(recorded);
         Ok((folded, row_set, trace, geocodes))
+    })
+    .await
+    .context("the mirror thread panicked")?
+}
+
+/// Answers `walkableRoads` from `inner` and declines everything else.
+struct WalkableOnly<A>(A);
+
+impl<A: crate::lean::Answerer> crate::lean::Answerer for WalkableOnly<A> {
+    fn answer(&mut self, ask: &crate::lean::Ask) -> Result<Option<Value>> {
+        if ask.what == crate::osm_trace::MatcherRead::Walkable.name() {
+            self.0.answer(ask)
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+/// Re-record ONLY a golden fixture's `walkableRoads` from the live mirror.
+///
+/// The day is replayed exactly as the corpus gate replays it — its own trace,
+/// then its own row set — except that the walkable section is withheld and
+/// answered by the mirror instead. So the walk legs, and therefore the walkable
+/// questions, are the ones the gate will ask; and every OTHER table keeps the
+/// answers the day was blessed on. A decline the gate would see stays a decline
+/// here: the mirror answers nothing but `walkableRoads`.
+///
+/// Returns the fold and the new `walkableRoads` section, in the fixture's shape.
+pub async fn rerecord_walkable(
+    pool: MySqlPool,
+    fixture: Value,
+    user: String,
+    date: String,
+    now_ms: i64,
+) -> Result<(crate::fold::Folded, Value)> {
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let inputs = fixture.get("inputs").context("the fixture has no inputs")?;
+        let row_set = inputs
+            .get("osmRowSet")
+            .context("the fixture has no osmRowSet")?;
+        let trace = crate::osm_trace::TraceAnswerer::from_fixture(
+            &fixture,
+            &date,
+            crate::osm_trace::Sections {
+                walkable: false,
+                buildings: true,
+                drivable: true,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
+        let rows = crate::rowset_answerer::RowSetAnswerer::new(row_set)?;
+        let live = crate::osm_trace::RecordingAnswerer::new(WalkableOnly(
+            crate::rowset_answerer::OsmAnswerer::with_source(MirrorSource::new(
+                pool, handle, now_ms,
+            )),
+        ));
+        let cap = crate::head::capture(inputs, &date, &user)?;
+        let mut answerer = crate::lean::Chain(trace, crate::lean::Chain(rows, live));
+        let folded = crate::fold::run_day(&cap, inputs, &mut answerer)?;
+        let section = answerer
+            .1
+            .1
+            .take()
+            .get(crate::osm_trace::MatcherRead::Walkable.name())
+            .cloned()
+            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+        Ok((folded, section))
     })
     .await
     .context("the mirror thread panicked")?

@@ -380,6 +380,9 @@ pub fn capture_inputs() -> Value {
     json!({
         "roadCorridorMarginM": crate::mirror_source::ROAD_CORRIDOR_MARGIN_M,
         "candidateLimit": crate::mirror_source::CANDIDATE_LIMIT,
+        // What the walk matcher's network may contain: a subtype outside it is
+        // ABSENT from the graph, not down-weighted.
+        "walkableRoadSubtypes": crate::mirror_source::WALKABLE_ROAD_SUBTYPES,
     })
 }
 
