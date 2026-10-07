@@ -254,6 +254,14 @@ pub(crate) async fn decode_one(
     // ⚠ `None` is DEGENERATE — Lean found no viable path. That is a real answer
     // about the day, not a fault, and it must not be written as zero segments:
     // an empty row would read as "decoded, nothing happened".
+    // `DECODE_REQ_DUMP=<dir>`: the live request, as `<dir>/<date>.json` — to set
+    // beside a frozen day's (`examples/dump_decode_request`) when the two decode
+    // differently.
+    if let Ok(dir) = std::env::var("DECODE_REQ_DUMP") {
+        let path = std::path::Path::new(&dir).join(format!("{date}.json"));
+        std::fs::write(&path, req.to_string())
+            .with_context(|| format!("writing {}", path.display()))?;
+    }
     let Some(segments) = backend::lean::assemble_segments(&req)? else {
         anyhow::bail!("the decode is degenerate — no viable path");
     };

@@ -272,6 +272,8 @@ def RIDE_RUN_KMH : Float := 86
     Metropolitan's pattern, not the Jubilee's, which timing alone could not
     tell apart on the decoder's 13-minute leg. -/
 def PASS_MIN_KMH : Float := 50
+/-- km/h per metre made good over the two minutes either side of a minute. -/
+def PASS_ACROSS_KMH_PER_M : Float := 3.6 / 120
 def PASS_SPAN_FRAC : Float := 0.6
 def PASS_PENALTY : Float := -2
 def PASS_CLAMP : Float := -6
@@ -348,37 +350,54 @@ structure InLegFix where
   lon : Float
   deriving Inhabited
 
-/-- The pass term over a pair's intermediate calls; see `PASS_MIN_KMH`. `moving`
+/-- The pass term over a pair's intermediate calls; see `PASS_MIN_KMH`.
+
+⚠ THE SPEED IS THE DISPLACEMENT FROM THE MINUTE BEFORE TO THE MINUTE AFTER, not
+the smoother's. A phone stopped at a platform sends no fix for most of a minute,
+and the Kalman speed carries line speed straight across the gap: 07-16's Jubilee
+read 58–66 km/h through Willesden Green and Kilburn, where the fixes either side
+of each gap (15 and 11 km/h apart) show it stopped — and the chain re-lined his
+confirmed Jubilee ride to the Metropolitan on that "pass". Two minutes of
+displacement contain the dwell; a train running through covers 2 km or more.
+`moving`
     is the leg's minutes in order, `(lat, lon, mean km/h)` or `none` without a
     fix. A call without coordinates asserts nothing. -/
 def passPenalty (moving : Array (Option (Float × Float × Float)))
     (calls : Array Verified.Hsmm.ServedStations.RailStop) : Float :=
-  let fast : Nat → Bool := fun k => match moving[k]?.getD none with
-    | some (_, _, v) => decide (v ≥ PASS_MIN_KMH)
-    | none => false
+  -- km/h made good from minute `k - 1` to minute `k + 1`, when both are fixed.
+  let across : Nat → Option Float := fun k =>
+    if k == 0 then none else
+    match moving[k - 1]?.getD none, moving[k + 1]?.getD none with
+    | some (la, lo, _), some (lb, lob, _) => some (haversineMeters la lo lb lob * PASS_ACROSS_KMH_PER_M)
+    | _, _ => none
   let passed := calls.foldl (fun n st =>
     match st.lat, st.lon with
     | some la, some lo =>
       if (List.range moving.size).any (fun k =>
-          decide (k > 0) && fast (k - 1) && fast (k + 1) &&
-          (match moving[k]?.getD none with
-            | some (mlat, mlon, v) =>
-              v ≥ PASS_MIN_KMH && haversineMeters mlat mlon la lo ≤ PASS_SPAN_FRAC * (v / 3.6) * 30
-            | none => false)) then n + 1 else n
+          match moving[k]?.getD none, across k with
+          | some (mlat, mlon, _), some v =>
+            v ≥ PASS_MIN_KMH && haversineMeters mlat mlon la lo ≤ PASS_SPAN_FRAC * (v / 3.6) * 30
+          | _, _ => false) then n + 1 else n
     | _, _ => n) 0
   max PASS_CLAMP (PASS_PENALTY * passed.toFloat)
 
--- A station the line calls at, passed at 60 km/h inside a three-minute run;
--- the same minute alone (a reacquisition jump); a stop without coordinates.
+-- A station the line calls at, passed at 60 km/h (a kilometre a minute, 0.009°
+-- of latitude) inside a three-minute run; the same minute alone (a
+-- reacquisition jump); a stop without coordinates.
 private def stopAt (lat lon : Float) : Verified.Hsmm.ServedStations.RailStop :=
   { name := some "S", lat := some lat, lon := some lon }
 private def run3 : Array (Option (Float × Float × Float)) :=
-  #[some (51.500, -0.10, 60), some (51.505, -0.10, 60), some (51.510, -0.10, 60)]
+  #[some (51.496, -0.10, 60), some (51.505, -0.10, 60), some (51.514, -0.10, 60)]
 #guard passPenalty run3 #[stopAt 51.5051 (-0.10)] == PASS_PENALTY
 #guard passPenalty #[none, some (51.505, -0.10, 60), none] #[stopAt 51.5051 (-0.10)] == 0
 #guard passPenalty run3 #[{ name := some "S" }] == 0
 -- Slow minutes: a call, not a pass.
-#guard passPenalty (run3.map (·.map fun (a, b, _) => (a, b, 20))) #[stopAt 51.5051 (-0.10)] == 0
+#guard passPenalty #[some (51.502, -0.10, 20), some (51.505, -0.10, 20), some (51.508, -0.10, 20)]
+  #[stopAt 51.5051 (-0.10)] == 0
+-- ⚠ The smoother says 60 throughout, but the minutes either side are 670 m
+-- apart: the train stopped in between (07-16, Kilburn). A call, not a pass.
+#guard passPenalty #[some (51.502, -0.10, 60), some (51.505, -0.10, 60), some (51.508, -0.10, 60)]
+  #[stopAt 51.5051 (-0.10)] == 0
 -- Four passes clamp.
 #guard passPenalty run3 #[stopAt 51.5051 (-0.10), stopAt 51.5050 (-0.10),
   stopAt 51.5052 (-0.10), stopAt 51.5049 (-0.10)] == PASS_CLAMP
