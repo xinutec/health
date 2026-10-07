@@ -336,29 +336,6 @@ def substituteLines (e : Env) (segs : Array Seg) : Array Seg :=
         | _ => s
       | _ => s
 
-/-- Name only: what the anchors' served-station test compares.
-
-⚠ PROXIMITY, and measured WRONG IN BOTH DIRECTIONS — left in place anyway,
-because replacing it regresses a floor. `stationsOnLine` filters stations by
-distance from the line's ways (`filter_stations_by_line_proximity`), so it both
-INFLATES (66 stations for the Northern's real 52, 54 for the Circle's 35) and
-OMITS stations the line truly serves (21 on the Central). An inflated list makes
-`lineCannotServe` decline a veto it should raise; an omission makes it veto a
-line that does serve the station.
-
-The mirror already carries the honest answer — `railStops`, the ordered
-stop-role members of each route relation, whose lists reproduce the true size of
-every tube line they cover. Swapping it in was BUILT AND REVERTED (#181): it
-correctly vetoes a blessed `Euston Square → King's Cross St Pancras ·
-Victoria Line`, which is geographically impossible — all four Victoria line
-relations stop at Euston, not Euston Square, and the relations holding both that
-pair are Circle, Hammersmith & City and Metropolitan. But the leg then falls to
-`driving` with no name instead of being relabelled, and the walk `offPath` floor
-regresses with it. The veto is not the missing piece; SUBSTITUTING the line that
-can serve the pair is, and that is #238's half. -/
-def Env.servedStations (e : Env) : String → Array Verified.Geo.LineMembership.ServedStation :=
-  fun line => (e.stationsOnLine line).map fun s => ⟨s.name⟩
-
 /-- The normalised names the line's RELATIONS stop at, or `none` when the
 mirror holds no relation for the line — unknown is not evidence. -/
 def Env.relationStops (e : Env) (line : String) : Option (Array String) :=
@@ -366,6 +343,44 @@ def Env.relationStops (e : Env) (line : String) : Option (Array String) :=
   if rels.isEmpty then none
   else some (rels.flatMap fun r => r.stops.filterMap fun st =>
     st.name.map Verified.Geo.LineStoppingPattern.normalizeStationName)
+
+/-- `stations` kept to those the line's relations stop at. A line with no
+relation in the mirror keeps every one, and so does a line whose filter would
+leave none. -/
+def Env.onRelations {α : Type} (e : Env) (line : String) (stations : Array α)
+    (name : α → String) : Array α :=
+  match e.relationStops line with
+  | none => stations
+  | some served =>
+    let kept := stations.filter fun st =>
+      served.contains (Verified.Geo.LineStoppingPattern.normalizeStationName (name st))
+    if kept.isEmpty then stations else kept
+
+/-- Name only: what the anchors' served-station test compares — the
+proximity list kept to the stations the line's RELATIONS stop at (#238,
+2026-10-07), the same filter the interchange splicer reads.
+
+`stationsOnLine` is every station point near the line's ways, so it INFLATES
+(66 stations for the Northern's real 52, 54 for the Circle's 35; the mainline
+"London King's Cross" on the Victoria) and OMITS stations the line truly serves
+(21 on the Central). The filter removes the inflation only; an omission stays
+one. Read by `boardingAnchor`, `alightAnchor` and `boardAtWait`; on the corpus
+it moved one day, 08-08's Victoria ride, which now boards at King's Cross St
+Pancras instead of the mainline station. -/
+def Env.servedStations (e : Env) : String → Array Verified.Geo.LineMembership.ServedStation :=
+  fun line => (e.onRelations line (e.stationsOnLine line) (·.name)).map fun s => ⟨s.name⟩
+
+/-- The PROXIMITY list, unfiltered: what the underground-run line pick vetoes
+against, and on purpose. That pick only considers lines found at both ends and
+hugged by the fixes, so the honest list leaves it with NO candidate where the
+proximity list kept a wrong one: 08-07's `Euston Square → King's Cross St
+Pancras` (all four Victoria relations stop at Euston, not Euston Square) then
+never becomes a train and falls to `driving` — measured twice (#181, and #238
+on 2026-10-07). The wrong Victoria label it keeps is relabelled to the bare
+pair later by `substituteLines`. Move this pick onto `servedStations` only
+when it can fall back to the lines the relations say serve the pair. -/
+def Env.nearLineStations (e : Env) : String → Array Verified.Geo.LineMembership.ServedStation :=
+  fun line => (e.stationsOnLine line).map fun s => ⟨s.name⟩
 
 /-- Name and coordinate, as a list: what the interchange splicer declares.
 
@@ -383,12 +398,7 @@ def Env.interchangeStations (e : Env) : String → List Verified.Geo.Interchange
   fun line =>
     let all := (e.stationsOnLine line).map fun s =>
       (⟨s.name, s.lat, s.lon⟩ : Verified.Geo.Interchange.Station)
-    match e.relationStops line with
-    | none => all.toList
-    | some served =>
-      let kept := all.filter fun st =>
-        served.contains (Verified.Geo.LineStoppingPattern.normalizeStationName st.name)
-      (if kept.isEmpty then all else kept).toList
+    (e.onRelations line all (·.name)).toList
 
 /-- The journey assembler's own shell record. Its radius is an `Int` where the
 env's is a `Float`; widening, so nothing is lost. -/
@@ -719,7 +729,7 @@ def passes (e : Env) : Array Pass := #[
     Verified.Geo.UndergroundAnnotate.annotateUndergroundRuns segs e.rawFixes e.points e.feasSteps
       (fun lat lon => e.nearbyStations lat lon UNDERGROUND_STATION_RADIUS_M)
       (fun lat lon => e.linesAtPoint lat lon UNDERGROUND_LINES_RADIUS_M)
-      e.nearbyWays e.servedStations),
+      e.nearbyWays e.nearLineStations),
 
   -- Second cadence-drive revert. The FIRST runs before the rail passes exist,
   -- so a platform interchange sandwiched between two rides saw `driving`
