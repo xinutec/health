@@ -918,9 +918,52 @@ private def coverageResult (j : Json) : Json :=
 private def encScore (bound : Nat) : Option Float → Except String Nat
   | none => .ok 0
   | some fv =>
-    let v := (Float.toInt64 fv).toInt
-    if v.natAbs > bound then throw s!"assembled score {v} exceeds envelope {bound}"
-    else .ok (v + (pOff : Int)).toNat
+    -- In machine words: `Int` is a GMP number past 2^31, and these scores are
+    -- far past it, so `(v + pOff).toNat` allocated on every cell (#1774).
+    -- `|w|` as a `UInt64` is exact for every `Int64`, `Int64.min` included.
+    let w := Float.toInt64 fv
+    let mag := (if w < 0 then 0 - w else w).toUInt64.toNat
+    if mag > bound then throw s!"assembled score {w.toInt} exceeds envelope {bound}"
+    else .ok (if w < 0 then pOff - mag else pOff + mag)
+
+/-- Inside `±int64Lim` two `Int64`s subtract without overflow. `@[noinline]`:
+a literal ≥ 2^32 inlined into a loop is a GMP string parse per evaluation. -/
+@[noinline] private def int64Lim : Int64 := 4611686018427387904
+
+/-- `((qE - qR) + h).toNat`, and the difference when `|qE - qR| > h` — the
+duration delta's packing. On machine words when both scores sit inside
+`±2^62`, so the difference is exact; in `Int` otherwise. -/
+@[inline] private def packDelta (qE qR : Int64) (h : Nat) : Nat × Option Int :=
+  if -int64Lim < qE && qE < int64Lim && -int64Lim < qR && qR < int64Lim then
+    let d := qE - qR
+    let mag := (if d < 0 then 0 - d else d).toUInt64.toNat
+    (if d < 0 then h - mag else h + mag, if mag > h then some d.toInt else none)
+  else
+    let d := qE.toInt - qR.toInt
+    ((d + (h : Int)).toNat, if d.natAbs > h then some d else none)
+
+private def packDeltaRef (qE qR : Int64) (h : Nat) : Nat × Option Int :=
+  let d := qE.toInt - qR.toInt
+  ((d + (h : Int)).toNat, if d.natAbs > h then some d else none)
+
+-- The fast path against the `Int` form, at the edges that can differ: signs,
+-- the band edge `h`, past it, the ±2^62 boundary, and the extremes.
+#guard
+  let vs : List Int64 := [0, 1, -1, 17592186044416, -17592186044416, 17592186044417,
+    -17592186044417, 562949953421312, -562949953421312, 4611686018427387903,
+    -4611686018427387903, 4611686018427387904, -4611686018427387904,
+    9223372036854775807, -9223372036854775808]
+  vs.all fun a => vs.all fun b =>
+    [0, 1, 17592186044416].all fun h => packDelta a b h == packDeltaRef a b h
+
+#guard [((0 : Int64), 0), (5, 3), (-5, 3), (-9223372036854775808, 9223372036854775808),
+    (9223372036854775807, 9223372036854775807), (-3, 3), (3, 2)].all fun (w, bound) =>
+  let ref : Except String Nat :=
+    if w.toInt.natAbs > bound then .error "x" else .ok (w.toInt + (pOff : Int)).toNat
+  match encScore bound (some w.toFloat), ref with
+  | .ok a, .ok b => a == b
+  | .error _, .error _ => true
+  | _, _ => false
 
 /-- Class key for the duration factorisation. `dur(s,d,e)` depends on the state
     only through `(mode, isNamedTrain)` — segment evidence sees the mode, and the
@@ -1036,7 +1079,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   for s in [0:S] do
     for d0 in [0:maxD] do
       durBase := durBase.set! (s * maxD + d0) (← encScore halfOB (quant (Verified.Hsmm.Assemble.durAt c s (d0 + 1) assembleRefE)))
-  let qiOf := fun (x : Float) => (Float.toInt64 x).toInt   -- dur is finite
+  let qiOf := fun (x : Float) => Float.toInt64 x   -- dur is finite
   -- Coverage depends on `e` alone, so once per `e` for every class and `d`.
   let covered : Array Bool := (Array.range T).map (Verified.Hsmm.Assemble.coveredAtE c)
   -- A pure loop: in `Except` each of the ~2.4M cells paid for the monad, which
@@ -1060,9 +1103,9 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         for cls in [0:nC] do
           let qE := match quant (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) cov w bases[cls]!) with
             | some v => qiOf v | none => 0
-          let delta := qE - qRefs[cls]!
-          if delta.natAbs > halfOB then bad := some delta
-          durDelta := durDelta.set! ((cls * maxD + d0) * T + e) (delta + (halfOB : Int)).toNat
+          let (packed, over) := packDelta qE qRefs[cls]! halfOB
+          if over.isSome then bad := over
+          durDelta := durDelta.set! ((cls * maxD + d0) * T + e) packed
     return (durDelta, bad)
   if let some delta := bad then throw s!"dur delta {delta} exceeds halfOB {halfOB}"
   return (durClass, durBase, durDelta)
