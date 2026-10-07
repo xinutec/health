@@ -110,6 +110,24 @@
       "argv": [
         "scripts/dev",
         "cargo",
+        "run",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "-p",
+        "backend",
+        "--example",
+        "lean_gmp_hotpaths"
+      ],
+      "artifacts": [],
+      "cwd": ".",
+      "env": {},
+      "name": "no new slow numeric conversions in compiled Lean",
+      "timeout_s": 600
+    },
+    {
+      "argv": [
+        "scripts/dev",
+        "cargo",
         "test",
         "--doc",
         "--manifest-path",

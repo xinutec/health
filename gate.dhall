@@ -235,6 +235,30 @@ in  { name = "health"
               ]
         , timeout_s = 1800
         }
+      , {-  Slow numeric conversions in compiled Lean: `Nat.toFloat` (the generic
+            literal path, not a cast), a literal ≥ 2^32 parsed from a string, a
+            Float literal rebuilt in a loop — each GMP work on EVERY call, and each
+            cost the walk matcher or the decoder build real time before anyone
+            saw it. Reads the generated C the row above just built, against
+            `lean/gmp-hotpaths.baseline` held exact in both directions: a new
+            site fails naming its function, a removed one fails until re-blessed.
+            Debug profile, like the row above, so it compiles nothing new.
+        -}
+        G.Check::{
+        , name = "no new slow numeric conversions in compiled Lean"
+        , argv =
+            dev
+              [ "cargo"
+              , "run"
+              , "--manifest-path"
+              , "rust/Cargo.toml"
+              , "-p"
+              , "backend"
+              , "--example"
+              , "lean_gmp_hotpaths"
+              ]
+        , timeout_s = 600
+        }
       , {-  The six corpus replays, split out of the row above and run at
             `--release` — the profile deploy.sh step 2 already runs the same
             binaries at, so no NEW trade is taken here; the trade (release drops
