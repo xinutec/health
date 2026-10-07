@@ -24,7 +24,7 @@
 # gitignored) — commits all changes in this repo WITHOUT the hook (its table,
 # gate-commit.json, is a subset of what just ran), pushes to main, waits for
 # CI, then rolls out the new image on isis. The k8s manifests live in the home
-# monorepo (xinutec/pippijn code/kubes/health/k8s). dev-lint: allow-pii the repository's name
+# monorepo (xinutec/pippijn code/kubes/health/k8s).
 #
 # ⚠ Until 2026-09-17 this ran the gate table, then the corpus replay again on
 # its own, then `git commit` ran the hook's copy of the whole table: two gates

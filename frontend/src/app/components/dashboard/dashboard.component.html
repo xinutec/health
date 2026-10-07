@@ -25,7 +25,6 @@
 			<button mat-stroked-button (click)="retryAll()">Retry</button>
 		</div>
 	}
-	<!-- dev-lint: allow-unstyled-class a unit-test hook — dashboard.component.spec.ts queries .view-tabs -->
 	<mat-tab-group
 		[selectedIndex]="tabIndex()"
 		(selectedIndexChange)="changeTab($event)"
