@@ -2,6 +2,7 @@ import Verified.Geo.PathPoint
 import Verified.Hsmm.FloatScore
 import Verified.JsNum
 import Verified.FloatConst
+import Verified.Fix
 /-!
 # Segment-list rewrites (port of the pure passes in `src/geo/passes/moving.ts`
 and `src/geo/passes/stays.ts`)
@@ -175,11 +176,7 @@ structure Seg where
   deriving Inhabited, BEq, Repr
 
 /-- A GPS fix, as these passes see it. -/
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving Inhabited, BEq, Repr
+abbrev Fix := Verified.GeoFix
 
 /-- A per-minute step count. -/
 structure StepPoint where
@@ -206,7 +203,7 @@ def addRefinedKind (existing : Array String) (kind : String) : Array String :=
 /-- Fixes inside a segment's window. INCLUSIVE both ends, the pipeline's
 dominant convention (`samplesInWindow`). -/
 def samplesInWindow (fixes : Array Fix) (startTs endTs : Int) : Array Fix :=
-  fixes.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs
+  Verified.GeoFix.within fixes startTs endTs
 
 /-- Arithmetic-mean centroid of some fixes, or `none` when there are none. -/
 def meanOf (fixes : Array Fix) : Option (Float × Float) :=

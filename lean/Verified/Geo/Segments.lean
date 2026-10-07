@@ -1,6 +1,7 @@
 import Verified.Geo.ModeBiometrics
 import Verified.Hsmm.FloatScore
 import Verified.JsNum
+import Verified.Fix
 /-!
 # Segment classification scoring cluster (port of the pure kernels in `src/geo/segments.ts`)
 
@@ -204,11 +205,7 @@ def isStationaryIncoherent (linearity netDisplacementM coreDisplacementM duratio
     !dwellWithDepartureTail
 
 /-- A fix for the pedestrian-core scan: instant + position. -/
-structure PedFix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving Inhabited
+abbrev PedFix := Verified.GeoFix
 
 /-- Net displacement of a fix sequence's pedestrian core: split at every
     vehicle-paced step, take the largest resulting run, return its first→last

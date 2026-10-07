@@ -1,5 +1,6 @@
 import Verified.Hsmm.FloatScore
 import Verified.FloatConst
+import Verified.Fix
 /-!
 # Rail-run leaves (port of the pure functions in `src/geo/passes/rail-runs.ts`)
 
@@ -40,12 +41,7 @@ namespace Verified.Geo.RailRuns
 
 open Verified.Hsmm.FloatScore (haversineMeters)
 
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  speedKmh : Float
-  deriving Inhabited, BEq, Repr
+abbrev Fix := Verified.SpeedFix
 
 /-! ## `expandTubeLineNames` -/
 

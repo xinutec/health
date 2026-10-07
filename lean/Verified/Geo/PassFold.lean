@@ -171,22 +171,12 @@ structure Env where
 
 /-! ## Fix projections
 
-One per shape a pass declares. Each drops fields the consumer does not read;
-none invents one. -/
+Every pass declares a fix as `Verified.GeoFix` (time and position) or
+`Verified.SpeedFix` (the env's own `PointF`, speed included) since #1937 — the
+nine per-pass projections that copied the same fields are this one, and the
+speed-carrying passes read `e.points` itself. Nothing is invented. -/
 
-def Env.coherenceFixes (e : Env) : Array StationaryCoherence.Fix :=
-  e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩
-
-def Env.mergeFixes (e : Env) : Array Verified.Geo.SegmentMerge.Fix :=
-  e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩
-
-def Env.railFixes (e : Env) : Array Verified.Geo.RailRuns.Fix :=
-  e.points.map fun p => ⟨p.ts, p.lat, p.lon, p.speedKmh⟩
-
-def Env.absorberFixes (e : Env) : Array Verified.Geo.RailAbsorbers.Fix :=
-  e.points.map fun p => ⟨p.ts, p.lat, p.lon, p.speedKmh⟩
-
-def Env.tubeFixes (e : Env) : Array Verified.Geo.TubeHop.Fix :=
+def Env.geoFixes (e : Env) : Array Verified.GeoFix :=
   e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩
 
 /-- The step rows as the worldline passes declare them. A field-for-field
@@ -205,28 +195,14 @@ one row is #422; when that closes this becomes a rename like the one above. -/
 def Env.absorberSteps (e : Env) : Array Verified.Geo.RailAbsorbers.StepPoint :=
   e.steps.map fun s => ⟨s.ts, s.steps.toInt64.toInt⟩
 
-def Env.interchangeFixes (e : Env) : Array Verified.Geo.Interchange.Fix :=
-  e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩
-
 /-- The second `Float → Int` step conversion — see `absorberSteps`, and #422. -/
 def Env.interchangeSteps (e : Env) : List Verified.Geo.Interchange.StepPoint :=
   (e.steps.map fun s => ⟨s.ts, s.steps.toInt64.toInt⟩).toList
-
-def Env.busFixes (e : Env) : List Verified.Geo.Bus.Fix :=
-  (e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩).toList
 
 /-- The step rows as the biometric windows declare them. A rename: `Float` both
 sides, unlike the two `Int` conversions above. -/
 def Env.biomSteps (e : Env) : List Verified.Geo.BiometricWindows.StepPoint :=
   (e.steps.map fun s => ⟨s.ts, s.steps⟩).toList
-
-def Env.labelFixes (e : Env) : List Verified.Geo.BiometricLabels.Fix :=
-  (e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩).toList
-
-/-- The road matcher declares the episode-geometry fix — same four fields as
-`railFixes`, a different record. -/
-def Env.geomFixes (e : Env) : Array Verified.Geo.EpisodeGeometry.Fix :=
-  e.points.map fun p => ⟨p.ts, p.lat, p.lon, p.speedKmh⟩
 
 /-! ### The line lookup, three ways
 
@@ -437,7 +413,7 @@ wiring, and they belong to the fold in the same way. -/
 /-- Fixes covering a segment's window. `samplesInWindow`: INCLUSIVE both ends,
 the pipeline's dominant reading. -/
 private def inWindow (e : Env) (s : Seg) : Array Shed.PointF :=
-  e.points.filter fun p => decide (p.ts ≥ s.startTs) && decide (p.ts ≤ s.endTs)
+  Verified.SpeedFix.within e.points s.startTs s.endTs
 
 /-- The mean of the fixes in a segment's window; `none` when no fix falls in it. -/
 private def centroidOf (e : Env) (s : Seg) : Option (Float × Float) :=
@@ -693,7 +669,7 @@ def passes (e : Env) : Array Pass := #[
   -- dwelling. Reclassify BEFORE merge and place attribution, so it coalesces
   -- with the adjacent walk and is never named after a POI it drifted past.
   ("stationaryCoherence", fun segs =>
-    StationaryCoherence.stationaryCoherence segs e.coherenceFixes),
+    StationaryCoherence.stationaryCoherence segs e.geoFixes),
 
   ("merge", fun segs =>
     Verified.Geo.SegmentMerge.mergeAdjacentMoving
@@ -704,7 +680,7 @@ def passes (e : Env) : Array Pass := #[
   -- centre.
   ("consolidateJitterStays", fun segs =>
     Verified.Geo.SegmentMerge.consolidateJitterStays
-      (Verified.Geo.SegmentMerge.attachStayCentroids segs e.mergeFixes) e.bestPlace e.tzAt),
+      (Verified.Geo.SegmentMerge.attachStayCentroids segs e.geoFixes) e.bestPlace e.tzAt),
 
   -- A ride that doubles back is two rides with a change between them. Must run
   -- BEFORE railRuns: once a run is grown across a turnaround the two halves are
@@ -717,7 +693,7 @@ def passes (e : Env) : Array Pass := #[
       { stationsLookup := fun lat lon =>
           e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M
         linesLookup := fun lat lon => e.linesAtPoint lat lon LINES_AT_POINT_DEFAULT_RADIUS_M }
-      segs e.railFixes e.railStops),
+      segs e.points e.railStops),
 
   -- A tube ride leaves only coarse cell-network fixes, which annotateRailRuns
   -- cannot resolve. Mine those from the RAW track to identify the line and
@@ -743,7 +719,7 @@ def passes (e : Env) : Array Pass := #[
   -- a station wait doesn't surface as a standalone stay mislabelled with the
   -- nearest focus place.
   ("boardingPlatform", fun segs =>
-    Verified.Geo.RailAbsorbers.absorbBoardingPlatform segs e.absorberFixes
+    Verified.Geo.RailAbsorbers.absorbBoardingPlatform segs e.points
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)),
 
@@ -770,7 +746,7 @@ def passes (e : Env) : Array Pass := #[
   -- ride. Split it at the watch-timed interchange step burst, with the change
   -- station picked from the line graph by timing fit.
   ("interchangeSplit", fun segs =>
-    Verified.Geo.Interchange.spliceInterchanges segs e.interchangeFixes e.interchangeSteps
+    Verified.Geo.Interchange.spliceInterchanges segs e.geoFixes e.interchangeSteps
       (fun lat lon r => (e.linesAtPoint lat lon r).toList) e.interchangeStations),
 
   -- A "stationary" stop the watch shows was a walk-through: a clear per-minute
@@ -779,10 +755,10 @@ def passes (e : Env) : Array Pass := #[
   -- touches genuine standalone phantom stops. The ONLY pass that changes the
   -- segment COUNT by merging, so it carries a merge plan as well as decisions.
   ("rideTailTrim", fun segs =>
-    Verified.Geo.Interchange.trimRideTailAtWalk segs e.interchangeFixes e.interchangeSteps),
+    Verified.Geo.Interchange.trimRideTailAtWalk segs e.geoFixes e.interchangeSteps),
   ("walkThrough", fun segs =>
     Verified.Geo.BiometricLabels.applyStationaryWalkThroughApplied
-      segs.toList e.biomSteps e.labelFixes),
+      segs.toList e.biomSteps e.geoFixes.toList),
 
   -- A short walk between two train legs sharing a station is the
   -- platform-to-platform change, not a street walk — name it the station so a
@@ -869,7 +845,7 @@ def passes (e : Env) : Array Pass := #[
   -- Both anchors run after `reenrichSplitWalks`, so each renames the walk it
   -- trimmed itself.
   ("boardingAnchor", fun segs => Array.map (renameFlagged e) <|
-    Verified.Geo.RailAbsorbers.anchorTrainBoardingToWalkedStation segs e.absorberFixes
+    Verified.Geo.RailAbsorbers.anchorTrainBoardingToWalkedStation segs e.points
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
       e.servedStations e.noLineConnects e.feasSteps),
@@ -878,7 +854,7 @@ def passes (e : Env) : Array Pass := #[
   -- and the ride on to the true alight is stranded as the FAST leading fixes of
   -- the next walk. Extend the train forward and trim the walk.
   ("alightAnchor", fun segs => Array.map (renameFlagged e) <|
-    Verified.Geo.RailAbsorbers.anchorTrainAlightToWalkedStation segs e.absorberFixes e.feasSteps
+    Verified.Geo.RailAbsorbers.anchorTrainAlightToWalkedStation segs e.points e.feasSteps
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
       e.servedStations e.noLineConnects),
@@ -888,7 +864,7 @@ def passes (e : Env) : Array Pass := #[
   -- run touches, it was one ride on that line — collapse it. The line topology
   -- decides, not a GPS heuristic, so a genuine multi-line change is left whole.
   ("railJourney", fun segs =>
-    Verified.Geo.RailJourney.assembleRailJourney e.railJourneyEnv segs e.railFixes e.biomSteps),
+    Verified.Geo.RailJourney.assembleRailJourney e.railJourneyEnv segs e.points e.biomSteps),
 
   -- A brief Underground hop with clean GPS trips neither underground gate, so
   -- it survives as `driving` and only the bus matcher is left to name it.
@@ -896,10 +872,10 @@ def passes (e : Env) : Array Pass := #[
   -- A hop whose whole ride fell between two states (GPS gone on the platform,
   -- back at the far station): fill the gap with a vehicle leg so `tubeHop`
   -- can judge it (07-16). Lean-only.
-  ("gapRide", fun segs => Verified.Geo.TubeHop.bridgeFastGaps segs e.tubeFixes),
+  ("gapRide", fun segs => Verified.Geo.TubeHop.bridgeFastGaps segs e.geoFixes),
 
   ("tubeHop", fun segs =>
-    Verified.Geo.TubeHop.upgradeTubeHops segs e.tubeFixes
+    Verified.Geo.TubeHop.upgradeTubeHops segs e.geoFixes
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
       (fun lat lon => e.linesAtPoint lat lon LINES_AT_POINT_DEFAULT_RADIUS_M)),
@@ -922,21 +898,21 @@ def passes (e : Env) : Array Pass := #[
   -- bus_stop nodes is a bus. After all mode refinement, so it judges the FINAL
   -- driving legs.
   ("busEvidence", fun segs =>
-    Verified.Geo.Bus.annotateBusEvidence segs e.busFixes e.transitStops),
+    Verified.Geo.Bus.annotateBusEvidence segs e.geoFixes.toList e.transitStops),
 
   -- Stronger than the dwell evidence above: anchor a leg's boarding wait (or,
   -- without one, its first fix) and its last fix to a mirrored route's stops
   -- and, on a match, name the bus. Catches short rides with too few dwells to
   -- score — a non-stopping bus can emit nothing else.
   ("busRoutes", fun segs =>
-    Verified.Geo.Bus.annotateBusRoutes segs e.busFixes e.busRouteCache),
+    Verified.Geo.Bus.annotateBusRoutes segs e.geoFixes.toList e.busRouteCache),
 
   -- Snap each road-vehicle leg onto the street network so the map draws it on
   -- the road instead of the raw GPS zigzag through buildings. After all mode
   -- refinement, so it only matches the FINAL road legs. Purely additive: with
   -- no road data it is a no-op and the raw track draws.
   ("roadMatch", fun segs =>
-    Verified.Geo.RoadMatchAnnotate.annotateRoadMatches e.roadEnv segs e.geomFixes),
+    Verified.Geo.RoadMatchAnnotate.annotateRoadMatches e.roadEnv segs e.points),
 
   -- The same for walking legs, onto the walkable network, so the map draws the
   -- pavement instead of a line through buildings. Display geometry only —
@@ -978,9 +954,9 @@ def passes (e : Env) : Array Pass := #[
   -- arise, because the TS returns its input by identity exactly when it changed
   -- nothing.
   ("finalMerge", fun segs =>
-    let intra := Verified.Geo.SegmentMerge.absorbIntraPlaceWalk segs e.mergeFixes
+    let intra := Verified.Geo.SegmentMerge.absorbIntraPlaceWalk segs e.geoFixes
     let swallowed :=
-      Verified.Geo.SegmentMerge.absorbFarFocusPlacePhantom intra e.knownPlaces e.mergeFixes
+      Verified.Geo.SegmentMerge.absorbFarFocusPlacePhantom intra e.knownPlaces e.geoFixes
     let coalesced :=
       if swallowed == intra then swallowed
       else Verified.Geo.SegmentMerge.mergeAdjacentMoving swallowed
@@ -1006,7 +982,7 @@ def passes (e : Env) : Array Pass := #[
   -- which decline this case by design because a hop between two rides can
   -- belong to either side and the window has to be read whole.
   ("changeoverWindow", fun segs =>
-    Verified.Geo.RailReconcile.splitChangeoverWindows segs e.absorberFixes e.feasSteps),
+    Verified.Geo.RailReconcile.splitChangeoverWindows segs e.points e.feasSteps),
 
   -- A stay at a station bracketed by trains on BOTH sides is a change of
   -- trains, not a venue visit — name it the station so a co-located shop cannot
@@ -1445,7 +1421,7 @@ private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
 -- pass relabels it and the second coalesces the result. Both are pinned in
 -- their firing ORDER above; these pin that each does something at all.
 #guard fires env "stationaryCoherence" marchThenWalk
-#guard fires env "merge" (StationaryCoherence.stationaryCoherence marchThenWalk env.coherenceFixes)
+#guard fires env "merge" (StationaryCoherence.stationaryCoherence marchThenWalk env.geoFixes)
 
 -- Two co-located stays, re-resolved from the merged centre.
 #guard fires MIX "consolidateJitterStays" #[st 0 600, st 600 1200]

@@ -1,4 +1,5 @@
 import Verified.Geo.RailAbsorbers
+import Verified.Fix
 /-!
 # Worldline feasibility (port of `src/eval/worldline-feasibility.ts`, #1048)
 
@@ -85,11 +86,7 @@ structure Leg where
   wayName : Option String := none
   deriving BEq, Repr, Inhabited
 
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving BEq, Repr, Inhabited
+abbrev Fix := Verified.GeoFix
 
 structure StepPoint where
   ts : Int

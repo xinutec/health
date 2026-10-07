@@ -10,6 +10,7 @@ import Verified.Geo.BiometricLabels
 -- move boundaries (#424).
 import Verified.Geo.SegmentUtil
 import Verified.JsNum
+import Verified.Fix
 /-!
 # Rail absorbers (port of `src/geo/passes/rail-absorbers.ts`)
 
@@ -76,12 +77,7 @@ in this file.
 kinematics of the walk whose boundary they moved. It was omitted while they did
 not, and its absence is exactly why they did not: the summary they needed to
 recompute is derived from it. -/
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  speedKmh : Float
-  deriving Inhabited, BEq, Repr
+abbrev Fix := Verified.SpeedFix
 
 /-- The fix as `Verified.Geo.SegmentUtil` types it — a rename, field for field. -/
 def Fix.toPointF (f : Fix) : Shed.PointF :=
@@ -472,7 +468,7 @@ straddling the walk↔train boundary is the ride itself, and the kinematic
 invariant charges it to this leg — a pass that cannot see it is blind to exactly
 the evidence the invariant reports. -/
 private def samplesInWindow (points : Array Fix) (s : Seg) : Array Fix :=
-  points.filter fun p => decide (p.ts ≥ s.startTs) && decide (p.ts ≤ s.endTs)
+  Verified.SpeedFix.within points s.startTs s.endTs
 
 /-- A stretch a pass would hand to a ride reads as a WALK: walked (whole
 minutes inside it at a walker's least cadence) and no faster end to end than a

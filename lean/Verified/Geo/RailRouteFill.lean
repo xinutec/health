@@ -1,3 +1,4 @@
+import Verified.Fix
 /-!
 # Which train legs are worth a route fill (port of `src/geo/rail-route-fill.ts`)
 
@@ -56,11 +57,7 @@ structure FillSegment where
   deriving Repr, Inhabited
 
 /-- One fix, as the corridor evidence a fill is computed from. -/
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving Repr, Inhabited
+abbrev Fix := Verified.GeoFix
 
 /-- A train leg that wanted a snapped route and found no cache row. -/
 structure Candidate where

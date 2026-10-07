@@ -188,7 +188,7 @@ def haversineMeters (lat1 lon1 lat2 lon2 : Float) : Float :=
 
 /-- Fixes inside a segment's window, both bounds INCLUSIVE (`samplesInWindow`). -/
 def samplesInWindow (points : Array Fix) (startTs endTs : Int) : Array Fix :=
-  points.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs
+  Verified.SpeedFix.within points startTs endTs
 
 /-- Representative location of a train leg for the line lookup: the centroid of
 its own fixes, falling back to a segment centroid when the leg has none. -/
@@ -738,8 +738,8 @@ private def dAB : Float := haversineMeters 51.5 LON 51.52 LON
 
 private def S11_FIXES : Array Fix := #[⟨1000, 51.5, -38.1, 50.0⟩, ⟨1058, 51.507487499999996, -38.1, 50.0⟩, ⟨1115, 51.514975, -38.1, 50.0⟩, ⟨1173, 51.5224625, -38.1, 50.0⟩, ⟨1230, 51.52995, -38.1, 50.0⟩, ⟨1288, 51.537437499999996, -38.1, 50.0⟩, ⟨1345, 51.544925, -38.1, 50.0⟩, ⟨1403, 51.5524125, -38.1, 50.0⟩, ⟨1460, 51.5599, -38.1, 50.0⟩, ⟨1520, 51.56, -38.1, 4.0⟩, ⟨1580, 51.560050000000004, -38.1, 4.0⟩, ⟨1640, 51.5601, -38.1, 4.0⟩]
 
-#guard (findRunAlightFix S11_FIXES 1460).map Fix.ts == some 1520
-#guard (findRunAlightFix S11_FIXES 1500).map Fix.ts == some 1520
+#guard (findRunAlightFix S11_FIXES 1460).map (·.ts) == some 1520
+#guard (findRunAlightFix S11_FIXES 1500).map (·.ts) == some 1520
 -- Past the last fix there is no alight to find: the ride ran off the data.
 #guard (findRunAlightFix S11_FIXES 1640).isNone
 
@@ -1193,7 +1193,7 @@ private def S27_FIXES : Array Fix := #[⟨1000, 51.5, -38.1, 50.0⟩, ⟨1075, 5
 /-! ### Structural readers -/
 
 -- Both bounds INCLUSIVE.
-#guard (samplesInWindow S1_FIXES 1090 1180).map Fix.ts == #[1090, 1180]
+#guard (samplesInWindow S1_FIXES 1090 1180).map (·.ts) == #[1090, 1180]
 -- The leg centroid the neighbourhood lookup is asked at. Neither coordinate is
 -- the round number it looks like: the mean of three fixes at lon −0.1 is
 -- −0.10000000000000002, and the same leg over the four-fix S3 set comes out at

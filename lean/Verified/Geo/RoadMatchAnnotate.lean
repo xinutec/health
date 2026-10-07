@@ -119,7 +119,7 @@ export Verified.Geo.SegmentMerge (effectiveMode)
 /-- Fixes inside a segment's window, INCLUSIVE both ends
 (`segment-util.ts`'s `samplesInWindow`). -/
 def samplesInWindow (points : Array Fix) (startTs endTs : Int) : Array Fix :=
-  points.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs
+  Verified.SpeedFix.within points startTs endTs
 
 /-- `MAX_SPEED_FOR_MODE[mode]` — absent for `driving` and `bus`, which is why
 those legs keep every in-window fix. -/

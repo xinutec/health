@@ -4,6 +4,7 @@ import Verified.JsNum
 -- For `PEDESTRIAN_MIN_CADENCE_SPM`: the burst route in `correctStationaryWalkThrough`
 -- counts minutes at the fleet's pedestrian floor rather than inventing one.
 import Verified.Geo.Worldline
+import Verified.Fix
 /-!
 # Biometric label rewrites
 
@@ -93,11 +94,7 @@ def STATIONARY_WALK_THROUGH_MAX_DURATION_S : Int := 45 * 60
 /-! ## Shapes -/
 
 /-- A Kalman-filtered fix, as much of one as the extent veto reads. -/
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving Inhabited, BEq
+abbrev Fix := Verified.GeoFix
 
 /-- The pipeline segment record. These four passes read a handful of its fields
 — `refinedKinds` for the low-cadence tag, the speeds, the linearity, the place

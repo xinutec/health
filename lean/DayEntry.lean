@@ -592,7 +592,7 @@ private def parseChain (j : Json) (segs : Array Seg)
   let namer ← namerOf j
   return {
     segments := segs
-    points := points.map fun p => ⟨p.ts, p.lat, p.lon, p.speedKmh⟩
+    points := points
     displayFixes := display.map fun p => ⟨p.ts, p.lat, p.lon⟩
     morningFixes := (← (← optArr j "morningFixes").mapM parseStayFix).toList
     prevEveningFixes := (← (← optArr j "prevEveningFixes").mapM parseStayFix).toList

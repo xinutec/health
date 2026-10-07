@@ -1,3 +1,4 @@
+import Verified.Fix
 /-!
 # Per-minute observation tensor (implementation-first port of `observation.ts`)
 
@@ -48,11 +49,7 @@ structure GpsAgg where
   deriving BEq
 
 /-- A nearest GPS fix (top-of-minute ts + coordinates). -/
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving BEq
+abbrev Fix := Verified.GeoFix
 
 structure ObsRow where
   ts : Int

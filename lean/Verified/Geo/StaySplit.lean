@@ -1,6 +1,7 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.Worldline
 import Verified.JsNum
+import Verified.Fix
 /-!
 # Re-cutting segments on evidence (port of `src/geo/stay-split.ts`, grown since)
 
@@ -132,12 +133,7 @@ open Verified.Geo.Worldline (FeasibilityStepPoint meanCadenceSpm PEDESTRIAN_STEP
 open Verified.Hsmm.FloatScore (haversineMeters)
 
 /-- A Kalman-filtered fix as this pass reads it. -/
-structure PointF where
-  ts : Int
-  lat : Float
-  lon : Float
-  speedKmh : Float
-  deriving Inhabited, BEq, Repr
+abbrev PointF := Verified.SpeedFix
 
 /-- Shedding must leave at least this much ride behind. -/
 def MIN_REMAINING_RIDE_S : Int := 120

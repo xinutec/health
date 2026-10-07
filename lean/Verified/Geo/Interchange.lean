@@ -2,6 +2,7 @@ import Verified.Geo.SegmentMerge
 import Verified.Hsmm.FloatScore
 import Verified.JsNum
 import Verified.FloatConst
+import Verified.Fix
 /-!
 # Interchange decomposition kernels (port of the pure exports of `src/geo/interchange-split.ts`)
 
@@ -152,11 +153,7 @@ def ENDPOINT_LINES_RADIUS_M : Float := 300
 /-- Legs shorter than this can't hide a change worth carving. -/
 def MIN_LEG_FOR_SPLIT_S : Int := 10 * 60
 
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving Inhabited, BEq, Repr
+abbrev Fix := Verified.GeoFix
 
 /-- The pipeline's segment record. This pass reads and rewrites a subset of
 it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
@@ -168,7 +165,7 @@ export Verified.Geo.SegmentMerge (effectiveMode)
 
 /-- `samplesInWindow` — inclusive on both ends. -/
 private def samplesInWindow (points : Array Fix) (startTs endTs : Int) : Array Fix :=
-  points.filter (fun p => decide (p.ts ≥ startTs) && decide (p.ts ≤ endTs))
+  Verified.GeoFix.within points startTs endTs
 
 open Verified.JsNum (jsRound jsRoundInt)
 

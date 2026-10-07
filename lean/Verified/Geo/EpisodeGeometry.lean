@@ -1,6 +1,7 @@
 import Verified.Geo.Prefilter
 import Verified.Geo.ModeBiometrics
 import Verified.FloatConst
+import Verified.Fix
 /-!
 # Episode geometry — the map's half of "one day, two renderers"
 
@@ -114,21 +115,12 @@ structure SPt where
   deriving Inhabited, BEq, Repr
 
 /-- The `FilteredPoint` fields this module reads — the Kalman-smoothed track. -/
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  speedKmh : Float
-  deriving Inhabited, BEq, Repr
+abbrev Fix := Verified.SpeedFix
 
 /-- A raw GPS fix as captured (pre-Kalman). `accuracy` is carried by the TS
 type but never read here — the physics of the mode is the constraint, not the
 phone's self-reported number — so it is absent. -/
-structure RawFix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving Inhabited, BEq, Repr
+abbrev RawFix := Verified.GeoFix
 
 /-- The `EnrichedSegment` fields `resolveEpisode` reads. A different projection
 of the same TS record than `Verified.Geo.DayState.Seg`, which reads the

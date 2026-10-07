@@ -1,5 +1,6 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.RailRuns
+import Verified.Fix
 /-!
 # Tube-hop upgrade (port of `src/geo/passes/tube-hop.ts` + `pickBestStation`)
 
@@ -45,11 +46,7 @@ open Verified.Geo.RailRuns (expandTubeLineNames)
 
 abbrev Mode := String
 
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving Inhabited, BEq, Repr
+abbrev Fix := Verified.GeoFix
 
 /-- A rail station near a coordinate, as the OSM adapter reports it.
 
@@ -165,7 +162,7 @@ def TUBE_HOP_SURFACE_MAX_KMH : Float := 8
 
 /-- Fixes inside a segment's window, INCLUSIVE both ends. -/
 def samplesInWindow (points : Array Fix) (startTs endTs : Int) : Array Fix :=
-  points.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs
+  Verified.GeoFix.within points startTs endTs
 
 /-- The bounding fix indices of the tunnel-blackout hop, or `none`.
 

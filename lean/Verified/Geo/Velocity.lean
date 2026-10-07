@@ -2,6 +2,7 @@ import Verified.Geo.RailRoadProximity
 import Verified.Geo.SegmentMerge
 import Verified.Geo.Segments
 import Verified.JsNum
+import Verified.Fix
 /-!
 # Velocity-owned pure kernels (port of the pure helpers in `src/geo/velocity.ts`)
 
@@ -323,11 +324,7 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 export Verified.Geo.SegmentMerge (effectiveMode)
 
 /-- A Kalman fix as this pass reads it. -/
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving Inhabited, BEq, Repr
+abbrev Fix := Verified.GeoFix
 
 /-- `samplesInWindow` — inclusive at both ends. -/
 private def inWindow (points : Array Fix) (s : Seg) : Array Fix :=
@@ -345,7 +342,7 @@ def stationaryCoherence (segs : Array Seg) (points : Array Fix) : Array Seg :=
         let last := segPoints[segPoints.size - 1]'(by omega)
         let netDisplacementM := haversineMeters first.lat first.lon last.lat last.lon
         let coreDisplacementM :=
-          pedestrianCoreDisplacementM (segPoints.map fun p => ({ ts := p.ts, lat := p.lat, lon := p.lon } : PedFix))
+          pedestrianCoreDisplacementM segPoints
         let durationS := Float.ofInt (seg.endTs - seg.startTs)
         if !isStationaryIncoherent seg.linearity netDisplacementM coreDisplacementM durationS then seg
         else
@@ -405,8 +402,7 @@ private def flipped (m lin : String) : CRow :=
 -- The two displacements the decision reads, pinned before the verdicts so the
 -- guards cover the arithmetic and not just the outcome.
 private def approxM (a b : Float) : Bool := Float.abs (a - b) < 1e-9
-private def pedOf (pts : Array Fix) : Array PedFix :=
-  pts.map fun p => { ts := p.ts, lat := p.lat, lon := p.lon }
+private def pedOf (pts : Array Fix) : Array PedFix := pts
 #guard approxM (haversineMeters MARCH[0]!.lat MARCH[0]!.lon MARCH[10]!.lat MARCH[10]!.lon) 299.662935621121
 #guard approxM (pedestrianCoreDisplacementM (pedOf MARCH)) 299.662935621121
 #guard approxM (haversineMeters DWELL_RIDE_TAIL[0]!.lat DWELL_RIDE_TAIL[0]!.lon

@@ -1,5 +1,6 @@
 import Verified.Geo.RefineMode
 import Verified.Geo.Velocity
+import Verified.Fix
 /-!
 # OSM enrichment for a moving segment (port of `enrichMovingSegment`,
 `src/geo/velocity.ts`)
@@ -136,11 +137,7 @@ boundary crossing a cell, which the both-endpoints-must-agree rule absorbs. -/
 def cityGrid (n : Float) : Float := Float.floor (n * 1000 + 0.5) / 1000
 
 /-- A Kalman fix as this reads it: the leg's own points, in time order. -/
-structure Pt where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving Inhabited, BEq, Repr
+abbrev Pt := Verified.GeoFix
 
 /-- A railway names a train leg only when it lies near at least half the leg's
     sampled points (#238, 2026-09-30). The pick is the nearest railway merged

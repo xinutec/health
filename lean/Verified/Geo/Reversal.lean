@@ -179,7 +179,7 @@ def localOffset (pLat pLon refLat refLon : Float) : Float × Float :=
 
 /-- Fixes inside a window, INCLUSIVE both ends (`samplesInWindow`). -/
 def samplesInWindow (points : Array PointF) (startTs endTs : Int) : Array PointF :=
-  points.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs
+  Verified.SpeedFix.within points startTs endTs
 
 /--
 Do the approach to `pivot` and the departure from it oppose?

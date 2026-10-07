@@ -1,5 +1,6 @@
 import Verified.Geo.SegmentMerge
 import Verified.Hsmm.FloatScore
+import Verified.Fix
 /-!
 # Bus cluster (port of the pure kernels in `src/geo/bus-route-match.ts` and
 `src/geo/bus-evidence.ts`)
@@ -47,11 +48,7 @@ structure LatLon where
   deriving Inhabited, BEq
 
 /-- A timestamped fix (seconds). -/
-structure Fix where
-  ts : Int
-  lat : Float
-  lon : Float
-  deriving Inhabited, BEq
+abbrev Fix := Verified.GeoFix
 
 /-- One stop on a bus route, in route order. -/
 structure BusStop where

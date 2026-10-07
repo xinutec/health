@@ -147,7 +147,7 @@ def hasRefinedKind (s : Seg) (kind : String) : Bool := s.refinedKinds.contains k
 
 /-- Fixes inside a segment's window, INCLUSIVE both ends. -/
 def samplesInWindow (points : Array Fix) (s : Seg) : Array Fix :=
-  points.filter fun p => p.ts ≥ s.startTs && p.ts ≤ s.endTs
+  Verified.SpeedFix.within points s.startTs s.endTs
 
 /-- …and with an EXCLUSIVE upper bound.
 
