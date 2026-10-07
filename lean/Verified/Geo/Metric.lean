@@ -214,19 +214,15 @@ one). The bracket pins the value (`IsSqrt.unique`), so this IS `isqrt` — the
 float is never trusted, only tried. Newton from the power-of-two seed cost ~4
 big divisions and a `log2` per call, and `qDist` is called several times per
 graph edge (#1921). -/
-def isqrtFast (n : Nat) : Nat :=
-  -- Past 2^53 the conversion rounds `n`, so the guess can be off by one either
-  -- way (µm² of a 100 m distance is already 10^16); both neighbours are tried
-  -- before the descent.
-  let r := (Float.sqrt n.toFloat).toUInt64.toNat
+def isqrtFrom (r n : Nat) : Nat :=
   if r * r ≤ n ∧ n < (r + 1) * (r + 1) then r
   else if (r + 1) * (r + 1) ≤ n ∧ n < (r + 1 + 1) * (r + 1 + 1) then r + 1
   else if 1 ≤ r ∧ (r - 1) * (r - 1) ≤ n ∧ n < r * r then r - 1
   else isqrt n
 
-@[csimp] theorem isqrt_eq_fast : @isqrt = @isqrtFast := by
-  funext n
-  simp only [isqrtFast]
+/-- Whatever the guess, the bracket decides: `isqrtFrom` is `isqrt`. -/
+theorem isqrtFrom_eq (r n : Nat) : isqrt n = isqrtFrom r n := by
+  simp only [isqrtFrom]
   split
   · rename_i h
     exact IsSqrt.unique (isqrt_isSqrt n) ⟨h.1, h.2⟩
@@ -235,10 +231,23 @@ def isqrtFast (n : Nat) : Nat :=
       exact IsSqrt.unique (isqrt_isSqrt n) ⟨h.1, h.2⟩
     · split
       · rename_i h
-        have e : (Float.sqrt n.toFloat).toUInt64.toNat - 1 + 1
-            = (Float.sqrt n.toFloat).toUInt64.toNat := by omega
+        have e : r - 1 + 1 = r := by omega
         exact IsSqrt.unique (isqrt_isSqrt n) ⟨h.2.1, by rw [e]; exact h.2.2⟩
       · rfl
+
+def isqrtFast (n : Nat) : Nat :=
+  -- A 64-bit `n` converts by a machine cast; `Nat.toFloat` goes through
+  -- `Float.ofScientific` (GMP) on every call — ~9% of a heavy fold's busy
+  -- samples on 2026-10-07. A wider `n` (or a wrapped one) only makes the
+  -- guess wrong, and the bracket catches that.
+  let w := n.toUInt64
+  let f := if w.toNat == n then w.toFloat else n.toFloat
+  isqrtFrom (Float.sqrt f).toUInt64.toNat n
+
+@[csimp] theorem isqrt_eq_fast : @isqrt = @isqrtFast := by
+  funext n
+  simp only [isqrtFast]
+  exact isqrtFrom_eq _ n
 
 -- The three fast arms and the descent agree on both sides of 2^53.
 #guard isqrtFast 0 == 0 && isqrtFast 1 == 1 && isqrtFast 2 == 1 && isqrtFast 3 == 1
