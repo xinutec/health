@@ -17,6 +17,7 @@ import {
 	HealthService,
 	type HeartRatePoint,
 	type HrvDay,
+	type RestHrDay,
 	type BreathingDay,
 	type Spo2Day,
 	type LatestFix,
@@ -50,6 +51,7 @@ import { DayNavComponent } from "../day-nav/day-nav.component";
 import { PullToRefreshComponent } from "../pull-to-refresh/pull-to-refresh.component";
 import { HeartrateChartComponent } from "../heartrate-chart/heartrate-chart.component";
 import { HrvChartComponent } from "../hrv-chart/hrv-chart.component";
+import { RestHrChartComponent } from "../rest-hr-chart/rest-hr-chart.component";
 import { BreathingChartComponent } from "../breathing-chart/breathing-chart.component";
 import { Spo2ChartComponent } from "../spo2-chart/spo2-chart.component";
 import { HypnogramComponent } from "../hypnogram/hypnogram.component";
@@ -164,6 +166,7 @@ export interface LoadTimings {
 		StepsChartComponent,
 		HeartrateChartComponent,
 		HrvChartComponent,
+		RestHrChartComponent,
 		BreathingChartComponent,
 		Spo2ChartComponent,
 		SleepChartComponent,
@@ -257,6 +260,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
 		},
 	});
 
+	/** Heart rate awake at rest over the Trends window. Its own resource, not in
+	 *  `windowData`: it computes from raw samples (a cold day reads ~38,000), so
+	 *  it must not hold the other charts back while it loads. */
+	private readonly restHrData = resource<RestHrDay[], number | undefined>({
+		params: () => (this.dataReady() ? this.trendDays() : undefined),
+		defaultValue: [],
+		loader: ({ params: days, abortSignal }) => this.health.getRestHr(days, abortSignal),
+	});
+
 	/** The selected day's stages / intraday HR / velocity. Keyed on the
 	 *  day, so it reloads — and supersedes — on navigation. `undefined`
 	 *  params keep it idle until the user is ready. */
@@ -319,6 +331,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	readonly activity = computed(() => this.windowData.value().activity);
 	readonly sleep = computed(() => this.windowData.value().sleep);
 	readonly hrv = computed(() => this.windowData.value().hrv);
+	readonly restHr = computed(() => (this.restHrData.hasValue() ? this.restHrData.value() : []));
+	/** A failed load is said on the card, never drawn as an empty chart. */
+	readonly restHrFailed = computed(() => this.restHrData.status() === "error");
 	readonly body = computed(() => this.windowData.value().body);
 	readonly bodyBefore = computed(() => this.windowData.value().bodyBefore);
 	readonly breathing = computed(() => this.windowData.value().breathing);

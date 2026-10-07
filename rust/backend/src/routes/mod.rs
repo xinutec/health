@@ -70,6 +70,7 @@ pub fn router(state: AppState) -> Router {
         .route("/sleep/stages", get(tables::sleep_stages))
         .route("/heartrate/zones", get(tables::heartrate_zones))
         .route("/heartrate/intraday", get(tables::heartrate_intraday))
+        .route("/heartrate/rest", get(tables::heartrate_rest))
         .route("/body", get(tables::body))
         .route("/body/before", get(tables::body_before))
         .route("/spo2", get(tables::spo2))

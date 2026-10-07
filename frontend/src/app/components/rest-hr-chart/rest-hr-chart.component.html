@@ -1,0 +1,13 @@
+<mat-card>
+  <mat-card-header>
+    <mat-card-title>Heart Rate Awake at Rest</mat-card-title>
+    <mat-card-subtitle>Awake, no steps: daily median, middle half shaded</mat-card-subtitle>
+  </mat-card-header>
+  <mat-card-content>
+    @if (failed()) {
+      <p class="failed">Could not load this chart.</p>
+    } @else {
+      <canvas baseChart [data]="chartData()" [options]="chartOptions()" type="line"></canvas>
+    }
+  </mat-card-content>
+</mat-card>

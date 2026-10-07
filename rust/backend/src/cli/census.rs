@@ -969,7 +969,6 @@ pub(crate) async fn rest_hr(
     until: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    use sqlx::Row as _;
     if !is_iso_date(since) || until.is_some_and(|u| !is_iso_date(u)) {
         anyhow::bail!("dates must be YYYY-MM-DD");
     }
@@ -977,98 +976,13 @@ pub(crate) async fn rest_hr(
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
-    let tz = backend::sync_state::get(&pool, user, "home_tz")
-        .await?
-        .unwrap_or_else(|| "Europe/London".into());
+    let tz = backend::rest_hr::home_tz(&pool, user).await?;
     let first = chrono::NaiveDate::parse_from_str(since, "%Y-%m-%d")?;
     let last = match until {
         Some(u) => chrono::NaiveDate::parse_from_str(u, "%Y-%m-%d")?,
         None => chrono::Utc::now().date_naive() - chrono::Duration::days(1),
     };
-    let unix = |s: &str| -> Option<i64> {
-        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-            .ok()
-            .map(|t| t.and_utc().timestamp())
-    };
-    let at = |secs: i64| {
-        chrono::DateTime::from_timestamp(secs, 0)
-            .map(|t| t.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string())
-            .unwrap_or_default()
-    };
-    let mut out: Vec<serde_json::Value> = Vec::new();
-    let mut day = first;
-    while day <= last {
-        let date = day.format("%Y-%m-%d").to_string();
-        let b = backend::timezone::date_bounds_utc(&date, Some(&tz))?;
-        // The spike filter reads 30 s either side, so fetch a minute beyond.
-        let (lo, hi) = (at(b.start_utc - 60), at(b.end_utc + 60));
-        let samples: Vec<(i64, i64)> = sqlx::query(
-            "SELECT CAST(ts_utc AS CHAR) AS t, bpm FROM heart_rate_intraday \
-             WHERE user_id = ? AND ts_utc >= ? AND ts_utc < ? ORDER BY ts_utc",
-        )
-        .bind(user)
-        .bind(&lo)
-        .bind(&hi)
-        .fetch_all(&pool)
-        .await
-        .context("reading heart_rate_intraday")?
-        .iter()
-        .filter_map(|r| {
-            Some((
-                unix(&r.get::<String, _>("t"))?,
-                i64::from(r.get::<i16, _>("bpm")),
-            ))
-        })
-        .collect();
-        let steps: Vec<i64> = sqlx::query(
-            "SELECT CAST(ts_utc AS CHAR) AS t FROM steps_intraday \
-             WHERE user_id = ? AND ts_utc >= ? AND ts_utc < ? AND steps > 0",
-        )
-        .bind(user)
-        .bind(&lo)
-        .bind(&hi)
-        .fetch_all(&pool)
-        .await
-        .context("reading steps_intraday")?
-        .iter()
-        .filter_map(|r| unix(&r.get::<String, _>("t")).map(|s| s.div_euclid(60)))
-        .collect();
-        // A night that began the evening before still covers this day's
-        // morning, so the read starts a day early.
-        let sleep: Vec<(i64, i64)> = sqlx::query(
-            "SELECT CAST(ts_utc AS CHAR) AS t, duration_seconds AS d FROM sleep_stages \
-             WHERE user_id = ? AND ts_utc >= ? AND ts_utc < ? AND stage NOT IN ('wake', 'awake')",
-        )
-        .bind(user)
-        .bind(at(b.start_utc - 86_400))
-        .bind(&hi)
-        .fetch_all(&pool)
-        .await
-        .context("reading sleep_stages")?
-        .iter()
-        .filter_map(|r| {
-            let s = unix(&r.get::<String, _>("t"))?;
-            Some((s, s + i64::from(r.get::<i32, _>("d"))))
-        })
-        .filter(|&(s, e)| e > b.start_utc && s < b.end_utc)
-        .collect();
-        let req = serde_json::json!({
-            "mode": "resthr", "samples": samples, "steps": steps, "sleep": sleep,
-            "dayStart": b.start_utc, "dayEnd": b.end_utc,
-        });
-        let reply: serde_json::Value =
-            serde_json::from_str(&backend::lean::serve(&req.to_string())?)?;
-        if let Some(e) = reply.get("error") {
-            anyhow::bail!("resthr {date}: {e}");
-        }
-        let mut row = serde_json::Map::new();
-        row.insert("date".into(), serde_json::json!(date));
-        if let Some(d) = reply.get("day").and_then(serde_json::Value::as_object) {
-            row.extend(d.clone());
-        }
-        out.push(serde_json::Value::Object(row));
-        day += chrono::Duration::days(1);
-    }
+    let out = backend::rest_hr::days(&pool, user, first, last, &tz).await?;
     pool.close().await;
     if json {
         println!("{}", serde_json::to_string(&out)?);

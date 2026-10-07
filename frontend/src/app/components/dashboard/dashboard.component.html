@@ -158,6 +158,9 @@
 					<app-hrv-chart [hrv]="hrv()" />
 				</div>
 				<div class="section">
+					<app-rest-hr-chart [days]="restHr()" [failed]="restHrFailed()" />
+				</div>
+				<div class="section">
 					<app-breathing-chart [breathing]="breathing()" />
 				</div>
 				<div class="section">

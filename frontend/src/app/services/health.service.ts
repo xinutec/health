@@ -326,6 +326,18 @@ export interface UserInfo {
   shareWindow: { from: string; to: string; location: boolean } | null;
 }
 
+/** Heart rate awake and at rest, one local day. The figures are absent when the
+ *  day could not be measured (no sleep record, or no settled rest). */
+export interface RestHrDay {
+  date: string;
+  median?: number;
+  p25?: number;
+  p75?: number;
+  p05?: number;
+  p95?: number;
+  restMinutes?: number;
+}
+
 export interface HrvDay {
   date: string;
   daily_rmssd: number;
@@ -453,6 +465,12 @@ export class HealthService {
     const res = await this.fetch(`/api/hrv?days=${days}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch HRV");
     return HealthService.body<HrvDay[]>(res);
+  }
+
+  async getRestHr(days = 30, signal?: AbortSignal): Promise<RestHrDay[]> {
+    const res = await this.fetch(`/api/heartrate/rest?days=${days}`, { signal });
+    if (!res.ok) throw new Error("Failed to fetch resting heart rate");
+    return HealthService.body<RestHrDay[]>(res);
   }
 
   async getBreathing(days = 30, signal?: AbortSignal): Promise<BreathingDay[]> {

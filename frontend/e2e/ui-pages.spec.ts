@@ -16,6 +16,7 @@ import type {
 	BreathingDay,
 	HeartRatePoint,
 	HrvDay,
+	RestHrDay,
 	LatestFix,
 	SleepLog,
 	SleepStage,
@@ -72,6 +73,17 @@ const HRV = [
 	{ date: day(0), daily_rmssd: 42.5, deep_rmssd: 48.1 },
 	{ date: day(-1), daily_rmssd: 39.8, deep_rmssd: 45.0 },
 ] satisfies HrvDay[];
+
+// A week with one unmeasured day: the chart must draw the gap, not a zero.
+const REST_HR = [
+	{ date: day(-6), median: 64, p25: 61, p75: 68, p05: 57, p95: 74, restMinutes: 410 },
+	{ date: day(-5), median: 66, p25: 62, p75: 70, p05: 58, p95: 77, restMinutes: 355 },
+	{ date: day(-4) },
+	{ date: day(-3), median: 72.5, p25: 66, p75: 76, p05: 63, p95: 80, restMinutes: 360 },
+	{ date: day(-2), median: 68, p25: 65, p75: 75, p05: 59, p95: 82, restMinutes: 505 },
+	{ date: day(-1), median: 70, p25: 64, p75: 74, p05: 60, p95: 88, restMinutes: 415 },
+	{ date: day(0), median: 74.5, p25: 69, p75: 83.5, p05: 68, p95: 88, restMinutes: 560 },
+] satisfies RestHrDay[];
 
 const BREATHING = [
 	{ date: day(0), full_sleep_rate: "14.2", deep_sleep_rate: "13.4", light_sleep_rate: "14.6", rem_sleep_rate: "15.1" },
@@ -188,6 +200,7 @@ async function mockApi(page: Page): Promise<void> {
 	await page.route("**/api/sleep*", (r) => r.fulfill({ json: SLEEP }));
 	await page.route("**/api/sleep/stages*", (r) => r.fulfill({ json: STAGES }));
 	await page.route("**/api/heartrate/intraday*", (r) => r.fulfill({ json: INTRADAY }));
+	await page.route("**/api/heartrate/rest*", (r) => r.fulfill({ json: REST_HR }));
 	await page.route("**/api/velocity*", (r) => r.fulfill({ json: VELOCITY }));
 	await page.route("**/api/location/latest", (r) => r.fulfill({ json: null satisfies LatestFix | null }));
 }

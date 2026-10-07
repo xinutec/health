@@ -365,6 +365,39 @@ pub async fn body_before(
     }
 }
 
+/// Heart rate awake and at rest per day (`crate::rest_hr`), over the
+/// requested window. At most 90 days: each uncached day reads ~38,000 samples.
+pub async fn heartrate_rest(
+    State(st): State<AppState>,
+    Extension(session): Extension<UserSession>,
+    Query(p): Query<DaysParams>,
+) -> Response {
+    let run = async {
+        let Some(since) = since_date(&session, p.days.as_deref())? else {
+            return Ok(bad_request("days must be an integer between 1 and 365"));
+        };
+        let today = chrono::Utc::now().date_naive();
+        let first = chrono::NaiveDate::parse_from_str(&since, "%Y-%m-%d")?
+            .max(today - chrono::Duration::days(89));
+        let tz = crate::rest_hr::home_tz(&st.pool, &session.user_id).await?;
+        let rows = crate::rest_hr::days(&st.pool, &session.user_id, first, today, &tz).await?;
+        Ok::<_, anyhow::Error>(Json(rows).into_response())
+    };
+    match run.await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, endpoint = "heartrate_rest", "read failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(crate::error::ErrorBody {
+                    error: "internal".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
 days_back_handler!(
     spo2,
     SQL_SPO2,

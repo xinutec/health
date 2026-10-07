@@ -93,6 +93,7 @@ function makeHealthMock(
 		},
 		getSleep: () => Promise.resolve(opts.sleep ?? []),
 		getHrv: () => Promise.resolve([]),
+		getRestHr: () => Promise.resolve([]),
 		getBody: () => Promise.resolve([]),
 		getBodyBefore: () => Promise.resolve(null),
 		getBreathing: () => Promise.resolve([]),
