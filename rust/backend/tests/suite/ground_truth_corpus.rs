@@ -99,6 +99,8 @@ const POST_TS: &[&str] = &[
     "2026-10-04.md",
     // The fourth: the bike-shop brunch the near-field hours rule fixed.
     "2026-10-05.md",
+    // The fifth: every row served right live and confirmed row by row.
+    "2026-10-06.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
@@ -134,9 +136,9 @@ const TS_FILES: usize = 31;
 const TS_ROWS: usize = 400;
 const TS_ENFORCEABLE: usize = 374;
 const TS_UNPARSEABLE: usize = 5;
-/// 6 since 2026-10-05 joined; 2026-10-02's `Times: Europe/Madrid` was the
-/// corpus's first day narrated in Spanish time, 10-03 to 10-05 the next.
-const TS_DECLARED_TZ: usize = 6;
+/// 7 since 2026-10-06 joined; 2026-10-02's `Times: Europe/Madrid` was the
+/// corpus's first day narrated in Spanish time, 10-03 to 10-06 the next.
+const TS_DECLARED_TZ: usize = 7;
 /// `groundTruthJourneys` over the same corpus, same source, same day.
 const TS_JOURNEYS: usize = 94;
 const TS_LEGS: usize = 230;
