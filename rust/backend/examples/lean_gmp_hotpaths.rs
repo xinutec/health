@@ -74,6 +74,17 @@ fn opens_function(line: &str) -> Option<&str> {
     head.rsplit([' ', '*']).next().filter(|n| !n.is_empty())
 }
 
+/// A forward declaration at file scope — `double l_Float_ofScientific(lean_object*, …);`
+/// — names the function without calling it. Every file that uses one declares it
+/// once, so counting declarations would charge each file a phantom site.
+fn is_declaration(line: &str) -> bool {
+    !line.starts_with(' ')
+        && !line.starts_with('\t')
+        && line.ends_with(");")
+        && !line.contains('=')
+        && !line.starts_with("return")
+}
+
 fn normalise(name: &str) -> String {
     let mut out = String::new();
     let b = name.as_bytes();
@@ -125,7 +136,7 @@ fn main() -> std::process::ExitCode {
             if let Some(n) = opens_function(line) {
                 func = normalise(n);
             }
-            if func.contains("_init_") {
+            if func.contains("_init_") || is_declaration(line) {
                 continue;
             }
             for p in PATTERNS {

@@ -660,29 +660,6 @@ def QCorridor.edgeWeightScaled (co : QCorridor) (a b : QPt) : Nat :=
 
 /-! ## `QBuildings` — the impassable-footprint penalty -/
 
-/-- Even-odd ray cast, cross-multiplied exact (the float side divides;
-`qPointInRing`). -/
-def qPointInRing (p : QPt) (ring : Array QPt) : Bool := Id.run do
-  -- One pass carrying the previous vertex: the `j` of the classic loop is
-  -- always `i - 1` (wrapping to the last), and reading each vertex once is
-  -- what this costs on the matcher's hot path (#1921) — four `getD`s an edge
-  -- were a third of the 09-30 walk stage.
-  let some last := ring.back? | return false
-  let mut yj := last.la
-  let mut xj := last.lo
-  let mut inside := false
-  for v in ring do
-    let yi := v.la
-    let xi := v.lo
-    if (yi > p.la) ≠ (yj > p.la) then
-      let dy := yj - yi
-      let lhs := (p.lo - xi) * dy
-      let rhs := (xj - xi) * (p.la - yi)
-      if (if dy > 0 then lhs < rhs else lhs > rhs) then inside := !inside
-    yj := yi
-    xj := xi
-  return inside
-
 /-- An axis-aligned integer bounding box (the exact bbox reject). -/
 structure QBox where
   minLa : Int

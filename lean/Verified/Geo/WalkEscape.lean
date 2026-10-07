@@ -2,6 +2,7 @@ import Verified.Geo.PathPoint
 import Verified.Geo.WalkableRoute
 import Std.Data.HashMap
 import Verified.FloatConst
+import Verified.Geo.Metric
 
 /-!
 # Building-escape walk corrector (port of `src/geo/walk-building-escape.ts`)
@@ -69,25 +70,17 @@ structure NearPt where
 
 /-! ## Ring and network primitives -/
 
-/-- Even-odd ray cast: is `p` inside the closed polygon `ring`? -/
-def pointInRing (p : Pt) (ring : Ring) : Bool := Id.run do
-  let n := ring.size
-  if n < 3 then return false
-  let mut inside := false
-  let mut j := n - 1
-  for hm_i : i in [0:n] do
-    have hi : i < ring.size := hm_i.upper
-    -- `j` is `n - 1` or a previous `i`, so it is in range; the guard is the
-    -- form the tactic accepts.
-    if hj : j < ring.size then
-      let yi := ring[i].lat
-      let xi := ring[i].lon
-      let yj := ring[j].lat
-      let xj := ring[j].lon
-      if ((yi > p.lat) != (yj > p.lat)) && p.lon < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi then
-        inside := !inside
-    j := i
-  return inside
+/-- The ring on the integer grid the walk matcher uses (`QPt`, 1e-7°). -/
+def qRing (ring : Ring) : Array Verified.Geo.QPt :=
+  ring.map fun v => Verified.Geo.QPt.ofLatLon v.lat v.lon
+
+/-- Even-odd ray cast: is `p` inside the closed polygon `ring`? Decided on the
+1e-7° integer grid, cross-multiplied exactly (`Verified.Geo.qPointInRing`, the
+matcher's own test) rather than by a float division — so the answer has no
+rounding mode, and the walk escape and the matcher agree on what is inside.
+Differs from the float ray cast only within ~1 cm of a wall. -/
+def pointInRing (p : Pt) (ring : Ring) : Bool :=
+  ring.size ≥ 3 && Verified.Geo.qPointInRing (Verified.Geo.QPt.ofLatLon p.lat p.lon) (qRing ring)
 
 /-- Nearest point on the closed boundary of `ring` to `p`. Strict improvement,
     so the FIRST edge at the minimum wins; edges run `(n-1,0), (0,1), …`. -/
@@ -299,6 +292,8 @@ structure Box where
 structure Footprint where
   ring : Ring
   box : Box
+  /-- `ring` on the integer grid, quantised once (`pointInRing`'s own form). -/
+  qring : Array Verified.Geo.QPt := #[]
   deriving Inhabited
 
 /-- The ring-geometry slice: footprints plus their (possibly expanded) bboxes.
@@ -350,7 +345,8 @@ def ringBoxes (buildings : Array Ring) (expandM : Float) : Array Box :=
 /-- Each building with its bbox expanded by `expandM`. -/
 def RingCtx.ofRings (buildings : Array Ring) (expandM : Float) : RingCtx := Id.run do
   let footprints : Array Footprint :=
-    (buildings.zip (ringBoxes buildings expandM)).map fun (ring, box) => { ring, box }
+    (buildings.zip (ringBoxes buildings expandM)).map fun (ring, box) =>
+      { ring, box, qring := qRing ring }
   let cellDeg := RING_CELL_DEG
   let mut grid : Std.HashMap (Int × Int) (Array Nat) := {}
   let mut unfiled : Array Nat := #[]
@@ -383,9 +379,14 @@ def makeBadnessCtx (walkable : Ways) (buildings : Array Ring) (opts : CorrectOpt
     grid := mkWaySegmentGrid walkable (max opts.onWayM opts.offNetworkM)
     opts }
 
+/-- `pointInRing` against a footprint's pre-quantised ring. -/
+@[inline] private def Footprint.contains (f : Footprint) (q : Verified.Geo.QPt) : Bool :=
+  f.ring.size ≥ 3 && Verified.Geo.qPointInRing q f.qring
+
 /-- Is `p` inside a building? One cell's footprints, boxes first, then the
     ray cast. -/
 def insideBuildingCtx (p : Pt) (ctx : RingCtx) : Bool := Id.run do
+  let q := Verified.Geo.QPt.ofLatLon p.lat p.lon
   let (cell, rest) := ctx.candidates p
   for cands in #[cell, rest] do
     for i in cands do
@@ -393,22 +394,23 @@ def insideBuildingCtx (p : Pt) (ctx : RingCtx) : Bool := Id.run do
       let b := f.box
       if p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon then
         continue
-      if pointInRing p f.ring then return true
+      if f.contains q then return true
   return false
 
 /-- `containingBuilding` through the index: the lowest-indexed footprint whose
     ring contains `p` — a ring containing `p` has its box containing `p`, so it
     is among the candidates. -/
 def containingBuildingIn (p : Pt) (ctx : RingCtx) : Option Ring := Id.run do
+  let q := Verified.Geo.QPt.ofLatLon p.lat p.lon
   let (cell, rest) := ctx.candidates p
   let mut best : Option Nat := none
   for i in cell do
-    if pointInRing p (ctx.footprints.getD i default).ring then
+    if (ctx.footprints.getD i default).contains q then
       best := some i
       break
   for i in rest do
     if (match best with | some b => i < b | none => true)
-        && pointInRing p (ctx.footprints.getD i default).ring then
+        && (ctx.footprints.getD i default).contains q then
       best := some i
   return best.map fun i => (ctx.footprints.getD i default).ring
 
@@ -431,6 +433,7 @@ def escapeBuildingsIn (drawn : Array TPt) (ctx : BadnessCtx) (opts : EscapeOptio
 
 /-- Is a building within `buildingProxM` of `p` (or `p` inside one)? -/
 def nearBuilding (p : Pt) (ctx : BadnessCtx) : Bool := Id.run do
+  let q := Verified.Geo.QPt.ofLatLon p.lat p.lon
   let (cell, rest) := ctx.ring.candidates p
   for cands in #[cell, rest] do
     for i in cands do
@@ -438,7 +441,7 @@ def nearBuilding (p : Pt) (ctx : BadnessCtx) : Bool := Id.run do
       let b := f.box
       if p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon then
         continue
-      if pointInRing p f.ring then return true
+      if f.contains q then return true
       match nearestOnRing p f.ring with
       | some near => if near.distM <= ctx.opts.buildingProxM then return true
       | none => pure ()

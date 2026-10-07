@@ -1,5 +1,6 @@
 import Std.Data.HashMap
 import Std.Data.HashSet
+import Verified.FloatConst
 /-!
 # Heart rate awake and at rest, compared like with like
 
@@ -56,7 +57,7 @@ sorted values. -/
 def pct (xs : Array Float) (q : Float) : Float :=
   let s := xs.qsort (· < ·)
   if s.isEmpty then 0
-  else s[min (s.size - 1) (roundHalfEven (q * (s.size - 1).toFloat))]!
+  else s[min (s.size - 1) (roundHalfEven (q * Verified.FloatConst.natToFloat (s.size - 1)))]!
 
 /-- Samples `(unix seconds, bpm)` with spikes removed: each is kept when it is
 within `SPIKE_BPM` of the median of every sample within `SPIKE_WINDOW_S` of it
@@ -69,8 +70,8 @@ def despike (samples : Array (Int × Nat)) : Array (Int × Nat) := Id.run do
     let (t, v) := samples[i]!
     while lo < samples.size && samples[lo]!.1 < t - SPIKE_WINDOW_S do lo := lo + 1
     while hi < samples.size && samples[hi]!.1 ≤ t + SPIKE_WINDOW_S do hi := hi + 1
-    let window := (samples.extract lo hi).map fun (_, b) => b.toFloat
-    if (v.toFloat - median window).abs ≤ SPIKE_BPM.toFloat then out := out.push (t, v)
+    let window := (samples.extract lo hi).map fun (_, b) => Verified.FloatConst.natToFloat b
+    if (Verified.FloatConst.natToFloat v - median window).abs ≤ Verified.FloatConst.natToFloat SPIKE_BPM then out := out.push (t, v)
   return out
 
 /-- Consecutive runs of an ascending list of minute indices. -/
@@ -110,7 +111,7 @@ def restDay (samples : Array (Int × Nat)) (stepMinutes : Array Int)
   for (t, v) in kept do
     if t < dayStart || t ≥ dayEnd then continue
     let m := t.fdiv 60
-    byMinute := byMinute.insert m ((byMinute.getD m #[]).push v.toFloat)
+    byMinute := byMinute.insert m ((byMinute.getD m #[]).push (Verified.FloatConst.natToFloat v))
   let steps : Std.HashSet Int := stepMinutes.foldl (·.insert ·) {}
   let asleepAt := fun (m : Int) =>
     sleep.any fun (s, e) => s.fdiv 60 ≤ m && m < e.fdiv 60

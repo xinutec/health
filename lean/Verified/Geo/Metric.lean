@@ -1,4 +1,5 @@
 import Verified.FloatConst
+import Verified.JsNum
 import Verified.Geo.Simplify
 import Verified.Geo.Splice
 import Verified.Geo.Prefilter
@@ -48,6 +49,38 @@ structure QPt where
   lo : Int
   ts : Int
   deriving BEq, Repr, Inhabited
+
+/-- Degrees to the 1e-7° grid `QPt` lives on. -/
+def Q_SCALE : Float := 1e7
+
+/-- A position on the `QPt` grid: `Math.round(x · 1e7)` per axis, ties up — the
+same rounding `WalkMatchAdapt.toQ` uses, so one coordinate quantises one way. -/
+def QPt.ofLatLon (lat lon : Float) : QPt :=
+  { la := Verified.JsNum.jsRoundInt (lat * Q_SCALE), lo := Verified.JsNum.jsRoundInt (lon * Q_SCALE), ts := 0 }
+
+/-- Even-odd ray cast, cross-multiplied exact (the float side divides;
+`qPointInRing`). -/
+def qPointInRing (p : QPt) (ring : Array QPt) : Bool := Id.run do
+  -- One pass carrying the previous vertex: the `j` of the classic loop is
+  -- always `i - 1` (wrapping to the last), and reading each vertex once is
+  -- what this costs on the matcher's hot path — four `getD`s an edge were a
+  -- third of a dense walk's matching stage.
+  let some last := ring.back? | return false
+  let mut yj := last.la
+  let mut xj := last.lo
+  let mut inside := false
+  for v in ring do
+    let yi := v.la
+    let xi := v.lo
+    if (yi > p.la) ≠ (yj > p.la) then
+      let dy := yj - yi
+      let lhs := (p.lo - xi) * dy
+      let rhs := (xj - xi) * (p.la - yi)
+      if (if dy > 0 then lhs < rhs else lhs > rhs) then inside := !inside
+    yj := yi
+    xj := xi
+  return inside
+
 
 /-- Newton's descent for the floor square root, as the twin's BigInt loop
 (`while (y < x) { x = y; y = (x + n/x)/2 }`). The iterate strictly decreases,
