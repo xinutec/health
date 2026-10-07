@@ -1,3 +1,4 @@
+import Verified.FloatConst
 import Verified.Geo.Simplify
 import Verified.Geo.Splice
 import Verified.Geo.Prefilter
@@ -236,13 +237,7 @@ theorem isqrtFrom_eq (r n : Nat) : isqrt n = isqrtFrom r n := by
       · rfl
 
 def isqrtFast (n : Nat) : Nat :=
-  -- A 64-bit `n` converts by a machine cast; `Nat.toFloat` goes through
-  -- `Float.ofScientific` (GMP) on every call — ~9% of a heavy fold's busy
-  -- samples on 2026-10-07. A wider `n` (or a wrapped one) only makes the
-  -- guess wrong, and the bracket catches that.
-  let w := n.toUInt64
-  let f := if w.toNat == n then w.toFloat else n.toFloat
-  isqrtFrom (Float.sqrt f).toUInt64.toNat n
+  isqrtFrom (Float.sqrt (Verified.FloatConst.natToFloat n)).toUInt64.toNat n
 
 @[csimp] theorem isqrt_eq_fast : @isqrt = @isqrtFast := by
   funext n

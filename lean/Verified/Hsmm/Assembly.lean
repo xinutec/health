@@ -64,7 +64,7 @@ def initialLogProbFull (s : State) : Float := Entry.initialStateLogProb s
 def durationLogProbFull (obs : Array ObsRow) (pref : Array Float)
     (s : State) (d segEnd : Nat) (covered : Bool)
     (fit : GammaFit) (minForMode trainMin : Float) (segEvidenceOn : Bool) : Float :=
-  TrainHopDuration.trainHopDurationLogProb s d.toFloat covered fit minForMode trainMin
+  TrainHopDuration.trainHopDurationLogProb s (Verified.FloatConst.natToFloat d) covered fit minForMode trainMin
     + (if segEvidenceOn then SegmentEvidence.segmentEvidenceAt obs pref s.mode d segEnd else 0.0)
 
 /-- `durationLogProbFull` with the per-mode prior handed in as `base` — see
@@ -72,14 +72,14 @@ def durationLogProbFull (obs : Array ObsRow) (pref : Array Float)
 def durationLogProbFrom (obs : Array ObsRow) (pref : Array Float)
     (s : State) (d segEnd : Nat) (covered : Bool) (trainMin base : Float)
     (segEvidenceOn : Bool) : Float :=
-  TrainHopDuration.trainHopDurationLogProbFrom s d.toFloat covered trainMin base
+  TrainHopDuration.trainHopDurationLogProbFrom s (Verified.FloatConst.natToFloat d) covered trainMin base
     + (if segEvidenceOn then SegmentEvidence.segmentEvidenceAt obs pref s.mode d segEnd else 0.0)
 
 /-- `durationLogProbFrom` with the segment's window already resolved
     (`SegmentEvidence.windowAt`), shared by every state at one `(d, segEnd)`. -/
 def durationLogProbFromW (s : State) (d : Nat) (covered : Bool) (trainMin base : Float)
     (segEvidenceOn : Bool) (w : Option SegmentEvidence.Window) : Float :=
-  TrainHopDuration.trainHopDurationLogProbFrom s d.toFloat covered trainMin base
+  TrainHopDuration.trainHopDurationLogProbFrom s (Verified.FloatConst.natToFloat d) covered trainMin base
     + (if segEvidenceOn then SegmentEvidence.segmentEvidenceOf s.mode d w else 0.0)
 
 theorem durationLogProbFrom_eq_W (obs : Array ObsRow) (pref : Array Float)
@@ -93,7 +93,7 @@ theorem durationLogProbFull_eq (obs : Array ObsRow) (pref : Array Float)
     (fit : GammaFit) (minForMode trainMin : Float) (segEvidenceOn : Bool) :
     durationLogProbFull obs pref s d segEnd covered fit minForMode trainMin segEvidenceOn
       = durationLogProbFrom obs pref s d segEnd covered trainMin
-          (Duration.logDurationProb d.toFloat fit minForMode) segEvidenceOn := rfl
+          (Duration.logDurationProb (Verified.FloatConst.natToFloat d) fit minForMode) segEvidenceOn := rfl
 
 /-- `transitionLogProb = transition(from,to) (+ chainContext)`, with the
     `t === −∞ ⇒ −∞` short-circuit (a hard-zero transition stays hard-zero; the

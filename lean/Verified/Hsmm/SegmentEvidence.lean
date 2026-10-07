@@ -155,7 +155,7 @@ def segmentEvidenceOf (mode : Mode) (d : Nat) (w : Option Window) : Float :=
   if mode == .unknown then 0.0
   else match w with
     | none => 0.0
-    | some w => segmentEvidence mode d.toFloat w
+    | some w => segmentEvidence mode (Verified.FloatConst.natToFloat d) w
 
 /-- Segment-evidence resolved over the observation tensor: the caller supplies
     only the state mode, segment length `d`, and end index `segEnd` (the duration
