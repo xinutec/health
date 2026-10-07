@@ -1239,6 +1239,66 @@ pub async fn rerecord_walkable(
     .context("the mirror thread panicked")?
 }
 
+/// Answer, from the live mirror, ONLY the lookups a golden fixture's own record
+/// cannot.
+///
+/// The day is replayed as the corpus gate replays it — its trace, then its row
+/// set — with the mirror last in the chain, so the mirror is asked exactly what
+/// the fixture declines: the new questions a code change asks (a stay named at
+/// a point the capturing build never asked about). Every answer the day was
+/// blessed on stays; nothing else of the day is re-read from production, so the
+/// replay measures the change and not the data's drift since capture.
+///
+/// Returns the fold, the new matcher-read and geocode answers as `osmTrace`
+/// sections, and how many map ROWS the mirror had to serve — which a caller
+/// must refuse, since rows belong in `osmRowSet` and are not merged here.
+pub async fn rerecord_unanswered(
+    pool: MySqlPool,
+    fixture: Value,
+    user: String,
+    date: String,
+    now_ms: i64,
+) -> Result<(crate::fold::Folded, Value, Option<Value>, usize)> {
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let inputs = fixture.get("inputs").context("the fixture has no inputs")?;
+        let row_set = inputs
+            .get("osmRowSet")
+            .context("the fixture has no osmRowSet")?;
+        let trace = crate::osm_trace::TraceAnswerer::from_fixture(
+            &fixture,
+            &date,
+            crate::osm_trace::Sections {
+                walkable: true,
+                buildings: true,
+                drivable: true,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
+        let rows = crate::rowset_answerer::RowSetAnswerer::new(row_set)?;
+        let (recording, rec) =
+            crate::rowset_capture::RecordingSource::new(MirrorSource::new(pool, handle, now_ms));
+        let live = crate::osm_trace::RecordingAnswerer::new(
+            crate::rowset_answerer::OsmAnswerer::with_source(recording),
+        );
+        let cap = crate::head::capture(inputs, &date, &user)?;
+        let mut answerer = crate::lean::Chain(trace, crate::lean::Chain(rows, live));
+        let folded = crate::fold::run_day(&cap, inputs, &mut answerer)?;
+        let matcher = answerer.1.1.take();
+        let recorded = rec
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok((
+            folded,
+            matcher,
+            recorded.geocode_section(),
+            recorded.served_rows(),
+        ))
+    })
+    .await
+    .context("the mirror thread panicked")?
+}
+
 /// Fold a day against the live mirror. See [`with_mirror_answerer`] for why
 /// this hop exists.
 pub async fn fold_from_mirror(

@@ -455,15 +455,19 @@ pub fn run(inputs: &Value, date: &str) -> Result<Head> {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or(&[]);
-    let snapped = snap_all(&cleaned, places)?;
-
     let usable = |p: &&Fix| p.accuracy.is_none_or(|a| a <= KALMAN_ADMIT_ACCURACY_M);
-    let gps_points: Vec<Fix> = snapped.iter().filter(usable).copied().collect();
-    // ⚠ From `cleaned`, NOT `snapped`. Place-snap pulls a fix near a known
-    // cluster onto its centroid — right for stay detection, but on a leg that
-    // merely PASSES home it yanks the drawn line off the road. The renderer
-    // wants where the phone actually was.
-    let display_fixes: Vec<Fix> = cleaned.iter().filter(usable).copied().collect();
+    // ⚠ The cap reads the accuracy the PHONE reported, so it runs before the
+    // snap: a snapped fix carries the place's radius instead. 10-07's six
+    // network fixes (219–426 m) near a known place came out of the snap at that
+    // place's radius, passed, and served a three-minute stay 460 m from the
+    // café he never left.
+    let admitted: Vec<Fix> = cleaned.iter().filter(usable).copied().collect();
+    let gps_points = snap_all(&admitted, places)?;
+    // ⚠ The admitted fixes, NOT the snapped ones. Place-snap pulls a fix near a
+    // known cluster onto its centroid — right for stay detection, but on a leg
+    // that merely PASSES home it yanks the drawn line off the road. The
+    // renderer wants where the phone actually was.
+    let display_fixes = admitted;
 
     let points = kalman(&gps_points)?;
     // The stay set is the SAME accuracy-capped snapped fixes the smoother got,

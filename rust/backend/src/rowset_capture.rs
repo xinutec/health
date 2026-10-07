@@ -98,6 +98,11 @@ impl<S: RowSource> RecordingSource<S> {
 }
 
 impl Recorded {
+    /// How many map rows the source served — lines, points and rail ways.
+    pub fn served_rows(&self) -> usize {
+        self.lines.len() + self.points.len() + self.rail_ways.len()
+    }
+
     /// The `osmRowSet` a fixture carries.
     pub fn row_set(&self) -> Value {
         json!({

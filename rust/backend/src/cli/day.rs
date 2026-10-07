@@ -928,3 +928,71 @@ pub(crate) async fn recapture_walkable(user: &str, fixture_path: &str) -> Result
     }
     Ok(())
 }
+
+/// `recapture-asks USER FIXTURE`: answer from the live mirror only the lookups
+/// the fixture's own record cannot, and add those answers to it. Nothing the
+/// day was blessed on changes; see [`backend::mirror_source::rerecord_unanswered`].
+pub(crate) async fn recapture_asks(user: &str, fixture_path: &str) -> Result<()> {
+    backend::lean::init().context("starting the Lean runtime")?;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let text =
+        std::fs::read_to_string(fixture_path).with_context(|| format!("reading {fixture_path}"))?;
+    let mut fixture: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {fixture_path}"))?;
+    let date = fixture
+        .pointer("/meta/date")
+        .and_then(serde_json::Value::as_str)
+        .context("the fixture has no meta.date")?
+        .to_string();
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (folded, matcher, geocodes, rows) = backend::mirror_source::rerecord_unanswered(
+        pool.clone(),
+        fixture.clone(),
+        user.to_string(),
+        date.clone(),
+        now_ms,
+    )
+    .await?;
+    pool.close().await;
+    // Rows belong in `osmRowSet`, whose shape this does not merge: a day that
+    // needs them needs a full `capture-day`.
+    anyhow::ensure!(
+        rows == 0,
+        "{date}: the mirror served {rows} map row(s) the fixture lacks; re-capture the day instead"
+    );
+    let trace = fixture
+        .pointer_mut("/inputs/osmTrace")
+        .and_then(serde_json::Value::as_object_mut)
+        .context("the fixture has no osmTrace to merge into")?;
+    let mut added = 0usize;
+    let sections = matcher
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .chain(geocodes.map(|g| ("reverseGeocode".to_string(), g)));
+    for (table, answers) in sections {
+        let dst = trace
+            .entry(table)
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .context("an osmTrace section is not an object")?;
+        for (key, answer) in answers.as_object().into_iter().flatten() {
+            if !dst.contains_key(key) {
+                dst.insert(key.clone(), answer.clone());
+                added += 1;
+            }
+        }
+    }
+    std::fs::write(fixture_path, fixture.to_string())
+        .with_context(|| format!("writing {fixture_path}"))?;
+    eprintln!(
+        "{date}: {added} answer(s) added; fold {} ask(s), {} answered -> {fixture_path}",
+        folded.asks.len(),
+        folded.answered()
+    );
+    Ok(())
+}
