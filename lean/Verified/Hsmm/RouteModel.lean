@@ -408,6 +408,80 @@ def chainMinuteTabled (edgesByLine : Std.HashMap String (List LineEdge))
     boardFixAt := fun l => (boards.get? l).getD (cm.boardFixAt l)
     headFixAt := if withHead then head else cm.headFixAt }
 
+/-- The fix-dependent half of a minute's chain answers: the fix's distance to
+    each line and to each place. They depend on the fix alone, and every minute
+    of a gap reads the same `prevGpsFix`, so the transition build computes them
+    once per distinct fix rather than once per minute (#1774, 2026-10-07). -/
+structure FixDists where
+  fx : Observation.Fix
+  lineD : Std.HashMap String Float
+  placeD : Std.HashMap Int Float
+
+def fixDists (edgesByLine : Std.HashMap String (List LineEdge))
+    (placeCoords : Std.HashMap Int (Float × Float)) (places : List Int) (lines : List String)
+    (fx : Observation.Fix) : FixDists :=
+  { fx
+    lineD := lines.foldl (fun m l => match edgesByLine.get? l with
+      | some le => m.insert l (minDistToLineM fx.lat fx.lon le)
+      | none => m) {}
+    placeD := places.foldl (fun m pid => match placeCoords.get? pid with
+      | some (plat, plon) => m.insert pid (haversineMeters fx.lat fx.lon plat plon)
+      | none => m) {} }
+
+/-- `chainMinuteTabled`, reading the distances from `fd` when it was computed
+    for this minute's own `prevGpsFix`; otherwise exactly `chainMinuteTabled`.
+    Same penalties of the same distances and the same slop, so the same values
+    — a fix `fd` was not built for falls through rather than being trusted. -/
+def chainMinuteTabledD (edgesByLine : Std.HashMap String (List LineEdge))
+    (placeCoords : Std.HashMap Int (Float × Float)) (places : List Int) (lines : List String)
+    (withHead : Bool) (fd : Option FixDists) (o : ObsRow) : ChainMinute :=
+  match o.prevGpsFix, fd with
+  | some fx, some d =>
+    if !(d.fx == fx) then chainMinuteTabled edgesByLine placeCoords places lines withHead o else
+    let cm := chainMinute edgesByLine placeCoords o
+    let slop := (max 0 (o.ts - fx.ts)).toNat.toFloat / 60
+    let stays : Std.HashMap Int Float := places.foldl (fun m pid => m.insert pid
+      (match d.placeD.get? pid with
+        | some dist => ChainContext.stayPenalty dist slop
+        | none => 0.0)) {}
+    let boards : Std.HashMap String Float := lines.foldl (fun m l => m.insert l
+      (match d.lineD.get? l with
+        | some dist => ChainContext.boardingPenalty dist slop
+        | none => 0.0)) {}
+    let head := if withHead then cm.headFixAt else 0.0
+    { stayAt := fun pid => (stays.get? pid).getD (cm.stayAt pid)
+      boardFixAt := fun l => (boards.get? l).getD (cm.boardFixAt l)
+      headFixAt := if withHead then head else cm.headFixAt }
+  | _, _ => chainMinuteTabled edgesByLine placeCoords places lines withHead o
+
+-- `chainMinuteTabledD` against `chainMinuteTabled`: one line, one place, a fix
+-- read by three minutes at growing slop, a minute with no fix, and a table
+-- built for ANOTHER fix (which must fall through, not be trusted).
+private def cmLine : List LineEdge :=
+  [⟨[⟨51.50, -0.10⟩, ⟨51.51, -0.10⟩], 51.50, 51.51, -0.10, -0.10⟩]
+private def cmEdges : Std.HashMap String (List LineEdge) := ({} : Std.HashMap _ _).insert "Victoria Line" cmLine
+private def cmPlaces : Std.HashMap Int (Float × Float) := ({} : Std.HashMap _ _).insert 7 (51.505, -0.102)
+private def cmFix : Observation.Fix := ⟨1000, 51.504, -0.1003⟩
+private def cmOther : Observation.Fix := ⟨900, 51.52, -0.13⟩
+private def cmRow (ts : Int) (fx : Option Observation.Fix) : ObsRow :=
+  { ts, gps := none, hr := none, cadence := none, hourLocal := 0, dayOfWeekLocal := 0,
+    inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
+    prevGpsFix := fx, nextGpsFix := none }
+private def cmSame (a b : ChainMinute) : Bool :=
+  a.stayAt 7 == b.stayAt 7 && a.stayAt 8 == b.stayAt 8
+    && a.boardFixAt "Victoria Line" == b.boardFixAt "Victoria Line"
+    && a.boardFixAt "Jubilee Line" == b.boardFixAt "Jubilee Line"
+    && a.headFixAt == b.headFixAt
+#guard [cmRow 1000 (some cmFix), cmRow 1300 (some cmFix), cmRow 4000 (some cmFix), cmRow 4060 none,
+    cmRow 950 (some cmOther)].all fun o =>
+  [true, false].all fun head =>
+    let fd := some (fixDists cmEdges cmPlaces [7, 8] ["Victoria Line", "Jubilee Line"] cmFix)
+    cmSame (chainMinuteTabledD cmEdges cmPlaces [7, 8] ["Victoria Line", "Jubilee Line"] head fd o)
+      (chainMinuteTabled cmEdges cmPlaces [7, 8] ["Victoria Line", "Jubilee Line"] head o)
+-- … and the fixture is not vacuous: the stay and boarding terms are non-zero.
+#guard (chainMinuteTabled cmEdges cmPlaces [7] ["Victoria Line"] false (cmRow 1300 (some cmFix))).stayAt 7 != 0
+  && (chainMinuteTabled cmEdges cmPlaces [7] ["Victoria Line"] false (cmRow 4000 (some cmFix))).boardFixAt "Victoria Line" != 0
+
 /-- The chain term given its minute's `ChainMinute` and the pair's
     place-anchored boarding penalty (`chainPlaceBoard`). -/
 def chainContextWith (edgesByLine : Std.HashMap String (List LineEdge))

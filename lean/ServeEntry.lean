@@ -1021,44 +1021,56 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
     (dst.mode == .stationary && dst.placeId != none)
     || (src.mode == .stationary && src.placeId != none && Verified.Hsmm.RouteModel.isMovingMode dst.mode)
     || (dst.mode == .train && (match dst.lineName with | some l => l != "unknown_rail" | none => false))
-  let mut ovPairs : Array (Nat × Nat) := #[]
-  let mut transRows : Array (Array Nat) := #[]
   -- What the chain term asks of each minute regardless of the pair — a fix's
   -- stay penalty to each place, its boarding penalty to each line — tabled once
   -- per minute rather than once per pair per minute (#1774, 2026-09-30).
   let placeIds := c.placeCoords.toList.map (·.1)
   let lineNames := c.edgesByLine.toList.map (·.1)
   let withHead := c.states.any Verified.Hsmm.Emissions.isRideHead
+  -- The fix's distances to every line and place once per DISTINCT fix: a
+  -- gap's minutes all share one `prevGpsFix` (#1774, 2026-10-07).
   let minutes : Array (Verified.Hsmm.RouteModel.ChainMinute × Bool) :=
-    if c.chainOn then c.obs.map fun o =>
-      (Verified.Hsmm.RouteModel.chainMinuteTabled c.edgesByLine c.placeCoords placeIds lineNames withHead o,
-       Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)
+    if c.chainOn then Id.run do
+      let mut out : Array (Verified.Hsmm.RouteModel.ChainMinute × Bool) := #[]
+      let mut fd : Option Verified.Hsmm.RouteModel.FixDists := none
+      for o in c.obs do
+        if let some fx := o.prevGpsFix then
+          if !(fd.any (·.fx == fx)) then
+            fd := some (Verified.Hsmm.RouteModel.fixDists c.edgesByLine c.placeCoords placeIds lineNames fx)
+        out := out.push
+          (Verified.Hsmm.RouteModel.chainMinuteTabledD c.edgesByLine c.placeCoords placeIds lineNames
+             withHead fd o,
+           Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)
+      return out
     else #[]
-  if c.chainOn then
-    for ((src, ws), a) in weighted do
-      for ((dst, _), b) in weighted do
-        if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
-          let base := baseTransF src dst ws
-          -- The place-anchored boarding penalty once per pair; each minute adds
-          -- only what depends on it (`chainContext` is this composition, #1774).
-          let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
-          let mut rowr : Array Nat := Array.replicate T 0
-          -- A counter, not `minutes.zipIdx`: that built a fresh array of T
-          -- tuples for EVERY eligible pair — the allocation churn that was a
-          -- quarter of the build's samples (#1774, 2026-10-06).
-          let mut t := 0
-          for (cm, covered) in minutes do
-            let cv := Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine src dst covered pb cm
-            rowr := rowr.set! t (← encScore pOB (quant (base + cv)))
-            t := t + 1
-          ovPairs := ovPairs.push (a, b)
-          transRows := transRows.push rowr
-  let nRows := transRows.size
-  let transFlat : Array Nat := Id.run do
-    let mut a := Array.replicate (nRows * T) 0
-    for (r, i) in transRows.zipIdx do
-      for (v, t) in r.zipIdx do a := a.set! (i * T + t) v
-    return a
+  -- The override rows go straight into the flat `nRows × T` array, row after
+  -- row: a row per pair and a `zipIdx` copy of each afterwards was the churn
+  -- in this phase (#1774, 2026-10-07). A pure loop, like the durations': the
+  -- FIRST envelope error is kept and thrown after it, which is the error the
+  -- `Except` loop stopped at.
+  let (ovPairs, transFlat, err) : Array (Nat × Nat) × Array Nat × Option String := Id.run do
+    let mut ovPairs : Array (Nat × Nat) := #[]
+    let mut flat : Array Nat := #[]
+    let mut err : Option String := none
+    if c.chainOn then
+      for ((src, ws), a) in weighted do
+        for ((dst, _), b) in weighted do
+          if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
+            let base := baseTransF src dst ws
+            -- The place-anchored boarding penalty once per pair; each minute adds
+            -- only what depends on it (`chainContext` is this composition, #1774).
+            let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
+            for (cm, covered) in minutes do
+              let cv := Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine src dst covered pb cm
+              match encScore pOB (quant (base + cv)) with
+              | .ok v => flat := flat.push v
+              | .error e =>
+                if err.isNone then err := some e
+                flat := flat.push 0
+            ovPairs := ovPairs.push (a, b)
+    return (ovPairs, flat, err)
+  if let some e := err then throw e
+  let nRows := ovPairs.size
   let mut transIdx : Array Nat := Array.replicate (S * S) nRows  -- sentinel = nRows ⇒ use base
   for ((a, b), i) in ovPairs.zipIdx do
     transIdx := transIdx.set! (a * S + b) i
