@@ -104,6 +104,7 @@ mod rail_fill;
 mod rail_snap;
 mod recovery_rules;
 mod render_segments;
+mod rest_hr;
 mod row_json;
 mod row_source;
 mod rowset_prefilter;
