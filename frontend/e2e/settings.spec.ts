@@ -1,5 +1,5 @@
 import { test, type Page } from "@playwright/test";
-import { expectNoTextOverlaps } from "@xinutec/ui-harness";
+import { expectCleanLayout } from "@xinutec/ui-harness";
 
 import type { LatestFix, ShareStatus, UserInfo } from "../src/app/services/health.service";
 
@@ -49,7 +49,7 @@ test("settings — share active: no text overlaps @ phone width", async ({ page 
 	await page.goto("/settings");
 	await page.getByText("Share your timeline").waitFor();
 	await page.getByLabel("Days to share").waitFor();
-	await expectNoTextOverlaps(page, testInfo);
+	await expectCleanLayout(page, testInfo);
 });
 
 test("settings — no share yet: no text overlaps @ phone width", async ({ page }, testInfo) => {
@@ -57,5 +57,5 @@ test("settings — no share yet: no text overlaps @ phone width", async ({ page 
 	await page.goto("/settings");
 	await page.getByText("Share your timeline").waitFor();
 	await page.getByText("No share link active", { exact: false }).waitFor();
-	await expectNoTextOverlaps(page, testInfo);
+	await expectCleanLayout(page, testInfo);
 });

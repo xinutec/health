@@ -2,8 +2,7 @@ import { test, type Page } from "@playwright/test";
 // The fleet-shared harness, published as @xinutec/ui-harness (source repo
 // ~/Code/ui-harness). Ships compiled JS, so it loads straight from node_modules.
 import {
-	expectNoTextOverlaps,
-	expectNoHorizontalOverflow,
+	expectCleanLayout,
 	expectViewportIsPhone,
 	expectIconFontLoaded,
 	expectRecoversFromMissingBundle,
@@ -241,16 +240,14 @@ test("dashboard Day tab — summary cards + charts: lays out cleanly @ phone wid
 	// rendering would leave the layout checks passing on a card without it.
 	await page.getByText("Still being recorded").waitFor();
 
-	await expectNoTextOverlaps(page, testInfo);
-	await expectNoHorizontalOverflow(page, testInfo);
+	await expectCleanLayout(page, testInfo);
 
 	// EXPANDED is where the widest content is: a collapsed journey hides its
 	// legs, and a leg carries the longest secondary the app draws (a Circle-line
 	// station pair). Check the layout in that state too.
 	await page.getByRole("button", { name: "Expand all" }).click();
 	await page.getByText("Circle Line", { exact: false }).first().waitFor();
-	await expectNoTextOverlaps(page, testInfo);
-	await expectNoHorizontalOverflow(page, testInfo);
+	await expectCleanLayout(page, testInfo);
 });
 
 test("dashboard Trends tab — no text overlaps @ phone width", async ({ page }, testInfo) => {
@@ -263,7 +260,7 @@ test("dashboard Trends tab — no text overlaps @ phone width", async ({ page },
 	await page.getByText("Breathing Rate").waitFor();
 	await page.getByText("Blood Oxygen (SpO2)").waitFor();
 	await page.getByText("30d", { exact: true }).waitFor(); // the range toggle row (mat-button-toggle)
-	await expectNoTextOverlaps(page, testInfo);
+	await expectCleanLayout(page, testInfo);
 });
 
 test("dashboard Trends tab — charts must not overflow the phone width", async ({ page }, testInfo) => {
@@ -298,5 +295,5 @@ test("dashboard Trends tab — charts must not overflow the phone width", async 
 		null,
 		{ polling: 120, timeout: 10_000 },
 	);
-	await expectNoHorizontalOverflow(page, testInfo);
+	await expectCleanLayout(page, testInfo);
 });
