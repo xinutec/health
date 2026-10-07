@@ -50,6 +50,16 @@ pub enum Command {
     Freshness,
     /// rows and date span per biometric table
     Coverage,
+    /// heart rate awake and at rest, one row per day (settled 5-minute blocks)
+    RestHr {
+        #[arg(long)]
+        json: bool,
+        user: String,
+        /// YYYY-MM-DD
+        since: String,
+        /// YYYY-MM-DD, default yesterday
+        until: Option<String>,
+    },
     /// resting HR / HRV / breathing rate by day, or two window means (#1733)
     HrTrend {
         #[arg(long, conflicts_with = "averages")]

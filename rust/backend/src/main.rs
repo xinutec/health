@@ -192,6 +192,12 @@ async fn main() -> Result<()> {
         C::GoogleProbe => backend::google::probe::run().await,
         C::Coverage => coverage().await,
         // #1733: the case file's heart-rate pages read these through prod-db.sh.
+        C::RestHr {
+            json,
+            user,
+            since,
+            until,
+        } => rest_hr(&user, &since, until.as_deref(), json).await,
         C::HrTrend {
             json,
             since,

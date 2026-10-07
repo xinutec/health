@@ -3,6 +3,7 @@ import DayEntry
 import BackendEntry
 import Lean.Data.Json
 import ServeEntry.Gates
+import Verified.RestHr
 
 /-!
 # `ServeEntry` — the mode table `verified_cli serve` dispatches on
@@ -2697,6 +2698,30 @@ private def placeNearLineResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
+/-- `resthr`: one day's heart rate awake and at rest (`Verified.RestHr`).
+Request `{samples: [[unix, bpm]…] (time-sorted), steps: [minute…],
+sleep: [[start, end]…], dayStart, dayEnd}`; reply `{day: null | {median, p25,
+p75, p05, p95, restMinutes}}`. -/
+private def restHrResult (j : Json) : Json :=
+  let parsed : Except String (Option Verified.RestHr.Day) := do
+    let samples ← (← (← j.getObjVal? "samples").getArr?).mapM fun e => do
+      let a ← e.getArr?
+      return ((← (← nth a 0).getInt?), (← (← nth a 1).getNat?))
+    let steps ← (← (← j.getObjVal? "steps").getArr?).mapM (·.getInt?)
+    let sleep ← (← (← j.getObjVal? "sleep").getArr?).mapM fun e => do
+      let a ← e.getArr?
+      return ((← (← nth a 0).getInt?), (← (← nth a 1).getInt?))
+    let dayStart ← (← j.getObjVal? "dayStart").getInt?
+    let dayEnd ← (← j.getObjVal? "dayEnd").getInt?
+    return Verified.RestHr.restDay samples steps sleep dayStart dayEnd
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok none => Json.mkObj [("day", Json.null)]
+  | .ok (some d) => Json.mkObj [("day", Json.mkObj [
+      ("median", Lean.toJson d.medianBpm), ("p25", Lean.toJson d.p25),
+      ("p75", Lean.toJson d.p75), ("p05", Lean.toJson d.p05), ("p95", Lean.toJson d.p95),
+      ("restMinutes", Lean.toJson d.restMinutes)])]
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -2720,6 +2745,7 @@ def dispatch (j : Json) : Json :=
   | .ok "kalman" => kalmanResult j
   | .ok "rankvenues" => rankVenuesResult j
   | .ok "bestplace" => bestPlaceResult j
+  | .ok "resthr" => restHrResult j
   | .ok "gpsquality" => gpsQualityResult j
   | .ok "gpsoutliers" => gpsOutliersResult j
   | .ok "biolabels" => bioLabelsResult j
