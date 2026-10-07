@@ -858,6 +858,9 @@ def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
     ("placeConfidence", match s.placeSource with
       | some src => Lean.toJson (Verified.Geo.NameConfidence.confidence src)
       | none => Json.null),
+    ("placeAt", match s.placeAt with
+      | some (lat, lon) => Json.arr #[Lean.toJson lat, Lean.toJson lon]
+      | none => Json.null),
     ("wayName", jOptS s.wayName),
     ("asleep", match s.asleep with | none => Json.null | some b => Json.bool b),
     ("tz", jOptS s.tz), ("minutesAsleep", jOptI s.minutesAsleep),

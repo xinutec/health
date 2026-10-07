@@ -81,6 +81,8 @@ fn state(start: i64, end: i64, inferred: Option<bool>) -> Value {
         // A source no naming rule produces: the table reads it as unknown, 0.5,
         // so this fixture does not move when a measured rate does (#325).
         "place": "somewhere", "city": null, "placeSource": "unmeasured", "placeConfidence": 0.5,
+        // Off any map, and exact in binary, so the round trip is byte-equal.
+        "placeAt": [0.5, 0.25],
         "wayName": "a way", "asleep": false,
         "tz": "Europe/London", "minutesAsleep": 42,
         "inferred": inferred,
@@ -132,7 +134,7 @@ fn absent_optional_fields_survive_as_null_rather_than_vanishing() {
     let bare = json!({
         "startTs": 100, "endTs": 200, "mode": "walking",
         "place": null, "city": null, "placeSource": null, "placeConfidence": null,
-        "wayName": null, "asleep": null,
+        "placeAt": null, "wayName": null, "asleep": null,
         "tz": null, "minutesAsleep": null, "inferred": null,
     });
     let got = lean::clip_inferred_future(std::slice::from_ref(&bare), 1_000).unwrap();

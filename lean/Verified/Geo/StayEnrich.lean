@@ -246,7 +246,7 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
   -- 1. Transit continuity, ahead of every other rule.
   match Verified.Geo.TransitPlace.stationAtTrainAlight prev cLat cLon reads.stations with
   | some station =>
-    withCity { seg with place := some station, placeSource := some (station, "station") }
+    withCity { seg with place := some station, placeSource := some ⟨station, "station", some (cLat, cLon)⟩ }
       (reads.place cLat cLon false false)
   | none =>
     let isSleepWindow := hasOvernightPresence seg.startTs seg.endTs cLon
@@ -273,13 +273,13 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
         else none
       if let some p := inside then
         withCity
-          { seg with place := some p.label, placeSource := some (p.label, p.source)
+          { seg with place := some p.label, placeSource := some ⟨p.label, p.source, some (cLat, cLon)⟩
                      placeKind := some (p.category, p.type_) }
           (some p)
       else if wp.displayName == some "Home" || wp.displayName == some "Work" then
         withCity
           { seg with place := wp.displayName, focusPlaceId := some wp.cand.id
-                     placeSource := wp.displayName.map fun n => (n, n.toLower) }
+                     placeSource := wp.displayName.map fun n => ⟨n, n.toLower, some (placeLat, placeLon)⟩ }
           (reads.place placeLat placeLon true false)
       else
         let isResidential := wp.sleepHours ≥ RESIDENCE_SLEEP_THRESHOLD_H
@@ -303,7 +303,7 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
         | some p =>
           withCity
             { seg with place := some p.label, focusPlaceId := some wp.cand.id
-                       placeSource := some (p.label, p.source)
+                       placeSource := some ⟨p.label, p.source, some (askLat, askLon)⟩
                        placeKind := some (p.category, p.type_) }
             (some p)
     | none =>
@@ -311,7 +311,7 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
       -- decides whether an address beats a venue.
       match reads.place cLat cLon isSleepWindow true with
       | none => seg
-      | some p => withCity { seg with place := some p.label, placeSource := some (p.label, p.source)
+      | some p => withCity { seg with place := some p.label, placeSource := some ⟨p.label, p.source, some (cLat, cLon)⟩
                                       placeKind := some (p.category, p.type_) } (some p)
 
 /-! ## Guards

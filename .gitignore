@@ -24,6 +24,7 @@ tests/golden/*
 !tests/golden/journey-baseline.json
 !tests/golden/feasibility-baseline.json
 !tests/golden/rail-triple-baseline.json
+!tests/golden/teleport-baseline.json
 !tests/golden/truth-baseline.json
 !tests/golden/decoder-scoreboard.json
 # The Lean delta ceiling carries fingerprints, not measurements: a `match` entry

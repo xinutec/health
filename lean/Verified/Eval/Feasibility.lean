@@ -13,7 +13,7 @@ The user's requirement, 2026-09-01, is exactly this module's subject: *"Correct
 or at least viable trajectory is important. It shouldn't show definitely-wrong
 interpretations that can't be right given the data."*
 
-## The four invariants
+## The five invariants
 
 * **impossible-mode-kinematics** — a `walking` leg whose fixes sustain a
   vehicle-paced run over a real distance (the "64 km/h walk down the rail
@@ -26,6 +26,10 @@ interpretations that can't be right given the data."*
   must share a station: you cannot step off at one and instantly board at
   another.
 * **degenerate-train-leg** — a train boarding and alighting at the same station.
+* **teleport** — two stays at different places with nothing relocating between
+  them, further apart than he could have walked in the time between, by more
+  than the fixes' own location noise. A stay is where its name was asked for
+  (`DayState.placeAt`), else where its fixes put it.
 
 ## ⚠ ZERO FALSE POSITIVES IS THE DESIGN CONSTRAINT, NOT AN ASPIRATION
 
@@ -62,6 +66,7 @@ open Verified.Geo.RailAbsorbers (parseRailWayName)
 
 inductive Kind where
   | railDiscontinuity | degenerateTrainLeg | impossibleModeKinematics | invalidRailTriple
+  | teleport
   deriving BEq, Repr, Inhabited
 
 def Kind.toString : Kind → String
@@ -69,6 +74,7 @@ def Kind.toString : Kind → String
   | .degenerateTrainLeg => "degenerate-train-leg"
   | .impossibleModeKinematics => "impossible-mode-kinematics"
   | .invalidRailTriple => "invalid-rail-triple"
+  | .teleport => "teleport"
 
 structure Violation where
   kind : Kind
@@ -84,9 +90,20 @@ structure Leg where
   endTs : Int
   mode : String
   wayName : Option String := none
+  place : Option String := none
+  /-- Where the name was asked for (`DayState.placeAt`). -/
+  placeAt : Option (Float × Float) := none
   deriving BEq, Repr, Inhabited
 
 abbrev Fix := Verified.GeoFix
+
+/-- A raw fix with the radius the phone reported for it, metres. -/
+structure AccFix where
+  ts : Int
+  lat : Float
+  lon : Float
+  accuracyM : Float
+  deriving BEq, Repr, Inhabited
 
 structure StepPoint where
   ts : Int
@@ -120,6 +137,13 @@ walking is ≳100. 60 splits them with margin on both sides. -/
 def PEDESTRIAN_MIN_CADENCE_SPM : Float := 60
 
 def EARTH_R_M : Float := 6371000
+
+/-- The on-foot ceiling in metres a second: what walking covers between stays. -/
+def WALK_MAX_MPS : Float := KINEMATIC_VEHICLE_STEP_KMH / 3.6
+
+/-- How many standard deviations of location noise a stay→stay distance must
+exceed, beyond what walking covers, to be a teleport. -/
+def TELEPORT_SIGMAS : Float := 3
 
 /-- Modes that do NOT move the user between distinct stations. A stay or sleep
 between two train legs cannot put you at a different boarding station; a
@@ -298,6 +322,62 @@ def checkRailTriples (legs : Array Leg) (lineStations : LineMembership) : Array 
                 detail := s!"train labelled {line} {role} {station}, a station that line does not serve" }
   return out
 
+/-! ## The teleport invariant -/
+
+/-- Where a stay's fixes put it, and how precisely: the mean weighted by
+1/accuracy², and the same weighted mean of the accuracies.
+
+⚠ THE NOISE IS NOT DIVIDED BY √n. Indoors a phone reports the same wrong spot
+for minutes, so its errors are correlated and many fixes place a stay no better
+than its best few. Crediting √n called the two halves of one night at Home
+fifteen standard deviations apart. -/
+def stayLocation (fixes : Array AccFix) : Option (Fix × Float) := Id.run do
+  let mut w := 0.0
+  let mut lat := 0.0
+  let mut lon := 0.0
+  let mut acc := 0.0
+  for f in fixes do
+    if f.accuracyM ≤ 0 then continue
+    let k := 1 / (f.accuracyM * f.accuracyM)
+    w := w + k
+    lat := lat + k * f.lat
+    lon := lon + k * f.lon
+    acc := acc + k * f.accuracyM
+  if w == 0 then return none
+  return some ({ ts := 0, lat := lat / w, lon := lon / w }, acc / w)
+
+private def isStay (m : String) : Bool := m == "stationary" || m == "sleeping"
+
+/-- Stays at different places with nothing relocating between them must be
+reachable on foot in the time between. A stay with no name, or no fixes to
+measure its noise by, is not judged. -/
+def checkTeleports (legs : Array Leg) (fixes : Array AccFix) : Array Violation := Id.run do
+  let mut out : Array Violation := #[]
+  -- The last stay, while nothing that relocates has followed it.
+  let mut prev : Option Leg := none
+  for l in legs do
+    if isStay l.mode then
+      if let some a := prev then
+        if let (some pa, some pb) := (a.place, l.place) then
+          let at_ (s : Leg) := stayLocation (fixes.filter fun f => f.ts ≥ s.startTs && f.ts ≤ s.endTs)
+          if let (true, some (ea, sa), some (eb, sb)) := (pa != pb, at_ a, at_ l) then
+            let pos (s : Leg) (e : Fix) : Fix :=
+              match s.placeAt with | some (lat, lon) => { ts := 0, lat, lon } | none => e
+            let d := fixDistanceM (pos a ea) (pos l eb)
+            let gap := Float.ofInt (max 0 (l.startTs - a.endTs))
+            let reach := WALK_MAX_MPS * gap
+            let noise := Float.sqrt (sa * sa + sb * sb)
+            if d > reach + TELEPORT_SIGMAS * noise then
+              out := out.push {
+                kind := .teleport, startTs := l.startTs, endTs := l.endTs,
+                detail := s!"{a.mode} @ {pa} → {l.mode} @ {pb} with no travel between: " ++
+                  s!"{roundI d} m apart in {roundI gap} s, where walking reaches {roundI reach} m " ++
+                  s!"and the fixes place the stays within {roundI noise} m" }
+      prev := some l
+    else if !isNonRelocating l.mode then
+      prev := none
+  return out
+
 /-! ## The whole check -/
 
 /-- Every feasibility violation in a drawn timeline.
@@ -306,7 +386,8 @@ The rail chain: assert continuity only when both endpoints are determinable and
 nothing has relocated the user since the previous train. A leg with no
 determinable alight BREAKS the chain rather than being asserted across. -/
 def checkWorldlineFeasibility (legs : Array Leg) (points : Array Fix)
-    (steps : Array StepPoint) (lineStations : LineMembership) : Array Violation := Id.run do
+    (steps : Array StepPoint) (lineStations : LineMembership)
+    (accFixes : Array AccFix := #[]) : Array Violation := Id.run do
   let mut out := checkModeKinematics legs points
   if !steps.isEmpty then
     out := out ++ checkVehiclePedestrianRuns legs points steps
@@ -336,7 +417,7 @@ def checkWorldlineFeasibility (legs : Array Leg) (points : Array Fix)
       relocatedSincePrevTrain := false
     else if !isNonRelocating l.mode then
       relocatedSincePrevTrain := true
-  return out
+  return out ++ checkTeleports legs accFixes
 
 
 /-! ## Witnesses
@@ -468,6 +549,44 @@ private def chain (ls : List Leg) : Array Violation :=
 #guard (checkWorldlineFeasibility #[lg 0 200 "train"] slowTrain (cadence 110) #[]).size == 1
 #guard (checkWorldlineFeasibility #[lg 0 9 "train" (some "Alpha → Gamma · Red Line")] #[] #[] #[]).size == 0
 #guard (checkWorldlineFeasibility #[lg 0 9 "train" (some "Alpha → Gamma · Red Line")] #[] #[] served).size == 1
+
+/-! ### teleport -/
+
+private def af (ts : Int) (lon acc : Float) : AccFix := { ts, lat := 0, lon, accuracyM := acc }
+private def stay (s e : Int) (place : String) (at_ : Option Float := none) : Leg :=
+  { startTs := s, endTs := e, mode := "stationary", place := some place
+    placeAt := at_.map ((0 : Float), ·) }
+-- Every fix 10 m sure, all at the café.
+private def atCafe : Array AccFix := (Array.range 16).map fun k => af (Int.ofNat k * 60) 0 10
+
+-- The café, then a promenade named 445 m away, then the café: two jumps.
+#guard (checkTeleports #[stay 0 300 "Café" (some 0), stay 300 600 "Promenade" (some 0.004),
+    stay 600 900 "Café" (some 0)] atCafe).map (·.kind) == #[.teleport, .teleport]
+-- ⚠ WITHOUT the asked-for position the stays sit where their fixes are — all at
+-- the café — so a name 445 m off is invisible. The position is the claim.
+#guard (checkTeleports #[stay 0 300 "Café", stay 300 600 "Promenade", stay 600 900 "Café"]
+    atCafe).size == 0
+-- The same place twice is no move.
+#guard (checkTeleports #[stay 0 300 "Café" (some 0), stay 300 600 "Café" (some 0.004)] atCafe).size == 0
+-- A walk between relocates him.
+#guard (checkTeleports #[stay 0 300 "Café" (some 0), lg 300 400 "walking",
+    stay 400 600 "Promenade" (some 0.004)] atCafe).size == 0
+-- ⚠ UNOBSERVED TIME CAN HIDE THE WALK: half an hour of `unknown` reaches 7.5 km.
+#guard (checkTeleports #[stay 0 300 "Café" (some 0), lg 300 2100 "unknown",
+    stay 2100 2400 "Promenade" (some 0.004)] atCafe).size == 0
+-- …but a minute of it reaches 250 m, short of 445.
+#guard (checkTeleports #[stay 0 300 "Café" (some 0), lg 300 360 "unknown",
+    stay 360 600 "Promenade" (some 0.004)] atCafe).size == 1
+-- Fixes 300 m unsure cannot tell 445 m from standing still.
+#guard (checkTeleports #[stay 0 300 "Café" (some 0), stay 300 600 "Promenade" (some 0.004)]
+    ((Array.range 16).map fun k => af (Int.ofNat k * 60) 0 300)).size == 0
+-- A stay with no fixes has no noise to judge by, and is not judged.
+#guard (checkTeleports #[stay 0 300 "Café" (some 0), stay 300 600 "Promenade" (some 0.004)] #[]).size == 0
+-- ⚠ Sixteen fixes at 10 m place the stay within 10 m, not 2.5.
+#guard (stayLocation atCafe).any fun (_, n) => (n - 10).abs < 1e-9
+-- The weight is 1/accuracy²: one 10 m fix outweighs a 100 m fix a hundredfold.
+#guard match stayLocation #[af 0 0 10, af 60 0.01 100] with
+  | some (p, _) => (p.lon - 0.01 / 101).abs < 1e-12 | none => false
 
 end Witnesses
 

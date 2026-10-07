@@ -2540,6 +2540,9 @@ private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DaySt
          -- The rule that named `place`; `placeConfidence` is derived from it on
          -- the way back out, so it is not read (#325).
          , placeSource := ← optS "placeSource"
+         , placeAt := ← match j.getObjVal? "placeAt" with
+             | .ok (.arr #[la, lo]) => do return some (← jFloat la, ← jFloat lo)
+             | _ => pure none
          , asleep := ← optB "asleep", tz := ← optS "tz"
          , minutesAsleep := ← jOptInt j "minutesAsleep"
          , inferred := ← optB "inferred" }

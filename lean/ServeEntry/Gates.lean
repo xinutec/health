@@ -791,14 +791,17 @@ regardless of how the cascade produced them.
 
 ⚠ EVERY INPUT IS OPTIONAL AND THE ABSENCE OF ONE SILENCES ITS INVARIANT, on
 purpose. No `points` and the kinematic checks do not run; no `steps` and the
-pedestrian twin does not; no `stationsOnLine` and the triple check does not.
+pedestrian twin does not; no `stationsOnLine` and the triple check does not;
+no `accFixes` and the teleport check does not.
 That is the zero-false-positive rule applied to missing DATA rather than to
 thresholds — a day whose fixture never recorded a line's stations must not have
 its labels called impossible.
 
   { "mode": "feasibility",
-    "legs": [ { "startTs": n, "endTs": n, "mode": s, "wayName": s|null } ],
+    "legs": [ { "startTs": n, "endTs": n, "mode": s, "wayName": s|null,
+                "place": s|null, "placeAt": [f, f]|null } ],
     "points": [ { "ts": n, "lat": f, "lon": f } ],
+    "accFixes": [ { "ts": n, "lat": f, "lon": f, "accuracy": f } ],
     "steps": [ { "ts": n, "steps": f } ],
     "lineStations": [ { "line": s, "stations": [s] } ] }
 
@@ -812,7 +815,17 @@ private def parseLeg (j : Json) : Except String Leg := do
   return { startTs := ← (← j.getObjVal? "startTs").getInt?
            endTs := ← (← j.getObjVal? "endTs").getInt?
            mode := ← (← j.getObjVal? "mode").getStr?
-           wayName := (j.getObjVal? "wayName" >>= (·.getStr?)).toOption }
+           wayName := (j.getObjVal? "wayName" >>= (·.getStr?)).toOption
+           place := (j.getObjVal? "place" >>= (·.getStr?)).toOption
+           placeAt := ← match j.getObjVal? "placeAt" with
+             | .ok (.arr #[la, lo]) => do return some (← jFloat la, ← jFloat lo)
+             | _ => pure none }
+
+private def parseAccFix (j : Json) : Except String AccFix := do
+  return { ts := ← (← j.getObjVal? "ts").getInt?
+           lat := ← jFloatField j "lat"
+           lon := ← jFloatField j "lon"
+           accuracyM := ← jFloatField j "accuracy" }
 
 private def parseFix (j : Json) : Except String Fix := do
   return { ts := ← (← j.getObjVal? "ts").getInt?
@@ -834,7 +847,8 @@ def feasibilityResult (j : Json) : Json :=
     let points ← (← optArr j "points").mapM parseFix
     let steps ← (← optArr j "steps").mapM parseStep
     let lineStations ← (← optArr j "lineStations").mapM parseMembership
-    let vs := checkWorldlineFeasibility legs points steps lineStations
+    let accFixes ← (← optArr j "accFixes").mapM parseAccFix
+    let vs := checkWorldlineFeasibility legs points steps lineStations accFixes
     return Json.mkObj [("violations", Json.arr (vs.map fun v =>
       Json.mkObj [("kind", Json.str v.kind.toString),
                   ("startTs", Lean.toJson v.startTs), ("endTs", Lean.toJson v.endTs),

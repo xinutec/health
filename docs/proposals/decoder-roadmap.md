@@ -150,7 +150,12 @@ against a metric that can't move.
   position. The 2026-06-24 sleep-10km-from-prior-fix bug proves the invariant
   must cover *place*, not just rail. The "prefer Home" patch was tried and
   reverted (it broke inpatient nights) — the fix is continuity, not a
-  residential bias.
+  residential bias. Status: shipped as `teleport` in
+  `Verified.Eval.Feasibility` — two stays at different places with nothing
+  relocating between, judged at the position each name was asked for
+  (`DayState.placeAt`), noise from the fixes' reported accuracy; ratcheted
+  per-day ceiling in `tests/golden/teleport-baseline.json`. Sleep windows with
+  no fixes are not yet judged.
 - **Confidence calibration.** Emit a per-segment confidence plus a
   reliability/Brier/ECE metric so "calibrated honesty" is measured, not
   asserted. Phase 4's gate depends on this.

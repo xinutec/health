@@ -482,11 +482,11 @@ def interchangeStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
           | some r => s!"{r}; {why}"
           | none => why
         out := out.set! i { s with place := some station, refinedReason := some reason
-                                   placeSource := some (station, "station") }
+                                   placeSource := some ⟨station, "station", some (cLat, cLon)⟩ }
   return out
 
 private def isStationStay (s : Seg) : Bool :=
-  Verified.Geo.SegmentMerge.effectiveMode s == "stationary" && s.placeSource.any (·.2 == "station")
+  Verified.Geo.SegmentMerge.effectiveMode s == "stationary" && s.placeSource.any (·.rule == "station")
 
 /-- Is `p` within station range of a node named `st`? -/
 private def inStation (e : Env) (st : String) (p : Shed.PointF) : Bool :=
@@ -522,7 +522,7 @@ private def boardingNames (e : Env) (segs : Array Seg) : Array (Option (String �
   let enclosedAt (i : Nat) : Array String := Id.run do
     let some s := segs[i]? | return #[]
     if Verified.Geo.SegmentMerge.effectiveMode s != "stationary" then return #[]
-    if !s.placeSource.any (·.2 == "enclosing") then return #[]
+    if !s.placeSource.any (·.rule == "enclosing") then return #[]
     if s.placeKind != some Verified.Geo.Landmarks.STATION_BUILDING then return #[]
     let some (cLat, cLon) := centroidOf e s | return #[]
     return Verified.Geo.TransitPlace.stationsWithin cLat cLon e.nearbyStations
@@ -549,7 +549,8 @@ def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
     let some s := out[i]? | continue
     let some (some (station, why)) := names[i]? | continue
     if isStationStay s then continue
-    out := out.set! i { s with place := some station, placeSource := some (station, "station")
+    out := out.set! i { s with place := some station
+                               placeSource := some ⟨station, "station", centroidOf e s⟩
                                refinedReason := some (match s.refinedReason with
                                  | some r => s!"{r}; {why}"
                                  | none => why) }
@@ -1558,13 +1559,13 @@ private def farPhantomOut : Array Seg := runNamed MIX "finalMerge" farPhantomDay
 -- a stay longer than any wait for a train is somewhere he went.
 #guard fires MIX "boardingStayLabel" #[st 0 600, wk 600 900, st 900 1500, tr 1500 3000 (some "S → T")]
 #guard (runNamed MIX "boardingStayLabel" #[st 0 600, wk 600 900, st 900 1500, tr 1500 3000 (some "S → T")]).all
-  fun s => s.mode != "stationary" || s.placeSource.any (·.2 == "station")
+  fun s => s.mode != "stationary" || s.placeSource.any (·.rule == "station")
 #guard !(fires MIX "boardingStayLabel" #[st 0 7200, tr 7200 9000 (some "S → T")])
 #guard !(fires MIX "boardingStayLabel" #[tr 0 600 (some "A → S"), st 600 900])
 -- A train leaving straight from a wait named for a station its line serves
 -- boards there; a station the line is not known to serve is left alone.
 private def waitAt (a b : Int) (name : String) : Seg :=
-  { st a b (some name) with placeSource := some (name, "station") }
+  { st a b (some name) with placeSource := some ⟨name, "station", none⟩ }
 #guard (runNamed MIX "boardAtWait"
     #[waitAt 0 600 "S", tr 610 3000 (some "M → T · Metropolitan")])[1]!.wayName
   == some "S → T · Metropolitan"

@@ -10,9 +10,10 @@
 //! that can't be right given the data."* A model-independent assertion on the
 //! OUTPUT: a real worldline is one continuous path through space-time, so some
 //! drawn timelines are impossible regardless of how the cascade produced them.
-//! Four invariants — `impossible-mode-kinematics` (a walk at vehicle pace, and
+//! Five invariants — `impossible-mode-kinematics` (a walk at vehicle pace, and
 //! a train at pedestrian pace while the wearer steps), `invalid-rail-triple`
-//! (a line labelled through a station it does not reach),
+//! (a line labelled through a station it does not reach), `teleport` (two
+//! stays at different places too far apart for the time between),
 //! `rail-discontinuity` and `degenerate-train-leg`.
 //!
 //! ⚠ **IT WAS A SEPARATE TEST WITH ITS OWN FOLD, AND THAT IS WHY IT FOUND
@@ -26,8 +27,8 @@
 //!
 //! # A CEILING, not a floor, and the ratchet is the other way
 //!
-//! `feasibility-baseline.json` and `rail-triple-baseline.json` record standing
-//! defects as per-day COUNTS that may only shrink. A day emitting more than its
+//! `feasibility-baseline.json`, `rail-triple-baseline.json` and
+//! `teleport-baseline.json` record standing defects as per-day COUNTS that may only shrink. A day emitting more than its
 //! committed count fails; fewer is an improvement to re-bless with
 //! `FEASIBILITY_BLESS=1` (single-shard, like every bless in this runner).
 //!
@@ -50,14 +51,33 @@ use serde_json::{Value, json};
 
 use super::Replay;
 
-const KINEMATIC: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tests/golden/feasibility-baseline.json"
-);
-const TRIPLE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tests/golden/rail-triple-baseline.json"
-);
+/// `(label, violation kind, baseline file)`: each kind with a standing count.
+const CEILINGS: [(&str, &str, &str); 3] = [
+    (
+        "kinematic",
+        "impossible-mode-kinematics",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/golden/feasibility-baseline.json"
+        ),
+    ),
+    (
+        "rail-triple",
+        "invalid-rail-triple",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/golden/rail-triple-baseline.json"
+        ),
+    ),
+    (
+        "teleport",
+        "teleport",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/golden/teleport-baseline.json"
+        ),
+    ),
+];
 
 fn load(path: &str) -> BTreeMap<String, u64> {
     serde_json::from_str(&std::fs::read_to_string(path).expect("the ceiling is tracked"))
@@ -99,10 +119,9 @@ fn rows(request: &Value, at: &str, keys: &[&str]) -> Vec<Value> {
 }
 
 pub struct Feasibility {
-    kin_base: BTreeMap<String, u64>,
-    tri_base: BTreeMap<String, u64>,
-    kin_now: BTreeMap<String, u64>,
-    tri_now: BTreeMap<String, u64>,
+    /// Per `CEILINGS` entry: the committed counts and this run's.
+    base: Vec<BTreeMap<String, u64>>,
+    now: Vec<BTreeMap<String, u64>>,
     measured: BTreeSet<String>,
     attempted: BTreeSet<String>,
     failures: Vec<String>,
@@ -111,14 +130,12 @@ pub struct Feasibility {
 }
 
 impl Feasibility {
-    /// Both ceilings are tracked, so unlike the narrative graders this one has
+    /// Every ceiling is tracked, so unlike the narrative graders this one has
     /// no skip: a missing baseline is a broken checkout, not an absent corpus.
     pub fn new() -> Self {
         Self {
-            kin_base: load(KINEMATIC),
-            tri_base: load(TRIPLE),
-            kin_now: BTreeMap::new(),
-            tri_now: BTreeMap::new(),
+            base: CEILINGS.iter().map(|c| load(c.2)).collect(),
+            now: vec![BTreeMap::new(); CEILINGS.len()],
             measured: BTreeSet::new(),
             attempted: BTreeSet::new(),
             failures: Vec::new(),
@@ -139,6 +156,7 @@ impl Feasibility {
                 json!({
                     "startTs": s["startTs"], "endTs": s["endTs"],
                     "mode": s["mode"], "wayName": s["wayName"],
+                    "place": s["place"], "placeAt": s["placeAt"],
                 })
             })
             .collect();
@@ -151,6 +169,7 @@ impl Feasibility {
         }
         let points = rows(&rep.request, "/env/points", &["lat", "lon"]);
         let steps = rows(&rep.request, "/env/steps", &["steps"]);
+        let acc_fixes = rows(&rep.request, "/env/rawFixes", &["lat", "lon", "accuracy"]);
         // Line membership from the fixture's own recorded trace. A day whose
         // capture never asked for a line contributes NOTHING here rather than
         // an empty list — see the mode's header.
@@ -176,14 +195,15 @@ impl Feasibility {
         if self.dump.is_some() {
             self.dumped.push(
                 json!({ "date": date, "legs": legs, "points": points,
-                        "steps": steps, "lineStations": line_stations })
+                        "steps": steps, "lineStations": line_stations,
+                        "accFixes": acc_fixes })
                 .to_string(),
             );
         }
 
         let req = json!({
             "mode": "feasibility", "legs": legs, "points": points,
-            "steps": steps, "lineStations": line_stations,
+            "steps": steps, "lineStations": line_stations, "accFixes": acc_fixes,
         });
         let reply = backend::lean::serve(&req.to_string())
             .unwrap_or_else(|e| panic!("{name}: the invariants must answer: {e:#}"));
@@ -191,30 +211,28 @@ impl Feasibility {
         assert!(fr.get("error").is_none(), "{name}: refused: {fr}");
 
         self.measured.insert(date.to_string());
-        let (mut kin, mut tri) = (0u64, 0u64);
+        let mut counts = vec![0u64; CEILINGS.len()];
         for v in fr["violations"].as_array().map_or(&[][..], Vec::as_slice) {
             let (kind, detail) = (
                 v["kind"].as_str().unwrap_or("?"),
                 v["detail"].as_str().unwrap_or(""),
             );
-            match kind {
-                "impossible-mode-kinematics" => kin += 1,
-                "invalid-rail-triple" => tri += 1,
+            match CEILINGS.iter().position(|c| c.1 == kind) {
+                Some(i) => counts[i] += 1,
                 // ⚠ CONTINUITY AND SELF-RIDE ARE AT ZERO AND HAVE NO CEILING
                 // FILE. They are hard failures, not standing debt: there is no
                 // committed count for them, so any occurrence is reported and
                 // fails below rather than being silently tolerated.
-                _ => self.failures.push(format!("{date}: {kind} — {detail}")),
+                None => self.failures.push(format!("{date}: {kind} — {detail}")),
             }
             if std::env::var("FEASIBILITY_DEBUG").is_ok() {
                 eprintln!("      {date} {kind} {detail}");
             }
         }
-        if kin > 0 {
-            self.kin_now.insert(date.to_string(), kin);
-        }
-        if tri > 0 {
-            self.tri_now.insert(date.to_string(), tri);
+        for (now, n) in self.now.iter_mut().zip(counts) {
+            if n > 0 {
+                now.insert(date.to_string(), n);
+            }
         }
     }
 
@@ -251,22 +269,21 @@ impl Feasibility {
                 .unwrap_or_else(|e| panic!("the ceiling gate must answer: {e:#}"));
             serde_json::from_str(&reply).expect("the gate reply parses")
         };
-        let (kin_mine, tri_mine) = (mine(&self.kin_base), mine(&self.tri_base));
-        let kin_gate = gate(&kin_mine, &self.kin_now);
-        let tri_gate = gate(&tri_mine, &self.tri_now);
-        assert!(
-            kin_gate.get("error").is_none(),
-            "kinematic gate: {kin_gate}"
-        );
-        assert!(tri_gate.get("error").is_none(), "triple gate: {tri_gate}");
+        let mine_all: Vec<BTreeMap<String, u64>> = self.base.iter().map(mine).collect();
+        let gates: Vec<Value> = mine_all
+            .iter()
+            .zip(&self.now)
+            .map(|(m, n)| gate(m, n))
+            .collect();
+        for (c, g) in CEILINGS.iter().zip(&gates) {
+            assert!(g.get("error").is_none(), "{} gate: {g}", c.0);
+        }
 
         if std::env::var("FEASIBILITY_BLESS").is_ok() {
             // ⚠ The runner made this a single shard measuring every day, so the
             // FULL committed ceiling is the right input here, not `mine`.
-            for (path, committed, current) in [
-                (KINEMATIC, &self.kin_base, &self.kin_now),
-                (TRIPLE, &self.tri_base, &self.tri_now),
-            ] {
+            for ((c, committed), current) in CEILINGS.iter().zip(&self.base).zip(&self.now) {
+                let path = c.2;
                 let req = json!({
                     "mode": "ceilingbless",
                     "committed": ceiling_wire(committed),
@@ -290,7 +307,8 @@ impl Feasibility {
 
         let empty: &[Value] = &[];
         let mut regressions: Vec<String> = Vec::new();
-        for (label, g) in [("kinematic", &kin_gate), ("rail-triple", &tri_gate)] {
+        for (c, g) in CEILINGS.iter().zip(&gates) {
+            let label = c.0;
             for r in g["regressed"].as_array().map_or(empty, Vec::as_slice) {
                 regressions.push(format!(
                     "      ✗ {} {} — was {}, now {}",
@@ -318,14 +336,23 @@ impl Feasibility {
                 );
             }
         }
+        let tally: Vec<String> = CEILINGS
+            .iter()
+            .zip(&self.now)
+            .zip(&mine_all)
+            .map(|((c, now), m)| {
+                format!(
+                    "{} {} (ceiling {})",
+                    c.0,
+                    now.values().sum::<u64>(),
+                    m.values().sum::<u64>()
+                )
+            })
+            .collect();
         eprintln!(
-            "feasibility: {} impossible-kinematics leg(s) over {} day(s), \
-             {} invalid rail triple(s); ceilings {} and {} on this shard's days",
-            self.kin_now.values().sum::<u64>(),
+            "feasibility: over {} day(s): {}",
             self.measured.len(),
-            self.tri_now.values().sum::<u64>(),
-            kin_mine.values().sum::<u64>(),
-            tri_mine.values().sum::<u64>()
+            tally.join(", ")
         );
 
         if !self.failures.is_empty() {

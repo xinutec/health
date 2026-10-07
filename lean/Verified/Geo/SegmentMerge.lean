@@ -3,6 +3,7 @@ import Verified.Hsmm.FloatScore
 import Verified.JsNum
 import Verified.FloatConst
 import Verified.Fix
+import Verified.PlaceSource
 /-!
 # Segment-list rewrites (port of the pure passes in `src/geo/passes/moving.ts`
 and `src/geo/passes/stays.ts`)
@@ -86,11 +87,8 @@ structure Seg where
   linearity : Float := 0.5
   pointCount : Int := 10
   place : Option String := none
-  /-- Which rule named the stay, WITH the name it named: `(name, source)`
-      (#325, 2026-09-30). A later pass that renames the stay leaves the pair
-      behind, and a name that no longer matches its pair has no source — so a
-      confidence can never outlive the name it was measured for. -/
-  placeSource : Option (String × String) := none
+  /-- Which rule named the stay, the name it named, and where it asked. -/
+  placeSource : Option Verified.PlaceSource := none
   /-- The OSM key and value of the feature that named the stay, when the
       namer said (`ResolvedPlace.category`, `.type_`): `("railway",
       "train_station")` for a station building. Read by a later pass that needs

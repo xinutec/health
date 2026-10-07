@@ -1,4 +1,5 @@
 import Verified.Geo.Worldline
+import Verified.PlaceSource
 /-!
 # Day assembly: states, sleep attribution, known-place stays, day grammar
 
@@ -68,6 +69,10 @@ structure DayState where
   /-- The rule that named `place`, when the name is still the one it named
       (`Seg.placeSource`). Not part of `sameState`. -/
   placeSource : Option String := none
+  /-- Where that rule asked for the name: the position the timeline puts him
+      at, which the worldline referee checks for continuity. Gated like
+      `placeSource`. Not part of `sameState`. -/
+  placeAt : Option (Float × Float) := none
   /-- The city header the timeline draws above this state. Served rather than
   re-derived by the client (#339); see `cityForState`. -/
   city : Option String := none
@@ -103,7 +108,7 @@ structure Seg where
   vehicleKind : Option String := none
   place : Option String := none
   /-- `SegmentMerge.Seg.placeSource`, carried to the state (#325). -/
-  placeSource : Option (String × String) := none
+  placeSource : Option Verified.PlaceSource := none
   wayName : Option String := none
   displayTz : Option String := none
   /-- The metro area the leg sits in, where both its ends agree on one
@@ -152,12 +157,16 @@ def findCovering (segments : List Seg) (ts : Int) : Option Seg :=
 def findCoveringSleep (sleeps : List SleepWindow) (ts : Int) : Option SleepWindow :=
   sleeps.find? (fun w => w.startTs ≤ ts && ts < w.endTs)
 
+/-- The segment's provenance, while its name is still the one it named. -/
+private def Seg.servedSource (s : Seg) : Option Verified.PlaceSource :=
+  s.placeSource.filter fun ps => s.place == some ps.name && ps.rule != ""
+
 private def makeStateFromSegment (seg : Seg) (startTs endTs : Int) (mode : Mode)
     (asleep : Bool) : DayState :=
   { startTs := startTs, endTs := endTs, mode := mode,
     place := seg.place,
-    placeSource := seg.placeSource.bind fun (n, src) =>
-      if seg.place == some n && src != "" then some src else none,
+    placeSource := seg.servedSource.map (·.rule),
+    placeAt := seg.servedSource.bind (·.askedAt),
     wayName := seg.wayName,
     asleep := if asleep && mode != "sleeping" then some true else none,
     tz := seg.displayTz,
@@ -196,8 +205,8 @@ def stateForInterval (start finish : Int) (seg : Option Seg) (sleep : Option Sle
           -- string equality in `sameState` would stop the two halves of one
           -- sleep from merging into a single row.
           some { startTs := start, endTs := finish, mode := "sleeping", place := s.place,
-                 placeSource := s.placeSource.bind fun (n, src) =>
-                   if s.place == some n && src != "" then some src else none,
+                 placeSource := s.servedSource.map (·.rule),
+                 placeAt := s.servedSource.bind (·.askedAt),
                  tz := if w.tz.isSome then w.tz else s.displayTz,
                  minutesAsleep := if w.minutesAsleep > 0 then some w.minutesAsleep else none }
         else
