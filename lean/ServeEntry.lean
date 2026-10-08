@@ -1294,6 +1294,32 @@ orphan pattern, one day old.
 indexes the observation tensor, so any other source could silently disagree in
 length or order and `groupStates` would return `none` (or worse, agree by
 accident on a shifted window). -/
+/-- `"emissionDebug": {"fromTs": n, "toTs": n}` on an `assemblesegments` request:
+every state's per-minute emission and entry over the window, beside the state
+the decode chose — the instrument for a minute that went to the wrong mode, as
+`chainDebug` is for a wrong line. -/
+private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Array Nat)
+    (dj : Json) : Json :=
+  let fromTs := (dj.getObjValAs? Int "fromTs").toOption.getD 0
+  let toTs := (dj.getObjValAs? Int "toTs").toOption.getD 0
+  let optF := fun (x : Option Float) => match x with | some v => Lean.toJson v | none => Json.null
+  let rows := (c.obs.zipIdx.filter fun (o, _) => fromTs ≤ o.ts && o.ts ≤ toTs).map fun (o, t) =>
+    let decoded := (path[t]?.bind fun i => c.states[i]?).map Verified.Hsmm.StateSpace.stateKey
+    let per := c.states.zipIdx.map fun (st, s) =>
+      Json.mkObj [("state", Json.str (Verified.Hsmm.StateSpace.stateKey st)),
+                  ("emit", Lean.toJson (Verified.Hsmm.Assemble.emitAt c t s)),
+                  ("entry", Lean.toJson (Verified.Hsmm.Assemble.entryAt c t s))]
+    Json.mkObj [("ts", Lean.toJson o.ts),
+                ("speedKmh", optF (o.gps.map (·.speedKmh))),
+                ("cadence", optF o.cadence), ("hr", optF o.hr),
+                ("prevFixTs", match o.prevGpsFix with | some f => Lean.toJson f.ts | none => Json.null),
+                ("nextFixTs", match o.nextGpsFix with | some f => Lean.toJson f.ts | none => Json.null),
+                ("decoded", match decoded with | some k => Json.str k | none => Json.null),
+                ("covered", Json.bool (Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)),
+                ("linesAt", Json.arr ((Verified.Hsmm.TrainCandidates.linesAt c.coverage o.ts).map Json.str).toArray),
+                ("states", Json.arr per)]
+  Json.mkObj [("emissionDebug", Json.arr rows)]
+
 private def assembleSegmentsResult (j : Json) : Json :=
   match parseAssemble j with
   | .error e => Json.mkObj [("error", Json.str e)]
@@ -1304,6 +1330,7 @@ private def assembleSegmentsResult (j : Json) : Json :=
       match pDecodeFast pd ckptStride with
       | none => Json.mkObj [("degenerate", Json.bool true)]
       | some r =>
+        if let .ok dj := j.getObjVal? "emissionDebug" then emissionDebugJson c r.path dj else
         -- Index → the state the model actually holds. An out-of-range index is
         -- an ERROR, not a skipped minute: it would shorten the path and shift
         -- every later segment boundary.
