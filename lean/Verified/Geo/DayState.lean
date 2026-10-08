@@ -96,6 +96,8 @@ structure SleepWindow where
   place : Option String
   minutesAsleep : Int
   tz : Option String
+  /-- Where `place` was asked for: the stay or known place the name came from. -/
+  placeAt : Option (Float × Float) := none
   deriving Inhabited, BEq
 
 /-- The fields of `EnrichedSegment` the day-state converter reads. -/
@@ -186,7 +188,7 @@ def stateForInterval (start finish : Int) (seg : Option Seg) (sleep : Option Sle
     | none => none  -- overnight in transit: no place, nothing to synthesize
     | some p =>
       some { startTs := start, endTs := finish, mode := "sleeping", place := some p,
-             placeSource := some "sleep",
+             placeSource := some "sleep", placeAt := w.placeAt,
              tz := w.tz,
              minutesAsleep := if w.minutesAsleep > 0 then some w.minutesAsleep else none }
   | some s, sleepOpt =>
@@ -329,7 +331,8 @@ is where you went TO, not where you slept. It is continuity, not a residential
 bias — the same rule keeps inpatient nights at the hospital, whose bedtime side
 IS the hospital.
 -/
-def derivePlaceForSleep (winStart winEnd : Int) (segments : List Seg) : Option String :=
+def derivePlaceForSleepAt (winStart winEnd : Int) (segments : List Seg) :
+    Option (String × Option (Float × Float)) :=
   let scored := segments.filterMap (fun s =>
     if s.refinedMode.getD s.mode != "stationary" then none
     else match s.place with
@@ -339,7 +342,8 @@ def derivePlaceForSleep (winStart winEnd : Int) (segments : List Seg) : Option S
           if s.startTs > winEnd then (2, s.startTs - winEnd)        -- wake side
           else if winStart > s.endTs then (1, winStart - s.endTs)   -- bedtime side
           else (0, 0)
-        if gap > PLACE_FALLBACK_MAX_GAP_SEC then none else some (p, rank, gap))
+        if gap > PLACE_FALLBACK_MAX_GAP_SEC then none
+        else some ((p, s.servedSource.bind (·.askedAt)), rank, gap))
   -- Strict improvement only, so ties keep the FIRST candidate (as the TS does).
   let best := scored.foldl (fun acc (p, rank, gap) =>
     match acc with
@@ -347,6 +351,10 @@ def derivePlaceForSleep (winStart winEnd : Int) (segments : List Seg) : Option S
     | some (_, br, bg) =>
       if rank < br || (rank == br && gap < bg) then some (p, rank, gap) else acc) none
   best.map (fun (p, _, _) => p)
+
+/-- The name alone. -/
+def derivePlaceForSleep (winStart winEnd : Int) (segments : List Seg) : Option String :=
+  (derivePlaceForSleepAt winStart winEnd segments).map (·.1)
 
 /-! ## Known-place dwell detection -/
 
@@ -576,6 +584,9 @@ private def sw (startTs endTs : Int) (place : Option String) (minutesAsleep : In
 /-! ### `segmentsToDayStates` -/
 
 #guard segmentsToDayStates [] [] == []
+-- A sleep over a stretch with no GPS is judged where its window's name was asked.
+#guard (segmentsToDayStates [] [{ sw T0 (T0+3600) (some "Home") with placeAt := some (51.5, -0.1) }]).head!.placeAt
+  == some (51.5, -0.1)
 #guard segmentsToDayStates [sg T0 (T0+3600) (place := some "Home")] []
   == [{ startTs := T0, endTs := T0+3600, mode := "stationary", place := some "Home" }]
 -- Adjacent same-state runs merge; different places do not.
@@ -691,6 +702,11 @@ private def WE : Int := T0 + 30000
 #guard derivePlaceForSleep WS WE [sg (T0+12000) (T0+20000) "walking" (place := some "Home")] == none
 #guard derivePlaceForSleep WS WE [sg (T0+12000) (T0+20000)] == none
 #guard derivePlaceForSleep WS WE [sg (T0+12000) (T0+20000) (place := some "Hospital")] == some "Hospital"
+-- The position comes with the name: where the candidate's record was asked.
+#guard derivePlaceForSleepAt WS WE
+  [{ sg (T0+12000) (T0+20000) (place := some "Hospital") with
+       placeSource := some ⟨"Hospital", "enclosing", some (51.5, -0.1)⟩ }]
+  == some ("Hospital", some (51.5, -0.1))
 -- The 2026-06-24 case: a bedtime-side home beats a NEARER wake-side place,
 -- because you cannot relocate while asleep.
 #guard derivePlaceForSleep WS WE

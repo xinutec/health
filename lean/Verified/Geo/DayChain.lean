@@ -147,7 +147,10 @@ synthetic stationary segment. It never enters the day's segment output, only the
 candidate set, so every field but the window, the mode and the place is filler —
 and `derivePlaceForSleep` reads exactly those. -/
 def stayCandidateSeg (c : StayCandidate) : Verified.Geo.DayState.Seg :=
-  { startTs := c.startTs, endTs := c.endTs, mode := "stationary", place := some c.place }
+  { startTs := c.startTs, endTs := c.endTs, mode := "stationary", place := some c.place
+    -- The name stands for the mined place's centre; a sleep named after this
+    -- candidate is judged there.
+    placeSource := some ⟨c.place, "stay", some (c.centroidLat, c.centroidLon)⟩ }
 
 /-! ## The chain -/
 
@@ -177,12 +180,14 @@ continuation, none of which asked. -/
 private def BRACKET_RADIUS_M : Float := 100
 
 open Verified.Hsmm.FloatScore (haversineMeters) in
-/-- The nearest named place within `radiusM`, ignoring each place's own radius. -/
+/-- The nearest named place within `radiusM`, ignoring each place's own radius:
+its name and its centre. -/
 private def snapWithin (radiusM lat lon : Float)
-    (places : List Verified.Geo.DayState.StayKnownPlace) : Option String :=
+    (places : List Verified.Geo.DayState.StayKnownPlace) : Option (String × (Float × Float)) :=
   let inRange := places.filterMap fun p =>
     let d := haversineMeters lat lon p.centroidLat p.centroidLon
-    if decide (d > radiusM) then none else p.displayName.map fun n => (n, d)
+    if decide (d > radiusM) then none
+    else p.displayName.map fun n => ((n, (p.centroidLat, p.centroidLon)), d)
   (inRange.foldl (fun acc (n, d) =>
     match acc with
     | none => some (n, d)
@@ -206,7 +211,7 @@ after it, served as eight hours at Work 11.3 km away. Neither edge clears the
 places — he went somewhere — this yields `none` and the ordinary rule decides. -/
 def bracketPlaceForSleep (winStart winEnd : Int) (before : List Verified.Geo.DayState.StayFix)
     (after : Array Verified.Geo.EpisodeGeometry.Fix)
-    (places : List Verified.Geo.DayState.StayKnownPlace) : Option String :=
+    (places : List Verified.Geo.DayState.StayKnownPlace) : Option (String × (Float × Float)) :=
   -- ⚠ A GENERIC LABEL IS NOT A NAME. `sleepCandidates` re-resolves
   -- `GENERIC_STAY_LABEL` through `Env.sleepPlace` into a real lodging name, and
   -- this path does not — so admitting one would serve the placeholder where the
@@ -220,7 +225,7 @@ def bracketPlaceForSleep (winStart winEnd : Int) (before : List Verified.Geo.Day
   | some b, some a =>
     match snapWithin BRACKET_RADIUS_M b.lat b.lon named,
           snapWithin BRACKET_RADIUS_M a.lat a.lon named with
-    | some nb, some na => if nb == na then some nb else none
+    | some nb, some na => if nb.1 == na.1 then some nb else none
     | _, _ => none
   | _, _ => none
 
@@ -234,11 +239,13 @@ a silence at all; where they do not agree it yields `none` and the ordinary rule
 runs unchanged. -/
 def enrichSleepWindows (raw : List RawSleepWindow)
     (candidates : List Verified.Geo.DayState.Seg)
-    (bracket : Int → Int → Option String) : List SleepWindow :=
+    (bracket : Int → Int → Option (String × (Float × Float))) : List SleepWindow :=
   raw.map fun w =>
+    let named : Option (String × Option (Float × Float)) :=
+      ((bracket w.startTs w.endTs).map fun (n, pos) => (n, some pos)).orElse fun _ =>
+        Verified.Geo.DayState.derivePlaceForSleepAt w.startTs w.endTs candidates
     { startTs := w.startTs, endTs := w.endTs, tz := w.tz, minutesAsleep := w.minutesAsleep
-      place := (bracket w.startTs w.endTs).orElse fun _ =>
-        derivePlaceForSleep w.startTs w.endTs candidates }
+      place := named.map (·.1), placeAt := named.bind (·.2) }
 
 /-- The one state a fully-unobserved day gets, or nothing.
 
@@ -281,7 +288,8 @@ def bridgeSamePlaceHoles (states : Array DayState)
           if pa == pb && !(points.any fun p => p.ts > a.endTs && p.ts < b.startTs) then
             out := out.push
               { startTs := a.endTs, endTs := b.startTs, mode := "stationary", place := some pa
-                placeSource := some "inferred", tz := b.tz.orElse (fun _ => a.tz)
+                placeSource := some "inferred", placeAt := a.placeAt.orElse (fun _ => b.placeAt)
+                tz := b.tz.orElse (fun _ => a.tz)
                 inferred := some true }
         | _, _ => pure ()
     | none => pure ()
@@ -346,6 +354,11 @@ private def emptyEnv : Env :=
 
 -- Not bracketed: the day stays genuinely unknown rather than being invented.
 #guard (dayChain { emptyEnv with bracketPlace := none }).1 == #[]
+-- A bracketed night names the known place AND stands at its centre.
+#guard bracketPlaceForSleep 1000 2000 [{ ts := 900, lat := 51.5001, lon := -0.1 }]
+  #[{ ts := 2100, lat := 51.5, lon := -0.1001, speedKmh := 0 }]
+  [{ centroidLat := 51.5, centroidLon := -0.1, displayName := some "Home" }]
+  == some ("Home", (51.5, -0.1))
 
 -- An empty day draws no episodes either way.
 #guard (dayChain { emptyEnv with bracketPlace := some "St Elsewhere" }).2 == #[]
