@@ -466,6 +466,7 @@ def absorbIntraPlaceWalk (segments : Array Seg) (fixes : Array Fix) : Array Seg 
                   { seg with
                     refinedMode := some "stationary"
                     place := prev.place
+                    placeSource := prev.placeSource
                     city := prev.city
                     wayName := none
                     centroidLat := some pLat
@@ -1122,6 +1123,11 @@ def consolidateJitterStays (segments : Array Seg)
           centroidLat := some cLat
           centroidLon := some cLon
           place := match place with | some p => some p.label | none => base.place
+          -- The name was asked at the merged centre: say so, or the stay is
+          -- judged by its fixes (`DayState.placeAt`).
+          placeSource := match place with
+                         | some p => some ⟨p.label, p.source, some (cLat, cLon)⟩
+                         | none => base.placeSource
           city := match place with
                   | some p => match p.city with | some c => some c | none => base.city
                   | none => base.city
@@ -1213,6 +1219,11 @@ private def shape (segs : Array Seg) :
      some "earlier note; consolidated 3 GPS-jitter stay fragments")]
 #guard (go runOf3).map (·.centroidLon) == #[some C1_LON]
 #guard (go runOf3).map (·.avgSpeed) == #[1.25]
+-- The name's record: asked at the merged centre, under the resolver's rule.
+#guard (go runOf3).map (·.placeSource) == #[some ⟨"Olivomare", "", some (C1_LAT, C1_LON)⟩]
+-- An unresolvable centre leaves the base's own record standing (none here).
+#guard (consolidateJitterStays runOf3 (fun _ _ _ _ _ => none) londonTz).map (·.placeSource)
+       == #[none]
 -- The weighted centroid is NOT the plain mean of the three fragment centroids.
 #guard C1_LAT != (51.5 + 51.5002 + 51.5004) / 3
 

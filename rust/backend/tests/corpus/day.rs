@@ -432,6 +432,26 @@ impl Day {
     }
 }
 
+fn lat_lon(v: &Value) -> Option<(f64, f64)> {
+    match v.as_array()?.as_slice() {
+        [a, b] => Some((a.as_f64()?, b.as_f64()?)),
+        _ => None,
+    }
+}
+
+/// Great-circle metres between two positions.
+fn metres(p: (f64, f64), q: (f64, f64)) -> f64 {
+    let (la1, lo1, la2, lo2) = (
+        p.0.to_radians(),
+        p.1.to_radians(),
+        q.0.to_radians(),
+        q.1.to_radians(),
+    );
+    let h = ((la2 - la1) / 2.0).sin().powi(2)
+        + la1.cos() * la2.cos() * ((lo2 - lo1) / 2.0).sin().powi(2);
+    2.0 * 6_371_008.8 * h.sqrt().asin()
+}
+
 /// The first state that differs, and which of its fields.
 ///
 /// Printing the timelines whole buries the one state that moved; printing only
@@ -463,11 +483,21 @@ fn first_state_difference(got: &Value, want: &Value) -> String {
             .into_iter()
             .filter(|k| a.get(k.as_str()) != b.get(k.as_str()))
             .map(|k| {
-                format!(
-                    "{k}: now {} vs blessed {}",
+                let (x, y) = (
                     a.get(k.as_str()).unwrap_or(&Value::Null),
-                    b.get(k.as_str()).unwrap_or(&Value::Null)
-                )
+                    b.get(k.as_str()).unwrap_or(&Value::Null),
+                );
+                // A position is where he was: the log says how far it moved,
+                // never where.
+                if k == "placeAt" {
+                    return match (lat_lon(x), lat_lon(y)) {
+                        (Some(p), Some(q)) => format!("{k}: moved {:.1} m", metres(p, q)),
+                        (Some(_), None) => format!("{k}: now set vs blessed null"),
+                        (None, Some(_)) => format!("{k}: now null vs blessed set"),
+                        (None, None) => format!("{k}: differs"),
+                    };
+                }
+                format!("{k}: now {x} vs blessed {y}")
             })
             .collect();
         return format!(

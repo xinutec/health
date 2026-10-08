@@ -210,10 +210,16 @@ def maybeOverridePlace (seg : Seg) (hmm : List HmmSeg) (places : List (Int × Pl
           -- truly GPS-dark stay legitimately anchors via the prior, and it is
           -- only when the stay's own GPS says otherwise that the override is a
           -- teleport rather than a refinement.
+          -- The claim is the PLACE's: its name under its own rule, at its own
+          -- position (as `StayEnrich`'s Home/Work arm records it).
+          let askedAt := match place.lat, place.lon with
+            | some pLat, some pLon => some (pLat, pLon)
+            | _, _ => none
+          let named := { seg with place := some name, placeSource := some ⟨name, name.toLower, askedAt⟩ }
           match seg.centroidLat, seg.centroidLon, place.lat, place.lon with
           | some sLat, some sLon, some pLat, some pLon =>
-            if doorstepConsistent sLat sLon pLat pLon then { seg with place := some name } else seg
-          | _, _, _, _ => { seg with place := some name }
+            if doorstepConsistent sLat sLon pLat pLon then named else seg
+          | _, _, _, _ => named
 
 /-- The movement→train arm. -/
 def maybeOverrideMovementToTrain (seg : Seg) (hmm : List HmmSeg) : Seg :=
@@ -271,6 +277,11 @@ private def PLACES : List (Int × PlaceLookup) := [
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := none, wayName := none, refinedReason := none, centroidLat := (some 51.5405), centroidLon := (some (-0.1425)), vehicleKind := none, roadCorridorFraction := none }]
     #[⟨1751000000, 1751000600, "stationary", none, (some 9)⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Home"), none, none, none)]
+
+-- H1's record: the place's own name, under its rule, at its position.
+#guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := none, wayName := none, refinedReason := none, centroidLat := (some 51.5405), centroidLon := (some (-0.1425)), vehicleKind := none, roadCorridorFraction := none }]
+    #[⟨1751000000, 1751000600, "stationary", none, (some 9)⟩] PLACES).map (·.placeSource) ==
+  #[some ⟨"Home", "home", some (51.5405, -0.1425)⟩]
 
 -- H2: two candidate places; the one with the most overlap SECONDS wins, not the first. The centroid sits at the WINNER, so the doorstep gate is not what decides.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := none, wayName := none, refinedReason := none, centroidLat := (some 51.5405), centroidLon := (some (-0.1425)), vehicleKind := none, roadCorridorFraction := none }]
