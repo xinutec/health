@@ -406,7 +406,9 @@ structure QCorridor where
   grid : Std.HashMap Nat (Array Nat)
   chords : Array QChord
 
-def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := Id.run do
+/-- The corridor-wide `cosQ` lower bound `mkQCorridor` sizes its cells with —
+one definition, so the cell budget below counts the cells the corridor builds. -/
+def corridorCmin (fixes : Array QPt) : Int := Id.run do
   -- Corridor-wide `cosQ` LOWER bound, used both for the longitude leg of
   -- `distToFast`'s reject and for the cell widths (a too-small `cmin` only ever
   -- widens cells and loosens the reject, so erring low is always safe; erring
@@ -433,6 +435,26 @@ def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := I
   let mut cmin : Int :=
     cosQLowerBound (if loEnd.natAbs ≥ hiEnd.natAbs then loEnd else hiEnd)
   if cmin < 1 then cmin := 1
+  return cmin
+
+/-- How many (cell, chord) entries `mkQCorridor` would file, without filing them:
+each chord goes into every cell of its bounding box dilated by one cell, so a
+chord between fixes kilometres apart costs the SQUARE of its length in cells. -/
+def corridorEntries (fixes : Array QPt) (farUm : Nat) : Nat := Id.run do
+  let cmin := corridorCmin fixes
+  let cellLa : Int := ((farUm / 11132 : Nat) : Int) + 1
+  let cellLo : Int := ((farUm * 1048576 / (11132 * cmin.toNat) : Nat) : Int) + 1
+  let mut n : Nat := 0
+  for i in [1:fixes.size] do
+    let a := fixes.getD (i - 1) default
+    let b := fixes.getD i default
+    let rows := (((max a.la b.la) + cellLa).fdiv cellLa - ((min a.la b.la) - cellLa).fdiv cellLa + 1).toNat
+    let cols := (((max a.lo b.lo) + cellLo).fdiv cellLo - ((min a.lo b.lo) - cellLo).fdiv cellLo + 1).toNat
+    n := n + rows * cols
+  return n
+
+def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := Id.run do
+  let cmin := corridorCmin fixes
   -- Stated as `Nat` divisions cast up, which is both what the machine wants and
   -- the exact form `near_chord_cell_range` is proved about.
   let cellLa : Int := ((farUm / 11132 : Nat) : Int) + 1
@@ -1066,6 +1088,8 @@ private def gwRings : Array (Array QPt) := #[
     ⟨515009000, -1302000, 0⟩]]
 
 private def gwCo : QCorridor := mkQCorridor gwFixes 25000000 80000000 40
+-- The budget counts exactly what the corridor files.
+#guard corridorEntries gwFixes 80000000 == gwCo.grid.fold (fun a _ v => a + v.size) 0
 private def gwBld : QBuildings := mkQBuildings gwRings gwFixes 25 15000000
 
 private def graphEq (a b : QGraph) : Bool :=
@@ -1865,6 +1889,11 @@ def ROAD_QPROFILE : QMatchProfile :=
     wayContinuityNats := 5, spurReturnUm := 25000000, spurMaxSpanVerts := 4
     simplifyTolUm := 5000000, buildingCrossFactor := 1, buildingSupportUm := 0 }
 
+/-- The corridor grid's entry budget: thirty-five times the corpus's largest
+(2,845, a 195-fix drive), and near 10 MB of grid. A mislabelled train stretch
+reaches millions. -/
+def CORRIDOR_MAX_ENTRIES : Nat := 100000
+
 structure QObs where
   fix : QPt
   cands : Array QCand
@@ -1910,6 +1939,11 @@ spur removal / length bail. -/
 def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
     (buildings : Array (Array QPt)) (P : QMatchProfile) : Option QMatchResult := Id.run do
   if fixes.size < P.minFixes then return none
+  -- A corridor whose grid would exceed the budget is declined, and the leg is
+  -- drawn from its fixes: fixes kilometres apart give a match nothing to hold
+  -- to, and their grid grows with the square of the gap — a train still
+  -- labelled `driving` reaches millions of entries and the serving pod's limit.
+  if corridorEntries fixes P.corridorFarUm > CORRIDOR_MAX_ENTRIES then return none
   let co := mkQCorridor fixes P.corridorNearUm P.corridorFarUm P.corridorMaxPenalty
   let bld : Option QBuildings :=
     if P.buildingCrossFactor > 1 && buildings.size > 0 then

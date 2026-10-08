@@ -459,6 +459,15 @@ pub(crate) async fn refresh_focus_places_one(
         .as_of
         .is_some_and(|d| d.date_naive() < chrono::Utc::now().date_naive());
 
+    // ⚠ One transaction from here: the prior, its snapshot and the places it
+    // was mined with land together. A half-applied refresh would leave a prior
+    // with no snapshot of it, or rows deleted whose replacements were never
+    // written, which the dashboard reads as places the user stopped going to.
+    let mut tx = pool
+        .begin()
+        .await
+        .context("opening the refresh transaction")?;
+
     if !backfill {
         sqlx::query(
             "INSERT INTO venue_type_priors (user_id, priors_json, mined_stays) VALUES (?, ?, ?) \
@@ -468,7 +477,7 @@ pub(crate) async fn refresh_focus_places_one(
         .bind(user_id)
         .bind(serde_json::to_string(&priors)?)
         .bind(attributed_all.len() as i64)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .context("writing venue_type_priors")?;
     }
@@ -504,7 +513,7 @@ pub(crate) async fn refresh_focus_places_one(
     .bind(&anchor)
     .bind(serde_json::to_string(&priors)?)
     .bind(attributed_all.len() as i64)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .context("writing venue_type_prior_snapshots")?;
     eprintln!(
@@ -522,18 +531,11 @@ pub(crate) async fn refresh_focus_places_one(
             "[{user_id}] backfill as of {anchor}: snapshot only — NOT touching \
              venue_type_priors or focus_places, which describe now"
         );
+        tx.commit().await.context("committing the snapshot")?;
         return Ok(());
     }
 
-    // ── 7. the write, in one transaction ────────────────────────────────────
-    // ⚠ The DELETE and the upserts must land together. A half-applied refresh
-    // leaves rows deleted whose replacements were never written, and the
-    // dashboard reads that as places the user stopped going to.
-    let mut tx = pool
-        .begin()
-        .await
-        .context("opening the focus_places transaction")?;
-
+    // ── 7. the places ───────────────────────────────────────────────────────
     if !deleted.is_empty() {
         // ⚠ `QueryBuilder`, not `format!`: a interpolated SQL string trips the
         // audit lint, and this is the one statement here with a
@@ -680,7 +682,7 @@ pub(crate) async fn refresh_focus_places_one(
         eprintln!("[{user_id}] home_tz = {tz}");
     }
 
-    tx.commit().await.context("committing focus_places")?;
+    tx.commit().await.context("committing the refresh")?;
     eprintln!("[{user_id}] focus_places refreshed ({} rows)", mined.len());
     Ok(())
 }
