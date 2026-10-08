@@ -20,7 +20,11 @@ namespace Verified.Hsmm.Observation
 def MINUTES_PER_DAY : Nat := 1440
 def SECONDS_PER_MINUTE : Int := 60
 def WATCH_LIVENESS_WINDOW_MIN : Nat := 5
-def REACQUIRE_GAP_MIN : Nat := 5
+/-- Fix-less minutes before a fix counts as a reacquisition. One: the smoother's
+speed runs through a gap of up to 45 s unchanged and then carries the gap's own
+speed until it settles (`examples/reacquire_speed`), so a fix that ends a dark
+minute is already one the speed term must not take at face value. -/
+def REACQUIRE_GAP_MIN : Nat := 1
 
 structure GpsPoint where
   ts : Int
