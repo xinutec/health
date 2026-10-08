@@ -77,13 +77,33 @@ fn env_or(key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
-fn text(status: StatusCode, body: &'static str) -> Response {
-    (status, body).into_response()
+/// A sign-in that could not be finished, drawn as a page: these routes are where
+/// a browser is sent, and a bare status in place of the app reads as it broken.
+fn sign_in_problem(status: StatusCode, said: &'static str) -> Response {
+    let body = format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <title>Sign-in did not finish</title><style>\
+         body{{font:16px/1.5 system-ui,-apple-system,sans-serif;margin:0;\
+         min-height:100vh;display:grid;place-items:center;padding:1.5rem;color:#1a1a1a}}\
+         main{{max-width:26rem}}h1{{font-size:1.2rem;margin:0 0 .5rem}}\
+         p{{margin:0 0 1.5rem;color:#555}}\
+         a{{display:inline-block;padding:.65rem 1.1rem;border-radius:.5rem;\
+         background:#1b6ac9;color:#fff;text-decoration:none}}\
+         </style></head><body><main><h1>Sign-in did not finish</h1>\
+         <p>{said}</p><a href=\"/login\">Try again</a></main></body></html>"
+    );
+    (
+        status,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        body,
+    )
+        .into_response()
 }
 
 fn oops(e: &anyhow::Error, what: &str) -> Response {
     tracing::error!(error = %format!("{e:#}"), "{what}");
-    text(
+    sign_in_problem(
         StatusCode::INTERNAL_SERVER_ERROR,
         "Authentication failed. Please try again.",
     )
@@ -163,7 +183,7 @@ pub async fn callback(
 
     // ⚠ The cookie is the binding, because NC may have dropped `state`.
     let Some(cookie) = jar.get(PENDING_COOKIE) else {
-        return text(
+        return sign_in_problem(
             StatusCode::FORBIDDEN,
             "Invalid or expired OAuth state. Please try logging in again.",
         );
@@ -171,7 +191,7 @@ pub async fn callback(
     let raw = match session::verify_value(secret, cookie.value()) {
         Ok(Some(v)) => v,
         Ok(None) => {
-            return text(
+            return sign_in_problem(
                 StatusCode::FORBIDDEN,
                 "Invalid or expired OAuth state. Please try logging in again.",
             );
@@ -181,7 +201,7 @@ pub async fn callback(
     let pending = match lean::decode_pending(&raw) {
         Ok(Some(pd)) => pd,
         Ok(None) => {
-            return text(
+            return sign_in_problem(
                 StatusCode::FORBIDDEN,
                 "Invalid or expired OAuth state. Please try logging in again.",
             );
@@ -197,7 +217,7 @@ pub async fn callback(
     ) {
         Ok(true) => {}
         Ok(false) => {
-            return text(
+            return sign_in_problem(
                 StatusCode::FORBIDDEN,
                 "Invalid or expired OAuth state. Please try logging in again.",
             );
@@ -206,7 +226,7 @@ pub async fn callback(
     }
 
     let Some(code) = p.code.as_deref().filter(|c| !c.is_empty()) else {
-        return text(StatusCode::BAD_REQUEST, "Missing authorization code.");
+        return sign_in_problem(StatusCode::BAD_REQUEST, "Missing authorization code.");
     };
 
     match finish_nextcloud_login(&st, secret, code, now_ms).await {
@@ -395,13 +415,13 @@ pub async fn fitbit_callback(
 ) -> Response {
     let now_ms = chrono::Utc::now().timestamp_millis();
     let Some(state_token) = p.state.as_deref().filter(|s| !s.is_empty()) else {
-        return text(
+        return sign_in_problem(
             StatusCode::FORBIDDEN,
             "Invalid or expired OAuth state. Please try again from /fitbit/auth.",
         );
     };
     let Some((state_user, verifier)) = st.oauth_states.take(state_token, now_ms) else {
-        return text(
+        return sign_in_problem(
             StatusCode::FORBIDDEN,
             "Invalid or expired OAuth state. Please try again from /fitbit/auth.",
         );
@@ -409,13 +429,13 @@ pub async fn fitbit_callback(
     // ⚠ The state's user must be THIS session's user. Without this check a
     // stolen callback URL would link the attacker's Fitbit to whoever opened it.
     if state_user != session.user_id {
-        return text(
+        return sign_in_problem(
             StatusCode::FORBIDDEN,
             "Session user does not match OAuth state. Please try again.",
         );
     }
     let Some(code) = p.code.as_deref().filter(|c| !c.is_empty()) else {
-        return text(StatusCode::BAD_REQUEST, "Missing authorization code.");
+        return sign_in_problem(StatusCode::BAD_REQUEST, "Missing authorization code.");
     };
 
     match finish_fitbit_link(&st, &state_user, &verifier, code).await {
@@ -428,7 +448,7 @@ pub async fn fitbit_callback(
         .into_response(),
         Err(e) => {
             tracing::error!(error = %format!("{e:#}"), "Fitbit token exchange failed");
-            text(
+            sign_in_problem(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Fitbit authorization failed. Please try again.",
             )
