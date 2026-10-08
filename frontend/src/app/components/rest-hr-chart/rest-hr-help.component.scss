@@ -1,0 +1,23 @@
+:host {
+	display: block;
+	padding: 8px 4px 4px;
+}
+.title {
+	font: var(--mat-sys-title-medium);
+	margin-bottom: 8px;
+}
+p,
+li {
+	font: var(--mat-sys-body-medium);
+	color: var(--mat-sys-on-surface-variant);
+}
+ul {
+	display: grid;
+	gap: 6px;
+	margin: 8px 0 0 20px;
+}
+.actions {
+	display: flex;
+	justify-content: flex-end;
+	margin-top: 8px;
+}

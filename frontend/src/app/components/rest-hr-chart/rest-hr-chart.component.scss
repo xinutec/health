@@ -1,0 +1,12 @@
+/* The "?" sits on the title line, sized down from a full icon button; laid
+ * out in a span of our own, not the mat-card-title slot. */
+.title {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+.help {
+	--mat-icon-button-state-layer-size: 32px;
+	padding: 4px;
+	color: var(--mat-sys-on-surface-variant);
+}

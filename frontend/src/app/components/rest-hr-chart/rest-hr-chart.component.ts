@@ -1,6 +1,10 @@
-import { Component, input, effect, ChangeDetectionStrategy, signal } from "@angular/core";
+import { Component, input, effect, ChangeDetectionStrategy, signal, inject } from "@angular/core";
 import { MatCardModule } from "@angular/material/card";
+import { MatButtonModule } from "@angular/material/button";
+import { MatIconModule } from "@angular/material/icon";
+import { RestHrHelpComponent } from "./rest-hr-help.component";
 import { BaseChartDirective } from "ng2-charts";
+import { Sheets } from "@xinutec/ui-scaffold";
 import type { ChartConfiguration } from "chart.js";
 import type { RestHrDay } from "../../services/health.service";
 import { chartColors, gridColor, tickColor, formatDay } from "../../chart-theme";
@@ -11,16 +15,26 @@ import { chartColors, gridColor, tickColor, formatDay } from "../../chart-theme"
 @Component({
   selector: "app-rest-hr-chart",
   standalone: true,
-  imports: [MatCardModule, BaseChartDirective],
+  imports: [MatCardModule, MatButtonModule, MatIconModule, BaseChartDirective],
   templateUrl: "./rest-hr-chart.component.html",
   changeDetection: ChangeDetectionStrategy.OnPush,
+  styleUrl: "./rest-hr-chart.component.scss",
 })
 export class RestHrChartComponent {
+  private readonly sheets = inject(Sheets);
+
+  openHelp(): void {
+    this.sheets.open(RestHrHelpComponent);
+  }
+
   readonly days = input<RestHrDay[]>([]);
   readonly failed = input(false);
 
   private static readonly PAD = 3;
   private static readonly MEDIAN = "Median";
+  private static readonly MID = "25th–75th percentile";
+  private static readonly WIDE = "5th–95th percentile";
+  private static readonly LEGEND = [RestHrChartComponent.MEDIAN, RestHrChartComponent.MID, RestHrChartComponent.WIDE];
 
   readonly chartData = signal<ChartConfiguration<"line">["data"]>({ labels: [], datasets: [] });
   readonly chartOptions = signal<ChartConfiguration<"line">["options"]>(this.buildOptions(50, 90, []));
@@ -35,7 +49,9 @@ export class RestHrChartComponent {
           labels: {
             color: tickColor,
             // The band edges are drawing aids, not series.
-            filter: (item) => item.text === RestHrChartComponent.MEDIAN || item.text === "Middle half",
+            filter: (item) => RestHrChartComponent.LEGEND.includes(item.text),
+            // From the line outwards, not in drawing order.
+            sort: (a, b) => RestHrChartComponent.LEGEND.indexOf(a.text) - RestHrChartComponent.LEGEND.indexOf(b.text),
           },
         },
         tooltip: {
@@ -44,7 +60,7 @@ export class RestHrChartComponent {
             label: (ctx) => {
               const d = data[ctx.dataIndex];
               if (!d || typeof d.median !== "number") return "not measured";
-              return `${d.median.toFixed(0)} bpm (middle half ${d.p25?.toFixed(0)}–${d.p75?.toFixed(0)}, ${d.restMinutes} min)`;
+              return `${d.median.toFixed(0)} bpm (25th–75th ${d.p25?.toFixed(0)}–${d.p75?.toFixed(0)}, ${d.restMinutes} min)`;
             },
           },
         },
@@ -75,9 +91,9 @@ export class RestHrChartComponent {
         labels: data.map((d) => formatDay(d.date)),
         datasets: [
           { ...edge, label: "p5", data: v("p05"), fill: false },
-          { ...edge, label: "p95", data: v("p95"), fill: "-1", backgroundColor: "rgba(239, 68, 68, 0.07)" },
+          { ...edge, label: RestHrChartComponent.WIDE, data: v("p95"), fill: "-1", backgroundColor: "rgba(239, 68, 68, 0.07)" },
           { ...edge, label: "p25", data: v("p25"), fill: false },
-          { ...edge, label: "Middle half", data: v("p75"), fill: "-1", backgroundColor: "rgba(239, 68, 68, 0.22)" },
+          { ...edge, label: RestHrChartComponent.MID, data: v("p75"), fill: "-1", backgroundColor: "rgba(239, 68, 68, 0.22)" },
           {
             label: RestHrChartComponent.MEDIAN,
             data: v("median"),

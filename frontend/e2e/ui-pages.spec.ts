@@ -1,7 +1,8 @@
-import { test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 // The fleet-shared harness, published as @xinutec/ui-harness (source repo
 // ~/Code/ui-harness). Ships compiled JS, so it loads straight from node_modules.
 import {
+	expectBackClosesOverlay,
 	expectCleanLayout,
 	expectViewportIsPhone,
 	expectIconFontLoaded,
@@ -274,6 +275,31 @@ test("dashboard Trends tab — no text overlaps @ phone width", async ({ page },
 	await page.getByText("Blood Oxygen (SpO2)").waitFor();
 	await page.getByText("30d", { exact: true }).waitFor(); // the range toggle row (mat-button-toggle)
 	await expectCleanLayout(page, testInfo);
+});
+
+test("rest heart rate: the ? opens its explanation as a bottom sheet @ phone width", async ({ page }, testInfo) => {
+	await mockApi(page);
+	await page.goto("/");
+	await page.getByRole("tab", { name: "Trends" }).click();
+	const help = page.getByRole("button", { name: "What this chart shows" });
+	await help.scrollIntoViewIfNeeded();
+	await page.screenshot({ path: testInfo.outputPath("rest-hr-card.png") });
+	await help.click();
+	// The sheet slides up; check and picture where it lands, not mid-slide. (Its
+	// entry needs the animation: with animations off it never arrives.)
+	await expect(page.getByRole("button", { name: "Close" })).toBeInViewport({ ratio: 1 });
+	await page.screenshot({ path: testInfo.outputPath("rest-hr-help.png") });
+	// The sheet covers the page by design; check the sheet itself.
+	await expectCleanLayout(page, testInfo, { root: "app-rest-hr-help" });
+	await page.getByRole("button", { name: "Close" }).click();
+	await expect(page.getByText("Heart rate awake at rest", { exact: true })).toHaveCount(0);
+
+	// The phone's back gesture closes the sheet, and only the sheet.
+	await expectBackClosesOverlay(page, async () => {
+		await help.click();
+		await expect(page.getByRole("button", { name: "Close" })).toBeInViewport({ ratio: 1 });
+	});
+	await expect(help).toBeVisible();
 });
 
 test("dashboard Trends tab — charts must not overflow the phone width", async ({ page }, testInfo) => {
