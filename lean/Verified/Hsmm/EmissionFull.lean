@@ -3,6 +3,7 @@ import Verified.Hsmm.Observation
 import Verified.Hsmm.Geometric
 import Verified.Hsmm.RouteModel
 import Verified.Hsmm.Continuity
+import Verified.FloatConst
 /-!
 # Full HSMM emission composition (implementation-first port of `buildHsmmModel`'s emission)
 
@@ -46,6 +47,9 @@ private def toGeoFix (f : Fix) : Geometric.GpsFix := ⟨f.ts.toNat.toFloat, f.la
 private def toThin (o : ObsRow) : Observation :=
   ⟨o.gps.map (fun g => ⟨g.lat, g.lon, g.speedKmh⟩), o.hr, o.cadence, o.inBed⟩
 
+/-- No correction — hoisted so the branch below does not rebuild a literal per call. -/
+private def NO_CORRECTION : Float := 0
+
 /-- Base emission + the reacquire-robust correction. The correction replaces the
     stationary speed term's σ with the reacquire-widened σ — expressed additively
     as `(widened − base)` so the committed `emissionLogProb` is reused untouched.
@@ -54,14 +58,29 @@ private def toThin (o : ObsRow) : Observation :=
 def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Float × Float))
     (reacquireRobust : Bool) : Float :=
   let base := emissionLogProb s (toThin o) placeCoord
+  -- A walk is widened too, and not scaled away on the track: the fix that
+  -- ends a dark minute carries the gap's speed whatever it lands on, and on
+  -- the track it is steps, not speed, that tell a walk from a ride.
   let corr :=
-    if reacquireRobust && s.mode == .stationary then
+    if reacquireRobust && (s.mode == .stationary || s.mode == .walking) then
       match o.gps, o.reacquireAgeMin with
       | some g, some age =>
         let prior := modePriors s.mode
-        let widened := reacquireWidenedSpeedStd prior.speedStd (some age.toNat.toFloat) o.railDistM
-        logNormalPdf g.speedKmh prior.speedMean widened
-          - logNormalPdf g.speedKmh prior.speedMean prior.speedStd
+        let rail := if s.mode == .walking then none else o.railDistM
+        let gap := o.reacquireGapMin.map fun g => Verified.FloatConst.natToFloat g.toNat
+        -- After a short gap the artefact is momentum: a speed above the
+        -- prior. A speed below it is a measurement, and keeps the base.
+        let momentumOnly := match gap with
+          | some gm => gm < Emissions.REACQ_RESET_GAP_MIN
+          | none => false
+        if momentumOnly && g.speedKmh ≤ prior.speedMean then NO_CORRECTION else
+        let widened := reacquireWidenedSpeedStd prior.speedStd
+          (some (Verified.FloatConst.natToFloat age.toNat)) rail gap
+        -- The wider density is a second component, not a replacement: a
+        -- minute the base fits keeps the base (a wider σ is lower near the
+        -- mean), and only a minute the base rejects takes the wider one.
+        max NO_CORRECTION (logNormalPdf g.speedKmh prior.speedMean widened
+          - logNormalPdf g.speedKmh prior.speedMean prior.speedStd)
       | _, _ => 0.0
     else 0.0
   base + corr

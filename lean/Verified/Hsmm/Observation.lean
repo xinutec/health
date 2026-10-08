@@ -66,6 +66,8 @@ structure ObsRow where
   roadDistM : Option Float
   railDistM : Option Float
   reacquireAgeMin : Option Int
+  /-- The fix-less minutes before the run `reacquireAgeMin` counts into. -/
+  reacquireGapMin : Option Int := none
   prevGpsFix : Option Fix
   nextGpsFix : Option Fix
   deriving Inhabited
@@ -136,19 +138,23 @@ private def nextAliveDist (alive : Array Bool) : Array (Option Nat) :=
 /-- Reacquire age per minute: a bright run following a ≥`REACQUIRE_GAP_MIN`
     fixless gap gets 0,1,2,… from its first fix; shorter-gap runs and fixless
     minutes stay none. Day start counts as being in a gap. -/
-def reacquireAges (gpsPresent : Array Bool) : Array (Option Int) :=
+def reacquireAgesAndGaps (gpsPresent : Array Bool) : Array (Option (Int × Int)) :=
   (List.range MINUTES_PER_DAY).foldl
-    (fun (st : (Nat × Bool × Nat) × Array (Option Int)) m =>
-      let (gapLen, runQualifies, ageInRun) := st.1
+    (fun (st : (Nat × Option Nat × Nat) × Array (Option (Int × Int))) m =>
+      let (gapLen, runGap, ageInRun) := st.1
       if !(gpsPresent[m]?.getD false) then
-        ((gapLen + 1, runQualifies, ageInRun), st.2.push none)
+        ((gapLen + 1, runGap, ageInRun), st.2.push none)
       else if gapLen > 0 then
-        let q := gapLen ≥ REACQUIRE_GAP_MIN
-        ((0, q, 0), st.2.push (if q then some 0 else none))
+        let q := if gapLen ≥ REACQUIRE_GAP_MIN then some gapLen else none
+        ((0, q, 0), st.2.push (q.map fun g => (0, Int.ofNat g)))
       else
         let age := ageInRun + 1
-        ((0, runQualifies, age), st.2.push (if runQualifies then some (Int.ofNat age) else none)))
-    ((REACQUIRE_GAP_MIN, false, 0), #[]) |>.2
+        ((0, runGap, age), st.2.push (runGap.map fun g => (Int.ofNat age, Int.ofNat g))))
+    ((REACQUIRE_GAP_MIN, none, 0), #[]) |>.2
+
+/-- The reacquire age alone. -/
+def reacquireAges (gpsPresent : Array Bool) : Array (Option Int) :=
+  (reacquireAgesAndGaps gpsPresent).map (·.map (·.1))
 
 /-- Build the observation tensor. `localCtx m = (hourLocal, dayOfWeek)` and
     `proximityAt ts = (roadDistM?, railDistM?)` are caller-resolved (tz / OSM);
@@ -194,7 +200,7 @@ def buildObservationTensor
     else cad0
   -- Pass 3: reacquire age.
   let gpsPresent : Array Bool := gpsArr.map Option.isSome
-  let reacq := reacquireAges gpsPresent
+  let reacq := reacquireAgesAndGaps gpsPresent
   -- Pass 4: forward prev-fix, backward next-fix.
   let prevArr : Array (Option Fix) := (List.range MINUTES_PER_DAY).foldl
     (fun (st : (Option Fix) × Array (Option Fix)) m =>
@@ -214,7 +220,9 @@ def buildObservationTensor
     a.push {
       ts, gps := gpsArr[m]?.getD none, hr := hrArr[m]?.getD none, cadence := cad[m]?.getD none,
       hourLocal := hour, dayOfWeekLocal := dow, inBed := inBed[m]?.getD false,
-      roadDistM := road, railDistM := rail, reacquireAgeMin := reacq[m]?.getD none,
+      roadDistM := road, railDistM := rail,
+      reacquireAgeMin := (reacq[m]?.getD none).map (·.1),
+      reacquireGapMin := (reacq[m]?.getD none).map (·.2),
       prevGpsFix := prevArr[m]?.getD none, nextGpsFix := nextArr[m]?.getD none }) #[]
 
 -- Parity with the real `buildObservationTensor` (values from Node/V8).

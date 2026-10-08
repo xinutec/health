@@ -7,8 +7,8 @@
 		"legLineScorable": 3,
 		"legLineMatching": 3,
 		"stationsAsserted": 4,
-		"stationsMatching": 2,
-		"stationsMissing": 2,
+		"stationsMatching": 3,
+		"stationsMissing": 1,
 		"phantomRides": 0
 	},
 	"2026-05-18": {
@@ -37,7 +37,7 @@
 	},
 	"2026-05-22": {
 		"journeysExpected": 5,
-		"journeysMatched": 3,
+		"journeysMatched": 4,
 		"legModeScorable": 11,
 		"legModeMatching": 10,
 		"legLineScorable": 2,
