@@ -1194,6 +1194,7 @@ pub(crate) async fn refresh_presence_log(pool: &sqlx::MySqlPool, lookback: i64) 
 /// ⚠ THE REFUSAL RULE IS UNCHANGED and is still the rail one — zero relations
 /// with any failure. It no longer has to carry the partial case, because tile
 /// ownership does.
+// dev-lint: allow-sqlx the retirement is its own decision, taken before the mirrors answer
 pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
@@ -1463,6 +1464,7 @@ pub(crate) async fn retire_unplannable(
 /// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED. That is what makes it
 /// lossless, and it is why the refusal can be as narrow as "every tile failed".
 /// It is also why a 2-of-18 run exits 0 — see #1134.
+// dev-lint: allow-sqlx the retirement is its own decision, taken before the mirrors answer
 pub(crate) async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
