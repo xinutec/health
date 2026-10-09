@@ -64,13 +64,22 @@ the stepped interchange), and charging the walk's minutes there pushed that
 decode into a longer ride and a phantom leg (measured 2026-09-29, lines and
 stations each −1 on that day). What cannot happen is a walk or a stay without
 steps spanning a gap faster than a walk. A stay at a KNOWN place is
-`geometricFeasibility`'s, not this term's. -/
+`geometricFeasibility`'s, not this term's.
+
+A one-stop hop goes dark for two minutes, not three: 944 m between fixes 120 s
+apart read as a walk until a WALK paid from 120 s and the clamp went to −6 (it
+otherwise pays at most 3 nats a minute for 28 km/h). Only the walk: a placeless
+stay paying from 120 s flipped a platform wait to the known place beside the
+station, which pays nothing. At 45 s the bound reached into interchanges and
+moved 06-12's Victoria ride to the District. -/
 
 def GAP_MIN_S : Float := 180
+/-- A walk pays from a shorter gap: a one-stop hop goes dark for two minutes. -/
+def GAP_MIN_WALK_S : Float := 120
 def GAP_WALK_MAX_KMH : Float := 7
 def GAP_CYCLE_MAX_KMH : Float := 25
 def GAP_SIGMA_KMH : Float := 5
-def GAP_CLAMP : Float := -3
+def GAP_CLAMP : Float := -6
 
 /-- The ceiling a mode can sustain across a gap; `none` = no ceiling here. -/
 def gapCeilingKmh (s : State) : Option Float :=
@@ -85,7 +94,7 @@ def gapSpeedPenalty (s : State) (hasFix stepped : Bool) (prevFix nextFix : Optio
   else match gapCeilingKmh s, prevFix, nextFix with
     | some cap, some p, some n =>
       let dt := n.ts - p.ts
-      if dt < GAP_MIN_S then 0.0
+      if dt < (if s.mode == .walking then GAP_MIN_WALK_S else GAP_MIN_S) then 0.0
       else
         let v := haversineMeters p.lat p.lon n.lat n.lon / 1000 / (dt / 3600)
         if v <= cap then 0.0
@@ -94,16 +103,20 @@ def gapSpeedPenalty (s : State) (hasFix stepped : Bool) (prevFix nextFix : Optio
           max GAP_CLAMP (0.0 - 0.5 * (e * e))
     | _, _, _ => 0.0
 
--- 2.0 km in five minutes: a walk and a placeless stay clamp; a train and a stay
--- at a known place are not this term's; a minute with a fix and a short gap assert nothing.
-#guard gapSpeedPenalty ⟨.walking, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == GAP_CLAMP
-#guard gapSpeedPenalty ⟨.stationary, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == GAP_CLAMP
+-- 2.0 km in two and a half minutes: a walk clamps; in five
+-- minutes a train and a stay at a known place are not this term's; a minute with
+-- a fix and a short gap assert nothing.
+#guard gapSpeedPenalty ⟨.walking, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨150, 51.5067, -0.1428⟩) == GAP_CLAMP
+-- A placeless stay pays only from the longer gap: at two and a half minutes
+-- a stay near a known place would otherwise flip to it, which pays nothing.
+#guard gapSpeedPenalty ⟨.stationary, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨150, 51.5067, -0.1428⟩) == 0
+#guard gapSpeedPenalty ⟨.stationary, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) < -5
 -- The same 2.0 km in five minutes is 24 km/h: a bike can, so it goes free.
 #guard gapSpeedPenalty ⟨.cycling, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
 #guard gapSpeedPenalty ⟨.train, none, some "Jubilee Line"⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
 #guard gapSpeedPenalty ⟨.stationary, some 5, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
 #guard gapSpeedPenalty ⟨.walking, none, none⟩ true false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
-#guard gapSpeedPenalty ⟨.walking, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨120, 51.5067, -0.1428⟩) == 0
+#guard gapSpeedPenalty ⟨.walking, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨90, 51.5067, -0.1428⟩) == 0
 -- A stepped minute is a walk whatever the gap says.
 #guard gapSpeedPenalty ⟨.walking, none, none⟩ false true (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
 -- A walk's own pace across a gap is free.
