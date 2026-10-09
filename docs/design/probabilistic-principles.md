@@ -18,8 +18,8 @@ three layers:
 1. **Generator: enumerate only physically possible state
    sequences.** Hard structural constraints (a train segment has
    a valid `(board, alight, line)` station triple; adjacent
-   segments share a physical endpoint; a `walking` segment has
-   peak speed ≤ 12 km/h) filter the candidate space. A sequence
+   segments share a physical endpoint; true walking speed is
+   ≤ 12 km/h) filter the candidate space. A sequence
    that violates physics is not a candidate — the decoder doesn't
    weigh it, doesn't score it, doesn't consider it.
 2. **Scorer: pick the highest-evidence candidate per minute.**
@@ -61,19 +61,53 @@ set, followed by a factor-graph scorer over the survivors.
 
 ## Rule 1: hard constraints belong in the generator, soft constraints in the scorer
 
-A constraint is *hard* if it forbids physically impossible
-configurations — the kind of constraint a careful human would
-not even consider as a hypothesis. Examples:
+### What "impossible" means
 
-- A train segment that boards or alights mid-tunnel (no
-  station).
-- A `walking` segment with peak GPS speed > 12 km/h.
-- Adjacent segments whose endpoints are 5 km apart (a teleport).
-- A sleep-window place 30 km from the user's last pre-sleep GPS
-  fix.
+A hard constraint gives a configuration probability zero, and
+zero is permanent: no amount of evidence brings it back. So a
+constraint may be hard only when it is a fact about the **true
+worldline** — what can happen in the world — and never when it
+is a fact about **what we observed or looked up**.
 
-These are filtered by the *generator*. A candidate sequence
-violating them is not in the search space.
+- **Hard (the latent path):** one place at a time; a mode's
+  physical speed bound (nobody walks 30 km/h for minutes); a
+  train boards and alights at stations; vehicles change only
+  where both are; adjacent segments share an endpoint (no
+  teleport).
+- **Never hard (the evidence):** GPS fixes, step counts, heart
+  rate, and every map lookup — which stations a line serves,
+  which venues exist, which rail relations we mirrored. Each is
+  a likelihood, heavy-tailed, so a bad reading lowers every
+  hypothesis a little and rules none out.
+
+Why exclude at all rather than score very low: a low score can
+be outvoted. A teleport priced at −15 nats loses to twenty
+minutes of slightly better speed fit on the other side, and the
+day reads as absurd — which the bar
+([`decoder-roadmap.md`](../proposals/decoder-roadmap.md)) does
+not allow. A true impossibility is not tradeable against
+evidence. Excluding it also keeps the search space tractable.
+
+**Every hard constraint that reads the map carries an escape
+hatch in the state space:** an unmapped station, an unknown
+venue, an unidentified vehicle. A gap in our knowledge then
+becomes an uncertain answer, never an impossible one. The cases
+that set this rule, all from real confirmed days:
+
+- A walk whose fixes moved at 29 km/h while the wearer stepped
+  120 times a minute: the GPS jumped. A bound on *GPS* speed
+  excludes the truth; a bound on *true* speed with a
+  heavy-tailed fix model does not.
+- A café that was not in OSM. "A stay is at a mapped venue"
+  would have made the afternoon impossible.
+- A mirror with no rail relations for a whole country. "A train
+  leg is a known `(board, line, alight)` triple" would have made
+  the ride impossible — and a hard C1 filter already zeroed real
+  rides when sparse GPS fell >250 m from a station, and was
+  turned back into a soft prior (Phase 1 of the roadmap).
+
+These true-path constraints are filtered by the *generator*. A
+candidate sequence violating them is not in the search space.
 
 A constraint is *soft* if it expresses graduated preference
 between physically valid hypotheses:
@@ -293,14 +327,18 @@ candidate state sequence must satisfy to be in the search space
 at all. See `docs/proposals/decoder-roadmap.md`
 for the architectural justification.
 
-| Constraint | Applies to | Status |
-|---|---|---|
-| C1: Train `(board, line, alight)` triple — both stations on L, graph-connected on L's edge subgraph | `train @ L` segments | Planned (proposal Phase 1) |
-| C2: Walking peak GPS speed ≤ 12 km/h | `walking` segments | Planned (proposal Phase 2; task #176) |
-| C3: Stationary fixes within R_place of centroid | `stationary @ P` segments | Planned (proposal Phase 2) |
-| C4: Adjacent segments share endpoint (station node, place polygon, or walkable handoff) | All transitions | Planned (proposal Phase 3) |
-| C5: Sleep-window place ∈ lodging/residence POIs near last pre-sleep GPS | `sleeping @ P` segments | Partly shipped (post-midnight-place); proposal Phase 4 codifies |
-| Back-to-back train legs share a station | Adjacent train segments | Shipped (task #175) |
+Each constraint is hard only in its true-path half; the evidence
+it reads is a likelihood, and where it reads the map it has an
+escape hatch (see "What impossible means" under Rule 1).
+
+| Constraint | Hard (the true path) | Soft (the evidence) | Escape hatch | Status |
+|---|---|---|---|---|
+| C1: train triple | A train boards and alights at stations on its line, connected on the line | Which stations a line serves, from the mirrored relations; fix-to-track distance | An unmapped line or station | Planned (proposal Phase 1) |
+| C2: walking speed | True walking speed ≤ 12 km/h | GPS speed — a jumping fix is noise, not motion | — | Planned (proposal Phase 2; task #176) |
+| C3: stationary coherence | One place for the whole stay | Fix distance to the place, heavy-tailed | An unknown venue | Planned (proposal Phase 2) |
+| C4: continuity | Adjacent segments share an endpoint — station, place or walkable handoff; no teleport | Where each endpoint is, from fixes and the map | An unmapped station or venue | Planned (proposal Phase 3) |
+| C5: sleep window | Asleep in one place, reachable from the last place before | Whether that place is a mapped lodging or residence | An unmapped residence | Partly shipped (post-midnight-place); proposal Phase 4 codifies |
+| Back-to-back train legs share a station | The second leg boards where the first alighted | The station names on each leg | — | Shipped (task #175) |
 
 When a generator constraint is planned but not yet shipped, the
 soft factor that approximates it (e.g. route-rail-evidence
@@ -416,10 +454,15 @@ If you find yourself:
 
 - Tempted to add a soft per-minute factor that's trying to
   penalise a *physically impossible* configuration (a train
-  alighting in a tunnel, a walking segment moving at 60 km/h, a
+  alighting in a tunnel, a walk whose true speed is 60 km/h, a
   teleport between adjacent segments) → that's a generator
   constraint, not a scorer factor. Add it to the generator's
   candidate-enumeration code. See Rule 1.
+- Tempted to make an *observation* or a *map lookup* hard (fixes
+  that moved fast, a venue not in OSM, a line with no mirrored
+  relation) → don't. It is evidence: a heavy-tailed likelihood,
+  and an escape hatch in the state space where the map can be
+  missing something. See "What impossible means" under Rule 1.
 - Tempted to *lie* about a per-minute physical fact to match a
   segment-level labelling convention (e.g. classify a cadence-
   confirmed walking minute as "train" because the convention
