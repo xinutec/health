@@ -166,6 +166,9 @@ structure PacedRun where
   netM : Float
   steps : Nat
   peakKmh : Float
+  /-- The run's first and last fix. -/
+  fromTs : Int
+  toTs : Int
   deriving BEq, Repr, Inhabited
 
 /-- The worst sustained vehicle-paced run inside a window's fixes.
@@ -199,7 +202,8 @@ def worstVehiclePacedRun (fixes : Array Fix) : Option PacedRun := Id.run do
       let netM := fixDistanceM (runFirst.getD fixes[i - 1]) fixes[i]
       if runSteps ≥ KINEMATIC_MIN_RUN_STEPS && netM ≥ KINEMATIC_MIN_RUN_NET_M
           && (match worst with | none => true | some w => netM > w.netM) then
-        worst := some { netM, steps := runSteps, peakKmh }
+        worst := some { netM, steps := runSteps, peakKmh,
+                        fromTs := (runFirst.getD fixes[i - 1]).ts, toTs := fixes[i].ts }
     else
       runStart := -1
       runFirst := none
@@ -210,17 +214,39 @@ private def fixesIn (points : Array Fix) (a b : Int) : Array Fix :=
 
 private def roundI (f : Float) : Int := (Verified.JsNum.jsRound f).toInt64.toInt
 
+/-- Steps/min every minute a walked run touches must reach for its fixes to be
+the noise, not the walk. Real walking is ≳100; a ride's minute reaches 90 only
+when most of it was walked. -/
+def KINEMATIC_WALKED_MIN_SPM : Float := 90
+
+/-- Every minute bucket from `fromTs`'s to `toTs`'s is present and at walking
+cadence. A missing minute is not a walked one. -/
+def walkedThrough (steps : Array StepPoint) (fromTs toTs : Int) : Bool := Id.run do
+  let first := fromTs / 60
+  let last := toTs / 60
+  for m in [0:(last - first + 1).toNat] do
+    match steps.find? (fun s => s.ts / 60 == first + Int.ofNat m) with
+    | some s => if s.steps < KINEMATIC_WALKED_MIN_SPM then return false
+    | none => return false
+  return true
+
 /-- A `walking` leg whose fixes sustain a vehicle-paced run over a real distance
 contains movement that is not walking — a ride tail stranded by a mis-placed
 segment boundary.
 
-⚠ WALKING ONLY. See the module header. -/
-def checkModeKinematics (legs : Array Leg) (points : Array Fix) : Array Violation :=
+⚠ WALKING ONLY. See the module header.
+
+A run the wearer stepped through at walking cadence is the FIXES moving, not
+him: 10-07's morning walk drew 385 m at 29 km/h over 120 steps a minute. -/
+def checkModeKinematics (legs : Array Leg) (points : Array Fix)
+    (steps : Array StepPoint := #[]) : Array Violation :=
   legs.filterMap fun l =>
     if l.mode != "walking" then none
     else match worstVehiclePacedRun (fixesIn points l.startTs l.endTs) with
       | none => none
-      | some w => some {
+      | some w =>
+        if walkedThrough steps w.fromTs w.toTs then none
+        else some {
           kind := .impossibleModeKinematics, startTs := l.startTs, endTs := l.endTs,
           detail := s!"{l.mode} leg sustains a vehicle-paced run: {roundI w.netM} m net over " ++
             s!"{w.steps} consecutive fast steps (peak {roundI w.peakKmh} km/h) — " ++
@@ -388,7 +414,7 @@ determinable alight BREAKS the chain rather than being asserted across. -/
 def checkWorldlineFeasibility (legs : Array Leg) (points : Array Fix)
     (steps : Array StepPoint) (lineStations : LineMembership)
     (accFixes : Array AccFix := #[]) : Array Violation := Id.run do
-  let mut out := checkModeKinematics legs points
+  let mut out := checkModeKinematics legs points steps
   if !steps.isEmpty then
     out := out ++ checkVehiclePedestrianRuns legs points steps
   out := out ++ checkRailTriples legs lineStations
@@ -465,6 +491,11 @@ private def fastWalk : Array Fix := #[fx 0 0, fx 30 0.01, fx 60 0.02]
 #guard (worstVehiclePacedRun fastWalk).isSome
 -- Fixes outside the leg's window are not its evidence.
 #guard (checkModeKinematics #[lg 100 200 "walking"] fastWalk).size == 0
+-- Stepped through at walking cadence, the run is the fixes moving: no violation.
+#guard (checkModeKinematics #[lg 0 60 "walking"] fastWalk #[⟨0, 120⟩, ⟨60, 118⟩]).size == 0
+-- ⚠ One minute of it ridden, or unmeasured, and it asserts.
+#guard (checkModeKinematics #[lg 0 60 "walking"] fastWalk #[⟨0, 120⟩, ⟨60, 4⟩]).size == 1
+#guard (checkModeKinematics #[lg 0 60 "walking"] fastWalk #[⟨0, 120⟩]).size == 1
 
 /-! ### impossible-mode-kinematics, the pedestrian direction -/
 
