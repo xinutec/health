@@ -648,6 +648,47 @@ def alightAfterHold (e : Env) (segs : Array Seg) : Array Seg := Id.run do
         | none => why) }
   return out
 
+/-- How far from its last fix a ride's labelled alight may lie and still be
+where it ended: past a dark stretch of tunnel the last fix trails the train. -/
+def ALIGHT_FAR_M : Float := 5000
+/-- The last fix must be this close to the ride's end to say where it ended. -/
+def ALIGHT_LAST_FIX_MAX_S : Int := 120
+
+/-- A ride whose last fix, taken as it ended, is nowhere near its labelled
+alight alights at the mainline station nearest that fix. A merge that extends a
+train forward keeps the first leg's label: one high-speed train stood 40
+minutes at an intermediate station, the legs either side were joined into one
+ride, and it read as ending there, 497 km short of the terminus its last fix
+sat 239 m from. The line stays only when it serves the new alight. -/
+def alightAtLastFix (e : Env) (segs : Array Seg) : Array Seg := Id.run do
+  let mut out := segs
+  for i in [0 : out.size] do
+    let some s := out[i]? | continue
+    if Verified.Geo.SegmentMerge.effectiveMode s != "train" then continue
+    let some rail := Verified.Geo.RailAbsorbers.parseRailWayName s.wayName | continue
+    let some last := (e.points.filter (fun p => p.ts ≥ s.startTs && p.ts ≤ s.endTs)).back? | continue
+    if s.endTs - last.ts > ALIGHT_LAST_FIX_MAX_S then continue
+    -- Where the label puts the alight: the line's own station, so no new ask.
+    let some line := rail.line | continue
+    let some labelled := (e.stationsOnLine line).find? (·.name == rail.alight) | continue
+    if Verified.Hsmm.FloatScore.haversineMeters last.lat last.lon labelled.lat labelled.lon
+        ≤ ALIGHT_FAR_M then continue
+    let R := Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M
+    let near := (e.nearbyStations last.lat last.lon R).filter fun n =>
+      n.distanceM ≤ R && Verified.Geo.TransitPlace.isMainlineNode n
+    let some st := (near.insertionSort (·.distanceM < ·.distanceM))[0]? | continue
+    if st.name == rail.board then continue
+    let line := if (e.stationsOnLine line).any (·.name == st.name) then some line else none
+    let why := s!"alights at {st.name}, {toString (Verified.JsNum.jsRound st.distanceM).toInt64.toInt} m from the ride's last fix (was {rail.alight})"
+    out := out.set! i { s with
+      wayName := some (match line with
+        | some l => s!"{rail.board} → {st.name}{Verified.Geo.Worldline.RAIL_LINE_SEP}{l}"
+        | none => s!"{rail.board} → {st.name}")
+      refinedReason := some (match s.refinedReason with
+        | some r => if r == "" then why else s!"{r}; {why}"
+        | none => why) }
+  return out
+
 /-! ## The passes
 
 Order is execution order. Do not reorder without reading the rationale on the
@@ -1000,6 +1041,7 @@ def passes (e : Env) : Array Pass := #[
   -- A ride ending on a fix the phone then held alights where the next fresh
   -- fix is (#1891).
   ("alightAfterHold", fun segs => alightAfterHold e segs),
+  ("alightAtLastFix", fun segs => alightAtLastFix e segs),
 
   -- LAST. `driving` is this cascade's placeholder for "a vehicle-speed run
   -- nobody has identified yet"; the rail and bus passes have now all had their
@@ -1105,7 +1147,7 @@ private def PAIR_MIRROR : Env :=
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
     "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "interchangeStayLabel",
-    "boardingStayLabel", "boardAtWait", "alightAfterHold", "vehicleIdentity"]
+    "boardingStayLabel", "boardAtWait", "alightAfterHold", "alightAtLastFix", "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
 
@@ -1126,17 +1168,16 @@ def TS_CASCADE : Array String := #[
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
   -- `walkDwell`, `stayEdgeWalk`, `lineSubstitute`, `boardingStayLabel`,
-  -- `railThrough`, `boardAtWait` and `alightAfterHold` are Lean-only (#1694,
-  -- #1855, #238, #325, #1891); they sit here so the containment check keeps holding for the order
-  -- the TS had.
+  -- `railThrough`, `boardAtWait`, `alightAfterHold` and `alightAtLastFix` are Lean-only;
+  -- they sit here so the containment check keeps holding for the order the TS had.
   "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
   "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
   "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "boardingStayLabel",
-  "boardAtWait", "alightAfterHold", "vehicleIdentity"]
+  "boardAtWait", "alightAfterHold", "alightAtLastFix", "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 51
+#guard TS_CASCADE.size == 52
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1760,6 +1801,23 @@ private def holdRide : Seg := { tr 0 1000 (some "B → V · L") with }
 #guard !fires (HOLD 120 100) "alightAfterHold" #[holdRide]
 #guard !fires (HOLD 300 450) "alightAfterHold" #[holdRide]
 
+-- A ride labelled to V whose last fix, at its end, is 497 km from V and 239 m
+-- from a mainline T: it alights at T, and line L, which does not reach T, goes.
+-- V within reach, a Métro node, or a last fix long before the end: it does not.
+private def lastAt (endFixTs : Int) (stations : Array TubeHop.NearbyStation)
+    (vM : Float := 497000) : Env :=
+  { NO_LOOKUPS with
+    points := #[{ ts := 0, lat := lat0, lon := lon0, speedKmh := 200 },
+                { ts := endFixTs, lat := lat0, lon := lon0, speedKmh := 20 }]
+    nearbyStations := fun _ _ r => stations.filter (·.distanceM ≤ r)
+    stationsOnLine := fun _ => #[⟨"V", lat0 - vM * mlat, lon0⟩] }
+private def terminus : TubeHop.NearbyStation := { name := "T", subtype := "rail", distanceM := 239 }
+private def longRide : Seg := tr 0 1000 (some "B → V · L")
+#guard (runNamed (lastAt 1000 #[terminus]) "alightAtLastFix" #[longRide]).map (·.wayName) == #[some "B → T"]
+#guard !fires (lastAt 1000 #[terminus] (vM := 1500)) "alightAtLastFix" #[longRide]
+#guard !fires (lastAt 1000 #[{ terminus with subtype := "subway" }]) "alightAtLastFix" #[longRide]
+#guard !fires (lastAt 800 #[terminus]) "alightAtLastFix" #[longRide]
+
 /-- One train leg holding a ride, a walk out of the station, then a standstill —
 the 06-18 shape, lifted from `Interchange`'s own guards.
 
@@ -2043,7 +2101,7 @@ def witnessed : Array String :=
 
 -- `lineSubstitute` fires on a leg whose line the relations rule out.
 #guard fires SUB "lineSubstitute" #[leg "Euston Square → King's Cross St Pancras · Victoria Line"]
-#guard witnessed.size == 51
+#guard witnessed.size == 52
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
