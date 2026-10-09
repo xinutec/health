@@ -120,6 +120,22 @@ into a discrete `(mode, route, position, edge)` state and regressed mode by
 a *continuous emission*, not a discrete state explosion — and by putting hard
 structure in the generator, never in a per-minute scorer.
 
+## Standing decision: the cascade does not grow
+
+A journey-structure error on a confirmed day — where a ride boards or
+alights, how a dark ride is split, a walk that was a ride — is a case for
+the decoder (C4.4 and on), not a new cascade pass. Each such pass is a
+local rule with hand-picked cutoffs that the cutover then has to retire,
+and the cascade grew from 51 to 53 passes in one day of fixing them. The
+case goes into the corpus as a `wrong` row naming the decoder work that
+clears it; the served error stays visible until then. The cascade still
+takes fixes outside journey structure (naming, display).
+
+Order from here: the gap-speed term as a continuous likelihood (σ from
+the fixes' accuracy, no gap-length cutoff) → C4.4a (station and line
+authority, whose confidence bar is the emitted station and needs no
+calibration) → the calibration metric → Phase 4.
+
 ## Phase 0 — measurement first (the prerequisite, #250)
 
 The evaluation apparatus the whole plan rests on does not fully exist, so
