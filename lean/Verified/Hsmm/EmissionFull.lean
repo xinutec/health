@@ -85,6 +85,28 @@ def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Flo
     else 0.0
   base + corr
 
+/-- One weight per family of decoder terms (`flags.termWeights` sets them for
+    the harness, `examples/tune_weights` learns them). A product by `1.0` is
+    exact, so a family at `1` sums exactly as before it had a weight. -/
+structure TermWeights where
+  base : Float := 1.0
+  geometric : Float := 1.0
+  gap : Float := 1.0
+  rail : Float := 1.0
+  /-- Learned: a coordinate search on half the 43 narrated days moved it to
+      0.75 and nothing else, and on the other half it scored leg modes +2,
+      lines +1, stations +1, phantoms unchanged; on all 43, leg modes 278 → 280,
+      lines 52 → 53, stations 43 → 45, journeys and phantoms unchanged. The
+      search on the first half also went down (0.375, with the duration prior
+      at 0.75) and gained nothing on the second. -/
+  lineProximity : Float := 0.75
+  continuity : Float := 1.0
+  entry : Float := 1.0
+  chain : Float := 1.0
+  duration : Float := 1.0
+  segmentEvidence : Float := 1.0
+  deriving Inhabited
+
 /-- Full per-cell emission log-probability over the model — the TS
     `buildEmissionFn` closure plus the geometric/rail/line-proximity terms the
     model sums onto it. `placeCoords` resolves `s.placeId`; `reacquireRobust`
@@ -96,17 +118,18 @@ def emissionLogProbFullWith
     (modeledLines : List String) (minute : RouteModel.MinuteLines) (railEv : Float)
     (placeCoords : Std.HashMap Int (Float × Float))
     (reacquireRobust : Bool) (continuity : Option Continuity.ContinuityContext)
-    (s : State) (o : ObsRow) (priors : Mode → Emissions.ModePrior := modePriors) : Float :=
+    (s : State) (o : ObsRow) (priors : Mode → Emissions.ModePrior := modePriors)
+    (w : TermWeights := {}) : Float :=
   let placeCoord := match s.placeId with | some pid => placeCoords.get? pid | none => none
-  baseEmissionWithReacquire s o placeCoord reacquireRobust priors
-    + Geometric.geometricFeasibility s o.ts.toNat.toFloat
+  w.base * baseEmissionWithReacquire s o placeCoord reacquireRobust priors
+    + w.geometric * Geometric.geometricFeasibility s o.ts.toNat.toFloat
         (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord
-    + Geometric.gapSpeedPenalty s o.gps.isSome (o.cadence.any (· > 0))
+    + w.gap * Geometric.gapSpeedPenalty s o.gps.isSome (o.cadence.any (· > 0))
         (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix)
     -- The kernels' `isCovered` is the TypeScript gate, held open (see above).
-    + railEv
-    + RouteModel.lineProximityFactorWith modeledLines minute s o false
-    + Continuity.continuityLogLikelihood s o.gps.isSome
+    + w.rail * railEv
+    + w.lineProximity * RouteModel.lineProximityFactorWith modeledLines minute s o false
+    + w.continuity * Continuity.continuityLogLikelihood s o.gps.isSome
         (o.prevGpsFix.map (fun f => (f.lat, f.lon))) continuity
 
 /-- The per-cell emission with its per-minute facts computed in place — what

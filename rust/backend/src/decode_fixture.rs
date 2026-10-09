@@ -73,10 +73,20 @@ fn arm_knob(var: &str) -> Value {
         .map_or(Value::Null, |f| json!(f))
 }
 
+/// `HSMM_TERM_WEIGHTS='{"lineProximity":0.75}'`: per-family term weights laid
+/// on every request (`examples/tune_weights`), harness-only like the rest.
+///
 /// `HSMM_FITTED_PRIORS_DIR=<dir>`: the parameter table `<dir>/<date>.json`
 /// (`examples/fit_emissions`, fitted without that day) laid on the day's
 /// request — the held-out arm. Harness-only like the knobs above; `null` when
 /// unset, which is the shipped model.
+fn term_weights() -> Result<Value> {
+    match std::env::var("HSMM_TERM_WEIGHTS") {
+        Ok(j) => Ok(serde_json::from_str(&j).context("HSMM_TERM_WEIGHTS is JSON")?),
+        Err(_) => Ok(Value::Null),
+    }
+}
+
 fn fitted_priors(fx: &Value) -> Result<Value> {
     let Ok(dir) = std::env::var("HSMM_FITTED_PRIORS_DIR") else {
         return Ok(Value::Null);
@@ -96,6 +106,7 @@ pub fn request(fx: &Value) -> Result<Value> {
         let mut req = fx["request"].clone();
         anyhow::ensure!(req.is_object(), "a format-3 fixture with no request");
         req["flags"]["fittedPriors"] = fitted_priors(fx)?;
+        req["flags"]["termWeights"] = term_weights()?;
         for (k, env) in [
             ("modeMinuteScale", "HSMM_MODE_MINUTE_SCALE"),
             ("modeEntryScale", "HSMM_MODE_ENTRY_SCALE"),
@@ -261,6 +272,7 @@ pub fn request(fx: &Value) -> Result<Value> {
             "rideHeadMin": arm_knob("HSMM_RIDE_HEAD_MIN"),
             "rideHeadCredit": arm_knob("HSMM_RIDE_HEAD_CREDIT"),
             "fittedPriors": fitted_priors(fx)?,
+            "termWeights": term_weights()?,
         },
         "date": date,
         "tz": tz,

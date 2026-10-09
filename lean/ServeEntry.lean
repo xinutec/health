@@ -862,6 +862,18 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     match row "modePriors" m with
     | some #[g, sm, ss, hm, hs, z, cm, cs] => ⟨g, sm, ss, hm, hs, z, cm, cs⟩
     | _ => Verified.Hsmm.Emissions.modePriors m
+  -- Per-family term weights (harness-only): a name absent keeps the model's own.
+  let d : Verified.Hsmm.EmissionFull.TermWeights := {}
+  let tw (k : String) (dflt : Float) : Float :=
+    match (flags.getObjVal? "termWeights" >>= (·.getObjVal? k) >>= (·.getNum?)) with
+    | .ok n => n.toFloat
+    | .error _ => dflt
+  let weights : Verified.Hsmm.EmissionFull.TermWeights :=
+    { base := tw "base" d.base, geometric := tw "geometric" d.geometric, gap := tw "gap" d.gap
+      rail := tw "rail" d.rail, lineProximity := tw "lineProximity" d.lineProximity
+      continuity := tw "continuity" d.continuity, entry := tw "entry" d.entry
+      chain := tw "chain" d.chain, duration := tw "duration" d.duration
+      segmentEvidence := tw "segmentEvidence" d.segmentEvidence }
   let fits := fun (m : Verified.Hsmm.Emissions.Mode) =>
     match row "durationFits" m with
     | some #[a, b] => ({ alpha := a, beta := b, sampleCount := 10 } : Verified.Hsmm.Duration.GammaFit)
@@ -873,7 +885,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (← (← flags.getObjVal? "chainContext").getBool?)
     (knob "modeMinuteScale" 1.0) (knob "modeEntryScale" 0.0)
     (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0))
-    (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)) with priors, fits }, maxD)
+    (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)) with priors, fits, weights }, maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json

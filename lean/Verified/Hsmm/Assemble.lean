@@ -102,6 +102,8 @@ structure ModelContext where
   priors : Mode → Emissions.ModePrior := Emissions.modePriors
   /-- The duration Gamma per mode, likewise. -/
   fits : Mode → GammaFit := baselineFit
+  /-- Per-family weights (`EmissionFull.TermWeights`), all `1` when shipped. -/
+  weights : EmissionFull.TermWeights := {}
 
 /-- The longest segment the HSMM will consider, in minutes.
 
@@ -216,7 +218,7 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
        else match c.railByMinute[t]? with
          | some m => m.getD (StateSpace.stateKey st) 0.0
          | none => RouteModel.routeRailEvidence c.model c.connGraph st o false)
-      c.placeCoords c.reacquireRobust c.continuity st o c.priors
+      c.placeCoords c.reacquireRobust c.continuity st o c.priors c.weights
     -- The per-minute mode prior is inside the sum above at scale 1; the arm
     -- knob adds the difference, so the shipped model is untouched at 1.
     + ((if o.gps.isSome then c.modeMinuteScaleWithGps else c.modeMinuteScale) - 1.0)
@@ -259,7 +261,7 @@ def entryAt (c : ModelContext) (t s : Nat) : Float :=
     | none => false
   let profile := match st.placeId with | some pid => c.hourProfiles.get? pid | none => none
   let weight := match st.placeId with | some pid => c.visitWeights.get? pid | none => none
-  Assembly.entryLogProbFull st o.hourLocal true profile c.nPlaces weight covered lineValid
+  c.weights.entry * Assembly.entryLogProbFull st o.hourLocal true profile c.nPlaces weight covered lineValid
     + c.modeEntryScale * modeEntryLog st.mode
 
 /-- `initial(s)` — uniform 0. -/
@@ -277,7 +279,7 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
   | some st =>
     -- A ride's head lasts at most `rideHeadMin` minutes (#366).
     if Emissions.isRideHead st && d > c.rideHeadMin then negInf
-    else Duration.logDurationProb d.toFloat (c.fits st.mode) (Duration.minDurationByMode st.mode)
+    else c.weights.duration * Duration.logDurationProb d.toFloat (c.fits st.mode) (Duration.minDurationByMode st.mode)
 
 /-- `durAt` given `durPriorBase c s d`: only the train-hop relaxation and the
     segment evidence are resolved at `e`. -/
@@ -287,7 +289,7 @@ def durAtFrom (c : ModelContext) (s d e : Nat) (base : Float) : Float :=
   | some st =>
   let covered := match c.obs[e]? with | some o => coveredAt c o.ts | none => false
   Assembly.durationLogProbFrom c.obs c.stepPref st d e covered
-    (Duration.minDurationByMode .train) base c.segEvidenceOn
+    (Duration.minDurationByMode .train) base c.segEvidenceOn c.weights.segmentEvidence
 
 /-- Whether minute `e` is covered — one per `e`, shared by every state. -/
 def coveredAtE (c : ModelContext) (e : Nat) : Bool :=
@@ -301,7 +303,7 @@ def durAtFromW (c : ModelContext) (s d : Nat) (covered : Bool)
   | none => negInf
   | some st =>
   Assembly.durationLogProbFromW st d covered (Duration.minDurationByMode .train) base
-    c.segEvidenceOn w
+    c.segEvidenceOn w c.weights.segmentEvidence
 
 theorem durAtFrom_eq_W (c : ModelContext) (s d e : Nat) (base : Float) :
     durAtFrom c s d e base
@@ -332,7 +334,8 @@ def transAt (c : ModelContext) (a b t : Nat) : Float :=
       | none => negInf
     else 0.0
   let placeNear := fun (pid : Int) (line : String) => c.placeNearLine.contains s!"{pid}|{line}"
-  Assembly.transitionLogProbFull placeNear c.states.toList c.selfLoop src dst c.chainOn chainVal
+  Assembly.transitionLogProbFull placeNear c.states.toList c.selfLoop src dst c.chainOn
+    (c.weights.chain * chainVal)
 
 /-- Quantised emission tensor `emit[t][s]`. -/
 def buildEmit (c : ModelContext) : Array (Array (Option Float)) :=
