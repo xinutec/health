@@ -48,11 +48,6 @@ body {
 }
 
 :root {
-	// Status-bar / notch inset at the top (with viewport-fit=cover: edge-to-edge on
-	// Android, the notch on iOS). The sticky toolbar pads by this so it isn't drawn
-	// under the system status bar. 0 in a normal browser tab.
-	--safe-top: env(safe-area-inset-top, 0px);
-
 	// App semantic aliases over Material 3 system tokens. Components keep
 	// referencing these names, but the values now flow from the theme — a
 	// palette or light/dark change propagates automatically instead of
@@ -106,12 +101,9 @@ mat-icon {
 	flex-shrink: 0;
 }
 
-// The scaffold's bar (`@xinutec/ui-scaffold`), edge-to-edge (viewport-fit=cover):
-// its surface fills the status-bar strip and its content drops below it.
-// height:auto overrides mat-toolbar's fixed height; min-height folds in the inset
-// so the content keeps its full height below the status bar.
+// The scaffold's bar (`@xinutec/ui-scaffold`): 64px at every width, where
+// mat-toolbar's own height drops to 56px on a phone.
 ui-scaffold mat-toolbar {
 	height: auto;
-	min-height: calc(64px + var(--safe-top, 0px));
-	padding-top: var(--safe-top, 0px);
+	min-height: 64px;
 }
