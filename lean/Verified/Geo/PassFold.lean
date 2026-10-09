@@ -648,6 +648,66 @@ def alightAfterHold (e : Env) (segs : Array Seg) : Array Seg := Id.run do
         | none => why) }
   return out
 
+/-- A position re-reported underground wanders by this much: 11 m over two and
+a half minutes, measured at Château d'Eau. -/
+def RIDE_HOLD_RADIUS_M : Float := 25
+/-- Below this a "walk" is not stepping: sitting on the train, phone held. -/
+def RIDE_HOLD_MAX_CADENCE_SPM : Float := 20
+/-- The longest unidentified vehicle leg taken as the rest of a ride. -/
+def RIDE_TAIL_MAX_S : Int := 10 * 60
+
+/-- A ride, then a short "walk" whose every fix repeats the ride's last one and
+which barely steps, then an unidentified vehicle leg: the phone held its
+position underground and the train went on. One ride, alighting at its line's
+station nearest where the vehicle leg ended. A Métro 4 ride read Vavin →
+Château d'Eau, a minute and a half of walking on the boulevard above it and a
+three-minute drive; it ran on to Gare du Nord. -/
+def rideThroughHold (e : Env) (segs : Array Seg) : Array Seg := Id.run do
+  let mut out : Array Seg := #[]
+  let mut i := 0
+  while i < segs.size do
+    let some s := segs[i]? | break
+    let merged : Option Seg := do
+      guard (Verified.Geo.SegmentMerge.effectiveMode s == "train")
+      let rail ← Verified.Geo.RailAbsorbers.parseRailWayName s.wayName
+      let line ← rail.line
+      let w ← segs[i + 1]?
+      let v ← segs[i + 2]?
+      guard (Verified.Geo.SegmentMerge.effectiveMode w == "walking"
+        && Verified.Geo.SegmentMerge.effectiveMode v == "driving"
+        && !Verified.Geo.SegmentPasses.hasVehicleClaim v
+        && w.startTs - s.endTs ≤ Verified.Geo.SegmentPasses.CONTIGUITY_MAX_GAP_S
+        && v.startTs - w.endTs ≤ Verified.Geo.SegmentPasses.CONTIGUITY_MAX_GAP_S
+        && w.endTs - w.startTs ≤ Verified.Geo.TransitPlace.PLATFORM_WALK_MAX_S
+        && v.endTs - v.startTs ≤ RIDE_TAIL_MAX_S)
+      let last ← (e.rawFixes.filter (·.ts ≤ s.endTs)).back?
+      let held := e.rawFixes.filter fun f => f.ts ≥ w.startTs && f.ts ≤ w.endTs
+      guard (!held.isEmpty && held.all fun f =>
+        Verified.Hsmm.FloatScore.haversineMeters f.lat f.lon last.lat last.lon ≤ RIDE_HOLD_RADIUS_M)
+      let stepped := e.steps.foldl (fun a p =>
+        if p.ts ≥ w.startTs && p.ts < w.endTs then a + p.steps else a) 0
+      guard (stepped / max 1 (Float.ofInt (w.endTs - w.startTs) / 60) < RIDE_HOLD_MAX_CADENCE_SPM)
+      let fin ← (e.rawFixes.filter fun f => f.ts ≥ v.startTs && f.ts ≤ v.endTs).back?
+      let dist := fun (st : Verified.Geo.RailJourney.LineStation) =>
+        Verified.Hsmm.FloatScore.haversineMeters fin.lat fin.lon st.lat st.lon
+      let st ← (e.stationsOnLine line).foldl (fun (b : Option Verified.Geo.RailJourney.LineStation) x =>
+        match b with
+        | some y => if dist x < dist y then some x else some y
+        | none => some x) none
+      guard (dist st ≤ ALIGHT_FRESH_MAX_M && st.name != rail.board && st.name != rail.alight)
+      let why := s!"rides on to {st.name}: the walk after it held the ride's last fix, unstepped, and the vehicle leg after that ended {toString (Verified.JsNum.jsRound (dist st)).toInt64.toInt} m from it (was {rail.alight})"
+      return { s with
+        endTs := v.endTs
+        pointCount := s.pointCount + w.pointCount + v.pointCount
+        wayName := some s!"{rail.board} → {st.name}{Verified.Geo.Worldline.RAIL_LINE_SEP}{line}"
+        refinedReason := some (match s.refinedReason with
+          | some r => if r == "" then why else s!"{r}; {why}"
+          | none => why) }
+    match merged with
+    | some m => out := out.push m; i := i + 3
+    | none => out := out.push s; i := i + 1
+  return out
+
 /-- How far from its last fix a ride's labelled alight may lie and still be
 where it ended: past a dark stretch of tunnel the last fix trails the train. -/
 def ALIGHT_FAR_M : Float := 5000
@@ -1040,6 +1100,7 @@ def passes (e : Env) : Array Pass := #[
 
   -- A ride ending on a fix the phone then held alights where the next fresh
   -- fix is (#1891).
+  ("rideThroughHold", fun segs => rideThroughHold e segs),
   ("alightAfterHold", fun segs => alightAfterHold e segs),
   ("alightAtLastFix", fun segs => alightAtLastFix e segs),
 
@@ -1147,7 +1208,7 @@ private def PAIR_MIRROR : Env :=
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
     "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "interchangeStayLabel",
-    "boardingStayLabel", "boardAtWait", "alightAfterHold", "alightAtLastFix", "vehicleIdentity"]
+    "boardingStayLabel", "boardAtWait", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
 
@@ -1168,16 +1229,16 @@ def TS_CASCADE : Array String := #[
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
   -- `walkDwell`, `stayEdgeWalk`, `lineSubstitute`, `boardingStayLabel`,
-  -- `railThrough`, `boardAtWait`, `alightAfterHold` and `alightAtLastFix` are Lean-only;
+  -- `railThrough`, `boardAtWait`, `rideThroughHold`, `alightAfterHold` and `alightAtLastFix` are Lean-only;
   -- they sit here so the containment check keeps holding for the order the TS had.
   "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
   "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
   "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "boardingStayLabel",
-  "boardAtWait", "alightAfterHold", "alightAtLastFix", "vehicleIdentity"]
+  "boardAtWait", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 52
+#guard TS_CASCADE.size == 53
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1801,6 +1862,24 @@ private def holdRide : Seg := { tr 0 1000 (some "B → V · L") with }
 #guard !fires (HOLD 120 100) "alightAfterHold" #[holdRide]
 #guard !fires (HOLD 300 450) "alightAfterHold" #[holdRide]
 
+-- A ride to V, a walk holding its last fix unstepped, a vehicle leg ending
+-- 100 m from G on the line: one ride to G. A walk that steps, or that moves
+-- off the held fix, leaves all three alone.
+private def thruLine : Array Verified.Geo.RailJourney.LineStation :=
+  #[⟨"B", lat0 - 5000 * mlat, lon0⟩, ⟨"V", lat0, lon0⟩, ⟨"G", lat0 + 900 * mlat, lon0⟩]
+private def THRU (walkSteps : Float) (heldM : Float) : Env :=
+  { NO_LOOKUPS with
+    rawFixes := #[⟨990, lat0, lon0, some 70⟩, ⟨1100, lat0 + heldM * mlat, lon0, some 600⟩,
+                  ⟨1150, lat0, lon0, some 80⟩, ⟨1300, lat0 + 800 * mlat, lon0, some 30⟩]
+    steps := #[{ ts := 1080, steps := walkSteps }]
+    stationsOnLine := fun _ => thruLine }
+private def thruDay : Array Seg :=
+  #[tr 0 1000 (some "B → V · L"), wk 1060 1150, { wk 1150 1300 with mode := "driving" }]
+#guard (runNamed (THRU 9 5) "rideThroughHold" thruDay).map (fun s => (s.endTs, s.wayName)) ==
+  #[(1300, some "B → G · L")]
+#guard !fires (THRU 90 5) "rideThroughHold" thruDay
+#guard !fires (THRU 9 60) "rideThroughHold" thruDay
+
 -- A ride labelled to V whose last fix, at its end, is 497 km from V and 239 m
 -- from a mainline T: it alights at T, and line L, which does not reach T, goes.
 -- V within reach, a Métro node, or a last fix long before the end: it does not.
@@ -2101,7 +2180,7 @@ def witnessed : Array String :=
 
 -- `lineSubstitute` fires on a leg whose line the relations rule out.
 #guard fires SUB "lineSubstitute" #[leg "Euston Square → King's Cross St Pancras · Victoria Line"]
-#guard witnessed.size == 52
+#guard witnessed.size == 53
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
