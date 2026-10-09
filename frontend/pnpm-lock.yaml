@@ -43,7 +43,7 @@ importers:
       '@angular/service-worker':
         specifier: ^22.2.1
         version: 22.2.1(@angular/core@22.2.1(@angular/compiler@22.2.1)(rxjs@7.8.2))(rxjs@7.8.2)
-      '@fontsource/inter':
+      '@fontsource/roboto':
         specifier: ^5.3.0
         version: 5.3.0
       '@types/leaflet':
@@ -675,8 +675,8 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@fontsource/inter@5.3.0':
-    resolution: {integrity: sha512-RofMylZmjlJEfELXeNHFWBRcSs75rGU/6bV2S2jfnvv/3rPXPGe0LgUJTklcHZ9lM4OZmAVFhcJPnACfb91A3g==}
+  '@fontsource/roboto@5.3.0':
+    resolution: {integrity: sha512-BapRJOWYP+LZ21zp+wBQjfpPYKRoxc4LspJ/RLuI+HSMBD5u/X4O+ESDrSvEqDSy0rAl7GwBJ+09mdc16cVQ1Q==}
 
   '@harperfast/extended-iterable@1.0.3':
     resolution: {integrity: sha512-sSAYhQca3rDWtQUHSAPeO7axFIUJOI6hn1gjRC5APVE1a90tuyT8f5WIgRsFhhWA7htNkju2veB9eWL6YHi/Lw==}
@@ -3600,7 +3600,7 @@ snapshots:
 
   '@exodus/bytes@1.16.0': {}
 
-  '@fontsource/inter@5.3.0': {}
+  '@fontsource/roboto@5.3.0': {}
 
   '@harperfast/extended-iterable@1.0.3':
     optional: true
