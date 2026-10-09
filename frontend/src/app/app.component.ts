@@ -5,6 +5,7 @@ import { filter, map, startWith } from "rxjs/operators";
 import { SwUpdates } from "./sw-updates";
 import { MatButtonModule } from "@angular/material/button";
 import { MatIconModule } from "@angular/material/icon";
+import { MatMenuModule } from "@angular/material/menu";
 import { MatSnackBar, MatSnackBarModule } from "@angular/material/snack-bar";
 import { MatTooltipModule } from "@angular/material/tooltip";
 import { Scaffold } from "@xinutec/ui-scaffold";
@@ -14,7 +15,7 @@ import { installErrorReporting } from "./client-diagnostics";
 import { Telemetry } from "./telemetry";
 
 /** What kind of view the current URL maps to. Drives toolbar
- *  controls visibility (the share button, gear and Logout disappear
+ *  controls visibility (the share button, gear and overflow menu disappear
  *  in share mode; the reauth banner hides too — the recipient has
  *  no path to fix the owner's connection). */
 type AppMode = "dashboard" | "settings" | "share";
@@ -26,6 +27,7 @@ type AppMode = "dashboard" | "settings" | "share";
 		Scaffold,
 		MatButtonModule,
 		MatIconModule,
+		MatMenuModule,
 		MatSnackBarModule,
 		MatTooltipModule,
 		RouterLink,

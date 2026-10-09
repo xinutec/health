@@ -277,6 +277,23 @@ test("dashboard Trends tab — no text overlaps @ phone width", async ({ page },
 	await expectCleanLayout(page, testInfo);
 });
 
+test("the overflow menu holds Log out @ phone width", async ({ page }, testInfo) => {
+	await mockApi(page);
+	await page.goto("/");
+	const more = page.getByRole("button", { name: "More" });
+	await more.click();
+	await expect(page.getByRole("menuitem", { name: "Log out" })).toBeVisible();
+	// The menu fades in; check and picture it opaque, not mid-fade.
+	await page.waitForFunction(() => {
+		const panel = document.querySelector(".mat-mdc-menu-panel");
+		return panel !== null && getComputedStyle(panel).opacity === "1";
+	});
+	await page.screenshot({ path: testInfo.outputPath("overflow-menu.png") });
+	await expectCleanLayout(page, testInfo, { root: ".mat-mdc-menu-panel" });
+	await page.keyboard.press("Escape");
+	await expect(page.getByRole("menuitem", { name: "Log out" })).toHaveCount(0);
+});
+
 test("rest heart rate: the ? opens its explanation as a bottom sheet @ phone width", async ({ page }, testInfo) => {
 	await mockApi(page);
 	await page.goto("/");
