@@ -203,8 +203,9 @@ private def placeTerm (s : State) (o : Observation) (placeCoord : Option (Float 
   else 0.0
 
 /-- The base-path emission log-probability, summed in `emissions.ts` order. -/
-def emissionLogProb (s : State) (o : Observation) (placeCoord : Option (Float × Float)) : Float :=
-  let prior := modePriors s.mode
+def emissionLogProb (s : State) (o : Observation) (placeCoord : Option (Float × Float))
+    (priors : Mode → ModePrior := modePriors) : Float :=
+  let prior := priors s.mode
   let pCad := match o.cadence with | none => 0.0 | some c => logCadencePdf c prior
   let pBed := if o.inBed then Float.log (inBedProbByMode s.mode) else 0.0
   modePriorLog s.mode

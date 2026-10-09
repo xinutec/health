@@ -851,14 +851,29 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     match flags.getObjVal? name with
     | .ok v => match v.getNum? with | .ok n => n.toFloat | .error _ => dflt
     | .error _ => dflt
-  return (Verified.Hsmm.Assemble.buildContext obs model
+  -- A fitted parameter table (`examples/fit_emissions`), harness-only: each
+  -- mode it names replaces the shipped prior and duration fit, the rest stay.
+  let fitted := (flags.getObjVal? "fittedPriors").toOption.filter (!·.isNull)
+  let row (sect : String) (m : Verified.Hsmm.Emissions.Mode) : Option (Array Float) := do
+    let f ← fitted
+    let arr ← ((f.getObjVal? sect) >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)) >>= (·.getArr?)).toOption
+    arr.mapM fun v => (v.getNum?).toOption.map (·.toFloat)
+  let priors := fun (m : Verified.Hsmm.Emissions.Mode) =>
+    match row "modePriors" m with
+    | some #[g, sm, ss, hm, hs, z, cm, cs] => ⟨g, sm, ss, hm, hs, z, cm, cs⟩
+    | _ => Verified.Hsmm.Emissions.modePriors m
+  let fits := fun (m : Verified.Hsmm.Emissions.Mode) =>
+    match row "durationFits" m with
+    | some #[a, b] => ({ alpha := a, beta := b, sampleCount := 10 } : Verified.Hsmm.Duration.GammaFit)
+    | _ => Verified.Hsmm.Assemble.baselineFit m
+  return ({ (Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
     (← (← flags.getObjVal? "segEvidence").getBool?)
     (← (← flags.getObjVal? "chainContext").getBool?)
     (knob "modeMinuteScale" 1.0) (knob "modeEntryScale" 0.0)
     (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0))
-    (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0), maxD)
+    (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)) with priors, fits }, maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json

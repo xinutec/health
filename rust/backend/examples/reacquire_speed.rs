@@ -80,14 +80,16 @@ fn main() -> Result<()> {
     let mut hits: Vec<String> = Vec::new();
     for name in &names {
         let fx = backend::decode_fixture::read(name)?;
-        let mut pts: Vec<Pt> = fx["inputs"]["points"]
+        // The request's points: cleaned as the decoder sees them, in either format.
+        let req = backend::decode_fixture::request(&fx)?;
+        let mut pts: Vec<Pt> = req["observation"]["points"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(|p| {
                 Some(Pt {
                     ts: p["ts"].as_i64()?,
-                    speed: p["speed_kmh"].as_f64()?,
+                    speed: p["speedKmh"].as_f64()?,
                 })
             })
             .collect();

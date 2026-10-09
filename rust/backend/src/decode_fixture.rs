@@ -73,8 +73,40 @@ fn arm_knob(var: &str) -> Value {
         .map_or(Value::Null, |f| json!(f))
 }
 
+/// `HSMM_FITTED_PRIORS_DIR=<dir>`: the parameter table `<dir>/<date>.json`
+/// (`examples/fit_emissions`, fitted without that day) laid on the day's
+/// request — the held-out arm. Harness-only like the knobs above; `null` when
+/// unset, which is the shipped model.
+fn fitted_priors(fx: &Value) -> Result<Value> {
+    let Ok(dir) = std::env::var("HSMM_FITTED_PRIORS_DIR") else {
+        return Ok(Value::Null);
+    };
+    let date = fx["meta"]["date"].as_str().context("meta.date")?;
+    let path = std::path::Path::new(&dir).join(format!("{date}.json"));
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(serde_json::from_str(&text)?)
+}
+
 /// The `assemblesegments` request the fixture's day was decoded from.
 pub fn request(fx: &Value) -> Result<Value> {
+    // Format 3 froze the request itself (`decode-day` under `DECODE_CAPTURE`):
+    // nothing to rebuild, only the harness's arm knobs to lay on it.
+    if fx["meta"]["fixtureFormatVersion"].as_i64() == Some(3) {
+        let mut req = fx["request"].clone();
+        anyhow::ensure!(req.is_object(), "a format-3 fixture with no request");
+        req["flags"]["fittedPriors"] = fitted_priors(fx)?;
+        for (k, env) in [
+            ("modeMinuteScale", "HSMM_MODE_MINUTE_SCALE"),
+            ("modeEntryScale", "HSMM_MODE_ENTRY_SCALE"),
+            ("modeMinuteScaleWithGps", "HSMM_MODE_MINUTE_SCALE_GPS"),
+            ("rideHeadMin", "HSMM_RIDE_HEAD_MIN"),
+            ("rideHeadCredit", "HSMM_RIDE_HEAD_CREDIT"),
+        ] {
+            req["flags"][k] = arm_knob(env);
+        }
+        return Ok(req);
+    }
     let (meta, inputs) = (&fx["meta"], &fx["inputs"]);
     let date = meta["date"].as_str().context("meta.date")?;
     let tz = meta["tz"].as_str().context("meta.tz")?;
@@ -228,6 +260,7 @@ pub fn request(fx: &Value) -> Result<Value> {
             "modeMinuteScaleWithGps": arm_knob("HSMM_MODE_MINUTE_SCALE_GPS"),
             "rideHeadMin": arm_knob("HSMM_RIDE_HEAD_MIN"),
             "rideHeadCredit": arm_knob("HSMM_RIDE_HEAD_CREDIT"),
+            "fittedPriors": fitted_priors(fx)?,
         },
         "date": date,
         "tz": tz,

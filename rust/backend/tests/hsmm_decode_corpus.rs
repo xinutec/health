@@ -23,8 +23,9 @@ use serde_json::Value;
 /// decoded its days one after another and was the SLOWEST test of the deploy
 /// gate's corpus row (~140 s against 50–85 s for the fold shards beside it), so
 /// it alone set that row's wall. Days are independent and each decode holds
-/// its own model; by index modulo, like `corpus_gate`'s shards.
-const SHARDS: usize = 4;
+/// its own model; by index modulo, like `corpus_gate`'s shards. Eight since the
+/// corpus grew from 11 days to 43: four shards took 66 s.
+const SHARDS: usize = 8;
 
 #[test]
 fn every_frozen_decode_still_decodes_a() {
@@ -44,6 +45,26 @@ fn every_frozen_decode_still_decodes_c() {
 #[test]
 fn every_frozen_decode_still_decodes_d() {
     on_big_stack(3);
+}
+
+#[test]
+fn every_frozen_decode_still_decodes_e() {
+    on_big_stack(4);
+}
+
+#[test]
+fn every_frozen_decode_still_decodes_f() {
+    on_big_stack(5);
+}
+
+#[test]
+fn every_frozen_decode_still_decodes_g() {
+    on_big_stack(6);
+}
+
+#[test]
+fn every_frozen_decode_still_decodes_h() {
+    on_big_stack(7);
 }
 
 fn on_big_stack(shard: usize) {

@@ -262,6 +262,21 @@ pub(crate) async fn decode_one(
         std::fs::write(&path, req.to_string())
             .with_context(|| format!("writing {}", path.display()))?;
     }
+    // `DECODE_CAPTURE=<dir>`: the day as a frozen decoder fixture, format 3 —
+    // the request itself beside an empty `expected`, which `DECODE_BLESS` fills
+    // (`decode_fixture::request` reads it back). A capture never writes the
+    // database: it refuses outside a dry run.
+    if let Ok(dir) = std::env::var("DECODE_CAPTURE") {
+        anyhow::ensure!(dry_run, "DECODE_CAPTURE is a dry-run tool: pass --dry-run");
+        let path = std::path::Path::new(&dir).join(format!("{date}-{user_id}.json"));
+        let fx = serde_json::json!({
+            "meta": { "fixtureFormatVersion": 3, "date": date, "tz": tz, "user": user_id },
+            "request": req,
+            "expected": [],
+        });
+        std::fs::write(&path, serde_json::to_string(&fx)?)
+            .with_context(|| format!("writing {}", path.display()))?;
+    }
     let Some(segments) = backend::lean::assemble_segments(&req)? else {
         anyhow::bail!("the decode is degenerate — no viable path");
     };

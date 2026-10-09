@@ -97,6 +97,11 @@ structure ModelContext where
       of it (#1774). A state absent from the map scores 0, as a non-train state
       does in `routeRailEvidence`. -/
   railByMinute : Array (Std.HashMap String Float) := #[]
+  /-- The emission parameters per mode: the shipped table unless a request
+      carries a fitted one (`flags.fittedPriors`, the harness's arm). -/
+  priors : Mode → Emissions.ModePrior := Emissions.modePriors
+  /-- The duration Gamma per mode, likewise. -/
+  fits : Mode → GammaFit := baselineFit
 
 /-- The longest segment the HSMM will consider, in minutes.
 
@@ -211,7 +216,7 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
        else match c.railByMinute[t]? with
          | some m => m.getD (StateSpace.stateKey st) 0.0
          | none => RouteModel.routeRailEvidence c.model c.connGraph st o false)
-      c.placeCoords c.reacquireRobust c.continuity st o
+      c.placeCoords c.reacquireRobust c.continuity st o c.priors
     -- The per-minute mode prior is inside the sum above at scale 1; the arm
     -- knob adds the difference, so the shipped model is untouched at 1.
     + ((if o.gps.isSome then c.modeMinuteScaleWithGps else c.modeMinuteScale) - 1.0)
@@ -272,7 +277,7 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
   | some st =>
     -- A ride's head lasts at most `rideHeadMin` minutes (#366).
     if Emissions.isRideHead st && d > c.rideHeadMin then negInf
-    else Duration.logDurationProb d.toFloat (baselineFit st.mode) (Duration.minDurationByMode st.mode)
+    else Duration.logDurationProb d.toFloat (c.fits st.mode) (Duration.minDurationByMode st.mode)
 
 /-- `durAt` given `durPriorBase c s d`: only the train-hop relaxation and the
     segment evidence are resolved at `e`. -/

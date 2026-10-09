@@ -56,8 +56,8 @@ private def NO_CORRECTION : Float := 0
     Fires only under the flag, for a stationary GPS-present minute with a resolved
     reacquire age. -/
 def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Float × Float))
-    (reacquireRobust : Bool) : Float :=
-  let base := emissionLogProb s (toThin o) placeCoord
+    (reacquireRobust : Bool) (priors : Mode → Emissions.ModePrior := modePriors) : Float :=
+  let base := emissionLogProb s (toThin o) placeCoord priors
   -- A walk is widened too, and not scaled away on the track: the fix that
   -- ends a dark minute carries the gap's speed whatever it lands on, and on
   -- the track it is steps, not speed, that tell a walk from a ride.
@@ -65,7 +65,7 @@ def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Flo
     if reacquireRobust && (s.mode == .stationary || s.mode == .walking) then
       match o.gps, o.reacquireAgeMin with
       | some g, some age =>
-        let prior := modePriors s.mode
+        let prior := priors s.mode
         let rail := if s.mode == .walking then none else o.railDistM
         let gap := o.reacquireGapMin.map fun g => Verified.FloatConst.natToFloat g.toNat
         -- After a short gap the artefact is momentum: a speed above the
@@ -96,9 +96,9 @@ def emissionLogProbFullWith
     (modeledLines : List String) (minute : RouteModel.MinuteLines) (railEv : Float)
     (placeCoords : Std.HashMap Int (Float × Float))
     (reacquireRobust : Bool) (continuity : Option Continuity.ContinuityContext)
-    (s : State) (o : ObsRow) : Float :=
+    (s : State) (o : ObsRow) (priors : Mode → Emissions.ModePrior := modePriors) : Float :=
   let placeCoord := match s.placeId with | some pid => placeCoords.get? pid | none => none
-  baseEmissionWithReacquire s o placeCoord reacquireRobust
+  baseEmissionWithReacquire s o placeCoord reacquireRobust priors
     + Geometric.geometricFeasibility s o.ts.toNat.toFloat
         (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord
     + Geometric.gapSpeedPenalty s o.gps.isSome (o.cadence.any (· > 0))
