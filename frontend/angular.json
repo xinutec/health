@@ -57,6 +57,7 @@
               "@fontsource/roboto/300.css",
               "@fontsource/roboto/400.css",
               "@fontsource/roboto/500.css",
+              "@fontsource/roboto/700.css",
               "material-icons/iconfont/filled.css",
               "node_modules/leaflet/dist/leaflet.css",
               "src/styles.scss"
