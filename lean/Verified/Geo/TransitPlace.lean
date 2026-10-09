@@ -198,6 +198,41 @@ def stationAtTransitInterchange
 than this is somewhere he went, and a train later is how he left it. -/
 def BOARDING_WAIT_MAX_S : Int := 90 * 60
 
+/-- The longest wait for a metro, tram or light-rail train: one comes every few
+minutes, and there is no check-in. Longer than this beside a station that is
+only those, a stay is somewhere he went: 88 minutes in a café 73 m from a
+Métro entrance had read as the station. -/
+def METRO_WAIT_MAX_S : Int := 15 * 60
+
+/-- A node that says mainline: a station or halt, not an entrance, a platform
+stop or a metro, tram or light-rail station. -/
+def isMainlineNode (n : NearbyStation) : Bool :=
+  n.subtype == "rail" || n.subtype == "halt"
+
+/-- The stations in range that a stay of `durS` can be the wait for, nearest
+first: every one up to `METRO_WAIT_MAX_S`, beyond it only a name with a
+mainline node in range. -/
+def stationsForWait (lat lon : Float) (durS : Int)
+    (stationsLookup : Float → Float → Float → Array NearbyStation)
+    (radiusM : Float := STATION_AT_ALIGHT_RADIUS_M) : Array String :=
+  let names := stationsWithin lat lon stationsLookup radiusM
+  if durS ≤ METRO_WAIT_MAX_S then names
+  else
+    let near := (stationsLookup lat lon radiusM).filter (·.distanceM ≤ radiusM)
+    names.filter fun n => near.any fun x => x.name == n && isMainlineNode x
+
+private def stWait (n st : String) (d : Float) : NearbyStation := { name := n, subtype := st, distanceM := d }
+private def vavin : Float → Float → Float → Array NearbyStation := fun _ _ _ =>
+  #[stWait "Rue Vavin" "subway_entrance" 73, stWait "Vavin" "stop_position" 81,
+    stWait "Vavin" "subway" 89]
+private def stPancras : Float → Float → Float → Array NearbyStation := fun _ _ _ =>
+  #[stWait "King's Cross St Pancras" "subway" 40, stWait "London St Pancras International" "rail" 90]
+-- A short wait can be for the Métro; an hour and a half beside it cannot.
+#guard stationsForWait 0 0 (10 * 60) vavin == #["Rue Vavin", "Vavin", "Vavin"]
+#guard stationsForWait 0 0 (88 * 60) vavin == #[]
+-- A mainline station keeps the long wait, and only its own name.
+#guard stationsForWait 0 0 (74 * 60) stPancras == #["London St Pancras International"]
+
 /-- The longest walk from the concourse to the platform that is still inside
 the station. Measured on both sides, not surveyed: the walks to the platform at
 Victoria (2026-06-12) and Stanmore (2026-09-06) are 4 and 3 minutes; the walk

@@ -501,7 +501,7 @@ private def stationsAround (e : Env) (s : Seg) : Array String := Id.run do
   if (s.focusPlaceId.bind e.focusPlaceDays).any
       (· ≥ Verified.Geo.TransitPlace.INTERCHANGE_FOCUS_GUARD_MIN_DAYS) then return #[]
   let some (cLat, cLon) := centroidOf e s | return #[]
-  return Verified.Geo.TransitPlace.stationsWithin cLat cLon e.nearbyStations
+  return Verified.Geo.TransitPlace.stationsForWait cLat cLon (s.endTs - s.startTs) e.nearbyStations
 
 /-- Which station names each wait before a train, and why: the chain back from
 the train (`TransitPlace.stationsBeforeBoarding`) first, else the chain forward
