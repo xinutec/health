@@ -3,8 +3,10 @@
      on every screen. -->
 <ui-scaffold [title]="mode() === 'share' ? 'Health (shared)' : 'Health'">
 	@if (health.user(); as user) {
-		<span class="user-name">{{ user.displayName }}</span>
-		@if (mode() !== "share") {
+		<!-- The name says whose data a shared view shows; on your own it is clutter. -->
+		@if (mode() === "share") {
+			<span class="user-name">{{ user.displayName }}</span>
+		} @else {
 			@if (shareUrl(); as url) {
 				<button
 					mat-icon-button
