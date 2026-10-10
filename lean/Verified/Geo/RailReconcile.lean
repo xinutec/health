@@ -222,6 +222,26 @@ structure RouteRow where
   geometry : Array Verified.Geo.WalkableRoute.Pt
   deriving Inhabited, BEq, Repr
 
+/-- A run's cached track by its label, or by the reverse journey's — the same
+track ridden the other way, its geometry reversed. -/
+def cachedTrack (railRouteCache : Array RouteRow) (key : String) :
+    Option (Array Verified.Geo.WalkableRoute.Pt) :=
+  let usable := fun (r : RouteRow) => r.geometry.size ≥ 2
+  match railRouteCache.find? (fun r => r.routeKey == key && usable r) with
+  | some row => some row.geometry
+  | none =>
+    match parseRailWayName (some key) with
+    | none => none
+    | some t =>
+      let rev := t.alight ++ RAIL_STATION_SEP ++ t.board ++
+        (match t.line with | some l => if l == "" then "" else RAIL_LINE_SEP ++ l | none => "")
+      (railRouteCache.find? (fun r => r.routeKey == rev && usable r)).map (·.geometry.reverse)
+
+#guard cachedTrack #[⟨"A → B", #[⟨0, 0⟩, ⟨1, 1⟩]⟩] "B → A" == some #[⟨1, 1⟩, ⟨0, 0⟩]
+#guard cachedTrack #[⟨"A → B · L", #[⟨0, 0⟩, ⟨1, 1⟩]⟩] "B → A · L" == some #[⟨1, 1⟩, ⟨0, 0⟩]
+#guard cachedTrack #[⟨"A → B", #[⟨0, 0⟩, ⟨1, 1⟩]⟩] "A → B" == some #[⟨0, 0⟩, ⟨1, 1⟩]
+#guard cachedTrack #[⟨"A → B", #[⟨0, 0⟩, ⟨1, 1⟩]⟩] "A → C" == none
+
 /-- Attach a train run's cached route geometry and interpolate its time window
 along it.
 
@@ -237,18 +257,16 @@ def annotateSnappedPaths (segments : Array Seg) (railRouteCache : Array RouteRow
   let keys := segments.filterMap fun s =>
     if effectiveMode s == "train" then s.wayName.filter (· != "") else none
   if keys.isEmpty then segments else
-  let usable := railRouteCache.filter fun r => keys.contains r.routeKey && r.geometry.size ≥ 2
-  if usable.isEmpty then segments else
   segments.map fun seg =>
     if effectiveMode seg != "train" then seg
     else match seg.wayName.filter (· != "") with
       | none => seg
       | some key =>
-        match usable.find? (·.routeKey == key) with
+        match cachedTrack railRouteCache key with
         | none => seg
-        | some row =>
+        | some geom =>
           { seg with
-            snappedPath := some (Verified.Geo.RailSnap.interpolateTimes row.geometry
+            snappedPath := some (Verified.Geo.RailSnap.interpolateTimes geom
               (Float.ofInt seg.startTs) (Float.ofInt seg.endTs)) }
 
 /-- Each train run's track for its FINAL label: the cached geometry, or none.
@@ -266,9 +284,9 @@ def reattachSnappedPaths (segments : Array Seg) (railRouteCache : Array RouteRow
     else match seg.wayName.filter (· != "") with
       | none => seg
       | some key =>
-        match railRouteCache.find? (fun r => r.routeKey == key && r.geometry.size ≥ 2) with
-        | some row =>
-          { seg with snappedPath := some (Verified.Geo.RailSnap.interpolateTimes row.geometry
+        match cachedTrack railRouteCache key with
+        | some geom =>
+          { seg with snappedPath := some (Verified.Geo.RailSnap.interpolateTimes geom
               (Float.ofInt seg.startTs) (Float.ofInt seg.endTs)) }
         | none => { seg with snappedPath := none }
 
