@@ -64,14 +64,14 @@ mode: it is how spread the posterior over the real modes is.
 
 ## Phases, each gated on the scoreboard, the served referee and the floors
 
-- **P0, the instrument.** Forward–backward in Lean beside the decode, emitting
+- **Phase A, the instrument.** Forward–backward in Lean beside the decode, emitting
   per-segment confidence; a reliability table and Brier score of segment mode
   confidence against the narrated minutes. Changes no output. Gate: the decode
   is byte-identical; the memory smoke holds on a travel day.
-- **P1, `unknown` out of the state space, into the output.** Gate: phantoms
+- **Phase B, `unknown` out of the state space, into the output.** Gate: phantoms
   not above today's 6, journeys and the served-referee count not below today's,
   modes and lines up (the removal arm's +5 and +5 are the prize).
-- **P2, the station chain on posteriors.** The gates go, then the terms move
+- **Phase C, the station chain on posteriors.** The gates go, then the terms move
   one family at a time. Gate: stations up, no wrong emission added.
 
 ## Risks
@@ -82,6 +82,6 @@ mode: it is how spread the posterior over the real modes is.
 - **The phantoms may not be uncertain.** If the 92 phantom rides of the removal
   arm come out confident, the posterior cannot hide them, and the missing piece
   is a model of the dark (what a minute with no fix says about each mode) —
-  measured in P0 before P1 is built.
+  measured in phase A before phase B is built.
 - **Memory.** Two directions of float cells beside the packed trellis; the
-  travel-day smoke is in P0's gate.
+  travel-day smoke is in phase A's gate.
