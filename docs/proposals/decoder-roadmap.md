@@ -165,7 +165,7 @@ corpus floors before it ships.
    probability is the wrong form for choosing a station: it is flat for
    everything in reach, where the anchor needs the nearer one to be
    likelier. The terms and the gates change together, the gates becoming
-   posterior probabilities (step 3).
+   posterior probabilities (step 3). Designed in `2026-10-station-states.md`.
 3. **Parameters are fitted.** Forward–backward EM over every captured day,
    judged on the narrated days held out. The same marginals are the
    calibrated confidence Phase 4 needs.
