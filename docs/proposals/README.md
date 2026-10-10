@@ -23,6 +23,7 @@ will find it.
 |---|---|---|
 | `decoder-roadmap.md` | active | **The single forward plan for the decoder line of work.** One joint probabilistic decoder owning a continuous map-matched worldline; Phases 0–5 |
 | `geometry-roadmap.md` | active | **The single forward plan for the positioning/geometry line of work.** A moving leg as the MAP estimate of one robust energy; Phases G0–G4, the measured landmines |
+| `2026-10-posterior-confidence.md` | design, not started | Decoder step 3: forward–backward confidence; `unknown` as an output, not a state; the station chain's gates as posteriors |
 | `2026-10-station-states.md` | S1 refuted (three arms) | Decoder step 2: platform states per station; the 22-journey gap to the cutover, measured; why S1 failed |
 | `2026-07-continuity-c4.md` | C4.0–C4.3 live; C4.4 open | Cross-segment continuity (#224): the acceptance suite (#327), the cadence-null emission hole, the journey-authority flip |
 | `2026-07-soft-venue-attribution.md` | P0 shipped; P1 truth-neutral, unshipped | The venue-naming lead (#325 owns the blocker): weight, don't filter — posterior-weighted attribution with an `other` component |

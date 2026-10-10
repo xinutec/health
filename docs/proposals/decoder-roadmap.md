@@ -168,7 +168,9 @@ corpus floors before it ships.
    posterior probabilities (step 3). Designed in `2026-10-station-states.md`.
 3. **Parameters are fitted.** Forward–backward EM over every captured day,
    judged on the narrated days held out. The same marginals are the
-   calibrated confidence Phase 4 needs.
+   calibrated confidence Phase 4 needs. Designed first as confidence, with
+   `unknown` leaving the state space for the output:
+   `2026-10-posterior-confidence.md`.
 4. **The decoder's segments are the served segments** (Phase 4), then the
    cascade's journey-structure passes go one at a time (Phase 5). Naming,
    display and enrichment stay.
