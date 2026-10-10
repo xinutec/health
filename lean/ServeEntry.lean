@@ -1463,11 +1463,36 @@ private def assembleSegmentsResult (j : Json) : Json :=
                         ("passPen", Lean.toJson p.passPen)]))])
                 pure #[Json.mkObj [("chainDebug", dbg)]]
               else
+              -- `flags.posterior` (harness-only): each segment's confidence, the
+              -- posterior mass of its mode over its minutes (`Posterior`).
+              -- `flags.unknownBelow` (harness arm): a segment whose confidence is
+              -- under it leaves as `unknown`, the posterior's "don't know".
+              let unknownBelow : Option Float := (j.getObjVal? "flags" >>= (·.getObjVal? "unknownBelow") >>= (·.getNum?)).toOption.map (·.toFloat)
+              let wantPost := (j.getObjVal? "flags" >>= (·.getObjVal? "posterior") >>= (·.getBool?)).toOption == some true
+                || unknownBelow.isSome
+              let marg := if wantPost then Verified.Hsmm.Posterior.marginals pd else #[]
+              let t0 := (c.obs[0]?.map (·.ts)).getD 0
+              let confidence := fun (seg : Verified.HsmmSegments.Segment) => Id.run do
+                let S := c.states.size
+                let mut tot := 0.0
+                let mut n := 0
+                let mut ts := seg.startTs
+                while ts < seg.endTs do
+                  let t := ((ts - t0) / 60).toNat
+                  for h : k in [0:S] do
+                    if Verified.Hsmm.StateSpace.modeName c.states[k].mode == seg.mode then
+                      tot := tot + marg.getD (t * S + k) 0
+                  n := n + 1
+                  ts := ts + 60
+                return if n == 0 then 0.0 else tot / Verified.FloatConst.natToFloat n
               pure (segs.mapIdx (fun i s =>
+                let conf := if wantPost then confidence s else 1.0
+                let unsure : Bool := match unknownBelow with | some q => decide (conf < q) | none => false
                 let base : List (String × Json) :=
+                  (if wantPost then [("confidence", Lean.toJson conf)] else []) ++
                   [ ("startTs", Lean.toJson s.startTs)
                   , ("endTs", Lean.toJson s.endTs)
-                  , ("mode", Json.str s.mode)
+                  , ("mode", Json.str (if unsure then "unknown" else s.mode))
                   , ("placeId", match s.placeId with
                       | none => Json.null | some p => Lean.toJson p)
                   -- The chain's line when it re-lined the leg (#238).

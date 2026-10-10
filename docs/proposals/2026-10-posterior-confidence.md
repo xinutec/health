@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-status: design, not started
+status: phase A built (instrument); phase B measured and refuted at two cuts
 references:
   - decoder-roadmap.md
   - 2026-10-station-states.md
@@ -11,7 +11,37 @@ references:
 
 The decoder roadmap's step 3. Two lines of work arrived here on 2026-10-10:
 the station chain's gates (`2026-10-station-states.md`: its terms cannot move
-without them) and the `unknown` state, measured below. Nothing here is built.
+without them) and the `unknown` state, measured below. Phase A is built
+(`Hsmm.Posterior`, `examples/posterior_calibration`, harness flags
+`posterior` and `unknownBelow`); read "What phases A and B measured" first.
+
+## What phases A and B measured (2026-10-10)
+
+**Calibration (phase A), today's decoder, 47,595 labelled minutes:** Brier
+0.042; accuracy rises with confidence in every band, but the decoder is
+overconfident — 98% of minutes sit above 0.9 at 0.961 accuracy, and the
+0.8–0.9 band is right 0.56 of the time. About 12 s a day (43 s at most):
+fine for an instrument, too slow to serve (the all-pairs transition sums in
+both directions dominate; the base matrix depends mostly on the source, so
+they factor).
+
+**The phantom question, without `unknown` in the state space:** decoded rides
+by confidence — below 0.5, 1 real and 71 phantom; 0.5–0.9, 7 and 7; 0.9 and
+above, 98 and 16. Most phantoms are uncertain; sixteen are confident.
+
+**Phase B, `unknown` out of the states and into the output below a cut:**
+
+| arm | journeys | legMode | legLine | stations | phantoms | served referee |
+|---|---|---|---|---|---|---|
+| today (`unknown` a state) | 121 | 286 | 53 | 47 | 6 | 126 |
+| no `unknown`, cut 0.5 | 111 | 288 | 58 | 53 | 22 | 122 |
+| no `unknown`, cut 0.7 | 100 | 273 | 58 | 53 | 21 | 109 |
+
+Refuted at both: the confident phantoms stay, and cutting uncertain stretches
+to `unknown` breaks journeys the state had held together. What the arms keep
+is the prize (lines +5, stations +6); what is missing is the risk named
+below — a model of what a dark minute says about each mode, so that the
+confident phantoms stop being confident.
 
 ## What `unknown` is doing
 

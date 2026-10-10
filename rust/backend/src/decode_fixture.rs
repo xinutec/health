@@ -113,6 +113,7 @@ pub fn request(fx: &Value) -> Result<Value> {
             ("modeMinuteScaleWithGps", "HSMM_MODE_MINUTE_SCALE_GPS"),
             ("rideHeadMin", "HSMM_RIDE_HEAD_MIN"),
             ("rideHeadCredit", "HSMM_RIDE_HEAD_CREDIT"),
+            ("unknownBelow", "HSMM_UNKNOWN_BELOW"),
         ] {
             req["flags"][k] = arm_knob(env);
         }
@@ -271,6 +272,7 @@ pub fn request(fx: &Value) -> Result<Value> {
             "modeMinuteScaleWithGps": arm_knob("HSMM_MODE_MINUTE_SCALE_GPS"),
             "rideHeadMin": arm_knob("HSMM_RIDE_HEAD_MIN"),
             "rideHeadCredit": arm_knob("HSMM_RIDE_HEAD_CREDIT"),
+            "unknownBelow": arm_knob("HSMM_UNKNOWN_BELOW"),
             "fittedPriors": fitted_priors(fx)?,
             "termWeights": term_weights()?,
         },
