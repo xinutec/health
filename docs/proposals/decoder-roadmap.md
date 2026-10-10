@@ -131,10 +131,38 @@ case goes into the corpus as a `wrong` row naming the decoder work that
 clears it; the served error stays visible until then. The cascade still
 takes fixes outside journey structure (naming, display).
 
-Order from here: the gap-speed term as a continuous likelihood (σ from
-the fixes' accuracy, no gap-length cutoff) → C4.4a (station and line
-authority, whose confidence bar is the emitted station and needs no
-calibration) → the calibration metric → Phase 4.
+## Order from here: generic models in, cutoffs out
+
+The cascade is most of the code (the `Geo` tree is about five times the
+decoder) and most of its tuned constants. About thirty of its passes decide
+one thing: where a segment starts or ends and which leg owns the edge
+minutes (`rideTailTrim`, `vehicleEdgeShed`, `rideHeadClaim`,
+`stayArrivalClaim`, `boardingAnchor`, `alightAnchor`, `gapRide`, `tubeHop`,
+`rideThroughHold`, `alightAtLastFix`, …). A segmental decoder places every
+boundary in one optimisation. Each step below replaces hand-picked
+thresholds with one model, and is measured on the scoreboard and the
+corpus floors before it ships.
+
+1. **Distances are likelihoods.** A "within X m" or "faster than Y" test
+   becomes the probability of the observation under the state: the mode's
+   own speed distribution (the fitted `ModePrior`), fix noise, an outlier
+   rate. First the gap term (`Hsmm.Geometric.gapTerm`); then the place
+   terms. Per-fix accuracy needs a fixture format that carries it; until
+   then the noise is the measured median.
+2. **Line and station are decoder state.** On rail the state carries the
+   line and the last station and moves only along that line's edges;
+   boarding and alighting happen at a node the adjacent walk shares. Board
+   = previous alight and "the line serves both ends" are then unbreakable,
+   and the post-decode station chain and the anchors retire. Position stays
+   a continuous emission; candidates are the stations and lines near the
+   fixes, which bounds the state (the route-aware decoder's discrete
+   position state is the precedent against).
+3. **Parameters are fitted.** Forward–backward EM over every captured day,
+   judged on the narrated days held out. The same marginals are the
+   calibrated confidence Phase 4 needs.
+4. **The decoder's segments are the served segments** (Phase 4), then the
+   cascade's journey-structure passes go one at a time (Phase 5). Naming,
+   display and enrichment stay.
 
 ## Phase 0 — measurement first (the prerequisite, #250)
 

@@ -124,8 +124,8 @@ def emissionLogProbFullWith
   w.base * baseEmissionWithReacquire s o placeCoord reacquireRobust priors
     + w.geometric * Geometric.geometricFeasibility s o.ts.toNat.toFloat
         (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord
-    + w.gap * Geometric.gapSpeedPenalty s o.gps.isSome (o.cadence.any (· > 0))
-        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix)
+    + w.gap * Geometric.gapTerm s o.gps.isSome
+        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) priors
     -- The kernels' `isCovered` is the TypeScript gate, held open (see above).
     + w.rail * railEv
     + w.lineProximity * RouteModel.lineProximityFactorWith modeledLines minute s o false
@@ -176,7 +176,12 @@ private def obsCont : ObsRow :=
     inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
     prevGpsFix := some ⟨900, 51.521, -0.131⟩, nextGpsFix := some ⟨900, 51.521, -0.131⟩ }
 
-#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.train, none, some "Test Line"⟩ obsTrain) (-1.3928522584398717)
+-- The train pays its share of a 40 km/h gap, which its speed prior almost always covers.
+#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.train, none, some "Test Line"⟩ obsTrain)
+  (-1.3928522584398717 + Geometric.gapTerm ⟨.train, none, some "Test Line"⟩ false
+    (obsTrain.prevGpsFix.map toGeoFix) (obsTrain.nextGpsFix.map toGeoFix))
+#guard Geometric.gapTerm ⟨.train, none, some "Test Line"⟩ false
+    (obsTrain.prevGpsFix.map toGeoFix) (obsTrain.nextGpsFix.map toGeoFix) > -0.05
 #guard approxF (emissionLogProbFull m cg ml pc false none ⟨.stationary, some 5, none⟩ obsStat) (-814.4852866803162)
 #guard approxF (emissionLogProbFull m cg ml pc false none ⟨.walking, none, none⟩ obsWalk) (-12.180968195475526)
 #guard approxF (emissionLogProbFull m cg ml pc true none ⟨.stationary, some 5, none⟩ obsReacq) (-7.8254058300548115)

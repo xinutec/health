@@ -13,7 +13,7 @@ for `s.placeId`. UNPROVEN; bit-exact with TS, pinned by the `#guard`s.
 namespace Verified.Hsmm.Geometric
 
 open Verified.Hsmm.FloatScore (haversineMeters)
-open Verified.Hsmm.Emissions (Mode State)
+open Verified.Hsmm.Emissions (Mode State ModePrior modePriors)
 
 def MAX_PLAUSIBLE_SPEED_KMH : Float := 80
 def SPEED_PENALTY_SIGMA_KMH : Float := 20
@@ -48,79 +48,95 @@ def geometricFeasibility (s : State) (obsTs : Float) (prevFix nextFix : Option G
         let e := (worst - MAX_PLAUSIBLE_SPEED_KMH) / SPEED_PENALTY_SIGMA_KMH
         0.0 - 0.5 * (e * e)
 
-/-! ## The gap-speed term (#238, 2026-09-29)
+/-! ## The gap term
 
-At a minute WITHOUT a fix, bracketed by fixes at least `GAP_MIN_S` apart, the
-gap's straight-line speed says what the minutes inside it can have been. A mode
-whose ceiling is below it — a walk, a placeless stay, a bike — pays a
-half-Gaussian in the excess, clamped per minute. It is the mirror of the rail
-gap credit a train line already earns under the same condition
-(`RouteModel.routeRailEvidence`): until now a dark two-stop tube ride lost to a
-walk that crossed 2 km in five minutes for free (05-20, Baker Street → Green
-Park: the Jubilee won the dark minutes by 4.5 nats each and lost the ride on
-the two mode switches). Only a STEPLESS minute pays: a gap that holds a ride
-AND a walk is ordinary (06-12, Green Park → King's Cross: the Victoria line and
-the stepped interchange), and charging the walk's minutes there pushed that
-decode into a longer ride and a phantom leg (measured 2026-09-29, lines and
-stations each −1 on that day). What cannot happen is a walk or a stay without
-steps spanning a gap faster than a walk. A stay at a KNOWN place is
-`geometricFeasibility`'s, not this term's.
+At a minute without a fix, the fixes bracketing its gap say how far the day
+moved in the dark: `d` metres in `dt` seconds. Whatever state holds the minute
+must have covered at least that straight line. The term is the probability that
+it could: the mode's own speed distribution (`ModePrior.speedMean` /
+`speedStd`, the same table the speed emission reads and the fitter learns),
+truncated at zero, carried over `dt` and widened by both fixes' noise, survives
+`d`. Mixed with an outlier tail, because a bracketing fix can be wrong — but
+only by so much: the chance falls off with the distance the outlier would have
+to explain.
 
-A one-stop hop goes dark for two minutes, not three: 944 m between fixes 120 s
-apart read as a walk until a WALK paid from 120 s and the clamp went to −6 (it
-otherwise pays at most 3 nats a minute for 28 km/h). Only the walk: a placeless
-stay paying from 120 s flipped a platform wait to the known place beside the
-station, which pays nothing. At 45 s the bound reached into interchanges and
-moved 06-12's Victoria ride to the District. -/
+The gap's log-likelihood is shared out over its dark minutes, so a gap held
+whole by one mode pays it once, and a gap shared with a ride charges each of
+its minutes a share. There is no gap-length cutoff, no per-mode ceiling and no
+clamp: a short gap is dominated by fix noise and asserts little; a long one by
+the speed spread. -/
 
-def GAP_MIN_S : Float := 180
-/-- A walk pays from a shorter gap: a one-stop hop goes dark for two minutes. -/
-def GAP_MIN_WALK_S : Float := 120
-def GAP_WALK_MAX_KMH : Float := 7
-def GAP_CYCLE_MAX_KMH : Float := 25
-def GAP_SIGMA_KMH : Float := 5
-def GAP_CLAMP : Float := -6
+/-! Measured on the decoder corpus's fixes, each against the midpoint of
+neighbours that agree with each other: 99% lie within 31 m (a per-axis σ of
+10 m), one in a thousand beyond 100 m, the excess past that falling off with a
+scale of about 70 m, and none beyond 500 m. -/
 
-/-- The ceiling a mode can sustain across a gap; `none` = no ceiling here. -/
-def gapCeilingKmh (s : State) : Option Float :=
-  match s.mode with
-  | .walking => some GAP_WALK_MAX_KMH
-  | .stationary => if s.placeId.isNone then some GAP_WALK_MAX_KMH else none
-  | .cycling => some GAP_CYCLE_MAX_KMH
-  | _ => none
+/-- The per-axis noise of a fix. -/
+def GPS_NOISE_M : Float := 10
+/-- The chance a fix is an outlier. -/
+def GAP_OUTLIER_P : Float := 1e-3
+/-- How fast the outlier chance falls with the distance it must explain. -/
+def GAP_OUTLIER_SCALE_M : Float := 70
 
-def gapSpeedPenalty (s : State) (hasFix stepped : Bool) (prevFix nextFix : Option GpsFix) : Float :=
-  if hasFix || stepped then 0.0
-  else match gapCeilingKmh s, prevFix, nextFix with
-    | some cap, some p, some n =>
+/-- `log erfc x` for `x ≥ 0`: the Chebyshev fit of Numerical Recipes (`erfcc`),
+    fractional error below `1.2e-7`, stable deep in the tail. -/
+def logErfc (x : Float) : Float :=
+  let t := 1 / (1 + 0.5 * x)
+  Float.log t + (0 - x * x - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418
+    + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587
+    + t * (-0.82215223 + t * 0.17087277)))))))))
+
+private def HALF : Float := 0.5
+private def LOG_HALF : Float := Float.log 0.5
+private def SQRT_2 : Float := Float.sqrt 2
+
+/-- `log Φ z`, the standard normal CDF. -/
+def logPhi (z : Float) : Float :=
+  if z <= 0 then LOG_HALF + logErfc (0 - z / SQRT_2)
+  else Float.log (1 - HALF * Float.exp (logErfc (z / SQRT_2)))
+
+/-- log P(a mode with prior `pr` covers `d` metres in `dt` seconds). -/
+def gapLogLikelihood (pr : ModePrior) (d dt : Float) : Float :=
+  let mu := pr.speedMean / 3.6 * dt
+  let sdMove := pr.speedStd / 3.6 * dt
+  let sd := Float.sqrt (sdMove * sdMove + 2 * GPS_NOISE_M * GPS_NOISE_M)
+  let survives := Float.exp (logPhi ((mu - d) / sd) - logPhi (mu / sd))
+  let excess := max 0 (d - mu)
+  Float.log (GAP_OUTLIER_P * Float.exp (0 - excess / GAP_OUTLIER_SCALE_M)
+    + (1 - GAP_OUTLIER_P) * survives)
+
+/-- This dark minute's share of its gap's log-likelihood under `s`. -/
+def gapTerm (s : State) (hasFix : Bool) (prevFix nextFix : Option GpsFix)
+    (priors : Mode → ModePrior := modePriors) : Float :=
+  if hasFix then 0.0
+  else match prevFix, nextFix with
+    | some p, some n =>
       let dt := n.ts - p.ts
-      if dt < (if s.mode == .walking then GAP_MIN_WALK_S else GAP_MIN_S) then 0.0
-      else
-        let v := haversineMeters p.lat p.lon n.lat n.lon / 1000 / (dt / 3600)
-        if v <= cap then 0.0
-        else
-          let e := (v - cap) / GAP_SIGMA_KMH
-          max GAP_CLAMP (0.0 - 0.5 * (e * e))
-    | _, _, _ => 0.0
+      let dark := Float.round (dt / 60) - 1
+      if dark < 1 then 0.0
+      else gapLogLikelihood (priors s.mode) (haversineMeters p.lat p.lon n.lat n.lon) dt / dark
+    | _, _ => 0.0
 
--- 2.0 km in two and a half minutes: a walk clamps; in five
--- minutes a train and a stay at a known place are not this term's; a minute with
--- a fix and a short gap assert nothing.
-#guard gapSpeedPenalty ⟨.walking, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨150, 51.5067, -0.1428⟩) == GAP_CLAMP
--- A placeless stay pays only from the longer gap: at two and a half minutes
--- a stay near a known place would otherwise flip to it, which pays nothing.
-#guard gapSpeedPenalty ⟨.stationary, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨150, 51.5067, -0.1428⟩) == 0
-#guard gapSpeedPenalty ⟨.stationary, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) < -5
--- The same 2.0 km in five minutes is 24 km/h: a bike can, so it goes free.
-#guard gapSpeedPenalty ⟨.cycling, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
-#guard gapSpeedPenalty ⟨.train, none, some "Jubilee Line"⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
-#guard gapSpeedPenalty ⟨.stationary, some 5, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
-#guard gapSpeedPenalty ⟨.walking, none, none⟩ true false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
-#guard gapSpeedPenalty ⟨.walking, none, none⟩ false false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨90, 51.5067, -0.1428⟩) == 0
--- A stepped minute is a walk whatever the gap says.
-#guard gapSpeedPenalty ⟨.walking, none, none⟩ false true (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
--- A walk's own pace across a gap is free.
-#guard gapSpeedPenalty ⟨.walking, none, none⟩ false false (some ⟨0, 51.5000, -0.10⟩) (some ⟨600, 51.5090, -0.10⟩) == 0
+#guard Float.abs (logPhi 0 - Float.log 0.5) < 1e-6
+#guard Float.abs (logPhi (-5) - Float.log 2.866515718791939e-7) < 1e-6
+#guard Float.abs (logPhi 1.5 - Float.log 0.9331927987311419) < 1e-6
+-- 2.0 km in two minutes, one dark minute: a walk cannot, and no outlier
+-- explains 1.8 km; a train can, and pays a few hundredths a minute.
+#guard gapTerm ⟨.walking, none, none⟩ false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨120, 51.5067, -0.1428⟩) < -25
+-- A walk 150 m ahead of its pace is an outlier's reach.
+#guard gapTerm ⟨.walking, none, none⟩ false (some ⟨0, 51.5000, -0.10⟩) (some ⟨120, 51.5028, -0.10⟩) > -12
+#guard gapTerm ⟨.train, none, some "Jubilee Line"⟩ false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) > -0.05
+-- Five minutes, four dark: each pays a quarter of the gap.
+#guard Float.abs (4 * gapTerm ⟨.walking, none, none⟩ false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩)
+  - gapLogLikelihood (modePriors .walking) (haversineMeters 51.5226 (-0.1571) 51.5067 (-0.1428)) 300) < 1e-9
+-- A stay, placed or not, is held to the same gap.
+#guard gapTerm ⟨.stationary, some 5, none⟩ false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) < -1.5
+-- A stay that did not move pays nothing; a walk at its own pace pays little.
+#guard gapTerm ⟨.stationary, none, none⟩ false (some ⟨0, 51.5, -0.1⟩) (some ⟨300, 51.5, -0.1⟩) == 0
+#guard gapTerm ⟨.walking, none, none⟩ false (some ⟨0, 51.5000, -0.10⟩) (some ⟨600, 51.5060, -0.10⟩) > -0.1
+-- A minute with a fix, or a gap with no dark minute, asserts nothing.
+#guard gapTerm ⟨.walking, none, none⟩ true (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
+#guard gapTerm ⟨.walking, none, none⟩ false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨60, 51.5067, -0.1428⟩) == 0
 
 -- Parity with the real `buildGeometricFeasibility` (Node/V8). Home is the
 -- SYNTHETIC anchor (51.55, 2.22) — every lon in this file is shifted +2.5 from
