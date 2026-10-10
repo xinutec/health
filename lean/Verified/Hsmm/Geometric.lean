@@ -1,13 +1,13 @@
 import Verified.Hsmm.Emissions
 /-!
-# Geometric feasibility (implementation-first port of `geometric-feasibility.ts`)
+# Geometric feasibility
 
-Emission term: penalises `stationary @ knownPlace` on a GPS-gap minute when the
-implied teleport speed from the nearest fix (forward or backward in time) to the
-place centroid exceeds `MAX_PLAUSIBLE_SPEED_KMH` — a half-Gaussian in the excess.
-Reuses the verified `haversineMeters`. The fixes and `obs.ts` are passed in (the
-caller reads them off the observation), and `placeCoord` is the resolved centroid
-for `s.placeId`. UNPROVEN; bit-exact with TS, pinned by the `#guard`s.
+What the fixes around a dark minute say about the state holding it, as
+likelihoods: the gap term (whatever holds the minute covered the gap) and the
+place term (a stay at a known place was reachable from the fixes either side).
+Both read the modes' own speed distributions and the measured fix noise; the
+fixes and `obs.ts` are passed in, and `placeCoord` is the resolved centroid for
+`s.placeId`. UNPROVEN, pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Geometric
@@ -15,38 +15,10 @@ namespace Verified.Hsmm.Geometric
 open Verified.Hsmm.FloatScore (haversineMeters)
 open Verified.Hsmm.Emissions (Mode State ModePrior modePriors)
 
-def MAX_PLAUSIBLE_SPEED_KMH : Float := 80
-def SPEED_PENALTY_SIGMA_KMH : Float := 20
-
 structure GpsFix where
   ts : Float
   lat : Float
   lon : Float
-
-/-- Implied avg km/h to traverse from `fix` to the target over the elapsed time;
-    `0` for a same-or-future-minute fix (the place-distance term handles those). -/
-def impliedSpeedKmh (fix : GpsFix) (tlat tlon currentTs : Float) : Float :=
-  let elapsedSec := Float.abs (currentTs - fix.ts)
-  if elapsedSec <= 0 then 0.0
-  else
-    let distKm := haversineMeters fix.lat fix.lon tlat tlon / 1000
-    let elapsedH := elapsedSec / 3600
-    distKm / elapsedH
-
-/-- The feasibility penalty — the TS `buildGeometricFeasibility` closure. -/
-def geometricFeasibility (s : State) (obsTs : Float) (prevFix nextFix : Option GpsFix)
-    (placeCoord : Option (Float × Float)) : Float :=
-  if s.mode != .stationary || s.placeId.isNone then 0.0
-  else match placeCoord with
-    | none => 0.0
-    | some (plat, plon) =>
-      let sp1 := match prevFix with | some f => impliedSpeedKmh f plat plon obsTs | none => 0.0
-      let sp2 := match nextFix with | some f => impliedSpeedKmh f plat plon obsTs | none => 0.0
-      let worst := if sp1 > sp2 then sp1 else sp2
-      if worst <= MAX_PLAUSIBLE_SPEED_KMH then 0.0
-      else
-        let e := (worst - MAX_PLAUSIBLE_SPEED_KMH) / SPEED_PENALTY_SIGMA_KMH
-        0.0 - 0.5 * (e * e)
 
 /-! ## The gap term
 
@@ -117,6 +89,36 @@ def gapTerm (s : State) (hasFix : Bool) (prevFix nextFix : Option GpsFix)
       else gapLogLikelihood (priors s.mode) (haversineMeters p.lat p.lon n.lat n.lon) dt / dark
     | _, _ => 0.0
 
+/-! ## The place term
+
+A stay at a known place during a dark minute: the day got from the previous fix
+to the place in the time since, and from the place to the next fix in the time
+left. Each leg needs only that SOME travel mode covers it: the best mode's
+survival. Which mode it was is the travel minutes' own states to pay for, so
+the mode prior is not charged here again. The two legs multiply.
+
+Ground modes only. A plane reaches anywhere in a night, so with it a stay at
+Home 1,300 km from the morning's first fix went free, and the decode put the
+night there; no plane state pays for that flight, because none is decoded. -/
+
+private def TRAVEL_MODES : Array Mode := #[.walking, .cycling, .driving, .train]
+
+/-- log P(the best travel mode covers `d` metres in `dt` seconds); `0` for `dt ≤ 0`. -/
+def reachLogLikelihood (priors : Mode → ModePrior) (d dt : Float) : Float :=
+  if dt <= 0 then 0.0
+  else TRAVEL_MODES.foldl (fun best m => max best (gapLogLikelihood (priors m) d dt)) (gapLogLikelihood (priors .walking) d dt)
+
+def geometricFeasibility (s : State) (obsTs : Float) (prevFix nextFix : Option GpsFix)
+    (placeCoord : Option (Float × Float)) (priors : Mode → ModePrior := modePriors) : Float :=
+  if s.mode != .stationary || s.placeId.isNone then 0.0
+  else match placeCoord with
+    | none => 0.0
+    | some (plat, plon) =>
+      let leg (f : Option GpsFix) (dt : GpsFix → Float) := match f with
+        | some f => reachLogLikelihood priors (haversineMeters f.lat f.lon plat plon) (dt f)
+        | none => 0.0
+      leg prevFix (fun f => obsTs - f.ts) + leg nextFix (fun f => f.ts - obsTs)
+
 #guard Float.abs (logPhi 0 - Float.log 0.5) < 1e-6
 #guard Float.abs (logPhi (-5) - Float.log 2.866515718791939e-7) < 1e-6
 #guard Float.abs (logPhi 1.5 - Float.log 0.9331927987311419) < 1e-6
@@ -138,26 +140,22 @@ def gapTerm (s : State) (hasFix : Bool) (prevFix nextFix : Option GpsFix)
 #guard gapTerm ⟨.walking, none, none⟩ true (some ⟨0, 51.5226, -0.1571⟩) (some ⟨300, 51.5067, -0.1428⟩) == 0
 #guard gapTerm ⟨.walking, none, none⟩ false (some ⟨0, 51.5226, -0.1571⟩) (some ⟨60, 51.5067, -0.1428⟩) == 0
 
--- Parity with the real `buildGeometricFeasibility` (Node/V8). Home is the
--- SYNTHETIC anchor (51.55, 2.22) — every lon in this file is shifted +2.5 from
--- the capture (#859); distances depend only on the lats and delta-lon, so the
--- expected values held.
--- NOTE: this factor's value flows through `haversineMeters` (sin/cos/atan2/sqrt),
--- where Lean's libm and V8's can differ by ≤1 ULP on some inputs — so the penalty
--- is checked ULP-close (`approx`), not bit-equal. Exact-zero branches stay `==`.
--- This is the accepted near-tie class the quant flip already tolerates.
-private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 private def fx (ts lat lon : Float) : GpsFix := ⟨ts, lat, lon⟩
 private def stt (m : Mode) (pid : Option Int) : State := ⟨m, pid, none⟩
 private def home : Option (Float × Float) := some (51.55, 2.22)
 
-#guard approx (geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 2.39)) none home)
-  (-31.7255987889194)
-#guard geometricFeasibility (stt .stationary (some 5)) 5000 (some (fx 1000 51.5501 2.2199)) none home == 0
+-- 17 km in three minutes (340 km/h) to reach the place: no ground mode.
+#guard geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 2.39)) none home < -20
+-- Four minutes after a fix 15 m away: reachable on foot.
+#guard geometricFeasibility (stt .stationary (some 5)) 1240 (some (fx 1000 51.5501 2.2198)) none home > -0.01
+-- An hour after a fix 12 km away: reachable.
+#guard geometricFeasibility (stt .stationary (some 5)) 4600 (some (fx 1000 51.53 2.39)) none home > -0.5
+-- Only a stay at a known place is this term's; a minute with its own fix asserts nothing.
 #guard geometricFeasibility (stt .walking none) 1180 (some (fx 1000 51.53 2.39)) none home == 0
 #guard geometricFeasibility (stt .stationary (some 9)) 1180 (some (fx 1000 51.53 2.39)) none none == 0
 #guard geometricFeasibility (stt .stationary (some 5)) 1000 (some (fx 1000 51.53 2.39)) none home == 0
-#guard approx (geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 2.39)) (some (fx 1300 51.60 2.20)) home)
-  (-31.7255987889194)
+-- Both legs count: the way back out costs too.
+#guard geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 2.39)) (some (fx 1300 51.60 2.20)) home
+  < geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 2.39)) none home
 
 end Verified.Hsmm.Geometric

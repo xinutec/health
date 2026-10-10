@@ -123,7 +123,7 @@ def emissionLogProbFullWith
   let placeCoord := match s.placeId with | some pid => placeCoords.get? pid | none => none
   w.base * baseEmissionWithReacquire s o placeCoord reacquireRobust priors
     + w.geometric * Geometric.geometricFeasibility s o.ts.toNat.toFloat
-        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord
+        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord priors
     + w.gap * Geometric.gapTerm s o.gps.isSome
         (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) priors
     -- The kernels' `isCovered` is the TypeScript gate, held open (see above).
@@ -182,9 +182,11 @@ private def obsCont : ObsRow :=
     (obsTrain.prevGpsFix.map toGeoFix) (obsTrain.nextGpsFix.map toGeoFix))
 #guard Geometric.gapTerm ⟨.train, none, some "Test Line"⟩ false
     (obsTrain.prevGpsFix.map toGeoFix) (obsTrain.nextGpsFix.map toGeoFix) > -0.05
-#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.stationary, some 5, none⟩ obsStat) (-814.4852866803162)
+-- 14 km in the minute before: no ground mode covers it, and no outlier
+-- explains 14 km.
+#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.stationary, some 5, none⟩ obsStat) (-211.333404464173)
 #guard approxF (emissionLogProbFull m cg ml pc false none ⟨.walking, none, none⟩ obsWalk) (-12.180968195475526)
 #guard approxF (emissionLogProbFull m cg ml pc true none ⟨.stationary, some 5, none⟩ obsReacq) (-7.8254058300548115)
-#guard approxF (emissionLogProbFull m cg ml pc false (some contCtx) ⟨.stationary, some 5, none⟩ obsCont) (-2.173287216286719)
+#guard approxF (emissionLogProbFull m cg ml pc false (some contCtx) ⟨.stationary, some 5, none⟩ obsCont) (-2.185651821103)
 
 end Verified.Hsmm.EmissionFull
