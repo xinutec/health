@@ -157,6 +157,15 @@ corpus floors before it ships.
    a continuous emission; candidates are the stations and lines near the
    fixes, which bounds the state (the route-aware decoder's discrete
    position state is the precedent against).
+   The station chain's terms do not move one at a time: its margin and
+   floor gates are tuned to their scale, so swapping a term for a
+   likelihood trades right stations for wrong ones (measured 2026-10-10:
+   the anchor as a reach probability, 5 new wrong emissions and 2 right
+   ones lost; the transfer alone, 1 right one lost). And a reach
+   probability is the wrong form for choosing a station: it is flat for
+   everything in reach, where the anchor needs the nearer one to be
+   likelier. The terms and the gates change together, the gates becoming
+   posterior probabilities (step 3).
 3. **Parameters are fitted.** Forward–backward EM over every captured day,
    judged on the narrated days held out. The same marginals are the
    calibrated confidence Phase 4 needs.
