@@ -63,6 +63,15 @@ open Verified.Geo.Worldline (FeasibilityStepPoint meanCadenceSpm)
 coarse fixes in an ordinary walk is just noise. -/
 def MIN_RUN_DURATION_S : Int := 180
 
+/-- The fastest a metro ride averages between the fixes either side of it
+(km/h). Measured on the narrated rides: 99% of Tube fixes are under 100 km/h,
+and a whole ride, stops included, averages far less. A dark run faster than
+this is a mainline train (10-08: 1,081 cell-tower fixes over 687 km at
+141 km/h, each of which the reconstruction looked up lines for), and is not
+reconstructed as a tube ride. -/
+def METRO_MAX_KMH : Float := 100
+private def KMH_PER_MPS : Float := 3.6
+
 /-- A surviving side-piece (the walk before/after the tube) shorter than this is
 absorbed into the train segment rather than kept as its own sliver. -/
 def MIN_SIDE_DURATION_S : Int := 60
@@ -642,6 +651,9 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
       let alighting? := (good.filter fun f => f.ts ≥ runEnd)[0]?
       match boarding?, alighting? with
       | some boarding, some alighting =>
+        let dt := Float.ofInt (alighting.ts - boarding.ts)
+        if dt > 0 && equirectMeters boarding.lat boarding.lon alighting.lat alighting.lon / dt * KMH_PER_MPS
+            > METRO_MAX_KMH then result.push host else
         -- Good fixes that surfaced INSIDE the run are interchange candidates —
         -- the platform where the rider changed lines.
         --
