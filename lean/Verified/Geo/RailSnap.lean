@@ -218,12 +218,12 @@ structure RailGraph where
 /-- Add edges between vertices of different ways that sit within `gapBridgeM`
     of each other but do not share an OSM node. Candidate pairs come from a
     coarse grid hash, so this stays linear in vertex count. -/
-private def bridgeGaps (vertices : Array Pt) (adj : Array (Array Edge)) (cloud : FixCloud) :
-    Array (Array Edge) := Id.run do
+private def bridgeGaps (vertices : Array Pt) (adj : Array (Array Edge)) (cloud : FixCloud)
+    (bridgeM : Float := gapBridgeM) : Array (Array Edge) := Id.run do
   let some v0 := vertices[0]? | return adj
-  let cellLat := gapBridgeM / 111320.0
+  let cellLat := bridgeM / 111320.0
   let midLat := v0.lat
-  let cellLon := gapBridgeM / (111320.0 * Float.cos (midLat * pi / 180))
+  let cellLon := bridgeM / (111320.0 * Float.cos (midLat * pi / 180))
   let cellOf := fun (v : Pt) => (floorInt (v.lat / cellLat), floorInt (v.lon / cellLon))
   let mut buckets : Std.HashMap (Int × Int) (Array Nat) := {}
   for hm_i : i in [0:vertices.size] do
@@ -253,7 +253,7 @@ private def bridgeGaps (vertices : Array Pt) (adj : Array (Array Edge)) (cloud :
             -- the new one.
             if h : j < vertices.size ∧ i < adj.size ∧ j < adj.size then
               let gap := metersBetween v (vertices[j]'h.1)
-              if !(gap > gapBridgeM) && !((adj[i]'h.2.1).any (fun e => e.to == j)) then
+              if !(gap > bridgeM) && !((adj[i]'h.2.1).any (fun e => e.to == j)) then
                 let w := edgeWeight v (vertices[j]'h.1) cloud
                 -- `i < j`, so the two rows are distinct and may be read before
                 -- either is written.
@@ -267,7 +267,8 @@ private def bridgeGaps (vertices : Array Pt) (adj : Array (Array Edge)) (cloud :
     what connects ways into a network — and are numbered in first-seen order.
     Edges are consecutive node pairs within a way, plus gap-bridge edges. Only
     train-carrying subtypes are included. -/
-def buildRailGraph (lines : Array RailWay) (cloud : FixCloud) : RailGraph := Id.run do
+def buildRailGraph (lines : Array RailWay) (cloud : FixCloud) (bridgeM : Float := gapBridgeM) :
+    RailGraph := Id.run do
   let mut vertices : Array Pt := #[]
   let mut adj : Array (Array Edge) := #[]
   let mut idByKey : Std.HashMap Verified.JsNum.CoordKey Nat := {}
@@ -299,7 +300,7 @@ def buildRailGraph (lines : Array RailWay) (cloud : FixCloud) : RailGraph := Id.
           adj := (adj.set prev.toNat rowP hp).set id rowId (by rw [Array.size_set]; exact hid)
       prev := Int.ofNat id
       prevPt := c
-  return { vertices, adj := bridgeGaps vertices adj cloud }
+  return { vertices, adj := bridgeGaps vertices adj cloud bridgeM }
 
 /-! ## Dijkstra
 
@@ -532,6 +533,61 @@ def snapTrainSegmentOnLine (seg : TrainSegment) (lines : Array RailWay)
         -- search returns the geometric shortest path.
         return routeBetweenStations seg lineLines (FixCloud.ofFixes #[]) board alight (some line)
       | _, _ => return none
+
+/-! ## A route relation's own track
+
+A long mainline ride has no connected track in the local mirror: the mirror is
+fetched around the fixes, and a TGV's fixes are kilometres apart. OSM records
+the service itself as a route relation whose member ways ARE the ridden track,
+so the path is searched over those ways alone. They are not one ordered line —
+a relation lists both branches and some one-direction pieces, and consecutive
+ways can meet without sharing a node — so near-touching ways are bridged, wider
+than over the open network: every way here is the same route, so a bridge
+cannot jump to another line. Measured on TGV 406 (Paris – Hendaye/Tarbes, 1,931
+ways): bridged at 50 m Hendaye and Gare Montparnasse do not connect, at 200 m
+they do along 770 km, and 1 km changes nothing. -/
+
+def relationBridgeM : Float := 200
+
+/-- The track between two points over one relation's ways, time-interpolated
+    over `[startTs, endTs]`; `none` when either end is off the track or no path
+    joins them — draw the raw fixes, never a guess. -/
+def snapOnRelation (ways : Array RailWay) (board alight : Pt) (startTs endTs : Float) :
+    Option (Array SnappedPoint) := Id.run do
+  let graph := buildRailGraph ways (FixCloud.ofFixes #[]) relationBridgeM
+  if graph.vertices.isEmpty then return none
+  match nearestVertex graph board, nearestVertex graph alight with
+  | some (fromId, fromD), some (toId, toD) =>
+    if fromD > maxStationToRailM || toD > maxStationToRailM || fromId == toId then return none
+    match shortestPath graph fromId toId with
+    | none => return none
+    | some idPath =>
+      if idPath.size < 2 then return none
+      return some (interpolateTimes (idPath.filterMap (fun i => graph.vertices[i]?)) startTs endTs)
+  | _, _ => return none
+
+private def FAR_M : Float := 1.0 / 0.0
+
+/-- The median over `fixes` of each one's distance to the nearest path vertex:
+    how well a candidate route explains the ride. `0` without fixes. -/
+def medianDistanceToPath (path : Array SnappedPoint) (fixes : Array Pt) : Float := Id.run do
+  if fixes.isEmpty || path.isEmpty then return 0
+  let ds := fixes.map fun f =>
+    path.foldl (fun m p => min m (metersBetween f ⟨p.lat, p.lon⟩)) FAR_M
+  let sorted := ds.qsort (· < ·)
+  return sorted[sorted.size / 2]!
+
+#guard medianDistanceToPath #[⟨50.0, 0.0, 0⟩, ⟨50.01, 0.0, 1⟩] #[⟨50.0, 0.0⟩, ⟨50.01, 0.0⟩, ⟨50.0, 0.001⟩] == 0
+
+-- Two ways along one meridian that do not share a node: a 100 m gap is bridged
+-- (0.0009° of latitude ≈ 100 m), a 1 km one is not; an end 5 km off the track
+-- is refused.
+private def relW (a b : Float) : RailWay := ⟨none, some "rail", #[⟨a, 0.0⟩, ⟨b, 0.0⟩]⟩
+#guard (snapOnRelation #[relW 50.0 50.01, relW 50.0109 50.02] ⟨50.0, 0.0⟩ ⟨50.02, 0.0⟩ 0 600).map (·.size) == some 4
+#guard (snapOnRelation #[relW 50.0 50.01, relW 50.0109 50.02] ⟨50.0, 0.0⟩ ⟨50.02, 0.0⟩ 0 600).map
+  (fun p => (p[0]!.ts, p[3]!.ts)) == some (0, 600)
+#guard (snapOnRelation #[relW 50.0 50.01, relW 50.019 50.03] ⟨50.0, 0.0⟩ ⟨50.03, 0.0⟩ 0 600).isNone
+#guard (snapOnRelation #[relW 50.0 50.01, relW 50.0109 50.02] ⟨50.0, 0.0⟩ ⟨50.02, 0.07⟩ 0 600).isNone
 
 /-! ## Guards
 

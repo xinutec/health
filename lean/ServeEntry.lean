@@ -2577,6 +2577,30 @@ private def railSnapResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
+/-- `relationroute`: a route relation's own track between two points
+(`RailSnap.snapOnRelation`).
+
+  { "ways": [ <railsnap way> ], "board": [latBits, lonBits], "alight": [latBits, lonBits],
+    "startTsBits": …, "endTsBits": …, "fixes": [[latBits, lonBits], …] }
+→ { "path": [[latBits, lonBits, tsBits], …] | null, "medianM": bits } — `medianM`
+  the fixes' median distance to the path, for choosing among candidates. -/
+private def relationRouteResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let ways ← (← optArr j "ways").mapM parseRailWay
+    let board ← parseSnapPt (← j.getObjVal? "board")
+    let alight ← parseSnapPt (← j.getObjVal? "alight")
+    let fixes ← (← optArr j "fixes").mapM parseSnapPt
+    let res := Verified.Geo.RailSnap.snapOnRelation ways board alight
+      (← jBits (← j.getObjVal? "startTsBits")) (← jBits (← j.getObjVal? "endTsBits"))
+    return match res with
+      | none => Json.mkObj [("path", Json.null)]
+      | some path => Json.mkObj [
+          ("medianM", fBits (Verified.Geo.RailSnap.medianDistanceToPath path fixes)),
+          ("path", Json.arr (path.map fun p => Json.arr #[fBits p.lat, fBits p.lon, fBits p.ts]))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 private def railFillResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let segs ← (← optArr j "segments").mapM parseFillSegment
@@ -2850,6 +2874,7 @@ def dispatch (j : Json) : Json :=
   | .ok "osmcoverage" => osmCoverageResult j
   | .ok "venuetags" => venueTagsResult j
   | .ok "railsnap" => railSnapResult j
+  | .ok "relationroute" => relationRouteResult j
   | .ok "railfill" => railFillResult j
   | .ok "clipinferred" => clipInferredResult j
   | .ok "watchbattery" => watchBatteryResult j

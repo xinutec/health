@@ -865,7 +865,12 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
 
     let mut routes: Vec<(String, serde_json::Value)> = Vec::new();
     for (key, acc) in &by_route {
-        match rail_route_geometry(&pool, key, acc.start_ts, acc.end_ts, &acc.fixes).await? {
+        let snapped =
+            match rail_route_geometry(&pool, key, acc.start_ts, acc.end_ts, &acc.fixes).await? {
+                Some(g) => Some(g),
+                None => relation_route_geometry(key, acc.start_ts, acc.end_ts, &acc.fixes).await?,
+            };
+        match snapped {
             Some(geom) if geom.len() >= 2 => {
                 eprintln!(
                     "  resolved route → {} pts ({} historic fixes)",
@@ -1018,6 +1023,160 @@ pub(crate) async fn rail_route_geometry(
         }
     }
     Ok(None)
+}
+
+/// How far around a ride's fixes its two stations are looked for (m): a TGV's
+/// fixes can be kilometres off the track and miss a terminus.
+pub(crate) const RELATION_STATION_MARGIN_M: f64 = 5000.0;
+/// A train relation serves a station when one of its stops is within this (m).
+pub(crate) const RELATION_STOP_RADIUS_M: f64 = 500.0;
+/// The candidate relations whose track is fetched, at most.
+pub(crate) const RELATION_MAX_CANDIDATES: usize = 3;
+/// Overpass budget per request (ms).
+pub(crate) const RELATION_TIMEOUT_MS: u64 = 120_000;
+
+/// One Overpass request through the shared client and its mirror fallback; the
+/// body's `elements`, or an error the caller turns into "leave it raw".
+async fn overpass_elements(
+    client: &reqwest::Client,
+    query: &str,
+) -> Result<Vec<serde_json::Value>> {
+    match backend::overpass::fetch_attempt(client, query, RELATION_TIMEOUT_MS, 0).await {
+        backend::overpass::Outcome::Ok(body) => backend::overpass::elements(&body),
+        backend::overpass::Outcome::Permanent { status } => {
+            anyhow::bail!("Overpass refused the query ({status})")
+        }
+        backend::overpass::Outcome::AllFailed { errors, .. } => {
+            anyhow::bail!("Overpass unreachable: {}", errors.join("; "))
+        }
+    }
+}
+
+/// A long mainline ride's track from the OSM route relation of the service
+/// ridden — the fallback when the mirror holds no connected track between the
+/// two stations, which is every ride longer than the area its fixes fetched (a
+/// TGV across France).
+///
+/// One request finds both stations by the label's names near the fixes and
+/// the train relations stopping at each; their intersection are the services
+/// that ran between them. Each candidate's ways are fetched and routed over by
+/// `RailSnap.snapOnRelation`, and the path the pooled fixes lie closest to (by
+/// median distance, `RailSnap.medianDistanceToPath`) is kept. `None` means LEAVE IT RAW: no relation serves
+/// both, Overpass failed, or none joins the two stations.
+pub(crate) async fn relation_route_geometry(
+    key: &str,
+    start_ts: f64,
+    end_ts: f64,
+    fixes: &[(f64, f64)],
+) -> Result<Option<Vec<serde_json::Value>>> {
+    let label = key.split(" · ").next().unwrap_or(key);
+    let Some((board, alight)) = label.split_once(" → ") else {
+        return Ok(None);
+    };
+    if fixes.is_empty() || board == alight {
+        return Ok(None);
+    }
+    let (mut s, mut w, mut n, mut e) = (90.0f64, 180.0f64, -90.0f64, -180.0f64);
+    for (la, lo) in fixes {
+        s = s.min(*la);
+        n = n.max(*la);
+        w = w.min(*lo);
+        e = e.max(*lo);
+    }
+    let d_lat = RELATION_STATION_MARGIN_M / 111_320.0;
+    let d_lon = RELATION_STATION_MARGIN_M
+        / (111_320.0 * (((s + n) / 2.0) * std::f64::consts::PI / 180.0).cos());
+    let bbox = format!("{},{},{},{}", s - d_lat, w - d_lon, n + d_lat, e + d_lon);
+    let esc = |t: &str| t.replace('\\', "\\\\").replace('"', "\\\"");
+    let kinds = r#"[~"^(railway|public_transport)$"~"^(station|halt|stop|stop_position)$"]"#;
+    let r = RELATION_STOP_RADIUS_M;
+    let query = format!(
+        "[out:json][timeout:90];\
+         node[\"name\"=\"{b}\"]{kinds}({bbox})->.b;\
+         node[\"name\"=\"{a}\"]{kinds}({bbox})->.a;\
+         .b out;.a out;\
+         (node(around.b:{r})[\"public_transport\"=\"stop_position\"];.b;)->.bs;\
+         rel(bn.bs)[\"route\"=\"train\"]->.rb;\
+         (node(around.a:{r})[\"public_transport\"=\"stop_position\"];.a;)->.as;\
+         rel(bn.as)[\"route\"=\"train\"]->.ra;\
+         rel.rb.ra;out ids;",
+        b = esc(board),
+        a = esc(alight),
+    );
+    let client = reqwest::Client::new();
+    let els = match overpass_elements(&client, &query).await {
+        Ok(els) => els,
+        Err(err) => {
+            eprintln!("  relation lookup for the route failed, left raw: {err:#}");
+            return Ok(None);
+        }
+    };
+    let at = |name: &str| {
+        els.iter().find_map(|el| {
+            (el.get("type")?.as_str()? == "node" && el.pointer("/tags/name")?.as_str()? == name)
+                .then(|| Some((el.get("lat")?.as_f64()?, el.get("lon")?.as_f64()?)))?
+        })
+    };
+    let (Some(board_pt), Some(alight_pt)) = (at(board), at(alight)) else {
+        eprintln!("  a station of the route is not in OSM by its name near the fixes, left raw");
+        return Ok(None);
+    };
+    let rel_ids: Vec<u64> = els
+        .iter()
+        .filter(|el| el.get("type").and_then(serde_json::Value::as_str) == Some("relation"))
+        .filter_map(|el| el.get("id")?.as_u64())
+        .take(RELATION_MAX_CANDIDATES)
+        .collect();
+    eprintln!("  {} train relation(s) serve both stations", rel_ids.len());
+
+    let mut best: Option<(f64, Vec<serde_json::Value>)> = None;
+    for id in rel_ids {
+        let q = format!("[out:json][timeout:120];rel({id});way(r);out geom;");
+        let ways_el = match overpass_elements(&client, &q).await {
+            Ok(v) => v,
+            Err(err) => {
+                eprintln!("  relation {id}: track fetch failed: {err:#}");
+                continue;
+            }
+        };
+        let ways: Vec<serde_json::Value> = ways_el
+            .iter()
+            .filter_map(|wy| {
+                let coords: Vec<serde_json::Value> = wy
+                    .get("geometry")?
+                    .as_array()?
+                    .iter()
+                    .filter_map(|p| {
+                        Some(serde_json::json!([
+                            backend::fold_payload::bits(p.get("lat")?.as_f64()?),
+                            backend::fold_payload::bits(p.get("lon")?.as_f64()?)
+                        ]))
+                    })
+                    .collect();
+                (coords.len() >= 2).then(|| {
+                    serde_json::json!({
+                        "name": wy.pointer("/tags/name"),
+                        "subtype": wy.pointer("/tags/railway"),
+                        "coords": coords,
+                    })
+                })
+            })
+            .collect();
+        let Some((score, path)) =
+            backend::lean::relation_route(start_ts, end_ts, &ways, board_pt, alight_pt, fixes)?
+        else {
+            eprintln!("  relation {id}: no path joins the two stations");
+            continue;
+        };
+        eprintln!(
+            "  relation {id}: {} pts, fixes' median distance {score:.0} m",
+            path.len()
+        );
+        if best.as_ref().is_none_or(|(b, _)| score < *b) {
+            best = Some((score, path));
+        }
+    }
+    Ok(best.map(|(_, p)| p))
 }
 
 /// `LINESTRING(lon lat, …)` → `[[latBits, lonBits], …]`.

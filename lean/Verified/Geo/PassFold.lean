@@ -1104,6 +1104,11 @@ def passes (e : Env) : Array Pass := #[
   ("alightAfterHold", fun segs => alightAfterHold e segs),
   ("alightAtLastFix", fun segs => alightAtLastFix e segs),
 
+  -- The track again, for each run's FINAL label: the passes since `railSnap`
+  -- can relabel a ride, and the early track stays on it otherwise.
+  ("railSnapFinal", fun segs =>
+    Verified.Geo.RailReconcile.reattachSnappedPaths segs e.railRouteCache),
+
   -- LAST. `driving` is this cascade's placeholder for "a vehicle-speed run
   -- nobody has identified yet"; the rail and bus passes have now all had their
   -- chance to claim it, so a placeholder still wearing the name of a car must
@@ -1208,7 +1213,8 @@ private def PAIR_MIRROR : Env :=
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
     "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "interchangeStayLabel",
-    "boardingStayLabel", "boardAtWait", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "vehicleIdentity"]
+    "boardingStayLabel", "boardAtWait", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
+    "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
 
@@ -1229,16 +1235,18 @@ def TS_CASCADE : Array String := #[
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
   -- `walkDwell`, `stayEdgeWalk`, `lineSubstitute`, `boardingStayLabel`,
-  -- `railThrough`, `boardAtWait`, `rideThroughHold`, `alightAfterHold` and `alightAtLastFix` are Lean-only;
+  -- `railThrough`, `boardAtWait`, `rideThroughHold`, `alightAfterHold`, `alightAtLastFix` and
+  -- `railSnapFinal` are Lean-only;
   -- they sit here so the containment check keeps holding for the order the TS had.
   "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
   "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
   "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "boardingStayLabel",
-  "boardAtWait", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "vehicleIdentity"]
+  "boardAtWait", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
+  "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 53
+#guard TS_CASCADE.size == 54
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1597,6 +1605,9 @@ private def OWN : Env := { MIX with reenrich := fun s => some { s with wayName :
 
 -- A train run whose route is in the cache gets the track drawn on it.
 #guard fires MIX "railSnap" #[tr 1000 2000 (some "A → B")]
+-- A run relabelled after the early attach loses the old route's track.
+#guard fires MIX "railSnapFinal" #[{ tr 1000 2000 (some "A → C") with
+  snappedPath := some #[⟨0, 0, 1000⟩, ⟨0, 1, 2000⟩] }]
 -- Any segment a fix covers gets a zone. `tzAt` answers Amsterdam and `homeTz`
 -- is London, so a pass that fell back instead of looking up would still differ
 -- from the input and pass here — what pins the BRANCH is the pair of guards on
@@ -2180,7 +2191,7 @@ def witnessed : Array String :=
 
 -- `lineSubstitute` fires on a leg whose line the relations rule out.
 #guard fires SUB "lineSubstitute" #[leg "Euston Square → King's Cross St Pancras · Victoria Line"]
-#guard witnessed.size == 53
+#guard witnessed.size == 54
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size

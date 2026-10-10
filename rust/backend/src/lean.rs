@@ -2300,6 +2300,59 @@ pub fn focus_places(
     })
 }
 
+/// A route relation's own track between two points (`RailSnap.snapOnRelation`),
+/// as the `{lat, lon}` list `rail_route_cache` stores, with the fixes' median
+/// distance to it (m); `None` when the relation does not join them.
+pub fn relation_route(
+    start_ts: f64,
+    end_ts: f64,
+    ways: &[serde_json::Value],
+    board: (f64, f64),
+    alight: (f64, f64),
+    fixes: &[(f64, f64)],
+) -> Result<Option<(f64, Vec<serde_json::Value>)>> {
+    let pt = |(la, lo): (f64, f64)| {
+        serde_json::json!([crate::fold_payload::bits(la), crate::fold_payload::bits(lo)])
+    };
+    let req = serde_json::json!({
+        "mode": "relationroute",
+        "ways": ways,
+        "board": pt(board),
+        "alight": pt(alight),
+        "startTsBits": crate::fold_payload::bits(start_ts),
+        "endTsBits": crate::fold_payload::bits(end_ts),
+        "fixes": fixes.iter().map(|&f| pt(f)).collect::<Vec<_>>(),
+    });
+    let out = serve(&serde_json::to_string(&req)?)?;
+    let v: serde_json::Value =
+        serde_json::from_str(&out).context("relationroute answer is not JSON")?;
+    if let Some(e) = v.get("error") {
+        anyhow::bail!("relationroute: {e}");
+    }
+    let Some(path) = v.get("path").and_then(|p| p.as_array()) else {
+        return Ok(None);
+    };
+    let geom = path
+        .iter()
+        .filter_map(|p| {
+            let a = p.as_array()?;
+            let f = |i: usize| -> Option<f64> {
+                Some(f64::from_bits(a.get(i)?.as_str()?.parse::<u64>().ok()?))
+            };
+            Some(serde_json::json!({ "lat": f(0)?, "lon": f(1)? }))
+        })
+        .collect::<Vec<_>>();
+    let median = v
+        .get("medianM")
+        .and_then(|m| m.as_str()?.parse::<u64>().ok())
+        .map_or(f64::INFINITY, f64::from_bits);
+    Ok(if geom.is_empty() {
+        None
+    } else {
+        Some((median, geom))
+    })
+}
+
 /// One train leg snapped onto its rail corridor — the `railsnap` serve mode
 /// over `Verified.Geo.RailSnap`.
 ///

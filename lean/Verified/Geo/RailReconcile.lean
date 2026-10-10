@@ -251,6 +251,27 @@ def annotateSnappedPaths (segments : Array Seg) (railRouteCache : Array RouteRow
             snappedPath := some (Verified.Geo.RailSnap.interpolateTimes row.geometry
               (Float.ofInt seg.startTs) (Float.ofInt seg.endTs)) }
 
+/-- Each train run's track for its FINAL label: the cached geometry, or none.
+
+`annotateSnappedPaths` attaches early, because walk anchoring and the final
+merge read the track; passes after it can still relabel a run — a later alight,
+a through-joined leg — and the track attached for the old label stayed on it
+(10-08: the Hendaye–Bordeaux track under "Hendaye → Gare Montparnasse", the rest
+drawn as a gap). Every track comes from the cache, so recomputing from the final
+label is exact; a label not yet cached draws its raw fixes until the nightly
+job has resolved it. -/
+def reattachSnappedPaths (segments : Array Seg) (railRouteCache : Array RouteRow) : Array Seg :=
+  segments.map fun seg =>
+    if effectiveMode seg != "train" then seg
+    else match seg.wayName.filter (· != "") with
+      | none => seg
+      | some key =>
+        match railRouteCache.find? (fun r => r.routeKey == key && r.geometry.size ≥ 2) with
+        | some row =>
+          { seg with snappedPath := some (Verified.Geo.RailSnap.interpolateTimes row.geometry
+              (Float.ofInt seg.startTs) (Float.ofInt seg.endTs)) }
+        | none => { seg with snappedPath := none }
+
 /-! ## `splitChangeoverWindows` -/
 
 /-- A step at or above this (km/h) is the phone on a train, not on a platform. -/
