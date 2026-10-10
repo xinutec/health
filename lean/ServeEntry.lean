@@ -1381,7 +1381,8 @@ private def assembleSegmentsResult (j : Json) : Json :=
             -- a quiet day.
             Json.mkObj [("error", Json.str
               s!"path has {sts.size} states but the observation tensor has {c.obs.size} rows")]
-          | some segs =>
+          | some segs0 =>
+            let segs := Verified.HsmmSegments.foldRideWaits segs0
             -- ⚠ THE STATION CHAIN RUNS HERE, and that is the point. `stationchain`
             -- exists as its own mode and takes `obs` — the 1440-row observation
             -- tensor — so calling it from the shell would put back on the wire

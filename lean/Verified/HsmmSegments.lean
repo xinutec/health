@@ -114,4 +114,69 @@ private def st (m : String) (p : Option Int := none) (l : Option String := none)
 #guard (groupStates #[st "walking", st "driving", st "walking"] #[0, 60, 120]).map (·.size)
        == some 3
 
+/-! ## A short wait beside a ride is part of the trip
+
+The decode reports a platform wait as what it is, a stay: the phone stood still,
+no steps, a fix a minute. The narratives fold one into the walk or the ride
+beside it, and keep a longer one as a stay of its own. Measured 2026-10-10 on
+every decoded stay touching a train against the narrated minutes it covers: 25
+of 28 under ten minutes were narrated as movement, 7 of 8 of ten or more as a
+stay. So a stay shorter than `RIDE_WAIT_MAX_S` with a train beside it joins the
+walk on its side, or the train when there is no walk; the decode itself is
+untouched. A wait between two rides is left alone: joined into one ride, 05-15's
+Jubilee was re-lined by the station chain, whose duration term does not know a
+train can stand. -/
+
+def RIDE_WAIT_MAX_S : Int := 10 * 60
+
+/-- Fold each short wait beside a train into its neighbour (see above). -/
+def foldRideWaits (segs : Array Segment) : Array Segment := Id.run do
+  let mut out : Array Segment := #[]
+  let mut i := 0
+  while h : i < segs.size do
+    let s := segs[i]
+    let prev := out.back?
+    let next := segs[i + 1]?
+    let isTrain := fun (x : Option Segment) => (x.map (·.mode == "train")).getD false
+    let isWalk := fun (x : Option Segment) => (x.map (·.mode == "walking")).getD false
+    if s.mode == "stationary" && s.endTs - s.startTs < RIDE_WAIT_MAX_S
+        && (isTrain prev != isTrain next) then
+      if isWalk prev || (isTrain prev && !isWalk next) then
+        out := out.modify (out.size - 1) ({ · with endTs := s.endTs })
+        i := i + 1
+      else
+        match next with
+        | some n =>
+          out := out.push { n with startTs := s.startTs }
+          i := i + 2
+        | none =>
+          out := out.push s
+          i := i + 1
+    else
+      out := out.push s
+      i := i + 1
+  return out
+
+private def sg (a b : Int) (m : String) (l : Option String := none) : Segment := ⟨a, b, m, none, l⟩
+-- Walk, an 8-minute wait, the ride: the wait joins the walk.
+#guard foldRideWaits #[sg 0 600 "walking", sg 600 1080 "stationary", sg 1080 2000 "train" (some "M")]
+  == #[sg 0 1080 "walking", sg 1080 2000 "train" (some "M")]
+-- A wait after the ride joins the walk after it.
+#guard foldRideWaits #[sg 0 900 "train" (some "M"), sg 900 1200 "stationary", sg 1200 2000 "walking"]
+  == #[sg 0 900 "train" (some "M"), sg 900 2000 "walking"]
+-- A wait after the ride with no walk beside it joins the ride.
+#guard foldRideWaits #[sg 0 900 "train" (some "M"), sg 900 1200 "stationary", sg 1200 9000 "stationary"]
+  == #[sg 0 1200 "train" (some "M"), sg 1200 9000 "stationary"]
+-- A stay before a ride with no walk joins the ride's start.
+#guard foldRideWaits #[sg 0 300 "stationary", sg 300 900 "train" (some "M")]
+  == #[sg 0 900 "train" (some "M")]
+-- A wait between two rides is left alone.
+#guard foldRideWaits #[sg 0 180 "train" (some "J"), sg 180 480 "stationary", sg 480 600 "train" (some "J")]
+  == #[sg 0 180 "train" (some "J"), sg 180 480 "stationary", sg 480 600 "train" (some "J")]
+-- Ten minutes is a stay; a short stay with no train beside it is untouched.
+#guard foldRideWaits #[sg 0 600 "walking", sg 600 1200 "stationary", sg 1200 2000 "train" (some "M")]
+  == #[sg 0 600 "walking", sg 600 1200 "stationary", sg 1200 2000 "train" (some "M")]
+#guard foldRideWaits #[sg 0 600 "walking", sg 600 900 "stationary", sg 900 2000 "walking"]
+  == #[sg 0 600 "walking", sg 600 900 "stationary", sg 900 2000 "walking"]
+
 end Verified.HsmmSegments

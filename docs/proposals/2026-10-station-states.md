@@ -38,6 +38,14 @@ a fix at stay speed, behind an arm knob. Scoreboard, 43 days:
   stay became a platform and a one-minute ride (10-04, a phantom). A platform
   state needs a measured entry rate and wait-length distribution; the eight
   narrated waits (5–38 min) are too few and too wide to fit one.
+- **What the misses were instead: a reading convention.** The decode is right
+  that he stood still (no steps, a fix a minute); the narratives fold a short
+  wait into the walk or ride beside it. Of every decoded stay touching a
+  train, 25 of 28 under ten minutes were narrated as movement and 7 of 8 of ten
+  or more as a stay: `HsmmSegments.foldRideWaits` reads it so (one train
+  neighbour only; between two rides the chain re-lined a joined ride). Shipped:
+  scoreboard journeys 117 → 119, legMode 280 → 283, stations 45 → 47; on the
+  served referee 121 → 122 of 150.
 - **What it does buy is stations:** +5 with the wait folded, where the station
   the person stood at names the ride's end. That is evidence for the anchor
   half of S3, not for S1 as a decode change.
