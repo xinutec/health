@@ -133,13 +133,37 @@ def RIDE_HEAD_CRAWL_WEIGHT : Float := 0.5
 /-- A line-name slot that names no line: the generator's `unknown_rail`
     fallback and a ride's head. Every reader of a train state's line treats
     both as "no line". -/
-def isPlaceholderLine (l : String) : Bool := l == "unknown_rail" || l == "head"
+def isPlaceholderLine (l : String) : Bool := l == "unknown_rail" || l == "unknown_metro" || l == "head"
 
 /-- A ride's head: `driving` or `train` with the head mark in the `lineName`
     slot. For a train it is the platform wait before the ride, which is part
     of the ride by his convention (2026-09-27). -/
 def isRideHead (s : State) : Bool :=
   (s.mode == .driving || s.mode == .train) && s.lineName == some "head"
+
+/-! Rail that is not a modelled metro line rides in `unknown_rail`, and it is not
+the Tube: measured on the narrated rides, fix speeds on Tube lines run
+42 ± 33 km/h (99th percentile 100), on other rail 74 ± 71 (99th percentile 294,
+a TGV at 250–300). One distribution for both read a TGV minute as `unknown`. -/
+
+def MAINLINE_SPEED_MEAN : Float := 74
+def MAINLINE_SPEED_STD : Float := 71
+
+/-- A metro the day's route graph has no line for — abroad, the Paris Métro —
+    rides in `unknown_metro` at the train's own (Tube) speeds, beside the
+    mainline. -/
+def UNKNOWN_METRO : String := "unknown_metro"
+
+/-- The train state for rail no modelled line covers. -/
+def isMainline (s : State) : Bool := s.mode == .train && s.lineName == some "unknown_rail"
+
+/-- The mainline's prior: the train's, with the mainline's speeds. -/
+def mainlinePrior (priors : Mode → ModePrior := modePriors) : ModePrior :=
+  { priors .train with speedMean := MAINLINE_SPEED_MEAN, speedStd := MAINLINE_SPEED_STD }
+
+/-- A state's emission prior: its mode's, the mainline's for `unknown_rail`. -/
+def priorOf (priors : Mode → ModePrior) (s : State) : ModePrior :=
+  if isMainline s then mainlinePrior priors else priors s.mode
 
 /-- What the head adds to `driving`'s per-minute emission: the log of the crawl
     mixture over the cruising prior. 0 without a fix. -/
@@ -205,7 +229,7 @@ private def placeTerm (s : State) (o : Observation) (placeCoord : Option (Float 
 /-- The base-path emission log-probability, summed in `emissions.ts` order. -/
 def emissionLogProb (s : State) (o : Observation) (placeCoord : Option (Float × Float))
     (priors : Mode → ModePrior := modePriors) : Float :=
-  let prior := priors s.mode
+  let prior := priorOf priors s
   let pCad := match o.cadence with | none => 0.0 | some c => logCadencePdf c prior
   let pBed := if o.inBed then Float.log (inBedProbByMode s.mode) else 0.0
   modePriorLog s.mode

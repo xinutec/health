@@ -373,7 +373,7 @@
 	},
 	"2026-09-06": {
 		"journeysExpected": 6,
-		"journeysMatched": 4,
+		"journeysMatched": 3,
 		"legModeScorable": 10,
 		"legModeMatching": 8,
 		"legLineScorable": 1,
@@ -505,7 +505,7 @@
 	},
 	"2026-10-08": {
 		"journeysExpected": 6,
-		"journeysMatched": 2,
+		"journeysMatched": 3,
 		"legModeScorable": 13,
 		"legModeMatching": 11,
 		"legLineScorable": 1,

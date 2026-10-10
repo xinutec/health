@@ -129,6 +129,9 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (modeMinuteScale : Float := 1.0) (modeEntryScale : Float := 0.0)
     (modeMinuteScaleWithGps : Float := 1.0) (rideHeadMin : Nat := 0)
     (rideHeadCredit : Float := 1.0) : ModelContext :=
+  -- A line is a state only where the day's route graph has its track: abroad
+  -- a London line had no evidence against it and named a TGV (10-01).
+  let lines := KNOWN_LINES.filter (RouteModel.linesInGraph model).contains
   let totalDwell := places.foldl (fun a (_, _, _, _, dwell) => a + dwell) 0.0
   let nPlaces := places.length
   let placeCoords := places.foldl (fun m (p, lat, lon, _, _) => m.insert p.id (lat, lon))
@@ -140,8 +143,9 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     m.insert p.id (if totalDwell > 0 then dwell / totalDwell else 1.0 / nPlaces.toFloat))
     ({} : Std.HashMap Int Float)
   { obs
-    states := (buildStateSpace (places.map (·.1)) KNOWN_LINES
-      ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_STATE, StateSpace.RIDE_HEAD_TRAIN_STATE] else [])).toArray
+    states := (buildStateSpace (places.map (·.1)) lines
+      ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_STATE, StateSpace.RIDE_HEAD_TRAIN_STATE] else [])
+      ++ [(⟨.train, none, some Emissions.UNKNOWN_METRO⟩ : State)]).toArray
     model
     connGraph := RouteModel.toConnGraph model
     modeledLines := RouteModel.linesInGraph model
@@ -154,8 +158,9 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     minuteLines := obs.map (RouteModel.minuteLines model)
     railByMinute :=
       let connGraph := RouteModel.toConnGraph model
-      let trainStates := (buildStateSpace (places.map (·.1)) KNOWN_LINES
-        ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_TRAIN_STATE] else [])).filter (·.mode == .train)
+      let trainStates := (buildStateSpace (places.map (·.1)) lines
+        ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_TRAIN_STATE] else [])
+        ++ [(⟨.train, none, some Emissions.UNKNOWN_METRO⟩ : State)]).filter (·.mode == .train)
       -- Walked minutes (cadence at `INTERCHANGE_CADENCE_SPM` or more) and the
       -- run each belongs to. An INTERCHANGE minute is a walked minute whose run
       -- lies ENTIRELY inside the gap: a run touching the gap's first bookend
@@ -374,7 +379,7 @@ private def approxG (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 
 -- State space built correctly: KNOWN_LINES present, place 5 present.
 #guard KNOWN_LINES.length == 11
-#guard ctxU.states.size == 19          -- 5 movement + 2 stationary + 11 lines + unknown_rail
+#guard ctxU.states.size == 10          -- 5 movement + 2 stationary + the graph's one line + unknown_rail + unknown_metro
 #guard ctxU.nPlaces == 1
 
 -- emitAt: the composed value is EmissionFull's V8-pinned emission, and coverage
@@ -410,7 +415,7 @@ private def drvIdx : Nat := (ctxH.states.findIdx? (fun s => s.mode == .driving &
 #guard transAt { ctxU with chainOn := true } statIdx noneIdx 0 == negInf  -- stat@5 → stat@none
 
 -- tensor dims.
-#guard (buildEmit ctxU).size == 1 && (buildEmit ctxU)[0]!.size == 19
-#guard (buildInit ctxU).size == 19
+#guard (buildEmit ctxU).size == 1 && (buildEmit ctxU)[0]!.size == 10
+#guard (buildInit ctxU).size == 10
 
 end Verified.Hsmm.Assemble

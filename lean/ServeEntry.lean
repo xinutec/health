@@ -1002,7 +1002,8 @@ private def durClassKey (s : Verified.Hsmm.Emissions.State) : Nat :=
   match s.mode with
   | .stationary => 0 | .walking => 1 | .cycling => 2 | .driving => 3
   | .plane => 5 | .unknown => 6
-  | .train => match s.lineName with | some l => if l != "unknown_rail" then 7 else 4 | none => 4
+  | .train => match s.lineName with
+    | some l => if !Verified.Hsmm.Emissions.isPlaceholderLine l then 7 else 4 | none => 4
 
 /-- Reference `segEnd` for the duration baseline (matches TS `REF_E`). -/
 private def assembleRefE : Nat := 720
@@ -1048,7 +1049,8 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   let chainEligible := fun (src dst : Verified.Hsmm.Emissions.State) =>
     (dst.mode == .stationary && dst.placeId != none)
     || (src.mode == .stationary && src.placeId != none && Verified.Hsmm.RouteModel.isMovingMode dst.mode)
-    || (dst.mode == .train && (match dst.lineName with | some l => l != "unknown_rail" | none => false))
+    || (dst.mode == .train && (match dst.lineName with
+        | some l => !Verified.Hsmm.Emissions.isPlaceholderLine l | none => false))
   -- What the chain term asks of each minute regardless of the pair — a fix's
   -- stay penalty to each place, its boarding penalty to each line — tabled once
   -- per minute rather than once per pair per minute (#1774, 2026-09-30).
@@ -1370,7 +1372,10 @@ private def assembleSegmentsResult (j : Json) : Json :=
                 , placeId := s.placeId
                   -- A ride's head IS the ride: it leaves as plain `driving`
                   -- and `groupStates` joins it to the minutes that follow.
-                , lineName := if Verified.Hsmm.Emissions.isRideHead s then none else s.lineName })) #[]
+                , lineName := if Verified.Hsmm.Emissions.isRideHead s then none
+                    -- An unnamed metro is rail with no line to every reader.
+                    else if s.lineName == some Verified.Hsmm.Emissions.UNKNOWN_METRO then some "unknown_rail"
+                    else s.lineName })) #[]
         match states with
         | .error e => Json.mkObj [("error", Json.str e)]
         | .ok sts =>

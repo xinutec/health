@@ -182,9 +182,9 @@ private def obsCont : ObsRow :=
     (obsTrain.prevGpsFix.map toGeoFix) (obsTrain.nextGpsFix.map toGeoFix))
 #guard Geometric.gapTerm ⟨.train, none, some "Test Line"⟩ false
     (obsTrain.prevGpsFix.map toGeoFix) (obsTrain.nextGpsFix.map toGeoFix) > -0.05
--- 14 km in the minute before: no ground mode covers it, and no outlier
--- explains 14 km.
-#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.stationary, some 5, none⟩ obsStat) (-211.333404464173)
+-- 14 km in the minute before (840 km/h): beyond every ground mode, the
+-- mainline's tail included, and no outlier explains 14 km.
+#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.stationary, some 5, none⟩ obsStat) (-74.095848820918)
 #guard approxF (emissionLogProbFull m cg ml pc false none ⟨.walking, none, none⟩ obsWalk) (-12.180968195475526)
 #guard approxF (emissionLogProbFull m cg ml pc true none ⟨.stationary, some 5, none⟩ obsReacq) (-7.8254058300548115)
 #guard approxF (emissionLogProbFull m cg ml pc false (some contCtx) ⟨.stationary, some 5, none⟩ obsCont) (-2.185651821103)

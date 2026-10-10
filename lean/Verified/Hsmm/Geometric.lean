@@ -86,7 +86,7 @@ def gapTerm (s : State) (hasFix : Bool) (prevFix nextFix : Option GpsFix)
       let dt := n.ts - p.ts
       let dark := Float.round (dt / 60) - 1
       if dark < 1 then 0.0
-      else gapLogLikelihood (priors s.mode) (haversineMeters p.lat p.lon n.lat n.lon) dt / dark
+      else gapLogLikelihood (Verified.Hsmm.Emissions.priorOf priors s) (haversineMeters p.lat p.lon n.lat n.lon) dt / dark
     | _, _ => 0.0
 
 /-! ## The place term
@@ -97,7 +97,7 @@ left. Each leg needs only that SOME travel mode covers it: the best mode's
 survival. Which mode it was is the travel minutes' own states to pay for, so
 the mode prior is not charged here again. The two legs multiply.
 
-Ground modes only. A plane reaches anywhere in a night, so with it a stay at
+Ground modes only, the mainline among them. A plane reaches anywhere in a night, so with it a stay at
 Home 1,300 km from the morning's first fix went free, and the decode put the
 night there; no plane state pays for that flight, because none is decoded. -/
 
@@ -106,7 +106,9 @@ private def TRAVEL_MODES : Array Mode := #[.walking, .cycling, .driving, .train]
 /-- log P(the best travel mode covers `d` metres in `dt` seconds); `0` for `dt ≤ 0`. -/
 def reachLogLikelihood (priors : Mode → ModePrior) (d dt : Float) : Float :=
   if dt <= 0 then 0.0
-  else TRAVEL_MODES.foldl (fun best m => max best (gapLogLikelihood (priors m) d dt)) (gapLogLikelihood (priors .walking) d dt)
+  else TRAVEL_MODES.foldl (fun best m => max best (gapLogLikelihood (priors m) d dt))
+    (max (gapLogLikelihood (priors .walking) d dt)
+      (gapLogLikelihood (Verified.Hsmm.Emissions.mainlinePrior priors) d dt))
 
 def geometricFeasibility (s : State) (obsTs : Float) (prevFix nextFix : Option GpsFix)
     (placeCoord : Option (Float × Float)) (priors : Mode → ModePrior := modePriors) : Float :=
@@ -144,8 +146,9 @@ private def fx (ts lat lon : Float) : GpsFix := ⟨ts, lat, lon⟩
 private def stt (m : Mode) (pid : Option Int) : State := ⟨m, pid, none⟩
 private def home : Option (Float × Float) := some (51.55, 2.22)
 
--- 17 km in three minutes (340 km/h) to reach the place: no ground mode.
-#guard geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 2.39)) none home < -20
+-- 17 km in three minutes (340 km/h) to reach the place: only the far tail of
+-- the mainline's speeds.
+#guard geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 2.39)) none home < -4
 -- Four minutes after a fix 15 m away: reachable on foot.
 #guard geometricFeasibility (stt .stationary (some 5)) 1240 (some (fx 1000 51.5501 2.2198)) none home > -0.01
 -- An hour after a fix 12 km away: reachable.

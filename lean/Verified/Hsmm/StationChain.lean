@@ -1067,7 +1067,7 @@ def chainMarginals (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
     else match seg.lineName with
       | none => skip
       | some line =>
-        if line == "unknown_rail" then skip
+        if Verified.Hsmm.Emissions.isPlaceholderLine line then skip
         else match idxByTs.get? seg.startTs, idxByTs.get? (seg.endTs - 60) with
           | some firstIdx, some lastIdx =>
             (acc.1.push (buildLeg g obs servedFor stopsFor i seg line altLines firstIdx lastIdx
