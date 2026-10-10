@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-status: phase A built (instrument); phase B measured and refuted at two cuts
+status: phase A built (instrument); phase B measured and refuted at two cuts and at a 720-minute cap
 references:
   - decoder-roadmap.md
   - 2026-10-station-states.md
@@ -36,9 +36,24 @@ above, 98 and 16. Most phantoms are uncertain; sixteen are confident.
 | today (`unknown` a state) | 121 | 286 | 53 | 47 | 6 | 126 |
 | no `unknown`, cut 0.5 | 111 | 288 | 58 | 53 | 22 | 122 |
 | no `unknown`, cut 0.7 | 100 | 273 | 58 | 53 | 21 | 109 |
+| no `unknown`, cap 720 | 113 | 290 | 58 | 53 | 36 | 124 |
+| no `unknown`, cap 720, cut 0.5 | 110 | 287 | 58 | 53 | 18 | 121 |
 
 Refuted at both: the confident phantoms stay, and cutting uncertain stretches
-to `unknown` breaks journeys the state had held together. What the arms keep
+to `unknown` breaks journeys the state had held together.
+
+Most of the removal arm's phantoms are a trellis artefact, not evidence: a
+segment lasts at most `maxD` (240 minutes) and consecutive segments differ in
+state, so a long stay must be broken, and `unknown`'s one-minute blips were the
+breakers (102 of them, after stays of 229–240 minutes). Without `unknown` the
+breaker is a two-minute ride. The 720-minute cap stands in for "a stay at the
+cap may continue as itself": phantoms 92 → 36, and 18 with the cut, still
+three times the gate, with journeys down 8–11 (04-29 loses five of six under
+the cut). So the same-state continuation in the verified trellis would not
+clear phase B alone, and is not built. Fitted per-mode fix shares (minutes
+with a fix: stationary 0.35, train 0.43, walking 0.97, driving 0.94, against
+a uniform 0.85) were refuted too: alone journeys 118, stations 42, phantoms 8;
+with phase B 112/287/57/51/25. What the arms keep
 is the prize (lines +5, stations +6); what is missing is the risk named
 below — a model of what a dark minute says about each mode, so that the
 confident phantoms stop being confident.
