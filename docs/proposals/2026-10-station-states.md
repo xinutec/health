@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-status: design, not started
+status: S1 measured and refuted; not built
 references:
   - decoder-roadmap.md
   - 2026-07-continuity-c4.md
@@ -10,7 +10,37 @@ references:
 # Stations as decoder states
 
 The decoder roadmap's step 2 ("line and station are decoder state"), designed
-against what the decoder misses today. Nothing here is built.
+against what the decoder misses today. S1 was built, measured on three arms
+and reverted; read "What S1 measured" before building any of it again.
+
+## What S1 measured (2026-10-10)
+
+A platform as a synthetic place at the station (negative place id), in the
+station-graph table for the lines that call there, candidates within 200 m of
+a fix at stay speed, behind an arm knob. Scoreboard, 43 days:
+
+| arm | journeys | legMode | legLine | stations | phantoms |
+|---|---|---|---|---|---|
+| baseline | 117 | 280 | 53 | 45 | 6 |
+| one platform state per station | 114 | 279 | 52 | 48 | 7 |
+| board and alight platforms (left only into, entered only from, a train); the wait folded into the ride | 113 | 280 | 54 | 50 | 8 |
+| the same; the wait left a stay | 115 | 274 | 52 | 46 | 7 |
+
+- **The premise was half wrong.** The narratives split a journey at any stay of
+  `JOURNEY_PAUSE_MAX_S` or more, waits at stations included (Finchley Road 20
+  min, Victoria 17, Hendaye 35 and 36, Montparnasse 38; Baker Street 5). The
+  fourteen misses below are the decoder holding eight or nine minutes still
+  where the narrative has a walk: a timing disagreement, which a platform
+  state does not touch.
+- **A platform without its own priors displaces what is near it.** It pays the
+  visit-weight fallback and no hour profile, and the stay's 200-minute duration
+  Gamma: a focus place beside a station lost to it (06-16, 05-22), an evening
+  stay became a platform and a one-minute ride (10-04, a phantom). A platform
+  state needs a measured entry rate and wait-length distribution; the eight
+  narrated waits (5–38 min) are too few and too wide to fit one.
+- **What it does buy is stations:** +5 with the wait folded, where the station
+  the person stood at names the ride's end. That is evidence for the anchor
+  half of S3, not for S1 as a decode change.
 
 ## Where the decoder stands
 
