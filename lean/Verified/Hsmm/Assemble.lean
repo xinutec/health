@@ -114,6 +114,8 @@ structure ModelContext where
   /-- The transition weight: the shipped uniform split unless the harness
       carries a fitted mode matrix (`Transitions.fittedWeight`). -/
   transWeight : State → State → Float := Transitions.transitionWeight
+  /-- Per minute, the best train state's line-proximity term (`lineRankOnly`). -/
+  lineProxBest : Array Float := #[]
 
 /-- The longest segment the HSMM will consider, in minutes.
 
@@ -255,7 +257,11 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
         (if t == 0 then none else (c.obs[t - 1]?).map SegmentEmission.obsClass) with
       | some v => v
       | none => (SegmentEmission.fixMinute q.p st.mode o.gps.isSome prevLit).getD SEG_ZERO
-    chain - out + speed
+    let rank :=
+      if q.p.lineRankOnly && st.mode == .train then
+        -c.weights.lineProximity * (c.lineProxBest[t]?).getD SEG_ZERO
+      else SEG_ZERO
+    chain - out + speed + rank
 
 /-- `emission(s, obs[t])` — the full composed emission. Coverage does not reach
     it (#238, 2026-09-29): the per-minute line factors stay live on a
@@ -352,6 +358,18 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
                 else SEG_ZERO)
          else SEG_ZERO)
   | _, _ => SEG_ZERO
+
+/-- Per minute, the best line-proximity term over the train states. -/
+def lineProxBestTable (c : ModelContext) : Array Float :=
+  (Array.range c.obs.size).map fun t =>
+    match c.obs[t]? with
+    | none => SEG_ZERO
+    | some o =>
+      let ml := c.minuteLines.getD t (RouteModel.minuteLines c.model o)
+      let best := c.states.foldl (fun acc st =>
+        if st.mode == .train then max acc (RouteModel.lineProximityFactorWith c.modeledLines ml st o false)
+        else acc) negInf
+      if best == negInf then SEG_ZERO else best
 
 /-- `segEmFrom` over the segment of length `d` ending at `e`. -/
 def segEmAt (c : ModelContext) (s d e : Nat) : Float :=

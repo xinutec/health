@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`); eight arms measured, not at the gate yet
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`); twelve arms measured; s12 level with the shipped decoder on the referee
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -88,6 +88,8 @@ place entry normalised over places per hour.
 | s8: s7 + the observation chain | 106 | 289 | 60 | 42 | 11 | 122 |
 | s9: s8 + fitted per-minute cadence | 108 | 284 | 56 | 30 | — | not run |
 | s10: s8 + edge minutes as mixtures | 103 | 284 | 58 | 43 | 19 | not run |
+| s11: s8 without `LineProximity` | 110 | 291 | 40 | 34 | 11 | not run |
+| s12: s8 with `LineProximity` ranking lines only | 110 | 291 | 59 | 46 | 11 | 126 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -159,12 +161,19 @@ cheaper — phantoms 11 → 19. The edge minute is real; it needs a model where
 the boundary's position inside the minute is a variable, not a blend at every
 boundary.
 
+**`LineProximity` ranks lines and nothing else** (s12, `lineRankOnly`). Its hand
+constants (+1.5 on a line's track, −2.5 off it or nearer a road) did two
+jobs: the mode (train or not) and the line. Removed (s11), the mode decision
+improves (journeys +4, leg modes +2) and the line is lost (lines 60 → 40,
+stations 42 → 34). Kept only as a ranking — each minute the best train state's
+term is subtracted from every train state's — it picks the line and leaves the
+mode to the observation chain: journeys 110, leg modes 291, lines 59, stations
+46, referee 126, level with the shipped decoder.
+
 ## Next
 
 - The remaining misses against the served day, read one by one (the method
   that found every piece above).
-- `LineProximity`'s hand constants (+1.5 / −2.5) now double-count rail
-  adjacency for the mode; they should only choose the line.
 - Speed in the same form (a segment's jitter around its mean).
 - Held-out fits (by day) before anything ships.
 - Gate: phantoms not above the shipped 6, journeys and the referee not below

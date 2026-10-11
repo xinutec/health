@@ -89,6 +89,10 @@ structure Params where
       per mode (rows: the class before). It carries fix presence and rail
       adjacency together, and replaces `fixMarkov` for a mode it lists. -/
   obsChain : List (Mode × Array (Array Float)) := []
+  /-- `LineProximity` only ranks a train's lines: at each minute the best line's
+      term is subtracted from every train state's, so the term says which line
+      and nothing about train against other modes (`obsChain` says that). -/
+  lineRankOnly : Bool := false
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of

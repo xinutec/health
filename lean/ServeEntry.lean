@@ -912,12 +912,13 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let v ← ((f.getObjVal? "speedEps") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m))).toOption
       pure (m, ← num v)
     let speedWindow := ((f.getObjVal? "speedWindow") >>= (·.getBool?)).toOption.getD false
+    let lineRankOnly := ((f.getObjVal? "lineRankOnly") >>= (·.getBool?)).toOption.getD false
     let obsChain := all.filterMap fun m => do
       let rows ← (((f.getObjVal? "obsChain") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)))
         >>= (·.getArr?)).toOption
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, obsChain }
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, obsChain, lineRankOnly }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
@@ -958,7 +959,11 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let count := fun (src : Verified.Hsmm.Emissions.State) (md : Verified.Hsmm.Emissions.Mode) =>
         (((counts.get? (Verified.Hsmm.StateSpace.stateKey src)).getD []).find? (·.1 == md)).map (·.2) |>.getD 0
       Verified.Hsmm.Transitions.fittedWeight matrix count
-  return ({ ctx with priors, fits, weights, segEm, segPref, transWeight }, maxD)
+  let ctx := { ctx with priors, fits, weights, segEm, segPref, transWeight }
+  let lineProxBest := match segEm with
+    | some q => if q.p.lineRankOnly then Verified.Hsmm.Assemble.lineProxBestTable ctx else #[]
+    | none => #[]
+  return ({ ctx with lineProxBest }, maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json
