@@ -90,11 +90,18 @@ fn term_weights() -> Result<Value> {
 /// `HSMM_SEG_EMISSION=<file>`: segment-level heart-rate and fix-presence
 /// parameters (`Verified.Hsmm.SegmentEmission`), harness-only.
 fn seg_emission() -> Result<Value> {
-    let Ok(path) = std::env::var("HSMM_SEG_EMISSION") else {
+    json_file("HSMM_SEG_EMISSION")
+}
+
+/// The JSON file the environment variable `var` names, or `null` when unset —
+/// `HSMM_TRANS_FIT=<file>` is a fitted mode-to-mode transition matrix
+/// (`Transitions.fittedWeight`), `{src: {dst: p}}`, harness-only.
+fn json_file(var: &str) -> Result<Value> {
+    let Ok(path) = std::env::var(var) else {
         return Ok(Value::Null);
     };
     Ok(serde_json::from_str(
-        &std::fs::read_to_string(&path).context("HSMM_SEG_EMISSION")?,
+        &std::fs::read_to_string(&path).with_context(|| var.to_string())?,
     )?)
 }
 
@@ -132,6 +139,7 @@ pub fn request(fx: &Value) -> Result<Value> {
             req["maxD"] = json!(v.parse::<u64>()?);
         }
         req["flags"]["segEmission"] = seg_emission()?;
+        req["flags"]["transFit"] = json_file("HSMM_TRANS_FIT")?;
         return Ok(req);
     }
     let (meta, inputs) = (&fx["meta"], &fx["inputs"]);
@@ -291,6 +299,7 @@ pub fn request(fx: &Value) -> Result<Value> {
             "fittedPriors": fitted_priors(fx)?,
             "termWeights": term_weights()?,
             "segEmission": seg_emission()?,
+            "transFit": json_file("HSMM_TRANS_FIT")?,
         },
         "date": date,
         "tz": tz,

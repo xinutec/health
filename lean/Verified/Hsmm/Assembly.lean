@@ -102,8 +102,9 @@ theorem durationLogProbFull_eq (obs : Array ObsRow) (pref : Array Float)
     station-graph `placeNear` hard-zero (served `buildTransitionMatrix`). `chainOn`
     gates the C4.2 flag; `chainVal` is the caller-resolved per-transition penalty. -/
 def transitionLogProbFull (placeNear : Int → String → Bool) (states : List State) (selfLoop : Float)
-    (src dst : State) (chainOn : Bool) (chainVal : Float) : Float :=
-  let t := Transitions.transitionLogProbP placeNear states selfLoop src dst
+    (src dst : State) (chainOn : Bool) (chainVal : Float)
+    (weight : State → State → Float := Transitions.transitionWeight) : Float :=
+  let t := Transitions.transitionLogProbP placeNear states selfLoop src dst weight
   if !chainOn then t
   else if t == negInf then t
   else t + chainVal

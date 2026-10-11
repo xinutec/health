@@ -75,6 +75,10 @@ structure Params where
       `P(fix | none a minute ago)`. A mode listed here is scored per minute
       (`fixMinute`) and not by the segment's beta-binomial. -/
   fixMarkov : List (Mode × (Float × Float)) := []
+  /-- A minute's speed is the mode's Gaussian with this share of outliers spread
+      evenly over 0–`uMaxKmh` (a fix that jumped): one bad fix must not outvote
+      the steps and the minutes around it. -/
+  speedEps : List (Mode × Float) := []
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of
@@ -167,6 +171,13 @@ def fixMinute (p : Params) (mode : Mode) (lit : Bool) (prevLit : Option Bool) : 
       | some false => p01
       | none => p01 / (ONE - p11 + p01)
     Float.log (if lit then pFix else ONE - pFix)
+
+/-- What the speed outlier share adds to a minute whose Gaussian speed term is
+    `gauss`: `log((1−ε)·e^gauss + ε/uMax) − gauss`. `0` without a share. -/
+def speedRobust (p : Params) (mode : Mode) (gauss : Float) : Float :=
+  match p.speedEps.find? (·.1 == mode) with
+  | some (_, eps) => Float.log ((ONE - eps) * Float.exp gauss + eps / p.uMaxKmh) - gauss
+  | none => ZERO
 
 def score (p : Params) (mode : Mode) (st : Stats) : Float :=
   match p.byMode.find? (·.1 == mode) with

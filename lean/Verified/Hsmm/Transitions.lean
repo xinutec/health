@@ -102,33 +102,49 @@ def isHardZeroP (placeNear : Int → String → Bool) (src dst : State) : Bool :
       | _, _, _, _ => false)
 
 /-- `crossWeightSum` under the station-graph hard-zero. -/
-def crossWeightSumP (placeNear : Int → String → Bool) (states : List State) (src : State) : Float :=
+def crossWeightSumP (placeNear : Int → String → Bool) (states : List State) (src : State)
+    (weight : State → State → Float := transitionWeight) : Float :=
   states.foldl
-    (fun acc dst => if sameState src dst || isHardZeroP placeNear src dst then acc else acc + transitionWeight src dst)
+    (fun acc dst => if sameState src dst || isHardZeroP placeNear src dst then acc else acc + weight src dst)
     0.0
 
 /-- Transition log-probability under the station-graph hard-zero — the served
     TS `buildTransitionMatrix` with `placeNearLine`. -/
 def transitionLogProbP (placeNear : Int → String → Bool) (states : List State) (selfLoop : Float)
-    (src dst : State) : Float :=
+    (src dst : State) (weight : State → State → Float := transitionWeight) : Float :=
   if sameState src dst then selfLoop
   else if isHardZeroP placeNear src dst then negInf
   else
     let crossMass := 1.0 - Float.exp selfLoop
-    let weightSum := crossWeightSumP placeNear states src
+    let weightSum := crossWeightSumP placeNear states src weight
     if weightSum <= 0.0 then negInf
-    else Float.log (crossMass * transitionWeight src dst / weightSum)
+    else Float.log (crossMass * weight src dst / weightSum)
+
+/-- A fitted mode-to-mode matrix as a transition weight: `src → dst` weighs
+    `P(dst's mode | src's mode)` split evenly over the states of that mode `src`
+    may move to, so a row normalises to the matrix over the modes it can reach.
+    `count src m` is that number of states. A pair the matrix does not name
+    weighs `0`. -/
+private def NO_WEIGHT : Float := 0
+
+def fittedWeight (matrix : Mode → Mode → Option Float) (count : State → Mode → Nat)
+    (src dst : State) : Float :=
+  match matrix src.mode dst.mode with
+  | some p =>
+    let n := count src dst.mode
+    if n == 0 then NO_WEIGHT else p / Verified.FloatConst.natToFloat n
+  | none => NO_WEIGHT
 
 /-- `transitionLogProbP` with the per-`src` cross-weight sum precomputed. Building
     the whole matrix as `transitionLogProbPre placeNear sl (weightSum a) a b` after
     one O(S²) `crossWeightSumP` pass is O(S²) total, vs O(S³) recomputing the sum
     per cell (`transAt` does). Identical value — pinned below. -/
 def transitionLogProbPre (placeNear : Int → String → Bool) (selfLoop weightSum : Float)
-    (src dst : State) : Float :=
+    (src dst : State) (weight : State → State → Float := transitionWeight) : Float :=
   if sameState src dst then selfLoop
   else if isHardZeroP placeNear src dst then negInf
   else if weightSum <= 0.0 then negInf
-  else Float.log ((1.0 - Float.exp selfLoop) * transitionWeight src dst / weightSum)
+  else Float.log ((1.0 - Float.exp selfLoop) * weight src dst / weightSum)
 
 -- Parity with the real `buildTransitionMatrix` (base path; values from Node/V8).
 -- State space: 0 stat@5, 1 stat@7, 2 walk, 3 train@Central, 4 driving.

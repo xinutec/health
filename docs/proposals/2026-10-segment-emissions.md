@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind a harness flag (`flags.segEmission`); three arms measured, not at the gate yet
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`); five arms measured, not at the gate yet
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -81,18 +81,37 @@ place entry normalised over places per hour.
 | s1: segment heart rate + beta-binomial fixes | 97 | 288 | 59 | 49 | 54 | 123 |
 | s2: s1 + fitted displacement | 101 | 285 | 56 | 44 | 37 | 121 |
 | s3: s2 with the fix chain | 100 | 283 | 56 | 44 | 21 | 117 |
+| s4: s3 + fitted transitions | 99 | 283 | 59 | 45 | 21 | 115 |
+| s5: s4 + a per-minute speed outlier share | 104 | 247 | 21 | 5 | 12 | 106 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
-two-minute `cycling` blips: cycling has no narrated runs and still scores per
-minute on the hand-set table, beside modes that no longer do. s3 against s2
+two-minute `cycling` blips: a walking minute whose fix speed jumped. s3 against s2
 loses two short walks (06-18, 05-20) and moves a drive's start (06-02).
+
+**Fitted transitions** (s4, `Transitions.fittedWeight`, `flags.transFit`): the
+mode-to-mode matrix from consecutive confirmed rows (418 changes: walking ↔
+stationary 248, walking ↔ train 144, nothing for cycling), add-one smoothed,
+each mode's share split evenly over the states of that mode a state may move
+to; the hard zeros stay. Before it, a stay's outgoing mass was split evenly
+over every valid state, so the many train-line states held most of it and
+cycling as much as walking. Lines +3, stations +1, but the cycling blips stay:
+they are paid for by the speed term, not the transition.
+
+**Refuted: a per-minute outlier share on speed** (s5). The cycling blips are a
+walking minute whose fix speed jumped (23 and 32 km/h at a cadence of 108);
+walking's Gaussian (5 ± 2) charges about 58 nats for it and cycling takes the
+minute. An outlier share (walking 1.9%, measured beyond four standard
+deviations) removes those blips and halves the phantoms, but it also prices a
+walk at train speed at about 10 nats a minute instead of about 90: walking
+splits rides at their edges, and lines fall 59 → 21, stations 45 → 5. A fix
+that jumped is a one-minute event, not a rate; it needs that form.
 
 ## Next
 
-- **Transitions, fitted** (roadmap step 3): the mode-to-mode probabilities from
-  the narrated runs, so a mode he does not use (cycling) is improbable to
-  enter without a hand-set number.
+- **A speed glitch as an event**: the minute after a jump scored against the
+  minutes around it (the speed the fixes on either side imply), so one bad fix
+  cannot flip a walk, while a run of fast minutes still reads as a ride.
 - Speed in the same form (a segment's jitter around its mean).
 - Held-out fits (by day) before anything ships.
 - Gate: phantoms not above the shipped 6, journeys and the referee not below

@@ -111,6 +111,9 @@ structure ModelContext where
       keeps those. Harness-only (`flags.segEmission`). -/
   segEm : Option SegmentEmission.Prepared := none
   segPref : SegmentEmission.Prefix := default
+  /-- The transition weight: the shipped uniform split unless the harness
+      carries a fitted mode matrix (`Transitions.fittedWeight`). -/
+  transWeight : State → State → Float := Transitions.transitionWeight
 
 /-- The longest segment the HSMM will consider, in minutes.
 
@@ -232,7 +235,13 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
         c.weights.base * (FloatScore.logBernoulli o.gps.isSome prior.gpsPresentProb
           + (if o.inBed then SEG_ZERO else Emissions.hrTerm st (EmissionFull.toThin o) prior))
     let prevLit := if t == 0 then none else (c.obs[t - 1]?).map (·.gps.isSome)
-    (SegmentEmission.fixMinute q.p st.mode o.gps.isSome prevLit).getD SEG_ZERO - out
+    let speed := match o.gps with
+      | some g =>
+        let prior := Emissions.priorOf c.priors st
+        c.weights.base * SegmentEmission.speedRobust q.p st.mode
+          (FloatScore.logNormalPdf g.speedKmh prior.speedMean prior.speedStd)
+      | none => SEG_ZERO
+    (SegmentEmission.fixMinute q.p st.mode o.gps.isSome prevLit).getD SEG_ZERO - out + speed
 
 /-- `emission(s, obs[t])` — the full composed emission. Coverage does not reach
     it (#238, 2026-09-29): the per-minute line factors stay live on a
@@ -392,7 +401,7 @@ def transAt (c : ModelContext) (a b t : Nat) : Float :=
     else 0.0
   let placeNear := fun (pid : Int) (line : String) => c.placeNearLine.contains s!"{pid}|{line}"
   Assembly.transitionLogProbFull placeNear c.states.toList c.selfLoop src dst c.chainOn
-    (c.weights.chain * chainVal)
+    (c.weights.chain * chainVal) c.transWeight
 
 /-- Quantised emission tensor `emit[t][s]`. -/
 def buildEmit (c : ModelContext) : Array (Array (Option Float)) :=

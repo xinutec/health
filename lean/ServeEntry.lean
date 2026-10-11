@@ -908,7 +908,10 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | [a, b, c, d] => some (m, ({ hrMean := a, hrTau := b, fixA := c, fixB := d } :
           Verified.Hsmm.SegmentEmission.ModeParams))
       | _ => none
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov }
+    let speedEps := all.filterMap fun m => do
+      let v ← ((f.getObjVal? "speedEps") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m))).toOption
+      pure (m, ← num v)
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
@@ -919,7 +922,37 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)
   let segPref := Verified.Hsmm.SegmentEmission.prefixOf obs
   let segEm := segEm.map (Verified.Hsmm.SegmentEmission.prepare · obs.size)
-  return ({ ctx with priors, fits, weights, segEm, segPref }, maxD)
+  -- A fitted mode-to-mode transition matrix (harness-only): `{src: {dst: p}}`.
+  let modesAll : List Verified.Hsmm.Emissions.Mode :=
+    [.stationary, .walking, .cycling, .driving, .train, .plane, .unknown]
+  let modeOf := fun (n : String) => modesAll.find? (Verified.Hsmm.StateSpace.modeName · == n)
+  let transWeight : Verified.Hsmm.Emissions.State → Verified.Hsmm.Emissions.State → Float :=
+    match (flags.getObjVal? "transFit").toOption.filter (!·.isNull) with
+    | none => Verified.Hsmm.Transitions.transitionWeight
+    | some tf =>
+      let entries : List (Verified.Hsmm.Emissions.Mode × Verified.Hsmm.Emissions.Mode × Float) :=
+        match tf.getObj? with
+        | .ok rows => rows.toList.flatMap fun (sk, row) =>
+          match modeOf sk, row.getObj? with
+          | some sm, .ok cols => cols.toList.filterMap fun (dk, v) => do
+              let dm ← modeOf dk
+              let p ← (v.getNum?).toOption
+              pure (sm, dm, p.toFloat)
+          | _, _ => []
+        | .error _ => []
+      let matrix := fun (a b : Verified.Hsmm.Emissions.Mode) =>
+        (entries.find? fun (x, y, _) => x == a && y == b).map (·.2.2)
+      let placeNear := fun (pid : Int) (line : String) => ctx.placeNearLine.contains s!"{pid}|{line}"
+      let statesL := ctx.states.toList
+      let counts : Std.HashMap String (List (Verified.Hsmm.Emissions.Mode × Nat)) :=
+        ctx.states.foldl (fun m src =>
+          m.insert (Verified.Hsmm.StateSpace.stateKey src) (modesAll.map fun md =>
+            (md, (statesL.filter fun dst => dst.mode == md && !Verified.Hsmm.Transitions.sameState src dst
+               && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst).length))) {}
+      let count := fun (src : Verified.Hsmm.Emissions.State) (md : Verified.Hsmm.Emissions.Mode) =>
+        (((counts.get? (Verified.Hsmm.StateSpace.stateKey src)).getD []).find? (·.1 == md)).map (·.2) |>.getD 0
+      Verified.Hsmm.Transitions.fittedWeight matrix count
+  return ({ ctx with priors, fits, weights, segEm, segPref, transWeight }, maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json
@@ -1071,9 +1104,9 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   -- Each state with its weight sum and its index, so the pair loops below read
   -- nothing by index: the state comes from the iteration itself.
   let weighted : Array ((Verified.Hsmm.Emissions.State × Float) × Nat) :=
-    (c.states.map fun s => (s, Verified.Hsmm.Transitions.crossWeightSumP placeNear statesL s)).zipIdx
+    (c.states.map fun s => (s, Verified.Hsmm.Transitions.crossWeightSumP placeNear statesL s c.transWeight)).zipIdx
   let baseTransF := fun (src dst : Verified.Hsmm.Emissions.State) (ws : Float) =>
-    Verified.Hsmm.Transitions.transitionLogProbPre placeNear c.selfLoop ws src dst
+    Verified.Hsmm.Transitions.transitionLogProbPre placeNear c.selfLoop ws src dst c.transWeight
   let mut transBase : Array Nat := Array.replicate (S * S) 0
   for ((src, ws), a) in weighted do
     for ((dst, _), b) in weighted do
