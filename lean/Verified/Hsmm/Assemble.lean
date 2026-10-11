@@ -3,6 +3,7 @@ import Verified.Hsmm.EmissionFull
 import Verified.Hsmm.RouteModel
 import Verified.Hsmm.TrainCandidates
 import Verified.Hsmm.StateSpace
+import Verified.Hsmm.SegmentEmission
 /-!
 # Model orchestration — the Lean twin of `buildHsmmModel`
 
@@ -104,6 +105,12 @@ structure ModelContext where
   fits : Mode → GammaFit := baselineFit
   /-- Per-family weights (`EmissionFull.TermWeights`), all `1` when shipped. -/
   weights : EmissionFull.TermWeights := {}
+  /-- `SegmentEmission`'s terms (heart rate per segment, fix presence as a
+      chain, net displacement) in place of the per-minute heart-rate and
+      fix-presence terms and `SegmentEvidence`; `none`, the shipped model,
+      keeps those. Harness-only (`flags.segEmission`). -/
+  segEm : Option SegmentEmission.Prepared := none
+  segPref : SegmentEmission.Prefix := default
 
 /-- The longest segment the HSMM will consider, in minutes.
 
@@ -209,6 +216,24 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
 /-- Whether the train generator vouches a ride at `ts`. -/
 private def coveredAt (c : ModelContext) (ts : Int) : Bool := TrainCandidates.isCovered c.coverage ts
 
+private def SEG_ZERO : Float := 0
+
+/-- With `SegmentEmission` the awake heart rate is scored per segment
+    (`segEmAt`) and fix presence by its chain: the minute's own terms for the
+    two come out and the chain's goes in. `0` without it (the shipped model). -/
+def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :=
+  match c.segEm with
+  | none => SEG_ZERO
+  | some q =>
+    let out :=
+      if !q.p.byMode.any (·.1 == st.mode) then SEG_ZERO
+      else
+        let prior := Emissions.priorOf c.priors st
+        c.weights.base * (FloatScore.logBernoulli o.gps.isSome prior.gpsPresentProb
+          + (if o.inBed then SEG_ZERO else Emissions.hrTerm st (EmissionFull.toThin o) prior))
+    let prevLit := if t == 0 then none else (c.obs[t - 1]?).map (·.gps.isSome)
+    (SegmentEmission.fixMinute q.p st.mode o.gps.isSome prevLit).getD SEG_ZERO - out
+
 /-- `emission(s, obs[t])` — the full composed emission. Coverage does not reach
     it (#238, 2026-09-29): the per-minute line factors stay live on a
     generator-covered minute; see `EmissionFull`. -/
@@ -238,6 +263,9 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
          Emissions.rideHeadSpeedAdjust st.mode (o.gps.map (·.speedKmh))
            + c.rideHeadCredit * (Emissions.modePriorLog .stationary - Emissions.modePriorLog st.mode)
        else 0.0)
+    -- With `SegmentEmission` the awake heart rate is scored per segment
+    -- (`segEmAt`) and fix presence by its chain, so their minute terms go.
+    + segMinuteAt c t st o
   | _, _ => negInf
 
 /-- The per-SEGMENT entry log-prior by mode (#366): the entry rate that, with
@@ -286,6 +314,27 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
     if Emissions.isRideHead st && d > c.rideHeadMin then negInf
     else c.weights.duration * Duration.logDurationProb d.toFloat (c.fits st.mode) (Duration.minDurationByMode st.mode)
 
+/-- The segment-level emission of state `s` over a segment of length `d` with
+    window `w` and statistics `st`. Where it scores the displacement, the
+    `SegmentEvidence` term the duration already holds is taken back out. -/
+def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
+    (st : SegmentEmission.Stats) : Float :=
+  match c.segEm, c.states[s]? with
+  | some q, some x =>
+    SegmentEmission.scorePrepared q x.mode st
+      + (if q.p.disp.any (·.1 == x.mode) then
+           SegmentEmission.dispScore q.p x.mode d w
+             - (if c.segEvidenceOn then
+                  c.weights.segmentEvidence * SegmentEvidence.segmentEvidenceOf x.mode d w
+                else SEG_ZERO)
+         else SEG_ZERO)
+  | _, _ => SEG_ZERO
+
+/-- `segEmFrom` over the segment of length `d` ending at `e`. -/
+def segEmAt (c : ModelContext) (s d e : Nat) : Float :=
+  segEmFrom c s d (SegmentEvidence.windowAt c.obs c.stepPref d e)
+    (SegmentEmission.statsAt c.segPref d e)
+
 /-- `durAt` given `durPriorBase c s d`: only the train-hop relaxation and the
     segment evidence are resolved at `e`. -/
 def durAtFrom (c : ModelContext) (s d e : Nat) (base : Float) : Float :=
@@ -295,6 +344,7 @@ def durAtFrom (c : ModelContext) (s d e : Nat) (base : Float) : Float :=
   let covered := match c.obs[e]? with | some o => coveredAt c o.ts | none => false
   Assembly.durationLogProbFrom c.obs c.stepPref st d e covered
     (Duration.minDurationByMode .train) base c.segEvidenceOn c.weights.segmentEvidence
+    + segEmAt c s d e
 
 /-- Whether minute `e` is covered — one per `e`, shared by every state. -/
 def coveredAtE (c : ModelContext) (e : Nat) : Bool :=
@@ -303,17 +353,19 @@ def coveredAtE (c : ModelContext) (e : Nat) : Bool :=
 /-- `durAtFrom` with what depends only on `(d, e)` — the coverage and the
     segment's window — resolved by the caller once for every state (#1774). -/
 def durAtFromW (c : ModelContext) (s d : Nat) (covered : Bool)
-    (w : Option SegmentEvidence.Window) (base : Float) : Float :=
+    (w : Option SegmentEvidence.Window) (sst : SegmentEmission.Stats) (base : Float) : Float :=
   match c.states[s]? with
   | none => negInf
   | some st =>
   Assembly.durationLogProbFromW st d covered (Duration.minDurationByMode .train) base
     c.segEvidenceOn w c.weights.segmentEvidence
+    + segEmFrom c s d w sst
 
 theorem durAtFrom_eq_W (c : ModelContext) (s d e : Nat) (base : Float) :
     durAtFrom c s d e base
-      = durAtFromW c s d (coveredAtE c e) (SegmentEvidence.windowAt c.obs c.stepPref d e) base := by
-  unfold durAtFrom durAtFromW coveredAtE
+      = durAtFromW c s d (coveredAtE c e) (SegmentEvidence.windowAt c.obs c.stepPref d e)
+          (SegmentEmission.statsAt c.segPref d e) base := by
+  unfold durAtFrom durAtFromW coveredAtE segEmAt
   cases c.states[s]? <;> rfl
 
 /-- `duration(s, d, obs[e])` — the mode's duration prior at `d`, the train-hop

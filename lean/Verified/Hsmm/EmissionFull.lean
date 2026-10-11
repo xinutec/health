@@ -44,7 +44,7 @@ open Verified.Hsmm.FloatScore (logNormalPdf)
 private def toGeoFix (f : Fix) : Geometric.GpsFix := ⟨f.ts.toNat.toFloat, f.lat, f.lon⟩
 
 /-- `ObsRow` → the thin `Observation` the base emission consumes. -/
-private def toThin (o : ObsRow) : Observation :=
+def toThin (o : ObsRow) : Observation :=
   ⟨o.gps.map (fun g => ⟨g.lat, g.lon, g.speedKmh⟩), o.hr, o.cadence, o.inBed⟩
 
 /-- No correction — hoisted so the branch below does not rebuild a literal per call. -/

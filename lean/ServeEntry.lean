@@ -878,14 +878,48 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     match row "durationFits" m with
     | some #[a, b] => ({ alpha := a, beta := b, sampleCount := 10 } : Verified.Hsmm.Duration.GammaFit)
     | _ => Verified.Hsmm.Assemble.baselineFit m
-  return ({ (Verified.Hsmm.Assemble.buildContext obs model
+  -- Segment-level emissions (harness-only): `{sigmaW, rho, modes: {mode: [hrMean,
+  -- hrTau, fixA, fixB]}}`; absent keeps the per-minute heart-rate and fix terms.
+  let segEm : Option Verified.Hsmm.SegmentEmission.Params := do
+    let f ← (flags.getObjVal? "segEmission").toOption.filter (!·.isNull)
+    let num := fun (v : Json) => (v.getNum?).toOption.map (·.toFloat)
+    let sigmaW ← num (← (f.getObjVal? "sigmaW").toOption)
+    let rho ← num (← (f.getObjVal? "rho").toOption)
+    let modes ← (f.getObjVal? "modes").toOption
+    let all : List Verified.Hsmm.Emissions.Mode :=
+      [.stationary, .walking, .cycling, .driving, .train, .plane]
+    let disp := all.filterMap fun m => do
+      let arr ← (((f.getObjVal? "disp") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)))
+        >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [mu, sigma, eps] => some (m, ({ mu, sigma, eps } : Verified.Hsmm.SegmentEmission.DispParams))
+      | _ => none
+    let uMaxKmh := ((f.getObjVal? "uMaxKmh").toOption.bind num).getD
+      Verified.Hsmm.SegmentEmission.DEFAULT_U_MAX_KMH
+    let fixMarkov := all.filterMap fun m => do
+      let arr ← (((f.getObjVal? "fixMarkov") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)))
+        >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [p11, p01] => some (m, (p11, p01))
+      | _ => none
+    let byMode := all.filterMap fun m => do
+      let arr ← ((modes.getObjVal? (Verified.Hsmm.StateSpace.modeName m)) >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [a, b, c, d] => some (m, ({ hrMean := a, hrTau := b, fixA := c, fixB := d } :
+          Verified.Hsmm.SegmentEmission.ModeParams))
+      | _ => none
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov }
+  let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
     (← (← flags.getObjVal? "segEvidence").getBool?)
     (← (← flags.getObjVal? "chainContext").getBool?)
     (knob "modeMinuteScale" 1.0) (knob "modeEntryScale" 0.0)
     (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0))
-    (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)) with priors, fits, weights }, maxD)
+    (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)
+  let segPref := Verified.Hsmm.SegmentEmission.prefixOf obs
+  let segEm := segEm.map (Verified.Hsmm.SegmentEmission.prepare · obs.size)
+  return ({ ctx with priors, fits, weights, segEm, segPref }, maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json
@@ -1141,9 +1175,10 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         -- The segment's window once per (d, e) for every class
         -- (`durAtFrom_eq_W`, #1774).
         let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
+        let sst := Verified.Hsmm.SegmentEmission.statsAt c.segPref (d0 + 1) e
         let cov := covered[e]!
         for cls in [0:nC] do
-          let qE := match quant (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) cov w bases[cls]!) with
+          let qE := match quant (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) cov w sst bases[cls]!) with
             | some v => qiOf v | none => 0
           let (packed, over) := packDelta qE qRefs[cls]! halfOB
           if over.isSome then bad := over

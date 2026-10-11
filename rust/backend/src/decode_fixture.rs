@@ -87,6 +87,17 @@ fn term_weights() -> Result<Value> {
     }
 }
 
+/// `HSMM_SEG_EMISSION=<file>`: segment-level heart-rate and fix-presence
+/// parameters (`Verified.Hsmm.SegmentEmission`), harness-only.
+fn seg_emission() -> Result<Value> {
+    let Ok(path) = std::env::var("HSMM_SEG_EMISSION") else {
+        return Ok(Value::Null);
+    };
+    Ok(serde_json::from_str(
+        &std::fs::read_to_string(&path).context("HSMM_SEG_EMISSION")?,
+    )?)
+}
+
 fn fitted_priors(fx: &Value) -> Result<Value> {
     let Ok(dir) = std::env::var("HSMM_FITTED_PRIORS_DIR") else {
         return Ok(Value::Null);
@@ -117,6 +128,10 @@ pub fn request(fx: &Value) -> Result<Value> {
         ] {
             req["flags"][k] = arm_knob(env);
         }
+        if let Ok(v) = std::env::var("HSMM_MAX_D") {
+            req["maxD"] = json!(v.parse::<u64>()?);
+        }
+        req["flags"]["segEmission"] = seg_emission()?;
         return Ok(req);
     }
     let (meta, inputs) = (&fx["meta"], &fx["inputs"]);
@@ -242,7 +257,7 @@ pub fn request(fx: &Value) -> Result<Value> {
         })
         .collect::<Vec<_>>();
 
-    Ok(json!({
+    let mut req = json!({
         "observation": {
             "startUtc": bounds.start_utc,
             "points": cleaned.iter().map(|p| json!({
@@ -275,8 +290,13 @@ pub fn request(fx: &Value) -> Result<Value> {
             "unknownBelow": arm_knob("HSMM_UNKNOWN_BELOW"),
             "fittedPriors": fitted_priors(fx)?,
             "termWeights": term_weights()?,
+            "segEmission": seg_emission()?,
         },
         "date": date,
         "tz": tz,
-    }))
+    });
+    if let Ok(v) = std::env::var("HSMM_MAX_D") {
+        req["maxD"] = json!(v.parse::<u64>()?);
+    }
+    Ok(req)
 }

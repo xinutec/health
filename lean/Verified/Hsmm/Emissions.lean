@@ -199,7 +199,7 @@ private def speedTerm (s : State) (o : Observation) (prior : ModePrior) : Float 
 
 /-- HR term with the base-path mean/std selection (asleep / hyper-place for a
     known stationary place; per-mode prior otherwise). -/
-private def hrTerm (s : State) (o : Observation) (prior : ModePrior) : Float :=
+def hrTerm (s : State) (o : Observation) (prior : ModePrior) : Float :=
   match o.hr with
   | none => 0.0
   | some hr =>
