@@ -1037,11 +1037,38 @@ pub(crate) const RELATION_TIMEOUT_MS: u64 = 120_000;
 
 /// One Overpass request through the shared client and its mirror fallback; the
 /// body's `elements`, or an error the caller turns into "leave it raw".
+///
+/// ⚠ ASKS FOR A SLOT FIRST AND RETRIES A REFUSAL ONCE, as the tile mirror does.
+/// Unpaced, a night's lookups (a station query and up to three track fetches
+/// per ride) fired back to back at a two-slot allowance and came back 429 and
+/// 504 on four rides of seven, while the same query alone answers in ~20 s.
 async fn overpass_elements(
     client: &reqwest::Client,
     query: &str,
 ) -> Result<Vec<serde_json::Value>> {
-    match backend::overpass::fetch_attempt(client, query, RELATION_TIMEOUT_MS, 0).await {
+    use backend::overpass::{Outcome, fetch_attempt, wait_for_slot};
+    wait_for_slot(client, super::mirror::SLOT_WAIT_CAP_S).await;
+    let mut outcome = fetch_attempt(client, query, RELATION_TIMEOUT_MS, 0).await;
+    if outcome.may_retry() {
+        wait_for_slot(client, super::mirror::SLOT_WAIT_CAP_S).await;
+        let again = fetch_attempt(client, query, RELATION_TIMEOUT_MS, 1).await;
+        outcome = match (outcome, again) {
+            (
+                Outcome::AllFailed {
+                    errors: mut first, ..
+                },
+                Outcome::AllFailed { errors, answered },
+            ) => {
+                first.extend(errors.into_iter().map(|e| format!("retry: {e}")));
+                Outcome::AllFailed {
+                    errors: first,
+                    answered,
+                }
+            }
+            (_, other) => other,
+        };
+    }
+    match outcome {
         backend::overpass::Outcome::Ok(body) => backend::overpass::elements(&body),
         backend::overpass::Outcome::Permanent { status } => {
             anyhow::bail!("Overpass refused the query ({status})")
