@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`); five arms measured, not at the gate yet
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`); six arms measured, not at the gate yet
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -83,6 +83,7 @@ place entry normalised over places per hour.
 | s3: s2 with the fix chain | 100 | 283 | 56 | 44 | 21 | 117 |
 | s4: s3 + fitted transitions | 99 | 283 | 59 | 45 | 21 | 115 |
 | s5: s4 + a per-minute speed outlier share | 104 | 247 | 21 | 5 | 12 | 106 |
+| s6: s4 + windowed speed | 102 | 287 | 61 | 41 | 9 | 118 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -107,11 +108,24 @@ walk at train speed at about 10 nats a minute instead of about 90: walking
 splits rides at their edges, and lines fall 59 → 21, stations 45 → 5. A fix
 that jumped is a one-minute event, not a rate; it needs that form.
 
+**Windowed speed** (s6, `speedWindow`): the cycling blips were not one bad fix
+but GPS scatter — fixes hopping 100–200 m sideways every thirty seconds while
+the track advanced at walking pace, which reads as 20–40 km/h fix to fix. A
+minute's speed scored as the net speed between the minutes either side of it
+(their mean positions, two minutes apart) cuts walking's 99th percentile from
+23 to 15 km/h and a stay's tail entirely, on the narrated minutes. Phantoms
+21 → 9; leg modes and lines above the shipped decoder; stations −4.
+
+Of s6's misses against the served day, ten are rides read as `driving`
+(Tube rides above ground, the TGVs, the Paris Métro): the fix chain was fitted
+on trains that are mostly underground, so a lit train minute costs a train
+more than a car.
+
 ## Next
 
-- **A speed glitch as an event**: the minute after a jump scored against the
-  minutes around it (the speed the fixes on either side imply), so one bad fix
-  cannot flip a walk, while a run of fast minutes still reads as a ride.
+- **Train against car**: fix presence on a train depends on whether the track
+  is underground (the route graph knows), not on the train; and the evidence
+  that separates the two is the track, not the fixes.
 - Speed in the same form (a segment's jitter around its mean).
 - Held-out fits (by day) before anything ships.
 - Gate: phantoms not above the shipped 6, journeys and the referee not below

@@ -911,7 +911,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let speedEps := all.filterMap fun m => do
       let v ← ((f.getObjVal? "speedEps") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m))).toOption
       pure (m, ← num v)
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps }
+    let speedWindow := ((f.getObjVal? "speedWindow") >>= (·.getBool?)).toOption.getD false
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)

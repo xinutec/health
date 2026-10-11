@@ -79,6 +79,11 @@ structure Params where
       evenly over 0–`uMaxKmh` (a fix that jumped): one bad fix must not outvote
       the steps and the minutes around it. -/
   speedEps : List (Mode × Float) := []
+  /-- Score a minute's speed as the net speed between the minutes either side
+      of it (their mean positions, two minutes apart) instead of the speed of
+      its own fixes: a fix that scatters 100 m sideways reads as 12 km/h over
+      thirty seconds and as nothing over two minutes. -/
+  speedWindow : Bool := false
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of

@@ -220,6 +220,8 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
 private def coveredAt (c : ModelContext) (ts : Int) : Bool := TrainCandidates.isCovered c.coverage ts
 
 private def SEG_ZERO : Float := 0
+/-- Metres between the minutes either side of one (two minutes apart) to km/h. -/
+private def WINDOW_KMH_PER_M : Float := 0.03
 
 /-- With `SegmentEmission` the awake heart rate is scored per segment
     (`segEmAt`) and fix presence by its chain: the minute's own terms for the
@@ -238,8 +240,16 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
     let speed := match o.gps with
       | some g =>
         let prior := Emissions.priorOf c.priors st
-        c.weights.base * SegmentEmission.speedRobust q.p st.mode
-          (FloatScore.logNormalPdf g.speedKmh prior.speedMean prior.speedStd)
+        let own := FloatScore.logNormalPdf g.speedKmh prior.speedMean prior.speedStd
+        let windowed :=
+          if !q.p.speedWindow || t == 0 then own
+          else match (c.obs[t - 1]?).bind (·.gps), (c.obs[t + 1]?).bind (·.gps) with
+            | some a, some b =>
+              FloatScore.logNormalPdf
+                (FloatScore.haversineMeters a.lat a.lon b.lat b.lon * WINDOW_KMH_PER_M)
+                prior.speedMean prior.speedStd
+            | _, _ => own
+        c.weights.base * (windowed - own + SegmentEmission.speedRobust q.p st.mode windowed)
       | none => SEG_ZERO
     (SegmentEmission.fixMinute q.p st.mode o.gps.isSome prevLit).getD SEG_ZERO - out + speed
 
