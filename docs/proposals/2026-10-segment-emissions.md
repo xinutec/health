@@ -86,6 +86,8 @@ place entry normalised over places per hour.
 | s6: s4 + windowed speed | 102 | 287 | 61 | 41 | 9 | 118 |
 | s7: s6 + speed Gaussians fitted on windowed speeds | 103 | 287 | 60 | 41 | 11 | 119 |
 | s8: s7 + the observation chain | 106 | 289 | 60 | 42 | 11 | 122 |
+| s9: s8 + fitted per-minute cadence | 108 | 284 | 56 | 30 | — | not run |
+| s10: s8 + edge minutes as mixtures | 103 | 284 | 58 | 43 | 19 | not run |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -138,6 +140,24 @@ fix-minutes, 6% driving, 9% stationary, 19% walking; but a stay keeps its
 class (0.985 near → near) where a car does not (0.33), so a stay beside the
 tracks is not pulled toward a train while a hop on the rails is one. It
 replaces the fix chain. Journeys +3, leg modes +2, referee +3.
+
+**Refuted: fitted per-minute cadence** (s9). A one-stop hop's minute holds the
+walk onto the train (cadence 92 at 34 km/h); the hand-set train cadence (99%
+zero, 5 ± 10) charges it 49 nats and cycling takes the minute. The narrated
+fit (18.5% of train minutes with steps, 29 ± 33) is the truth about edge
+minutes, but applied to every minute it lets rides take the walks' edge
+minutes: stations 42 → 30. Third instance (with the speed outlier share and
+the platform waits) of one cause: a segment boundary falls inside a minute,
+so the edge minute is a mixture, and loosening a mode everywhere to absorb it
+moves every boundary.
+
+**Refuted: edge minutes as mixtures** (s10). A segment's first and last minute
+scored as half its own mode and half its neighbour's (by the fitted
+transitions): a blended minute can score better than either pure mode, so a
+boundary placed at an awkward minute is rewarded and short segments get
+cheaper — phantoms 11 → 19. The edge minute is real; it needs a model where
+the boundary's position inside the minute is a variable, not a blend at every
+boundary.
 
 ## Next
 
