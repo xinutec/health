@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`); twelve arms measured; s12 level with the shipped decoder on the referee
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`); thirteen arms measured; s12 level with the shipped decoder on the referee
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -90,6 +90,7 @@ place entry normalised over places per hour.
 | s10: s8 + edge minutes as mixtures | 103 | 284 | 58 | 43 | 19 | not run |
 | s11: s8 without `LineProximity` | 110 | 291 | 40 | 34 | 11 | not run |
 | s12: s8 with `LineProximity` ranking lines only | 110 | 291 | 59 | 46 | 11 | 126 |
+| s13: s12 + a step chain in place of the cadence term | 93 | 265 | 52 | 28 | 5 | not run |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -169,6 +170,18 @@ stations 42 → 34). Kept only as a ranking — each minute the best train state
 term is subtracted from every train state's — it picks the line and leaves the
 mode to the observation chain: journeys 110, leg modes 291, lines 59, stations
 46, referee 126, level with the shipped decoder.
+
+**Refuted: steps as a chain** (s13). Steps are bursty (15% of a stay's and a
+train's interior minutes have some), so the cadence term was put in the
+chain form that worked for fixes: three classes (none, under 60 a minute,
+walking cadence), each minute given the one before. Phantoms reach the gate
+(5) but walks bleed into rides: narrated trains keep walking cadence from one
+minute to the next at 0.67 (0.63 with the rows' edges, 0.67 with three
+minutes trimmed — interchanges inside a row, or the watch counting a bumpy
+carriage), so a train pays about 0.3 nats a minute more than a walk for a
+walk's steps, where the hand-set term charged about 50. Journeys 110 → 93,
+stations 46 → 28. About 70 such transitions cannot tell labelling from
+behaviour; the strict hand-set step term stays until they can.
 
 ## Next
 
