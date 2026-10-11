@@ -84,6 +84,11 @@ structure Params where
       its own fixes: a fix that scatters 100 m sideways reads as 12 km/h over
       thirty seconds and as nothing over two minutes. -/
   speedWindow : Bool := false
+  /-- A minute as one of three classes — no fix, a fix within `RAIL_NEAR_M` of a
+      railway, a fix elsewhere — scored given the minute before by a 3×3 chain
+      per mode (rows: the class before). It carries fix presence and rail
+      adjacency together, and replaces `fixMarkov` for a mode it lists. -/
+  obsChain : List (Mode × Array (Array Float)) := []
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of
@@ -165,6 +170,26 @@ def dispScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentEvidence.W
       else logNormalDensity (dist / KM_M / hours) q.mu q.sigma / (hours * KM_M)
     Float.log ((ONE - q.eps) * main + q.eps / (p.uMaxKmh * hours * KM_M))
   | _, _ => ZERO
+
+/-- Within GPS noise of a railway: 99% of fixes fall within 31 m of the truth. -/
+def RAIL_NEAR_M : Float := 30
+private def ONE_THIRD : Float := 1 / 3
+
+/-- A minute's class for `obsChain`: 0 no fix, 1 a fix near a railway, 2 a fix elsewhere. -/
+def obsClass (o : ObsRow) : Nat :=
+  match o.gps with
+  | none => 0
+  | some _ => match o.railDistM with
+    | some d => if d < RAIL_NEAR_M then 1 else 2
+    | none => 2
+
+/-- A minute's class under the mode's chain, given the minute before (`none` at
+    the day's first minute: a third). `none` when the mode has no chain. -/
+def obsMinute (p : Params) (mode : Mode) (cls : Nat) (prev : Option Nat) : Option Float :=
+  (p.obsChain.find? (·.1 == mode)).map fun (_, m) =>
+    match prev with
+    | some i => Float.log (((m[i]?).bind (·[cls]?)).getD ONE_THIRD)
+    | none => Float.log ONE_THIRD
 
 /-- A minute's fix presence under the mode's chain, given the minute before
     (`none` at the day's first minute: the chain's stationary share). `none`

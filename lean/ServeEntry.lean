@@ -912,7 +912,12 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let v ← ((f.getObjVal? "speedEps") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m))).toOption
       pure (m, ← num v)
     let speedWindow := ((f.getObjVal? "speedWindow") >>= (·.getBool?)).toOption.getD false
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow }
+    let obsChain := all.filterMap fun m => do
+      let rows ← (((f.getObjVal? "obsChain") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)))
+        >>= (·.getArr?)).toOption
+      let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
+      if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, obsChain }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)

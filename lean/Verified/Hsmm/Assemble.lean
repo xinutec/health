@@ -251,7 +251,11 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
             | _, _ => own
         c.weights.base * (windowed - own + SegmentEmission.speedRobust q.p st.mode windowed)
       | none => SEG_ZERO
-    (SegmentEmission.fixMinute q.p st.mode o.gps.isSome prevLit).getD SEG_ZERO - out + speed
+    let chain := match SegmentEmission.obsMinute q.p st.mode (SegmentEmission.obsClass o)
+        (if t == 0 then none else (c.obs[t - 1]?).map SegmentEmission.obsClass) with
+      | some v => v
+      | none => (SegmentEmission.fixMinute q.p st.mode o.gps.isSome prevLit).getD SEG_ZERO
+    chain - out + speed
 
 /-- `emission(s, obs[t])` — the full composed emission. Coverage does not reach
     it (#238, 2026-09-29): the per-minute line factors stay live on a

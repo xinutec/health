@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`); six arms measured, not at the gate yet
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`); eight arms measured, not at the gate yet
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -84,6 +84,8 @@ place entry normalised over places per hour.
 | s4: s3 + fitted transitions | 99 | 283 | 59 | 45 | 21 | 115 |
 | s5: s4 + a per-minute speed outlier share | 104 | 247 | 21 | 5 | 12 | 106 |
 | s6: s4 + windowed speed | 102 | 287 | 61 | 41 | 9 | 118 |
+| s7: s6 + speed Gaussians fitted on windowed speeds | 103 | 287 | 60 | 41 | 11 | 119 |
+| s8: s7 + the observation chain | 106 | 289 | 60 | 42 | 11 | 122 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -121,11 +123,28 @@ Of s6's misses against the served day, ten are rides read as `driving`
 on trains that are mostly underground, so a lit train minute costs a train
 more than a car.
 
+**Speed fitted on windowed speeds** (s7): stays 0.1 ± 0.4 km/h (floored at
+1), walks 3.6 ± 2.9, cars and buses 16 ± 12, trains 42 ± 47 (against the
+hand-set 0 ± 2, 5 ± 2, 40 ± 20, 50 ± 30). Neutral on the counts, but it no
+longer breaks stays as the per-minute refit did: with the scatter windowed
+out, the fitted spread is safe. Kept, as a fitted table in place of a hand-set
+one.
+
+**The observation chain** (s8, `obsChain`): a minute is one of three classes —
+no fix, a fix within 30 m of a railway (the measured GPS noise), a fix
+elsewhere — scored given the minute before by a 3×3 chain per mode. It carries
+fix presence and rail adjacency together. Within 30 m of rail: 68% of train
+fix-minutes, 6% driving, 9% stationary, 19% walking; but a stay keeps its
+class (0.985 near → near) where a car does not (0.33), so a stay beside the
+tracks is not pulled toward a train while a hop on the rails is one. It
+replaces the fix chain. Journeys +3, leg modes +2, referee +3.
+
 ## Next
 
-- **Train against car**: fix presence on a train depends on whether the track
-  is underground (the route graph knows), not on the train; and the evidence
-  that separates the two is the track, not the fixes.
+- The remaining misses against the served day, read one by one (the method
+  that found every piece above).
+- `LineProximity`'s hand constants (+1.5 / −2.5) now double-count rail
+  adjacency for the mode; they should only choose the line.
 - Speed in the same form (a segment's jitter around its mean).
 - Held-out fits (by day) before anything ships.
 - Gate: phantoms not above the shipped 6, journeys and the referee not below
