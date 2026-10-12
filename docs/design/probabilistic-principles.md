@@ -125,10 +125,12 @@ maximum.
 In practice this means:
 
 - **Don't write `return -Infinity` from a scoring function for
-  unlikely-but-possible cases.** Use a calibrated low log-prob
-  (e.g. `-10` to `-15` nats) so the factor remains comparable
-  in the MAP sum. The London → Karlsruhe-teleport scenario
-  stays a scoring concern, not a generator concern.
+  unlikely-but-possible cases.** The London → Karlsruhe-teleport
+  scenario stays a scoring concern, not a generator concern. The
+  earlier form of this advice — a calibrated low log-prob of
+  about −10 to −15 nats — is itself a hand-set number; the case
+  is priced as a tail of the likelihood it belongs to, with a
+  fitted share (Rule 8).
 - **Do write generator filters for genuinely impossible cases.**
   A train hypothesis with no valid `(board, alight, line)` triple
   is not a candidate, full stop. Generator code can literally
@@ -320,6 +322,83 @@ reverted the same day for exactly this reason. Do not rebuild it.
 The venue is still misnamed; that is the correct state of the
 world until the model earns it.
 
+## Rule 7: minutes are not independent; evidence saturates
+
+The scorer sums per-minute terms. That is the likelihood of the
+minutes only if they are independent given the state, and they
+are not: heart rate inside a stay or a ride has a lag-1
+autocorrelation of about 0.8, fix presence switches between long
+regimes, rail adjacency is a property of a stretch. Under
+independence a bias of a fraction of a nat per minute between two
+modes grows without bound with a segment's length, so a six-hour
+stay is decided by a heart-rate mean that is a few beats off. The
+hand-set per-minute numbers, the `unknown` state and the
+per-minute mode prior were the compensation; measured in
+[`../proposals/2026-10-segment-emissions.md`](../proposals/2026-10-segment-emissions.md).
+
+The form that holds is a model of how the signal is generated
+over a stretch, so that its evidence for one mode against another
+saturates: a random effect per segment (the segment's mean is a
+draw around the mode's, the minutes scatter around it,
+correlated), a chain (each minute given the one before; a regime
+change costs one switch), or a per-segment statistic (net
+displacement). Per-segment terms enter through the duration hook;
+the trellis and its proofs do not change.
+
+Corollaries:
+
+- **Refitting a per-minute number cannot fix a per-minute model.**
+  Correct marginals, scored as independent minutes, still
+  compound (a full held-out refit lost stations and kept the
+  phantom rides).
+- **A number that compensates for a structural error cannot be
+  retired one at a time.** The structure is replaced first, and
+  the numbers fall out as fits. The station chain's terms and
+  gates are scaled to each other
+  ([`../proposals/2026-10-station-states.md`](../proposals/2026-10-station-states.md));
+  the per-minute heart-rate and presence constants, `unknown` and
+  the mode prior are one knot.
+- **The minute grid is a modelling choice.** A boundary falls
+  inside a minute, so the edge minute is a mixture of two modes.
+  Loosening a mode everywhere to absorb it (an outlier share on
+  speed, a fitted cadence, a blend at every boundary) moves every
+  boundary. The form still open: the boundary's position inside
+  its one minute as a latent, scored as a proper likelihood, so
+  that a boundary pays rather than earns.
+- **A choice within a mode is conditional on the mode's
+  evidence.** Which line, given a fix near rail, is a separate
+  question from whether the fix is near rail; a term that answers
+  both at once double-counts, and its constants then do two jobs.
+
+## Rule 8: the code is the form; the numbers are a fit
+
+A constant in the scorer is one of three things, each with a
+different home:
+
+- **A measured fact** about the instruments or the world (the GPS
+  noise beside a railway; the bound on walking speed). Named, with
+  how it was measured, re-measured when the instrument changes.
+- **A fitted parameter** (a mode's heart-rate mean, a chain's
+  switch rate, the mode-transition matrix). Not in code: in a fit
+  artefact with its provenance (which days; held out how), loaded
+  as the model's parameter record. The code holds only the form.
+  `SegmentEmission.Params` is the shape; `Emissions.modePriors`
+  is the debt.
+- **A compensation**: a clamp, a floor, a margin, a penalty, a
+  scale. Each stands in for a model that is missing. A clamp is a
+  missing tail (the form is a mixture with an outlier share, so a
+  bad reading lowers every hypothesis a little and vetoes none). A
+  margin gate is a missing posterior (the form is the probability
+  of the alternative, from the forward–backward pass). A penalty
+  is a missing likelihood ratio. A scale on a term is a missing
+  correlation model (Rule 7). Most of the station chain's and the
+  cascade's module-level constants are of this kind; count them
+  with `grep -c 'def .* : Float :=' lean/Verified/{Hsmm,Geo}/*.lean`
+  rather than from a figure here.
+
+A step that ships names the constants it retires. That, beside
+the scoreboard, is the measure of "more generic".
+
 ## The current generator constraints
 
 These are the hard generator constraints — properties a
@@ -351,7 +430,10 @@ These are the per-minute soft factors that score among
 physically valid candidates produced by the generator. Each
 returns a log-probability; the scorer sums them as the joint
 log-likelihood of a candidate sequence. None is a hard
-constraint — all are calibrated graduated preferences.
+constraint — all are calibrated graduated preferences. The
+heart-rate, GPS-presence and speed rows, and `SegmentEvidence`,
+have segment-level forms behind `flags.segEmission` (Rule 7);
+when that ships they retire.
 
 | Layer        | Factor                       | Source                              | Status   |
 |--------------|------------------------------|-------------------------------------|----------|
@@ -409,8 +491,8 @@ Generator constraints (filter the candidate space):
 
 Scorer factors (graduated preference among valid candidates):
 
-- **HR continuity**: pair-wise factor on `|HR_t - HR_{t-1}|`.
-  HR doesn't jump 50 bpm in one minute without a mode change.
+- **HR continuity**: superseded by the per-segment random effect
+  of Rule 7 (built, behind `flags.segEmission`).
 - **Battery level**: low + decreasing implies the user isn't
   active; high + stable implies charging (often overnight at a
   known place).
@@ -473,11 +555,18 @@ If you find yourself:
   layer (e.g. tube-journey wrapper), not in the decoder.
 - Writing a `-Infinity` inside the scorer for an
   unlikely-but-possible case (a London → Karlsruhe teleport via
-  GPS noise) → use a calibrated low log-prob (-10 to -15 nats)
-  so the factor stays comparable in the MAP sum.
+  GPS noise) → a tail on the likelihood it belongs to, with a
+  fitted share (Rule 8).
 - Adding a flag / threshold / cutoff to control behaviour in
   the scorer → model whatever the flag is selecting between as
   two factors with different log-probs.
+- Adding a clamp, a floor, a margin or a scale to make a term
+  behave → it names a missing model (Rule 8); and if the term
+  misbehaves with a segment's length, the missing model is the
+  correlation (Rule 7).
+- Refitting one per-minute constant because its value is
+  measurably wrong → the fit is right and will still lose; the
+  form is wrong (Rule 7).
 - Pushing through a tuning value that makes one day's audit
   number jump → re-render and check it didn't regress others;
   also check that the same change is justifiable from the data,

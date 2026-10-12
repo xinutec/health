@@ -188,6 +188,12 @@ behaviour; the strict hand-set step term stays until they can.
 - The remaining misses against the served day, read one by one (the method
   that found every piece above).
 - Speed in the same form (a segment's jitter around its mean).
+- The boundary's position inside its minute as a latent (one shared edge
+  minute per boundary, a proper likelihood over the offset) — the form the
+  three edge-minute refutations (s5, s9, s10) point at.
+- Modes with no narrated runs (cycling, plane, bus) keep the hand-set
+  per-minute terms, and the remaining blips are theirs: EM over the captured
+  days with the narrated days clamped (roadmap step 3) fits them.
 - Held-out fits (by day) before anything ships.
 - Gate: phantoms not above the shipped 6, journeys and the referee not below
   the shipped counts. Then `unknown`, the per-minute mode prior and the
