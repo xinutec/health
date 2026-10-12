@@ -65,6 +65,14 @@ structure DispParams where
   eps : Float
   deriving Inhabited
 
+/-- Asleep heart rate as a segment-level random effect (`Params.asleep`). -/
+structure SleepParams where
+  hrMean : Float
+  hrTau : Float
+  sigmaW : Float
+  rho : Float
+  deriving Inhabited
+
 structure Params where
   sigmaW : Float
   rho : Float
@@ -110,6 +118,12 @@ structure Params where
   /-- The windowed speed's noise includes the two bracketing fixes' reported
       accuracy: a stay whose fixes scatter at 50 m is not moving at 3 km/h. -/
   accuracyNoise : Bool := false
+  /-- Asleep minutes' heart rate per segment, one physiology for every state:
+      the night's mean a draw around `hrMean` (spread `hrTau`), the minutes
+      around it (`sigmaW`, lag-1 `rho`). Replaces the per-minute asleep term,
+      whose mean depended on the state (a known place's 58, any other's own),
+      so a night at Home wanted to become a placeless stay at waking. -/
+  asleep : Option SleepParams := none
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of
@@ -119,17 +133,23 @@ structure Prefix where
   hrSum : Array Float
   hrSq : Array Float
   fixN : Array Float
+  /-- The same three for the asleep minutes. -/
+  bedN : Array Float := #[ZERO]
+  bedSum : Array Float := #[ZERO]
+  bedSq : Array Float := #[ZERO]
   deriving Inhabited
 
 def prefixOf (obs : Array ObsRow) : Prefix := Id.run do
-  let mut p : Prefix := ⟨#[ZERO], #[ZERO], #[ZERO], #[ZERO]⟩
+  let mut p : Prefix := ⟨#[ZERO], #[ZERO], #[ZERO], #[ZERO], #[ZERO], #[ZERO], #[ZERO]⟩
   for o in obs do
-    let (n, s, q) := match o.hr with
-      | some h => if o.inBed then (ZERO, ZERO, ZERO) else (ONE, h, h * h)
-      | none => (ZERO, ZERO, ZERO)
+    let (n, s, q, bn, bs, bq) := match o.hr with
+      | some h => if o.inBed then (ZERO, ZERO, ZERO, ONE, h, h * h) else (ONE, h, h * h, ZERO, ZERO, ZERO)
+      | none => (ZERO, ZERO, ZERO, ZERO, ZERO, ZERO)
     p := ⟨p.hrN.push (p.hrN.back?.getD 0 + n), p.hrSum.push (p.hrSum.back?.getD 0 + s),
           p.hrSq.push (p.hrSq.back?.getD 0 + q),
-          p.fixN.push (p.fixN.back?.getD 0 + (if o.gps.isSome then ONE else ZERO))⟩
+          p.fixN.push (p.fixN.back?.getD 0 + (if o.gps.isSome then ONE else ZERO)),
+          p.bedN.push (p.bedN.back?.getD 0 + bn), p.bedSum.push (p.bedSum.back?.getD 0 + bs),
+          p.bedSq.push (p.bedSq.back?.getD 0 + bq)⟩
   return p
 
 /-- A segment's sufficient statistics. -/
@@ -139,6 +159,10 @@ structure Stats where
   hrSum : Float
   hrSq : Float
   fixN : Float
+  /-- The asleep minutes' heart-rate count, sum and sum of squares. -/
+  bedN : Float := ZERO
+  bedSum : Float := ZERO
+  bedSq : Float := ZERO
 
 /-- The segment of length `d` ending at minute `e`. -/
 def statsAt (p : Prefix) (d e : Nat) : Stats :=
@@ -147,27 +171,41 @@ def statsAt (p : Prefix) (d e : Nat) : Stats :=
   let get := fun (a : Array Float) (i : Nat) => a[i]?.getD ZERO
   ⟨Verified.FloatConst.natToFloat d,
    get p.hrN hi - get p.hrN lo, get p.hrSum hi - get p.hrSum lo,
-   get p.hrSq hi - get p.hrSq lo, get p.fixN hi - get p.fixN lo⟩
+   get p.hrSq hi - get p.hrSq lo, get p.fixN hi - get p.fixN lo,
+   get p.bedN hi - get p.bedN lo, get p.bedSum hi - get p.bedSum lo,
+   get p.bedSq hi - get p.bedSq lo⟩
 
 private def TWO_PI : Float := 6.283185307179586
 
 def logBeta (a b : Float) : Float :=
   Duration.logGamma a + Duration.logGamma b - Duration.logGamma (a + b)
 
-/-- The segment's heart-rate marginal log-likelihood under one mode. -/
-def hrScore (p : Params) (m : ModeParams) (st : Stats) : Float :=
-  if st.hrN < ONE then ZERO
+/-- The marginal log-likelihood of `n` correlated minutes (sum `sum`, sum of
+    squares `sq`) whose mean is a draw around `hrMean` with spread `hrTau`,
+    scattering with `sigmaW` and lag-1 `rho`. -/
+def hrMarginal (sigmaW rho hrMean hrTau n sum sq : Float) : Float :=
+  if n < ONE then ZERO
   else
-    let n := st.hrN
-    let mean := st.hrSum / n
-    let ssw := max ZERO (st.hrSq - n * mean * mean)
-    let w := (ONE - p.rho) / (ONE + p.rho)
+    let mean := sum / n
+    let ssw := max ZERO (sq - n * mean * mean)
+    let w := (ONE - rho) / (ONE + rho)
     let nEff := max ONE (n * w)
-    let s2 := p.sigmaW * p.sigmaW
+    let s2 := sigmaW * sigmaW
     let within := -HALF * (nEff - ONE) * Float.log (TWO_PI * s2) - w * ssw / (TWO * s2)
-    let v := m.hrTau * m.hrTau + s2 / nEff
-    let between := -HALF * Float.log (TWO_PI * v) - (mean - m.hrMean) * (mean - m.hrMean) / (TWO * v)
+    let v := hrTau * hrTau + s2 / nEff
+    let between := -HALF * Float.log (TWO_PI * v) - (mean - hrMean) * (mean - hrMean) / (TWO * v)
     within + between
+
+/-- The segment's awake heart-rate marginal under one mode. -/
+def hrScore (p : Params) (m : ModeParams) (st : Stats) : Float :=
+  hrMarginal p.sigmaW p.rho m.hrMean m.hrTau st.hrN st.hrSum st.hrSq
+
+/-- The segment's asleep heart-rate marginal, the same for every state
+    (`Params.asleep`); `0` without it. -/
+def sleepScore (p : Params) (st : Stats) : Float :=
+  match p.asleep with
+  | some sp => hrMarginal sp.sigmaW sp.rho sp.hrMean sp.hrTau st.bedN st.bedSum st.bedSq
+  | none => ZERO
 
 /-- The segment's fix-presence sequence log-probability under one mode. -/
 def fixScore (m : ModeParams) (st : Stats) : Float :=
@@ -251,9 +289,10 @@ def speedRobust (p : Params) (mode : Mode) (gauss : Float) : Float :=
   | none => ZERO
 
 def score (p : Params) (mode : Mode) (st : Stats) : Float :=
-  match p.byMode.find? (·.1 == mode) with
-  | some (_, m) => hrScore p m st + fixScore m st
-  | none => ZERO
+  sleepScore p st
+    + match p.byMode.find? (·.1 == mode) with
+      | some (_, m) => hrScore p m st + fixScore m st
+      | none => ZERO
 
 /-! ### Tabulated
 
@@ -299,7 +338,8 @@ def prepare (p : Params) (N : Nat) : Prepared :=
 private def idx (x : Float) : Nat := (x + HALF).toUInt64.toNat
 
 def scorePrepared (q : Prepared) (mode : Mode) (st : Stats) : Float :=
-  match q.tables.find? (·.mode == mode) with
+  sleepScore q.p st
+    + match q.tables.find? (·.mode == mode) with
   | none => ZERO
   | some t =>
     let n := idx st.n
@@ -325,11 +365,11 @@ private def pTest : Params :=
 #guard dispScore pTest .stationary 109 (some ⟨50, 0, 0⟩) > dispScore pTest .train 109 (some ⟨50, 0, 0⟩) + 10
 #guard dispScore pTest .train 20 (some ⟨8000, 0, 0⟩) > dispScore pTest .stationary 20 (some ⟨8000, 0, 0⟩) + 3
 #guard dispScore pTest .walking 20 (some ⟨8000, 0, 0⟩) == 0
-#guard score pTest .stationary ⟨300, 0, 0, 0, 0⟩ > score pTest .train ⟨300, 0, 0, 0, 0⟩ + 10
-#guard score pTest .stationary ⟨300, 0, 0, 0, 300⟩ > score pTest .train ⟨300, 0, 0, 0, 300⟩ - 1
-#guard score pTest .walking ⟨300, 0, 0, 0, 0⟩ == 0
+#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO⟩ + 10
+#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO⟩ - 1
+#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO⟩ == 0
 -- The tables agree with the closed form.
-private def stT : Stats := ⟨120, 90, 7650, 652000, 40⟩
+private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO⟩
 #guard Float.abs (scorePrepared (prepare pTest 400) .train stT - score pTest .train stT) < 1e-6
 #guard Float.abs (scorePrepared (prepare pTest 400) .stationary stT - score pTest .stationary stT) < 1e-6
 

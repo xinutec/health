@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); twenty-five arms measured; s25 ahead of the shipped decoder on the referee (131 vs 126), leg modes (296 vs 286), lines (59 vs 53) and stations (50 vs 47), level on phantoms (6), behind on scoreboard journeys (115 vs 121) — the one gate bar left
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); twenty-eight arms measured; s28 ahead of the shipped decoder on the referee (132 vs 126), leg modes (297 vs 286), lines (59 vs 53), stations (51 vs 47) and phantoms (5 vs 6), behind on scoreboard journeys (117 vs 121) — the one gate bar left
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -108,6 +108,8 @@ place entry normalised over places per hour.
 | s25: s23 with the window one minute each side, one-sided beside a dark minute | 115 | 296 | 59 | 50 | 6 | 131 |
 | s26a: s25 + the place chosen by the entry alone | 117 | 296 | 59 | 50 | 7 | 131 |
 | s26b: s26a + the measured share of stays at no listed place (5%) | 117 | 297 | 59 | 51 | 8 | 132 |
+| s27: s26b with an unfitted mode voting flat on displacement | 117 | 297 | 59 | 51 | 8 | 132 |
+| s28: s27 with the asleep heart rate per segment, for every state | 117 | 297 | 59 | 51 | 5 | 132 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -373,6 +375,20 @@ add a one-minute night blip: a stay at Home becoming a placeless stay at
 waking, bridged by a one-minute `plane` — the stay-to-stay hard zero is
 right, and the bridge is cheap only because a mode with no fitted
 displacement had no vote in the displacement posterior.
+
+**An unfitted mode votes flat** (s27): a plane or a bicycle has no fitted
+displacement, so its vote is the flat component (anywhere within 300 km/h
+over the span). The one-minute plane became a two-minute train: the bridge
+was wanted, not merely cheap. **The night's heart rate per segment** (s28):
+the per-minute asleep term's mean depended on the state — 58 ± 10 at a known
+place, the mode's own anywhere else — so at waking, with the heart rate
+rising in bed, Home lost 0.3 to 0.7 a minute to a placeless stay for two
+hours and the decoder bought the change with a bridge. Measured on 54
+narrated nights: in bed 63.5 bpm, the nights' means spread 5.2, within a
+night 5.1 with lag-1 0.68 — a random effect per segment, the same for every
+state (`Params.asleep`), and the minute term comes out for all. Phantoms
+8 → 5 on the lister and 6 → 3 on the scoreboard; nothing else moved. Three
+of the five left are one- and two-minute Metropolitan blips inside walks.
 
 Next: the edge minute's offset as a latent (the one-stop hop's first minute
 is the walk onto the train, and the decoder now places a one-minute ride

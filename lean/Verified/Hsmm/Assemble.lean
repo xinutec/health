@@ -280,12 +280,18 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
   match c.segEm with
   | none => SEG_ZERO
   | some q =>
+    let prior := Emissions.priorOf c.priors st
     let out :=
-      if !q.p.byMode.any (·.1 == st.mode) then SEG_ZERO
-      else
-        let prior := Emissions.priorOf c.priors st
+      (if !q.p.byMode.any (·.1 == st.mode) then SEG_ZERO
+       else
         c.weights.base * (FloatScore.logBernoulli o.gps.isSome prior.gpsPresentProb
-          + (if o.inBed then SEG_ZERO else Emissions.hrTerm st (EmissionFull.toThin o) prior))
+          + (if o.inBed then SEG_ZERO else Emissions.hrTerm st (EmissionFull.toThin o) prior)))
+      -- With `asleep`, the asleep minutes' heart rate is scored per segment
+      -- for every state, so the minute term (whose mean depended on the
+      -- state) comes out everywhere.
+      + (if q.p.asleep.isSome && o.inBed then
+           c.weights.base * Emissions.hrTerm st (EmissionFull.toThin o) prior
+         else SEG_ZERO)
     let prevLit := if t == 0 then none else (c.obs[t - 1]?).map (·.gps.isSome)
     let speed := match o.gps with
       | some g =>

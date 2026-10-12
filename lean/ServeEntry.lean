@@ -919,13 +919,18 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let gapPairs := ((f.getObjVal? "gapPairs") >>= (·.getBool?)).toOption.getD false
     let dispPosterior := ((f.getObjVal? "dispPosterior") >>= (·.getBool?)).toOption.getD false
     let accuracyNoise := ((f.getObjVal? "accuracyNoise") >>= (·.getBool?)).toOption.getD false
+    let asleep : Option Verified.Hsmm.SegmentEmission.SleepParams := do
+      let arr ← ((f.getObjVal? "asleep") >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [hrMean, hrTau, sigmaW, rho] => some { hrMean, hrTau, sigmaW, rho }
+      | _ => none
     let obsChain := all.filterMap fun m => do
       let rows ← (((f.getObjVal? "obsChain") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)))
         >>= (·.getArr?)).toOption
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
     pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, obsChain, lineRankOnly,
-           dispSegment, gapPairs, dispPosterior, accuracyNoise }
+           dispSegment, gapPairs, dispPosterior, accuracyNoise, asleep }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
