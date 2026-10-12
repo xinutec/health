@@ -948,6 +948,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let gapPairs := ((f.getObjVal? "gapPairs") >>= (·.getBool?)).toOption.getD false
     let dispPosterior := ((f.getObjVal? "dispPosterior") >>= (·.getBool?)).toOption.getD false
     let accuracyNoise := ((f.getObjVal? "accuracyNoise") >>= (·.getBool?)).toOption.getD false
+    let unlistedCentre := ((f.getObjVal? "unlistedCentre") >>= (·.getBool?)).toOption.getD false
     let asleep : Option Verified.Hsmm.SegmentEmission.SleepParams := do
       let arr ← ((f.getObjVal? "asleep") >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
@@ -959,7 +960,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
     pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, obsChain, lineRankOnly,
-           dispSegment, gapPairs, dispPosterior, accuracyNoise, asleep }
+           dispSegment, gapPairs, dispPosterior, accuracyNoise, asleep, unlistedCentre }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
@@ -968,7 +969,12 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (knob "modeMinuteScale" 1.0) (knob "modeEntryScale" 0.0)
     (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0))
     (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)
-  let segPref := Verified.Hsmm.SegmentEmission.prefixOf obs
+  let posRef := Verified.Hsmm.SegmentEmission.refOf obs
+  let segPref := Verified.Hsmm.SegmentEmission.withPositions
+    (Verified.Hsmm.SegmentEmission.prefixOf obs) obs posRef
+    Verified.Hsmm.Emissions.PLACE_RADIUS_M Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M
+  let placePrior := Verified.Hsmm.SegmentEmission.placePriorOf posRef
+    (places.toList.map fun (_, lat, lon, _, _) => (lat, lon))
   let windowSpeed := Verified.Hsmm.Assemble.windowSpeedTable obs
   let segEm := segEm.map (Verified.Hsmm.SegmentEmission.prepare · obs.size)
   -- A fitted mode-to-mode transition matrix (harness-only): `{src: {dst: p}}`.
@@ -1034,7 +1040,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
           (num "newShare")
       | _, _ => #[]
     | none => #[]
-  let ctx := { ctx with priors, fits, weights, segEm, segPref, transWeight, selfLoop, stayEntryLog,
+  let ctx := { ctx with priors, fits, weights, segEm, segPref, placePrior, transWeight, selfLoop, stayEntryLog,
                         visitCounts, entryTable, windowSpeed }
   let lineProxBest := match segEm with
     | some q => if q.p.lineRankOnly then Verified.Hsmm.Assemble.lineProxBestTable ctx else #[]
@@ -1148,13 +1154,16 @@ private def packDeltaRef (qE qR : Int64) (h : Nat) : Nat × Option Int :=
   | _, _ => false
 
 /-- Class key for the duration factorisation. `dur(s,d,e)` depends on the state
-    only through `(mode, isNamedTrain)` — segment evidence sees the mode, and the
-    train-hop relaxation the named-line + coverage (which is line-independent). So
-    this partition is EXACT (no iterative refinement): every state in a class has
-    identical `dur(·,d,e)` at every cell. Named train ⇒ 7; unknown_rail train ⇒ 4. -/
+    only through `(mode, isNamedTrain, placeless stay)` — segment evidence sees
+    the mode, the train-hop relaxation the named-line + coverage (which is
+    line-independent), and the unlisted centre (`unlistedCentre`) the placeless
+    stay alone. So this partition is EXACT (no iterative refinement): every
+    state in a class has identical `dur(·,d,e)` at every cell. Named train ⇒ 7;
+    unknown_rail train ⇒ 4; the placeless stay ⇒ 8. -/
 private def durClassKey (s : Verified.Hsmm.Emissions.State) : Nat :=
   match s.mode with
-  | .stationary => 0 | .walking => 1 | .cycling => 2 | .driving => 3
+  | .stationary => if s.placeId.isNone then 8 else 0
+  | .walking => 1 | .cycling => 2 | .driving => 3
   | .plane => 5 | .unknown => 6
   | .train => match s.lineName with
     | some l => if !Verified.Hsmm.Emissions.isPlaceholderLine l then 7 else 4 | none => 4

@@ -111,6 +111,9 @@ structure ModelContext where
       keeps those. Harness-only (`flags.segEmission`). -/
   segEm : Option SegmentEmission.Prepared := none
   segPref : SegmentEmission.Prefix := default
+  /-- The prior over an unlisted place's centre (`SegmentEmission.placePriorOf`),
+      for `unlistedCentre`. -/
+  placePrior : Option (Float × Float × Float) := none
   /-- The transition weight: the shipped uniform split unless the harness
       carries a fitted mode matrix (`Transitions.fittedWeight`). -/
   transWeight : State → State → Float := Transitions.transitionWeight
@@ -238,7 +241,7 @@ private def SEG_ZERO : Float := 0
 
 /-- The median reported accuracy of a fix on the narrated days (10 m), for a
     fix that carries none. -/
-private def ACCURACY_DEFAULT_M : Float := 10
+def ACCURACY_DEFAULT_M : Float := 10
 
 private def KMH_PER_MS : Float := 3.6
 private def MIN_ONE : Float := 1
@@ -291,6 +294,11 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
       -- state) comes out everywhere.
       + (if q.p.asleep.isSome && o.inBed then
            c.weights.base * Emissions.hrTerm st (EmissionFull.toThin o) prior
+         else SEG_ZERO)
+      -- With `unlistedCentre` the placeless stay's position is scored per
+      -- segment (`segEmFrom`), so its per-minute off-network term comes out.
+      + (if q.p.unlistedCentre && st.mode == .stationary && st.placeId.isNone && o.gps.isSome then
+           c.weights.base * Emissions.OFF_NETWORK_LOG_PRIOR
          else SEG_ZERO)
     let prevLit := if t == 0 then none else (c.obs[t - 1]?).map (·.gps.isSome)
     let speed := match o.gps with
@@ -485,6 +493,12 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
   match c.segEm, c.states[s]? with
   | some q, some x =>
     SegmentEmission.scorePrepared q x.mode st
+      + (match c.placePrior with
+         | some pr =>
+           if q.p.unlistedCentre && x.mode == .stationary && x.placeId.isNone then
+             SegmentEmission.centreScore st pr
+           else SEG_ZERO
+         | none => SEG_ZERO)
       + (if q.p.disp.any (·.1 == x.mode) || q.p.dispPosterior then
            (if q.p.dispPosterior then SegmentEmission.dispPosteriorScore q.p x.mode d w
             else if q.p.dispSegment then SegmentEmission.dispScore q.p x.mode d w else SEG_ZERO)
