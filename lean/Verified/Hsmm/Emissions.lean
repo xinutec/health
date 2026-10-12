@@ -24,6 +24,9 @@ inductive Mode
   | stationary | walking | cycling | driving | train | plane | unknown
   deriving DecidableEq, BEq, Repr, Inhabited
 
+def MAINLINE_SPEED_MEAN : Float := 74
+def MAINLINE_SPEED_STD : Float := 71
+
 structure ModePrior where
   gpsPresentProb : Float
   speedMean : Float
@@ -33,19 +36,24 @@ structure ModePrior where
   expectedZeroProb : Float
   cadencePositiveMean : Float
   cadencePositiveStd : Float
+  /-- The train's speed on a mainline (`unknown_rail`), apart from the metro
+      lines' (`mainlinePrior`): narrated Tube minutes run 39 ± 26 km/h, the
+      Eurostar and TGV days 164 ± 388. -/
+  mainlineSpeedMean : Float := MAINLINE_SPEED_MEAN
+  mainlineSpeedStd : Float := MAINLINE_SPEED_STD
 
 /-- `UNIFORM_GPS_PRESENT_PROB` in emissions.ts. -/
 def uniformGpsPresentProb : Float := 0.85
 
 /-- `MODE_PRIORS`. -/
 def modePriors : Mode → ModePrior
-  | .stationary => ⟨uniformGpsPresentProb, 0, 2, 70, 15, 0.99, 10, 20⟩
-  | .walking    => ⟨uniformGpsPresentProb, 5, 2, 100, 20, 0.05, 100, 25⟩
-  | .cycling    => ⟨uniformGpsPresentProb, 18, 6, 130, 20, 0.95, 30, 30⟩
-  | .driving    => ⟨uniformGpsPresentProb, 40, 20, 75, 15, 0.99, 5, 10⟩
-  | .train      => ⟨uniformGpsPresentProb, 50, 30, 75, 15, 0.99, 5, 10⟩
-  | .plane      => ⟨uniformGpsPresentProb, 600, 200, 70, 15, 0.99, 5, 10⟩
-  | .unknown    => ⟨uniformGpsPresentProb, 20, 200, 80, 100, 0.5, 50, 100⟩
+  | .stationary => ⟨uniformGpsPresentProb, 0, 2, 70, 15, 0.99, 10, 20, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
+  | .walking    => ⟨uniformGpsPresentProb, 5, 2, 100, 20, 0.05, 100, 25, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
+  | .cycling    => ⟨uniformGpsPresentProb, 18, 6, 130, 20, 0.95, 30, 30, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
+  | .driving    => ⟨uniformGpsPresentProb, 40, 20, 75, 15, 0.99, 5, 10, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
+  | .train      => ⟨uniformGpsPresentProb, 50, 30, 75, 15, 0.99, 5, 10, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
+  | .plane      => ⟨uniformGpsPresentProb, 600, 200, 70, 15, 0.99, 5, 10, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
+  | .unknown    => ⟨uniformGpsPresentProb, 20, 200, 80, 100, 0.5, 50, 100, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
 
 /-- `MODE_PRIOR_LOG`: per-minute `log P(mode)`. -/
 def modePriorLog : Mode → Float
@@ -146,8 +154,6 @@ the Tube: measured on the narrated rides, fix speeds on Tube lines run
 42 ± 33 km/h (99th percentile 100), on other rail 74 ± 71 (99th percentile 294,
 a TGV at 250–300). One distribution for both read a TGV minute as `unknown`. -/
 
-def MAINLINE_SPEED_MEAN : Float := 74
-def MAINLINE_SPEED_STD : Float := 71
 
 /-- A metro the day's route graph has no line for — abroad, the Paris Métro —
     rides in `unknown_metro` at the train's own (Tube) speeds, beside the
@@ -159,7 +165,8 @@ def isMainline (s : State) : Bool := s.mode == .train && s.lineName == some "unk
 
 /-- The mainline's prior: the train's, with the mainline's speeds. -/
 def mainlinePrior (priors : Mode → ModePrior := modePriors) : ModePrior :=
-  { priors .train with speedMean := MAINLINE_SPEED_MEAN, speedStd := MAINLINE_SPEED_STD }
+  let t := priors .train
+  { t with speedMean := t.mainlineSpeedMean, speedStd := t.mainlineSpeedStd }
 
 /-- A state's emission prior: its mode's, the mainline's for `unknown_rail`. -/
 def priorOf (priors : Mode → ModePrior) (s : State) : ModePrior :=

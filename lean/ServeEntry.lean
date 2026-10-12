@@ -860,10 +860,23 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let f ← fitted
     let arr ← ((f.getObjVal? sect) >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)) >>= (·.getArr?)).toOption
     arr.mapM fun v => (v.getNum?).toOption.map (·.toFloat)
+  -- `mainlineSpeed: [mean, std]` beside `modePriors`: the train's speed on
+  -- `unknown_rail`, apart from the metro lines'.
+  let mainline : Option (Float × Float) := do
+    let f ← fitted
+    let arr ← ((f.getObjVal? "mainlineSpeed") >>= (·.getArr?)).toOption
+    match arr.toList.filterMap (fun v => (v.getNum?).toOption.map (·.toFloat)) with
+    | [m, sd] => some (m, sd)
+    | _ => none
   let priors := fun (m : Verified.Hsmm.Emissions.Mode) =>
-    match row "modePriors" m with
-    | some #[g, sm, ss, hm, hs, z, cm, cs] => ⟨g, sm, ss, hm, hs, z, cm, cs⟩
-    | _ => Verified.Hsmm.Emissions.modePriors m
+    let base : Verified.Hsmm.Emissions.ModePrior := match row "modePriors" m with
+      | some #[g, sm, ss, hm, hs, z, cm, cs] =>
+        ⟨g, sm, ss, hm, hs, z, cm, cs, Verified.Hsmm.Emissions.MAINLINE_SPEED_MEAN,
+         Verified.Hsmm.Emissions.MAINLINE_SPEED_STD⟩
+      | _ => Verified.Hsmm.Emissions.modePriors m
+    match mainline with
+    | some (mm, ms) => { base with mainlineSpeedMean := mm, mainlineSpeedStd := ms }
+    | none => base
   -- Per-family term weights (harness-only): a name absent keeps the model's own.
   let d : Verified.Hsmm.EmissionFull.TermWeights := {}
   let tw (k : String) (dflt : Float) : Float :=
