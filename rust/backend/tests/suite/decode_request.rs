@@ -76,7 +76,7 @@ fn the_mapped_shape_is_accepted() {
         places,
         serde_json::json!([{
             "id": 1, "name": "Home", "lat": 51.5, "lon": -0.1,
-            "hourProfile": null, "dwell": 3600.0
+            "hourProfile": null, "dwell": 3600.0, "visits": 2
         }]),
         "column names become concept names, and nothing else changes"
     );

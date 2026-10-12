@@ -120,6 +120,12 @@ structure ModelContext where
       `placeByEntry`): a transition into a stay gives that back, so the place
       is chosen by the entry prior alone and not also by the even split. -/
   stayEntryLog : Array Float := #[]
+  /-- Per place, its count of visits (stay beginnings), when the request
+      carries them. -/
+  visitCounts : Std.HashMap Int Float := {}
+  /-- Per local hour, `log P(place | a stay begins)` for each place and for a
+      place not on the list (`entryCountsTable`); empty without the arm. -/
+  entryTable : Array (Std.HashMap Int Float × Float) := #[]
 
 /-- The longest segment the HSMM will consider, in minutes.
 
@@ -250,7 +256,10 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
     let speed := match o.gps with
       | some g =>
         let prior := Emissions.priorOf c.priors st
+        -- The base's whole speed term: the Gaussian and, after a gap, the
+        -- reacquire correction on top of it; the windowed speed replaces both.
         let own := FloatScore.logNormalPdf g.speedKmh prior.speedMean prior.speedStd
+          + EmissionFull.reacquireCorrection st o c.reacquireRobust c.priors
         let windowed :=
           if !q.p.speedWindow || t == 0 then own
           else match (c.obs[t - 1]?).bind (·.gps), (c.obs[t + 1]?).bind (·.gps) with
@@ -336,6 +345,51 @@ def modeEntryLog (m : Mode) : Float :=
   let total := modes.foldl (fun a x => a + rate x) 0.0
   Float.log (rate m / total)
 
+private def SEG_ONE : Float := 1
+/-- A flat hour profile, for a place without one. -/
+private def UNIFORM_HOUR : Float := 1 / 24
+private def HOURS : Nat := 24
+
+/-- A place's share of hour `h` from its profile (dwell by hour, normalised to
+    sum to one), flat when it has none. -/
+private def hourShare (profiles : Std.HashMap Int (Array Float)) (p : Int) (h : Nat) : Float :=
+  match profiles.get? p with
+  | some pr =>
+    if pr.size != HOURS then UNIFORM_HOUR else
+    let tot := pr.foldl (· + ·) SEG_ZERO
+    if tot > SEG_ZERO then pr.getD h SEG_ZERO / tot else UNIFORM_HOUR
+  | none => UNIFORM_HOUR
+
+/-- `P(place | a stay begins at hour h)` from counts of visits, smoothed with
+    two pseudo-counts (`alpha` on the place, `beta` on its hour): a place's
+    share `(n_p + α) / (V + α·(K + 1))`, its hour `(n_p·prof_p[h] + β·g[h]) /
+    (n_p + β)` with `g` the visit-weighted hour profile over all places, and
+    a place not on the list `α / (V + α·(K + 1)) · g[h]`; normalised over the
+    places and that one. Per hour: each place's log probability and the
+    unlisted place's. Replaces the entry prior's ratios and floors, which gave
+    a four-visit place at an unprofiled hour about −12. -/
+def entryCountsTable (places : List Int) (visits : Std.HashMap Int Float)
+    (profiles : Std.HashMap Int (Array Float)) (alpha beta : Float) :
+    Array (Std.HashMap Int Float × Float) :=
+  let v := places.foldl (fun a p => a + visits.getD p SEG_ZERO) SEG_ZERO
+  let k := Verified.FloatConst.natToFloat places.length
+  (Array.range HOURS).map fun h =>
+    let g := if v > SEG_ZERO
+      then places.foldl (fun a p => a + visits.getD p SEG_ZERO * hourShare profiles p h) SEG_ZERO / v
+      else UNIFORM_HOUR
+    let w := places.map fun p =>
+      let n := visits.getD p SEG_ZERO
+      (p, (n + alpha) / (v + alpha * (k + SEG_ONE)) * ((n * hourShare profiles p h + beta * g) / (n + beta)))
+    let unk := alpha / (v + alpha * (k + SEG_ONE)) * g
+    let tot := w.foldl (fun a (_, x) => a + x) unk
+    (w.foldl (fun m (p, x) => m.insert p (Float.log (x / tot))) {}, Float.log (unk / tot))
+
+/-- The counts model's entry for a stay at hour `h`, when the table is built. -/
+def entryCountsAt (c : ModelContext) (st : State) (h : Nat) : Option Float :=
+  match c.entryTable[h]? with
+  | some (m, unk) => some (match st.placeId with | some pid => m.getD pid unk | none => unk)
+  | none => none
+
 /-- `entry(s, obs[t])` — base entry prior + train-generator entry, with the
     hour profile / visit weight / coverage verdict resolved for the state. -/
 def entryAt (c : ModelContext) (t s : Nat) : Float :=
@@ -348,8 +402,11 @@ def entryAt (c : ModelContext) (t s : Nat) : Float :=
     | none => false
   let profile := match st.placeId with | some pid => c.hourProfiles.get? pid | none => none
   let weight := match st.placeId with | some pid => c.visitWeights.get? pid | none => none
-  c.weights.entry * Assembly.entryLogProbFull st o.hourLocal true profile c.nPlaces weight covered lineValid
-    + c.modeEntryScale * modeEntryLog st.mode
+  match (if st.mode == .stationary then entryCountsAt c st o.hourLocal else none) with
+  | some v => c.weights.entry * v + c.modeEntryScale * modeEntryLog st.mode
+  | none =>
+    c.weights.entry * Assembly.entryLogProbFull st o.hourLocal true profile c.nPlaces weight covered lineValid
+      + c.modeEntryScale * modeEntryLog st.mode
 
 /-- `initial(s)` — uniform 0. -/
 def initAt (c : ModelContext) (s : Nat) : Float :=

@@ -980,7 +980,26 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     if tfKnob "placeByEntry" then
       ctx.states.map fun src => Float.log (Verified.FloatConst.natToFloat (count src .stationary))
     else #[]
-  let ctx := { ctx with priors, fits, weights, segEm, segPref, transWeight, selfLoop, stayEntryLog }
+  -- `flags.entryCounts` (harness arm): `{alpha, beta}` — the entry prior as
+  -- smoothed counts of visits (`Assemble.entryCountsTable`); the places' counts
+  -- ride on the request as `visits`.
+  let visitCounts : Std.HashMap Int Float := Id.run do
+    let mut m : Std.HashMap Int Float := {}
+    for pj in ((j.getObjVal? "places") >>= (·.getArr?)).toOption.getD #[] do
+      match (pj.getObjVal? "id" >>= (·.getInt?)).toOption, (pj.getObjVal? "visits" >>= (·.getNum?)).toOption with
+      | some id, some n => m := m.insert id n.toFloat
+      | _, _ => pure ()
+    return m
+  let entryTable := match (flags.getObjVal? "entryCounts").toOption.filter (!·.isNull) with
+    | some ec =>
+      let num := fun (k : String) => ((ec.getObjVal? k) >>= (·.getNum?)).toOption.map (·.toFloat)
+      match num "alpha", num "beta" with
+      | some alpha, some beta =>
+        Verified.Hsmm.Assemble.entryCountsTable (ctx.placeCoords.toList.map (·.1)) visitCounts ctx.hourProfiles alpha beta
+      | _, _ => #[]
+    | none => #[]
+  let ctx := { ctx with priors, fits, weights, segEm, segPref, transWeight, selfLoop, stayEntryLog,
+                        visitCounts, entryTable }
   let lineProxBest := match segEm with
     | some q => if q.p.lineRankOnly then Verified.Hsmm.Assemble.lineProxBestTable ctx else #[]
     | none => #[]
@@ -1438,6 +1457,8 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
     let per := c.states.zipIdx.map fun (st, s) =>
       Json.mkObj [("state", Json.str (Verified.Hsmm.StateSpace.stateKey st)),
                   ("emit", Lean.toJson (Verified.Hsmm.Assemble.emitAt c t s)),
+                  -- The segment-emission arm's per-minute adjustment, apart.
+                  ("seg", Lean.toJson (Verified.Hsmm.Assemble.segMinuteAt c t st o)),
                   ("entry", Lean.toJson (Verified.Hsmm.Assemble.entryAt c t s))]
     Json.mkObj [("ts", Lean.toJson o.ts),
                 ("speedKmh", optF (o.gps.map (·.speedKmh))),

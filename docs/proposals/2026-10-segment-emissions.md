@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`); nineteen arms measured; s16 (no self-loop mass, displacement as the mode's posterior, fitted durations) ahead of the shipped decoder on the referee (132 vs 126), leg modes and lines; behind on scoreboard journeys (115 vs 121), stations (44 vs 47) and phantoms (12 vs 6)
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); twenty-two arms measured; s22 ahead of the shipped decoder on leg modes (296 vs 286), lines (59 vs 53) and stations (50 vs 47), behind on scoreboard journeys (115 vs 121) and phantoms
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -100,6 +100,9 @@ place entry normalised over places per hour.
 | s16: s17 + duration priors fitted on the narrated runs | 115 | 296 | 59 | 44 | 12 | 132 |
 | s18: s16 + the measured stationary cadence (16% of stay minutes with steps) | 115 | 288 | 60 | 44 | — | not run |
 | s19: s16 + the fixes' reported accuracy in the windowed speed's noise | 113 | 296 | 57 | 37 | — | not run |
+| s20: s16 + the entry prior as smoothed counts of visits | 115 | 296 | 59 | 44 | 12 | not run |
+| s21: s20 + the reacquire correction taken out with the Gaussian | 114 | 293 | 59 | 50 | 12 | 130 |
+| s22: s21 + the fixes' accuracy in the windowed speed's noise | 115 | 296 | 59 | 50 | — | — |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -284,10 +287,32 @@ boundaries — lose the station. A tight stay's speed also pays the wider
 normalisation on every minute. The plumbing stays (it is what a position
 process needs); the flag stays off.
 
-Next: the entry prior as smoothed counts of stay beginnings; the edge
-minute's offset as a latent (the one-stop hop's first minute is the walk onto
-the train, and the decoder now places a one-minute ride there); the fix's
-accuracy in a position model rather than a speed term.
+**The entry prior as counts** (s20, `flags.entryCounts`): `P(place | a stay
+begins at hour h)` from each place's visit count and hour profile with two
+pseudo-counts (`Assemble.entryCountsTable`), a place off the list included;
+the places carry `visits` on the request. A four-visit place at an hour its
+profile never saw reads −6.3 instead of −11.7. The same four counts as s16:
+it retires the ratios and floors at no cost.
+
+**A bug in the arm, found on the day of writing.** Reading the morning ride's
+last minutes with `emission_debug` (which now prints the arm's share of each
+emission): at the minute after Baker Street, walking's emission was +37.6 —
+a positive log-probability. The arm replaces the base speed Gaussian with the
+windowed speed, but the base also carries the reacquire-robust correction
+(`max 0 (widened − base)`, about +70 on a 44 km/h fix shortly after a gap),
+and that stayed in: walking and stays were credited twice on every fast fix
+after a gap — the ride-tail minutes. With the correction factored out
+(`EmissionFull.reacquireCorrection`) and taken out with the Gaussian, the
+day's ride runs to Euston Square and that minute reads −48.6. Measured
+(s21): stations 44 → 50, above the shipped decoder's 47 for the first time;
+three counts went to `driving` blips on fast reacquire fixes inside walks,
+which the bogus credit had been covering. **The accuracy as the speed's
+noise, re-measured on the fixed arm** (s22): those three back, stations
+held — s19's station loss was the bug's, not the accuracy's. The flag is on.
+
+Next: the edge minute's offset as a latent (the one-stop hop's first minute
+is the walk onto the train, and the decoder now places a one-minute ride
+there); the fix's accuracy in a position model rather than a speed term.
 
 ## Next
 

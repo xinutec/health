@@ -73,28 +73,30 @@ fn main() -> Result<()> {
             _ => "     -".to_string(),
         };
         // The best state per mode: the mode is the key's first word.
-        let mut best: BTreeMap<String, (f64, f64, String)> = BTreeMap::new();
+        let mut best: BTreeMap<String, (f64, f64, f64, String)> = BTreeMap::new();
         for s in r["states"].as_array().into_iter().flatten() {
             let key = s["state"].as_str().unwrap_or("");
             // `stateKey`: `mode|detail` — a stay's place, a ride's line.
             let mode = key.split('|').next().unwrap_or(key).to_string();
             let emit = s["emit"].as_f64().unwrap_or(f64::NEG_INFINITY);
             let entry = s["entry"].as_f64().unwrap_or(f64::NEG_INFINITY);
+            let seg = s["seg"].as_f64().unwrap_or(0.0);
             let e = best
                 .entry(mode)
-                .or_insert((f64::NEG_INFINITY, 0.0, String::new()));
+                .or_insert((f64::NEG_INFINITY, 0.0, 0.0, String::new()));
             if emit > e.0 {
-                *e = (emit, entry, key.to_string());
+                *e = (emit, entry, seg, key.to_string());
             }
         }
         let mut bests: Vec<String> = best
             .iter()
             .filter(|(m, _)| m.as_str() != "train")
-            .map(|(m, (e, n, k))| {
+            .map(|(m, (e, n, g, k))| {
+                // emit / entry; `+seg` is the segment-emission arm's share of emit.
                 if k == m {
-                    format!("{m} {e:6.1}/{n:5.1}")
+                    format!("{m} {e:6.1}/{n:5.1} (seg {g:+.1})")
                 } else {
-                    format!("{k} {e:6.1}/{n:5.1}")
+                    format!("{k} {e:6.1}/{n:5.1} (seg {g:+.1})")
                 }
             })
             .collect();

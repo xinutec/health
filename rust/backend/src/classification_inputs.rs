@@ -1160,6 +1160,7 @@ pub fn decode_places(known: Option<&Value>) -> Result<Value> {
                 "lon": f("centroidLon")?,
                 "hourProfile": r.get("hourProfile").cloned().unwrap_or(Value::Null),
                 "dwell": f("totalDwellSec")?,
+                "visits": r.get("visitCount").cloned().unwrap_or(Value::Null),
             }))
         })
         .collect::<Result<Vec<_>>>()?;

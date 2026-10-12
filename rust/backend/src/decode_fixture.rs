@@ -96,11 +96,9 @@ fn seg_emission() -> Result<Value> {
 /// The JSON file the environment variable `var` names, or `null` when unset —
 /// `HSMM_TRANS_FIT=<file>` is a fitted mode-to-mode transition matrix
 /// (`Transitions.fittedWeight`), `{src: {dst: p}}`, harness-only.
-/// Each fix's reported accuracy by ts, from the capture-side fixture of the
-/// same day (`tests/golden/days`, whose PhoneTrack rows carry it); empty when
-/// that fixture is absent. The frozen decoder fixtures were written before
-/// the request carried accuracy, and the pipeline's points keep the raw ts.
-fn accuracy_by_ts(fx: &Value) -> Result<std::collections::HashMap<i64, f64>> {
+/// The capture-side fixture of the same day (`tests/golden/days`), when present:
+/// the raw rows the frozen request was made from, with what it did not keep.
+fn capture_fixture(fx: &Value) -> Result<Option<Value>> {
     let (date, user) = (
         fx["meta"]["date"].as_str().context("meta.date")?,
         fx["meta"]["user"].as_str().context("meta.user")?,
@@ -110,9 +108,43 @@ fn accuracy_by_ts(fx: &Value) -> Result<std::collections::HashMap<i64, f64>> {
         env!("CARGO_MANIFEST_DIR")
     );
     let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    Ok(Some(serde_json::from_str(&raw)?))
+}
+
+/// Each place's count of visits by id, from the capture-side fixture of the
+/// same day (`knownPlaces.visitCount`); empty when that fixture is absent.
+fn visits_by_id(fx: &Value) -> Result<std::collections::HashMap<i64, f64>> {
+    let Some(day) = capture_fixture(fx)? else {
         return Ok(std::collections::HashMap::new());
     };
-    let day: Value = serde_json::from_str(&raw)?;
+    Ok(day
+        .pointer("/inputs/knownPlaces")
+        .and_then(Value::as_array)
+        .map_or(&[] as &[Value], Vec::as_slice)
+        .iter()
+        .filter_map(|p| Some((p.get("id")?.as_i64()?, p.get("visitCount")?.as_f64()?)))
+        .collect())
+}
+
+/// Write `visits` onto every request place whose id the map knows.
+fn attach_visits(places: &mut Value, visits: &std::collections::HashMap<i64, f64>) {
+    for p in places.as_array_mut().into_iter().flatten() {
+        if let Some(v) = p["id"].as_i64().and_then(|id| visits.get(&id)) {
+            p["visits"] = json!(v);
+        }
+    }
+}
+
+/// Each fix's reported accuracy by ts, from the capture-side fixture of the
+/// same day (`tests/golden/days`, whose PhoneTrack rows carry it); empty when
+/// that fixture is absent. The frozen decoder fixtures were written before
+/// the request carried accuracy, and the pipeline's points keep the raw ts.
+fn accuracy_by_ts(fx: &Value) -> Result<std::collections::HashMap<i64, f64>> {
+    let Some(day) = capture_fixture(fx)? else {
+        return Ok(std::collections::HashMap::new());
+    };
     Ok(["priorEvening", "today", "morning"]
         .iter()
         .flat_map(|k| {
@@ -179,6 +211,8 @@ pub fn request(fx: &Value) -> Result<Value> {
         req["flags"]["segEmission"] = seg_emission()?;
         req["flags"]["transFit"] = json_file("HSMM_TRANS_FIT")?;
         attach_accuracy(&mut req["observation"]["points"], &accuracy_by_ts(fx)?);
+        attach_visits(&mut req["places"], &visits_by_id(fx)?);
+        req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS")?;
         return Ok(req);
     }
     let (meta, inputs) = (&fx["meta"], &fx["inputs"]);
@@ -348,5 +382,7 @@ pub fn request(fx: &Value) -> Result<Value> {
         req["maxD"] = json!(v.parse::<u64>()?);
     }
     attach_accuracy(&mut req["observation"]["points"], &accuracy_by_ts(fx)?);
+    attach_visits(&mut req["places"], &visits_by_id(fx)?);
+    req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS")?;
     Ok(req)
 }

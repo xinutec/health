@@ -50,6 +50,36 @@ def toThin (o : ObsRow) : Observation :=
 /-- No correction — hoisted so the branch below does not rebuild a literal per call. -/
 private def NO_CORRECTION : Float := 0
 
+/-- The reacquire-robust correction on its own: what `baseEmissionWithReacquire`
+    adds to the base speed term, so a caller that replaces that term (the
+    segment-emission arm's windowed speed) can take the whole of it out. -/
+def reacquireCorrection (s : State) (o : ObsRow) (reacquireRobust : Bool)
+    (priors : Mode → Emissions.ModePrior := modePriors) : Float :=
+  -- A walk is widened too, and not scaled away on the track: the fix that
+  -- ends a dark minute carries the gap's speed whatever it lands on, and on
+  -- the track it is steps, not speed, that tell a walk from a ride.
+  if reacquireRobust && (s.mode == .stationary || s.mode == .walking) then
+    match o.gps, o.reacquireAgeMin with
+    | some g, some age =>
+      let prior := priors s.mode
+      let rail := if s.mode == .walking then none else o.railDistM
+      let gap := o.reacquireGapMin.map fun g => Verified.FloatConst.natToFloat g.toNat
+      -- After a short gap the artefact is momentum: a speed above the
+      -- prior. A speed below it is a measurement, and keeps the base.
+      let momentumOnly := match gap with
+        | some gm => gm < Emissions.REACQ_RESET_GAP_MIN
+        | none => false
+      if momentumOnly && g.speedKmh ≤ prior.speedMean then NO_CORRECTION else
+      let widened := reacquireWidenedSpeedStd prior.speedStd
+        (some (Verified.FloatConst.natToFloat age.toNat)) rail gap
+      -- The wider density is a second component, not a replacement: a
+      -- minute the base fits keeps the base (a wider σ is lower near the
+      -- mean), and only a minute the base rejects takes the wider one.
+      max NO_CORRECTION (logNormalPdf g.speedKmh prior.speedMean widened
+        - logNormalPdf g.speedKmh prior.speedMean prior.speedStd)
+    | _, _ => NO_CORRECTION
+  else NO_CORRECTION
+
 /-- Base emission + the reacquire-robust correction. The correction replaces the
     stationary speed term's σ with the reacquire-widened σ — expressed additively
     as `(widened − base)` so the committed `emissionLogProb` is reused untouched.
@@ -57,33 +87,7 @@ private def NO_CORRECTION : Float := 0
     reacquire age. -/
 def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Float × Float))
     (reacquireRobust : Bool) (priors : Mode → Emissions.ModePrior := modePriors) : Float :=
-  let base := emissionLogProb s (toThin o) placeCoord priors
-  -- A walk is widened too, and not scaled away on the track: the fix that
-  -- ends a dark minute carries the gap's speed whatever it lands on, and on
-  -- the track it is steps, not speed, that tell a walk from a ride.
-  let corr :=
-    if reacquireRobust && (s.mode == .stationary || s.mode == .walking) then
-      match o.gps, o.reacquireAgeMin with
-      | some g, some age =>
-        let prior := priors s.mode
-        let rail := if s.mode == .walking then none else o.railDistM
-        let gap := o.reacquireGapMin.map fun g => Verified.FloatConst.natToFloat g.toNat
-        -- After a short gap the artefact is momentum: a speed above the
-        -- prior. A speed below it is a measurement, and keeps the base.
-        let momentumOnly := match gap with
-          | some gm => gm < Emissions.REACQ_RESET_GAP_MIN
-          | none => false
-        if momentumOnly && g.speedKmh ≤ prior.speedMean then NO_CORRECTION else
-        let widened := reacquireWidenedSpeedStd prior.speedStd
-          (some (Verified.FloatConst.natToFloat age.toNat)) rail gap
-        -- The wider density is a second component, not a replacement: a
-        -- minute the base fits keeps the base (a wider σ is lower near the
-        -- mean), and only a minute the base rejects takes the wider one.
-        max NO_CORRECTION (logNormalPdf g.speedKmh prior.speedMean widened
-          - logNormalPdf g.speedKmh prior.speedMean prior.speedStd)
-      | _, _ => 0.0
-    else 0.0
-  base + corr
+  emissionLogProb s (toThin o) placeCoord priors + reacquireCorrection s o reacquireRobust priors
 
 /-- One weight per family of decoder terms (`flags.termWeights` sets them for
     the harness, `examples/tune_weights` learns them). A product by `1.0` is
