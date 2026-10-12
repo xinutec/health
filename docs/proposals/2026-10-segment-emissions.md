@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`); nineteen arms measured; s16 (no self-loop mass, displacement as the mode's posterior, fitted durations) ahead of the shipped decoder on leg modes and lines, behind on journeys (115 vs 121), stations (44 vs 47) and phantoms (12 vs 6)
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`); nineteen arms measured; s16 (no self-loop mass, displacement as the mode's posterior, fitted durations) ahead of the shipped decoder on the referee (132 vs 126), leg modes and lines; behind on scoreboard journeys (115 vs 121), stations (44 vs 47) and phantoms (12 vs 6)
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -97,7 +97,7 @@ place entry normalised over places per hour.
 | s15a: s14a without the per-segment displacement | 114 | 298 | 60 | 44 | 21 | not run |
 | s15b: s15a + gap pairs spread over their dark minutes | 115 | 297 | 59 | 44 | 19 | not run |
 | s17: s14a with the displacement as the mode's posterior | 115 | 296 | 59 | 44 | 11 | not run |
-| s16: s17 + duration priors fitted on the narrated runs | 115 | 296 | 59 | 44 | 12 | not run |
+| s16: s17 + duration priors fitted on the narrated runs | 115 | 296 | 59 | 44 | 12 | 132 |
 | s18: s16 + the measured stationary cadence (16% of stay minutes with steps) | 115 | 288 | 60 | 44 | — | not run |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
