@@ -461,10 +461,18 @@ priors). Journeys 119 → 120 (05-15's platform wait and ride), leg modes
 at 5; stations 52 → 51: three in-station stops (07-01 Baker Street, 07-30,
 09-06) read as the train at a standstill and the boarding moves, against
 two found (05-15, 06-28). s30's phantoms were the place term's alone. The
-share is the recipe; the form it stands in for is a chain — a stop is a
-run of a minute or two, so a seven-minute standstill should cost a train
-more than seven draws of the share — and those three stations are its
-cases.
+share is the recipe. The form it stands in for is a chain (a stop is a run
+of minutes), measured before building it: on the narrated Tube minutes,
+with a stop a windowed speed under the stays' 95th percentile (0.56 km/h),
+a stop continues with probability 0.66 and begins with 0.04; stop runs
+have a median of 1.5 minutes and a 90th percentile of 5 (`stopchain.py`
+in the fits). So a seven-minute standstill costs a train about −6 under
+the chain and −15 under the share: the chain makes a long standstill
+*cheaper* for a vehicle, and the three stations it would be built for are
+not its cases. A stay at a station between two legs and a train held at
+its platform have the same speed; what names the stay is the journey's
+structure (the station-stay convention), which is the roadmap's line and
+station as decoder state, not a speed term. The chain is not built.
 
 Next: the edge minute's offset as a latent (the one-stop hop's first
 minute is the walk onto the train, and the decoder now places a one-minute
@@ -473,26 +481,52 @@ term.
 
 ## Next
 
-- The listed place's per-minute Gaussian and its floor are the next step of
-  the placeless stay's form (s31/s32): the same prefix sums score a stay at
-  a known centre in closed form, with a fitted outlier share in place of the
-  floor.
-- The edge minute: a boundary falls inside a minute, so the minute is a
-  mixture of two modes. Three forms that loosened a mode everywhere were
-  refuted above; the form still open is the boundary's offset inside its one
-  minute as a latent, scored as a proper likelihood. The one-minute
-  Metropolitan blips inside walks and the one-stop hops decoded a minute
-  short are its cases.
-- Two narratives to settle, not the decoder: 09-30's journey begins at
-  boarding (three walking minutes to the platform, a standing train from
-  10:47) where the narrative starts it at departure; 04-29's hospital
-  grounds (ten minutes of slow drift with no steps) are marked partial.
-- Held-out fits by day before anything ships: every number in the golden
-  fits was fitted on the days it is judged on.
-- The gate: scoreboard journeys not below the shipped 121 (119 at s29a);
-  phantoms, referee and stations already clear it. Then the flags become
-  defaults and the old paths retire — `SegmentEvidence`, the per-minute
-  heart-rate, presence and asleep terms, `unknown`, the per-minute mode
-  prior, `LineProximity`'s constants, the self-loop mass, the duration cap.
-- The fix's accuracy in a position model rather than a speed term (the
-  plumbing is in; as the speed's noise it is on).
+The 29 journeys s33a misses, read one by one against their narratives
+(`SCOREBOARD_JOURNEYS=1` and the decoded dump side by side), are a few
+shapes; counted at s33a, to re-count before acting:
+
+- **A short stay the decoder does not place** (about nine): a station stay
+  between two legs (Baker Street on 06-29 and 07-01, Stanmore on 09-06,
+  the 04-29 change), or a five-minute shop or stop inside a walk (Asda on
+  06-24, 09-06 at 14:24). The station ones are the station-stay convention
+  — a stay at a platform and a train held at it have the same speed — and
+  belong to line and station as decoder state (the roadmap's step 2). The
+  others are the price of a segment, read with `path_debug`: the Asda stop
+  loses by 21.8 nats, of which 2.8 is its own emission against walking's
+  (a shop reads as slow indoor walking to the stay model: windowed speed,
+  steps) and the rest the entry (−3), the duration prior (−4.7), the
+  centre's Occam factor (about −6) and the heart rate's (about −3); the
+  09-06 stop by 8.5. Each of those priors is honest on its own; together
+  they price a five-minute stop at about seventeen nats before any
+  evidence, and the shop's evidence does not pay it.
+- **An arrival or departure a few minutes off** (about six): the decoder's
+  stay begins two to ten minutes after the narrative's or ends before it
+  (06-12 at 10:29, 10-01 at 15:58, 07-16 at 14:32, 05-22 at 20:38), so a
+  walk trails or leads the journey: the slow minutes at a door or on a
+  platform.
+- **A one-stop hop or an edge minute** (three): 07-06's one-minute hop
+  read as `cycling`, 07-15's hop missed, 06-16's blip at Baker Street. The
+  form still open is the boundary's offset inside its one minute as a
+  latent, scored as a proper likelihood; three forms that loosened a mode
+  everywhere were refuted above.
+- **Bus legs** (three), decoded as `driving`: no bus state (the roadmap's
+  C-bus).
+- **Driving against train** (two): 05-25's drive beside the rails read as
+  a train twice; 10-08's Métro 4 ride read as a drive — Paris has no line
+  coverage, so the ride is `unknown_rail` against `driving` on speed alone.
+- **The narrative** (four): 04-29's hospital grounds (marked partial),
+  09-30's boarding of a standing train, 10-08's unnarrated six minutes
+  between two walks, 09-30's six-minute stop inside a walk the narrative
+  calls walking.
+
+Then, in order: held-out fits by day before anything ships (every number
+in the golden fits was fitted on the days it is judged on); the gate
+(scoreboard journeys not below the shipped 121 — 120 at s33a; phantoms,
+referee and stations already clear it); the flags become defaults and the
+old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
+asleep and off-network terms, `unknown`, the per-minute mode prior,
+`LineProximity`'s constants, the self-loop mass, the duration cap; the
+listed place's per-minute Gaussian and its floor into the placeless stay's
+form (the same prefix sums, a fitted outlier share for the floor); the
+fix's accuracy in a position model rather than a speed term (the plumbing
+is in; as the speed's noise it is on).
