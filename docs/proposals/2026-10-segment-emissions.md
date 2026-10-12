@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); thirty-two arms measured; s32 ahead of the shipped decoder on the referee (132 vs 126), leg modes (297 vs 286), lines (60 vs 53), stations (52 vs 47) and phantoms (5 vs 6), behind on scoreboard journeys (119 vs 121) — the one gate bar left
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); thirty-three arms measured; s33a ahead of the shipped decoder on the referee (135 vs 126), leg modes (299 vs 286), lines (62 vs 53), stations (51 vs 47) and phantoms (5 vs 6), behind on scoreboard journeys (120 vs 121) — the one gate bar left
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -114,6 +114,7 @@ place entry normalised over places per hour.
 | s30: s29a with a standstill component in a vehicle's windowed speed | 113 | 300 | 62 | 51 | 9 | 133 |
 | s31: s29a with the placeless stay's centre a latent, one Gaussian prior over the listed places | 119 | 296 | 60 | 51 | 5 | 131 |
 | s32: s31 with the prior a mixture over the listed places at a 308 m bandwidth | 119 | 297 | 60 | 52 | 5 | 132 |
+| s33a: s32 with s30's standstill component | 120 | 299 | 62 | 51 | 5 | 135 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -452,9 +453,18 @@ mixture of Gaussians at that bandwidth over the listed places (s32), the
 bandwidth a number in the fit artefact. Measured: the in-station stop is
 back; journeys, lines, stations and phantoms level with s29a, a leg mode
 and a referee point behind on 10-08's two approach minutes. The per-minute
-off-network term is retired in the arm, and s32 is the recipe: the stop
-share (s30) can be re-measured on it, since the place term no longer leans
-on the vehicle's speed to price a long unlisted stay.
+off-network term is retired in the arm.
+
+**The stop share, re-measured on the place term** (s33a: s32 with s30's
+priors). Journeys 119 → 120 (05-15's platform wait and ride), leg modes
+297 → 299, lines 60 → 62 (06-15, 06-28), referee 132 → 135, phantoms level
+at 5; stations 52 → 51: three in-station stops (07-01 Baker Street, 07-30,
+09-06) read as the train at a standstill and the boarding moves, against
+two found (05-15, 06-28). s30's phantoms were the place term's alone. The
+share is the recipe; the form it stands in for is a chain — a stop is a
+run of a minute or two, so a seven-minute standstill should cost a train
+more than seven draws of the share — and those three stations are its
+cases.
 
 Next: the edge minute's offset as a latent (the one-stop hop's first
 minute is the walk onto the train, and the decoder now places a one-minute
