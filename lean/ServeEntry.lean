@@ -1428,6 +1428,69 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
                 ("states", Json.arr per)]
   Json.mkObj [("emissionDebug", Json.arr rows)]
 
+private def PATH_ZERO : Float := 0
+
+/-- `"pathDebug": {"alt": [{"startTs": n, "endTs": n, "state": "<stateKey>"}]}` on
+an `assemblesegments` request: the decoded path, and the decoded path with the
+caller's segments written over `[startTs, endTs)`, each scored segment by
+segment with the model's own cells (`initAt`/`transAt`, `entryAt`, `emitAt`,
+`durAt`, composed as `Spec.scoreAux`) — the instrument for a boundary the
+decode did not place: which term paid for leaving it out. A written-over run
+may exceed `maxD`; `durAt` still prices it, the trellis never would. -/
+private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Array Nat)
+    (dj : Json) : Json :=
+  let fl (v : Float) : Json := if v == Verified.Hsmm.FloatScore.negInf then Json.null else Lean.toJson v
+  let alts : Array Json := ((dj.getObjVal? "alt") >>= (·.getArr?)).toOption.getD #[]
+  let (altPath, bad) : Array Nat × Option String := Id.run do
+    let mut p := path
+    let mut bad : Option String := none
+    for a in alts do
+      let s0 := (a.getObjValAs? Int "startTs").toOption.getD 0
+      let s1 := (a.getObjValAs? Int "endTs").toOption.getD 0
+      let key := (a.getObjValAs? String "state").toOption.getD ""
+      match c.states.findIdx? (fun st => Verified.Hsmm.StateSpace.stateKey st == key) with
+      | none => bad := some s!"no state {key}"
+      | some si =>
+        for (o, t) in c.obs.zipIdx do
+          if s0 ≤ o.ts && o.ts < s1 then p := p.set! t si
+    return (p, bad)
+  let rows (p : Array Nat) : Array Json × Float := Id.run do
+    let mut start := 0
+    let mut prev : Option Nat := none
+    let mut out : Array Json := #[]
+    let mut total := PATH_ZERO
+    for seg in Verified.Hsmm.ofPath p.toList do
+      let last := start + seg.dur - 1
+      let trans := match prev with
+        | none => Verified.Hsmm.Assemble.initAt c seg.state
+        | some sp => Verified.Hsmm.Assemble.transAt c sp seg.state start
+      let entry := Verified.Hsmm.Assemble.entryAt c start seg.state
+      let emit := (List.range seg.dur).foldl
+        (fun acc i => acc + Verified.Hsmm.Assemble.emitAt c (start + i) seg.state) PATH_ZERO
+      let dur := Verified.Hsmm.Assemble.durAt c seg.state seg.dur last
+      let sum := trans + entry + emit + dur
+      total := total + sum
+      out := out.push (Json.mkObj [
+        ("state", Json.str (match c.states[seg.state]? with
+          | some st => Verified.Hsmm.StateSpace.stateKey st | none => "?")),
+        ("startTs", Lean.toJson (match c.obs[start]? with | some o => o.ts | none => 0)),
+        ("endTs", Lean.toJson (match c.obs[last]? with | some o => o.ts + 60 | none => 0)),
+        ("d", Lean.toJson seg.dur),
+        ("trans", fl trans), ("entry", fl entry), ("emit", fl emit), ("dur", fl dur),
+        -- `dur`'s parts: the mode's duration prior and the segment-level
+        -- emissions; the rest is the train-hop relaxation and `SegmentEvidence`.
+        ("durPrior", fl (Verified.Hsmm.Assemble.durPriorBase c seg.state seg.dur)),
+        ("segEm", fl (Verified.Hsmm.Assemble.segEmAt c seg.state seg.dur last)),
+        ("total", fl sum)])
+      start := start + seg.dur
+      prev := some seg.state
+    return (out, total)
+  let (dRows, dTot) := rows path
+  let (aRows, aTot) := rows altPath
+  Json.mkObj [("decoded", Json.arr dRows), ("decodedTotal", fl dTot),
+              ("alt", Json.arr aRows), ("altTotal", fl aTot),
+              ("error", match bad with | some e => Json.str e | none => Json.null)]
+
 private def assembleSegmentsResult (j : Json) : Json :=
   match parseAssemble j with
   | .error e => Json.mkObj [("error", Json.str e)]
@@ -1439,6 +1502,7 @@ private def assembleSegmentsResult (j : Json) : Json :=
       | none => Json.mkObj [("degenerate", Json.bool true)]
       | some r =>
         if let .ok dj := j.getObjVal? "emissionDebug" then emissionDebugJson c r.path dj else
+        if let .ok dj := j.getObjVal? "pathDebug" then pathDebugJson c r.path dj else
         -- Index → the state the model actually holds. An out-of-range index is
         -- an ERROR, not a skipped minute: it would shorten the path and shift
         -- every later segment boundary.
