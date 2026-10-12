@@ -27,6 +27,9 @@ inductive Mode
 def MAINLINE_SPEED_MEAN : Float := 74
 def MAINLINE_SPEED_STD : Float := 71
 
+def NO_STOP_SHARE : Float := 0
+def STOP_STD_DEFAULT : Float := 1
+
 structure ModePrior where
   gpsPresentProb : Float
   speedMean : Float
@@ -41,19 +44,27 @@ structure ModePrior where
       Eurostar and TGV days 164 ± 388. -/
   mainlineSpeedMean : Float := MAINLINE_SPEED_MEAN
   mainlineSpeedStd : Float := MAINLINE_SPEED_STD
+  /-- A vehicle stops: the share of a mode's minutes at a standstill and that
+      component's spread, a second component beside the moving Gaussian in
+      the windowed speed term. `0` is no such component (walks, stays). On the
+      narrated days: Tube 10% (0.4 km/h), mainline 21%, driving 28% (2.1). -/
+  stopShare : Float := NO_STOP_SHARE
+  stopStd : Float := STOP_STD_DEFAULT
+  mainlineStopShare : Float := NO_STOP_SHARE
+  mainlineStopStd : Float := STOP_STD_DEFAULT
 
 /-- `UNIFORM_GPS_PRESENT_PROB` in emissions.ts. -/
 def uniformGpsPresentProb : Float := 0.85
 
 /-- `MODE_PRIORS`. -/
 def modePriors : Mode → ModePrior
-  | .stationary => ⟨uniformGpsPresentProb, 0, 2, 70, 15, 0.99, 10, 20, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
-  | .walking    => ⟨uniformGpsPresentProb, 5, 2, 100, 20, 0.05, 100, 25, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
-  | .cycling    => ⟨uniformGpsPresentProb, 18, 6, 130, 20, 0.95, 30, 30, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
-  | .driving    => ⟨uniformGpsPresentProb, 40, 20, 75, 15, 0.99, 5, 10, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
-  | .train      => ⟨uniformGpsPresentProb, 50, 30, 75, 15, 0.99, 5, 10, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
-  | .plane      => ⟨uniformGpsPresentProb, 600, 200, 70, 15, 0.99, 5, 10, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
-  | .unknown    => ⟨uniformGpsPresentProb, 20, 200, 80, 100, 0.5, 50, 100, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD⟩
+  | .stationary => ⟨uniformGpsPresentProb, 0, 2, 70, 15, 0.99, 10, 20, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD, NO_STOP_SHARE, STOP_STD_DEFAULT, NO_STOP_SHARE, STOP_STD_DEFAULT⟩
+  | .walking    => ⟨uniformGpsPresentProb, 5, 2, 100, 20, 0.05, 100, 25, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD, NO_STOP_SHARE, STOP_STD_DEFAULT, NO_STOP_SHARE, STOP_STD_DEFAULT⟩
+  | .cycling    => ⟨uniformGpsPresentProb, 18, 6, 130, 20, 0.95, 30, 30, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD, NO_STOP_SHARE, STOP_STD_DEFAULT, NO_STOP_SHARE, STOP_STD_DEFAULT⟩
+  | .driving    => ⟨uniformGpsPresentProb, 40, 20, 75, 15, 0.99, 5, 10, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD, NO_STOP_SHARE, STOP_STD_DEFAULT, NO_STOP_SHARE, STOP_STD_DEFAULT⟩
+  | .train      => ⟨uniformGpsPresentProb, 50, 30, 75, 15, 0.99, 5, 10, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD, NO_STOP_SHARE, STOP_STD_DEFAULT, NO_STOP_SHARE, STOP_STD_DEFAULT⟩
+  | .plane      => ⟨uniformGpsPresentProb, 600, 200, 70, 15, 0.99, 5, 10, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD, NO_STOP_SHARE, STOP_STD_DEFAULT, NO_STOP_SHARE, STOP_STD_DEFAULT⟩
+  | .unknown    => ⟨uniformGpsPresentProb, 20, 200, 80, 100, 0.5, 50, 100, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD, NO_STOP_SHARE, STOP_STD_DEFAULT, NO_STOP_SHARE, STOP_STD_DEFAULT⟩
 
 /-- `MODE_PRIOR_LOG`: per-minute `log P(mode)`. -/
 def modePriorLog : Mode → Float
@@ -166,7 +177,8 @@ def isMainline (s : State) : Bool := s.mode == .train && s.lineName == some "unk
 /-- The mainline's prior: the train's, with the mainline's speeds. -/
 def mainlinePrior (priors : Mode → ModePrior := modePriors) : ModePrior :=
   let t := priors .train
-  { t with speedMean := t.mainlineSpeedMean, speedStd := t.mainlineSpeedStd }
+  { t with speedMean := t.mainlineSpeedMean, speedStd := t.mainlineSpeedStd,
+           stopShare := t.mainlineStopShare, stopStd := t.mainlineStopStd }
 
 /-- A state's emission prior: its mode's, the mainline's for `unknown_rail`. -/
 def priorOf (priors : Mode → ModePrior) (s : State) : ModePrior :=

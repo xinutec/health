@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); twenty-eight arms measured; s28 ahead of the shipped decoder on the referee (132 vs 126), leg modes (297 vs 286), lines (59 vs 53), stations (51 vs 47) and phantoms (5 vs 6), behind on scoreboard journeys (117 vs 121) — the one gate bar left
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); twenty-nine arms measured; s29a ahead of the shipped decoder on the referee (133 vs 126), leg modes (298 vs 286), lines (60 vs 53), stations (52 vs 47) and phantoms (5 vs 6), behind on scoreboard journeys (119 vs 121) — the one gate bar left
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -110,6 +110,7 @@ place entry normalised over places per hour.
 | s26b: s26a + the measured share of stays at no listed place (5%) | 117 | 297 | 59 | 51 | 8 | 132 |
 | s27: s26b with an unfitted mode voting flat on displacement | 117 | 297 | 59 | 51 | 8 | 132 |
 | s28: s27 with the asleep heart rate per segment, for every state | 117 | 297 | 59 | 51 | 5 | 132 |
+| s29a: s28 with the Tube and mainline train speeds fitted apart | 119 | 298 | 60 | 52 | 5 | 133 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -390,22 +391,41 @@ state (`Params.asleep`), and the minute term comes out for all. Phantoms
 8 → 5 on the lister and 6 → 3 on the scoreboard; nothing else moved. Three
 of the five left are one- and two-minute Metropolitan blips inside walks.
 
+**Two train speeds** (s29a). Read on the 05-15 and 07-07 blips with the
+parts printed: on an above-ground Metropolitan stretch with 50–200 m fixes,
+the train's one speed Gaussian — fitted on a pool of Tube and TGV minutes,
+42 ± 47 km/h — is nearly flat, so `driving` ties it at 40 km/h and takes the
+minutes without steps. Measured apart on the narrated minutes: Tube lines
+38.8 ± 26.3 km/h, the other lines 163.5 ± 388. The state already carries
+which it is (`unknown_rail` against a named line), so the mainline speed is
+a fitted parameter beside the metro one (`fittedPriors.mainlineSpeed`).
+Journeys 117 → 119, leg modes 298, lines 60, stations 52, referee 133. The
+mainline's spread says the next form: a train stops (21% of mainline
+minutes, 10% of Tube, 28% of driving at a standstill on the narrated days),
+so a vehicle's speed is a stopped-or-moving mixture, not one Gaussian.
+
 Next: the edge minute's offset as a latent (the one-stop hop's first minute
 is the walk onto the train, and the decoder now places a one-minute ride
 there); the fix's accuracy in a position model rather than a speed term.
 
 ## Next
 
-- The remaining misses against the served day, read one by one (the method
-  that found every piece above).
-- Speed in the same form (a segment's jitter around its mean).
-- The boundary's position inside its minute as a latent (one shared edge
-  minute per boundary, a proper likelihood over the offset) — the form the
-  three edge-minute refutations (s5, s9, s10) point at.
-- Modes with no narrated runs (cycling, plane, bus) keep the hand-set
-  per-minute terms, and the remaining blips are theirs: EM over the captured
-  days with the narrated days clamped (roadmap step 3) fits them.
-- Held-out fits (by day) before anything ships.
-- Gate: phantoms not above the shipped 6, journeys and the referee not below
-  the shipped counts. Then `unknown`, the per-minute mode prior and the
-  per-minute heart-rate and fix constants retire.
+- The edge minute: a boundary falls inside a minute, so the minute is a
+  mixture of two modes. Three forms that loosened a mode everywhere were
+  refuted above; the form still open is the boundary's offset inside its one
+  minute as a latent, scored as a proper likelihood. The one-minute
+  Metropolitan blips inside walks and the one-stop hops decoded a minute
+  short are its cases.
+- Two narratives to settle, not the decoder: 09-30's journey begins at
+  boarding (three walking minutes to the platform, a standing train from
+  10:47) where the narrative starts it at departure; 04-29's hospital
+  grounds (ten minutes of slow drift with no steps) are marked partial.
+- Held-out fits by day before anything ships: every number in the golden
+  fits was fitted on the days it is judged on.
+- The gate: scoreboard journeys not below the shipped 121 (119 at s29a);
+  phantoms, referee and stations already clear it. Then the flags become
+  defaults and the old paths retire — `SegmentEvidence`, the per-minute
+  heart-rate, presence and asleep terms, `unknown`, the per-minute mode
+  prior, `LineProximity`'s constants, the self-loop mass, the duration cap.
+- The fix's accuracy in a position model rather than a speed term (the
+  plumbing is in; as the speed's noise it is on).

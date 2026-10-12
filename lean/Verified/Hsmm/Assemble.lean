@@ -306,9 +306,18 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
             | some (v, noise) =>
               -- The fixes' own accuracy, in quadrature with the mode's spread
               -- (`accuracyNoise`).
-              let sd := if !q.p.accuracyNoise then prior.speedStd else
-                Float.sqrt (prior.speedStd * prior.speedStd + noise)
-              FloatScore.logNormalPdf v prior.speedMean sd
+              let extra := if q.p.accuracyNoise then noise else SEG_ZERO
+              let sd := Float.sqrt (prior.speedStd * prior.speedStd + extra)
+              let moving := FloatScore.logNormalPdf v prior.speedMean sd
+              -- A vehicle stops: a standstill component beside the moving one
+              -- (`ModePrior.stopShare`), each with the span's GPS noise.
+              if prior.stopShare > SEG_ZERO then
+                let stopped := FloatScore.logNormalPdf v SEG_ZERO
+                  (Float.sqrt (prior.stopStd * prior.stopStd + extra))
+                let mx := max moving stopped
+                mx + Float.log (prior.stopShare * Float.exp (stopped - mx)
+                  + (MIN_ONE - prior.stopShare) * Float.exp (moving - mx))
+              else moving
             | none => own
         c.weights.base * (windowed - own + SegmentEmission.speedRobust q.p st.mode windowed)
       | none => SEG_ZERO

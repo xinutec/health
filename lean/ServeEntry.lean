@@ -868,15 +868,31 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     match arr.toList.filterMap (fun v => (v.getNum?).toOption.map (·.toFloat)) with
     | [m, sd] => some (m, sd)
     | _ => none
+  -- `speedStop: {mode: [share, std]}` (and `mainline`): the standstill
+  -- component of a vehicle's windowed speed.
+  let stop := fun (k : String) => (do
+    let f ← fitted
+    let arr ← ((f.getObjVal? "speedStop") >>= (·.getObjVal? k) >>= (·.getArr?)).toOption
+    match arr.toList.filterMap (fun v => (v.getNum?).toOption.map (·.toFloat)) with
+    | [share, sd] => some (share, sd)
+    | _ => none : Option (Float × Float))
   let priors := fun (m : Verified.Hsmm.Emissions.Mode) =>
     let base : Verified.Hsmm.Emissions.ModePrior := match row "modePriors" m with
       | some #[g, sm, ss, hm, hs, z, cm, cs] =>
         ⟨g, sm, ss, hm, hs, z, cm, cs, Verified.Hsmm.Emissions.MAINLINE_SPEED_MEAN,
-         Verified.Hsmm.Emissions.MAINLINE_SPEED_STD⟩
+         Verified.Hsmm.Emissions.MAINLINE_SPEED_STD, Verified.Hsmm.Emissions.NO_STOP_SHARE,
+         Verified.Hsmm.Emissions.STOP_STD_DEFAULT, Verified.Hsmm.Emissions.NO_STOP_SHARE,
+         Verified.Hsmm.Emissions.STOP_STD_DEFAULT⟩
       | _ => Verified.Hsmm.Emissions.modePriors m
-    match mainline with
-    | some (mm, ms) => { base with mainlineSpeedMean := mm, mainlineSpeedStd := ms }
-    | none => base
+    let base := match mainline with
+      | some (mm, ms) => { base with mainlineSpeedMean := mm, mainlineSpeedStd := ms }
+      | none => base
+    let base := match stop (Verified.Hsmm.StateSpace.modeName m) with
+      | some (sh, sd) => { base with stopShare := sh, stopStd := sd }
+      | none => base
+    match m, stop "mainline" with
+    | .train, some (sh, sd) => { base with mainlineStopShare := sh, mainlineStopStd := sd }
+    | _, _ => base
   -- Per-family term weights (harness-only): a name absent keeps the model's own.
   let d : Verified.Hsmm.EmissionFull.TermWeights := {}
   let tw (k : String) (dflt : Float) : Float :=
