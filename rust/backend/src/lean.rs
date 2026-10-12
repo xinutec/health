@@ -2532,6 +2532,9 @@ pub struct GpsFix {
     pub lat: f64,
     pub lon: f64,
     pub speed_kmh: f64,
+    /// The fix's reported horizontal accuracy in metres, when the capture
+    /// carries it.
+    pub accuracy_m: Option<f64>,
 }
 
 /// `Verified.Hsmm.GpsOutliers.dropGpsOutliers` — the physically-impossible fixes
@@ -2563,6 +2566,11 @@ pub fn drop_gps_outliers(points: &[GpsFix]) -> Result<Vec<GpsFix>> {
         .collect();
     let raw = serve(&serde_json::json!({ "mode": "gpsoutliers", "pts": pts }).to_string())?;
     let w: Wire = decode_serve(&raw, "gpsoutliers")?;
+    // The wire carries what the filter reads; the accuracy rides back by ts.
+    let accuracy: std::collections::HashMap<i64, f64> = points
+        .iter()
+        .filter_map(|p| Some((p.ts, p.accuracy_m?)))
+        .collect();
     Ok(w.pts
         .into_iter()
         .map(|(ts, lat, lon, speed)| GpsFix {
@@ -2570,6 +2578,7 @@ pub fn drop_gps_outliers(points: &[GpsFix]) -> Result<Vec<GpsFix>> {
             lat: f64::from_bits(lat.parse().unwrap_or(0)),
             lon: f64::from_bits(lon.parse().unwrap_or(0)),
             speed_kmh: f64::from_bits(speed.parse().unwrap_or(0)),
+            accuracy_m: accuracy.get(&ts).copied(),
         })
         .collect())
 }

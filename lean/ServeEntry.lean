@@ -637,7 +637,8 @@ private def parseObsRow (j : Json) : Except String Verified.Hsmm.Observation.Obs
   let gps : Option Verified.Hsmm.Observation.GpsAgg ←
     match j.getObjVal? "gps" with
     | .ok v => if v.isNull then pure none
-               else pure (some ⟨← jFloatField v "lat", ← jFloatField v "lon", ← jFloatField v "speedKmh"⟩)
+               else pure (some ⟨← jFloatField v "lat", ← jFloatField v "lon", ← jFloatField v "speedKmh",
+                                 ((v.getObjVal? "accuracyM") >>= (·.getNum?)).toOption.map (·.toFloat)⟩)
     | .error _ => pure none
   return {
     ts := ← (← j.getObjVal? "ts").getInt?, gps
@@ -743,7 +744,8 @@ tensors apart when they share a field name.
 
 private def parseGpsPoint (j : Json) : Except String Verified.Hsmm.Observation.GpsPoint := do
   return { ts := ← (← j.getObjVal? "ts").getInt?, lat := ← jFloatField j "lat"
-         , lon := ← jFloatField j "lon", speedKmh := ← jFloatField j "speedKmh" }
+         , lon := ← jFloatField j "lon", speedKmh := ← jFloatField j "speedKmh"
+         , accuracyM := ((j.getObjVal? "accuracyM") >>= (·.getNum?)).toOption.map (·.toFloat) }
 
 private def parseHrPoint (j : Json) : Except String Verified.Hsmm.Observation.HrPoint := do
   return { ts := ← (← j.getObjVal? "ts").getInt?, bpm := ← jFloatField j "bpm" }
@@ -916,13 +918,14 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let dispSegment := ((f.getObjVal? "dispSegment") >>= (·.getBool?)).toOption.getD true
     let gapPairs := ((f.getObjVal? "gapPairs") >>= (·.getBool?)).toOption.getD false
     let dispPosterior := ((f.getObjVal? "dispPosterior") >>= (·.getBool?)).toOption.getD false
+    let accuracyNoise := ((f.getObjVal? "accuracyNoise") >>= (·.getBool?)).toOption.getD false
     let obsChain := all.filterMap fun m => do
       let rows ← (((f.getObjVal? "obsChain") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)))
         >>= (·.getArr?)).toOption
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
     pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, obsChain, lineRankOnly,
-           dispSegment, gapPairs, dispPosterior }
+           dispSegment, gapPairs, dispPosterior, accuracyNoise }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
@@ -2025,7 +2028,7 @@ private def parseHsmmGpsPt (j : Json) : Except String Verified.Hsmm.Observation.
   let a ← j.getArr?
   match a[0]?, a[1]?, a[2]?, a[3]? with
   | some ts, some la, some lo, some sp =>
-    return ⟨← ts.getInt?, ← jBits la, ← jBits lo, ← jBits sp⟩
+    return ⟨← ts.getInt?, ← jBits la, ← jBits lo, ← jBits sp, none⟩
   | _, _, _, _ => throw "hsmm gps point must be [ts, latBits, lonBits, speedBits]"
 
 private def gpsOutliersResult (j : Json) : Json :=

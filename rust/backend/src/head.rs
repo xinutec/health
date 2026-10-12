@@ -625,6 +625,19 @@ pub fn capture(inputs: &Value, date: &str, user: &str) -> Result<Value> {
         )
     };
 
+    // The pipeline's points keep the raw fix's ts, so its reported accuracy
+    // rides along by ts from the raw rows (the pipeline does not carry it).
+    let accuracy: std::collections::HashMap<i64, f64> = ["priorEvening", "today", "morning"]
+        .iter()
+        .flat_map(|k| {
+            inputs
+                .pointer(&format!("/phonetrack/{k}"))
+                .and_then(Value::as_array)
+                .map_or(&[] as &[Value], Vec::as_slice)
+                .iter()
+        })
+        .filter_map(|p| Some((p.get("ts")?.as_i64()?, p.get("accuracy")?.as_f64()?)))
+        .collect();
     let mut obs = Map::new();
     obs.insert(
         "points".into(),
@@ -633,7 +646,8 @@ pub fn capture(inputs: &Value, date: &str, user: &str) -> Result<Value> {
                 .iter()
                 .map(|p| {
                     json!({ "ts": p.ts, "lat": js_num(p.lat), "lon": js_num(p.lon),
-                            "speedKmh": js_num(p.speed_kmh) })
+                            "speedKmh": js_num(p.speed_kmh),
+                            "accuracyM": accuracy.get(&p.ts).map_or(Value::Null, |a| js_num(*a)) })
                 })
                 .collect(),
         ),

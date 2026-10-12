@@ -95,7 +95,7 @@ def dropGpsOutliers (points : List GpsPoint) : List GpsPoint :=
     (points.foldl step ([], none, none)).1.reverse
 
 -- Parity with the real `dropGpsOutliers` (kept ts sets from Node/V8).
-private def mk (ts : Int) (lat lon : Float) : GpsPoint := ⟨ts, lat, lon, 0⟩
+private def mk (ts : Int) (lat lon : Float) : GpsPoint := ⟨ts, lat, lon, 0, none⟩
 
 private def pts : List GpsPoint :=
   [mk 0 51.5 (-0.1), mk 60 51.501 (-0.101), mk 120 51.4995 (-0.0998),

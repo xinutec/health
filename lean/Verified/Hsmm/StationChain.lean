@@ -1244,7 +1244,7 @@ private def T0 : Int := 1750000000
     accident and hand a case the anchor it meant to withhold. -/
 private def ob (i : Nat) (lon : Option Float) : ObsRow :=
   { ts := T0 + (i : Int) * 60
-    gps := lon.map (fun l => ⟨51.5, l, 0⟩)
+    gps := lon.map (fun l => ⟨51.5, l, 0, none⟩)
     hr := none, cadence := none, hourLocal := 9, dayOfWeekLocal := 3, inBed := false
     roadDistM := none, railDistM := none, reacquireAgeMin := none
     prevGpsFix := none, nextGpsFix := none }

@@ -99,6 +99,7 @@ place entry normalised over places per hour.
 | s17: s14a with the displacement as the mode's posterior | 115 | 296 | 59 | 44 | 11 | not run |
 | s16: s17 + duration priors fitted on the narrated runs | 115 | 296 | 59 | 44 | 12 | 132 |
 | s18: s16 + the measured stationary cadence (16% of stay minutes with steps) | 115 | 288 | 60 | 44 | — | not run |
+| s19: s16 + the fixes' reported accuracy in the windowed speed's noise | 113 | 296 | 57 | 37 | — | not run |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -270,10 +271,23 @@ scatter is the fixes' own reported accuracy (40–150 m indoors), which the
 frozen fixtures and the observation rows do not carry; the term that reads it
 is the next form, and the capture-side fixtures have it.
 
-Next: the fix's accuracy on the observation row and in the windowed speed's
-noise; the entry prior as smoothed counts of stay beginnings; the edge
+**Refuted: the accuracy as the speed's noise** (s19). The fix's reported
+accuracy now reaches the observation row (`GpsPoint.accuracyM`, joined by
+timestamp from the raw PhoneTrack rows on the capture path and from the
+capture-side fixtures in the harness; median 10 m, p90 59 m, p99 about 1 km
+on the narrated days). Added in quadrature to the windowed speed's spread
+(`accuracyNoise`), it costs a station on seven days (46 → 37 against s16's
+44) and two journeys: at a ride's reacquisition the first fixes carry
+hundreds of metres of accuracy, the speed there goes uninformative, the
+boundary slides a minute, and the station chain's margins — tuned to the old
+boundaries — lose the station. A tight stay's speed also pays the wider
+normalisation on every minute. The plumbing stays (it is what a position
+process needs); the flag stays off.
+
+Next: the entry prior as smoothed counts of stay beginnings; the edge
 minute's offset as a latent (the one-stop hop's first minute is the walk onto
-the train, and the decoder now places a one-minute ride there).
+the train, and the decoder now places a one-minute ride there); the fix's
+accuracy in a position model rather than a speed term.
 
 ## Next
 

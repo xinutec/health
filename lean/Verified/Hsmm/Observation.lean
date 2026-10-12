@@ -31,6 +31,9 @@ structure GpsPoint where
   lat : Float
   lon : Float
   speedKmh : Float
+  /-- The fix's reported horizontal accuracy in metres, when the capture
+      carries it. -/
+  accuracyM : Option Float := none
 
 structure HrPoint where
   ts : Int
@@ -50,6 +53,8 @@ structure GpsAgg where
   lat : Float
   lon : Float
   speedKmh : Float
+  /-- The median reported accuracy of the minute's fixes, when any carries one. -/
+  accuracyM : Option Float := none
   deriving BEq
 
 /-- A nearest GPS fix (top-of-minute ts + coordinates). -/
@@ -175,8 +180,10 @@ def buildObservationTensor
   let gpsArr : Array (Option GpsAgg) := (List.range MINUTES_PER_DAY).foldl (fun a m =>
     let rows := gpsB[m]?.getD #[]
     a.push (if rows.isEmpty then none else
+      let accs := rows.toList.filterMap GpsPoint.accuracyM
       some ⟨median (rows.toList.map GpsPoint.lat), median (rows.toList.map GpsPoint.lon),
-            mean (rows.toList.map GpsPoint.speedKmh)⟩)) #[]
+            mean (rows.toList.map GpsPoint.speedKmh),
+            if accs.isEmpty then none else some (median accs)⟩)) #[]
   let hrArr : Array (Option Float) := (List.range MINUTES_PER_DAY).foldl (fun a m =>
     let rows := hrB[m]?.getD #[]
     a.push (if rows.isEmpty then none else some (mean (rows.toList.map HrPoint.bpm)))) #[]
@@ -226,7 +233,7 @@ def buildObservationTensor
       prevGpsFix := prevArr[m]?.getD none, nextGpsFix := nextArr[m]?.getD none }) #[]
 
 -- Parity with the real `buildObservationTensor` (values from Node/V8).
-private def gp (relTs : Int) (lat lon spd : Float) : GpsPoint := ⟨1784156400 + relTs, lat, lon, spd⟩
+private def gp (relTs : Int) (lat lon spd : Float) : GpsPoint := ⟨1784156400 + relTs, lat, lon, spd, none⟩
 private def hp (relTs : Int) (bpm : Float) : HrPoint := ⟨1784156400 + relTs, bpm⟩
 private def sp (relTs : Int) (n : Float) : StepPoint := ⟨1784156400 + relTs, n⟩
 

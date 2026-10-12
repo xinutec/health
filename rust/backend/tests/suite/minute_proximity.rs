@@ -164,6 +164,7 @@ fn the_outlier_filter_is_reachable_and_exact() {
         lat,
         lon,
         speed_kmh: 0.0,
+        accuracy_m: None,
     };
     setup();
     // Six clustered fixes and one 55 km teleport, the shape of the Lean guard.

@@ -96,6 +96,44 @@ fn seg_emission() -> Result<Value> {
 /// The JSON file the environment variable `var` names, or `null` when unset —
 /// `HSMM_TRANS_FIT=<file>` is a fitted mode-to-mode transition matrix
 /// (`Transitions.fittedWeight`), `{src: {dst: p}}`, harness-only.
+/// Each fix's reported accuracy by ts, from the capture-side fixture of the
+/// same day (`tests/golden/days`, whose PhoneTrack rows carry it); empty when
+/// that fixture is absent. The frozen decoder fixtures were written before
+/// the request carried accuracy, and the pipeline's points keep the raw ts.
+fn accuracy_by_ts(fx: &Value) -> Result<std::collections::HashMap<i64, f64>> {
+    let (date, user) = (
+        fx["meta"]["date"].as_str().context("meta.date")?,
+        fx["meta"]["user"].as_str().context("meta.user")?,
+    );
+    let path = format!(
+        "{}/../../tests/golden/days/{date}-{user}.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Ok(std::collections::HashMap::new());
+    };
+    let day: Value = serde_json::from_str(&raw)?;
+    Ok(["priorEvening", "today", "morning"]
+        .iter()
+        .flat_map(|k| {
+            day.pointer(&format!("/inputs/phonetrack/{k}"))
+                .and_then(Value::as_array)
+                .map_or(&[] as &[Value], Vec::as_slice)
+                .iter()
+        })
+        .filter_map(|p| Some((p.get("ts")?.as_i64()?, p.get("accuracy")?.as_f64()?)))
+        .collect())
+}
+
+/// Write `accuracyM` onto every request point whose ts the map knows.
+fn attach_accuracy(points: &mut Value, accuracy: &std::collections::HashMap<i64, f64>) {
+    for p in points.as_array_mut().into_iter().flatten() {
+        if let Some(a) = p["ts"].as_i64().and_then(|ts| accuracy.get(&ts)) {
+            p["accuracyM"] = json!(a);
+        }
+    }
+}
+
 fn json_file(var: &str) -> Result<Value> {
     let Ok(path) = std::env::var(var) else {
         return Ok(Value::Null);
@@ -140,6 +178,7 @@ pub fn request(fx: &Value) -> Result<Value> {
         }
         req["flags"]["segEmission"] = seg_emission()?;
         req["flags"]["transFit"] = json_file("HSMM_TRANS_FIT")?;
+        attach_accuracy(&mut req["observation"]["points"], &accuracy_by_ts(fx)?);
         return Ok(req);
     }
     let (meta, inputs) = (&fx["meta"], &fx["inputs"]);
@@ -158,6 +197,7 @@ pub fn request(fx: &Value) -> Result<Value> {
                 lat: p["lat"].as_f64().context("point lat")?,
                 lon: p["lon"].as_f64().context("point lon")?,
                 speed_kmh: p["speed_kmh"].as_f64().context("point speed_kmh")?,
+                accuracy_m: None,
             })
         })
         .collect::<Result<_>>()?;
@@ -307,5 +347,6 @@ pub fn request(fx: &Value) -> Result<Value> {
     if let Ok(v) = std::env::var("HSMM_MAX_D") {
         req["maxD"] = json!(v.parse::<u64>()?);
     }
+    attach_accuracy(&mut req["observation"]["points"], &accuracy_by_ts(fx)?);
     Ok(req)
 }

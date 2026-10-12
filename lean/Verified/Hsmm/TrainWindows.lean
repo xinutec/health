@@ -217,7 +217,7 @@ def findTrainWindows (obs : Array ObsRow) : Array (Nat × Nat) := Id.run do
 
 -- Parity with the real `findTrainWindows` (windows from Node/V8).
 private def mk (i : Nat) (lat lon : Float) (spd : Option Float) : ObsRow :=
-  { ts := 1000 + (i : Int) * 60, gps := spd.map (fun s => ⟨lat, lon, s⟩), hr := none, cadence := none,
+  { ts := 1000 + (i : Int) * 60, gps := spd.map (fun s => ⟨lat, lon, s, none⟩), hr := none, cadence := none,
     hourLocal := 0, dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none,
     reacquireAgeMin := none, prevGpsFix := none, nextGpsFix := none }
 

@@ -214,7 +214,8 @@ pub(crate) async fn decode_one(
         "observation": {
             "startUtc": bounds.start_utc,
             "points": cleaned.iter().map(|p| serde_json::json!({
-                "ts": p.ts, "lat": p.lat, "lon": p.lon, "speedKmh": p.speed_kmh
+                "ts": p.ts, "lat": p.lat, "lon": p.lon, "speedKmh": p.speed_kmh,
+                "accuracyM": p.accuracy_m
             })).collect::<Vec<_>>(),
             "hr": obs.get("hr").cloned().unwrap_or(serde_json::json!([])),
             "steps": obs.get("steps").cloned().unwrap_or(serde_json::json!([])),
@@ -426,6 +427,7 @@ pub(crate) fn gps_fixes(obs: &serde_json::Value) -> Result<Vec<backend::lean::Gp
                 lat: f(r, "lat")?,
                 lon: f(r, "lon")?,
                 speed_kmh: f(r, "speedKmh")?,
+                accuracy_m: r.get("accuracyM").and_then(serde_json::Value::as_f64),
             })
         })
         .collect()

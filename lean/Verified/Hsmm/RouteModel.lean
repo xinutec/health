@@ -259,7 +259,7 @@ private def lpLines : List String := linesInGraph lpModel
 
 /-- GPS-present observation at `(lat, lon)` with given road/rail proximity. -/
 private def lpObs (lat lon : Float) (road rail : Option Float) : ObsRow :=
-  { ts := 100, gps := some ⟨lat, lon, 30⟩, hr := none, cadence := none, hourLocal := 0,
+  { ts := 100, gps := some ⟨lat, lon, 30, none⟩, hr := none, cadence := none, hourLocal := 0,
     dayOfWeekLocal := 0, inBed := false, roadDistM := road, railDistM := rail,
     reacquireAgeMin := none, prevGpsFix := none, nextGpsFix := none }
 private def lpNullObs : ObsRow := { lpObs 51.50 (-0.10) none none with gps := none }

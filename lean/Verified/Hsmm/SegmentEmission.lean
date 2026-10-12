@@ -107,6 +107,9 @@ structure Params where
       rather than a density: at most `0`, about `0` when the displacement fits
       the mode, the log odds against when it fits another. -/
   dispPosterior : Bool := false
+  /-- The windowed speed's noise includes the two bracketing fixes' reported
+      accuracy: a stay whose fixes scatter at 50 m is not moving at 3 km/h. -/
+  accuracyNoise : Bool := false
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of

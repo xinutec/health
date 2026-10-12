@@ -296,6 +296,38 @@ and are safe to drop; scorer-side passes (`revertIsolatedCadenceDrives`,
 *shown* to reproduce before deletion. Requires the classification-snapshot CI
 gate (#103) because real fixtures are gitignored. Status: pending (#226).
 
+## The shape of the code at the cutover
+
+The arm phase adds a flag beside every old path, so the tree grows while the
+model shrinks; the layout is rewritten once, when the flags become defaults
+and the old paths go, not per arm. Counted in `lean/` by `wc -l` at the time
+of writing, the cascade is five times the decoder, the decoder's one directory
+holds three kinds of file, and the two seam files (`ServeEntry.lean`,
+`rust/backend/src/lean.rs`) grow by a match arm per mode.
+
+1. **`Verified/Hsmm/` into three directories.** `Model/`: what a signal looks
+   like under a state (emissions, segment emissions, transitions, durations,
+   entry). `Trellis/`: the verified machine (spec, packed proofs, forward and
+   Viterbi, posterior, checkpoints, quantisation); its proofs and `#guard`s
+   stay as they are. `Rail/`: lines and stations (the route model and graph,
+   train candidates, served stations, the station chain while it exists).
+   Rule: a file in `Model/` does not import `Trellis/`.
+2. **One parameter record, one artefact.** A `DecoderParams` record in
+   `Model/`, loaded from one fit file with its provenance (which days, held
+   out how). `Emissions.modePriors` and the per-mode gammas move out of source
+   into it; `flags.segEmission`, `flags.transFit`, the per-day fitted priors
+   and the term weights fold into it as their forms become the default. The
+   code holds the form; the artefact holds the numbers
+   (`../design/probabilistic-principles.md`, Rule 8).
+3. **The seam by surface.** `ServeEntry` becomes one file per mode family —
+   decode, instruments (`emissionDebug`, `pathDebug`, `decodetrace`,
+   `decodeprof`), the geometry ops, the parsers — and `lean.rs` the same way,
+   each wire type beside the mode that uses it. Rule: a new mode is a new
+   file, not a new arm in the big match.
+4. **`Verified/Geo/`: delete, do not arrange.** The journey-structure passes
+   go one at a time (Phase 5); what remains — naming, display, enrichment —
+   is laid out once it is known what remains.
+
 ## Dependencies
 
 - **Phase 0 gates everything** — no phase can claim no-regression until the

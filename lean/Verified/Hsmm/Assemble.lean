@@ -229,6 +229,10 @@ private def SEG_ZERO : Float := 0
 /-- Metres between the minutes either side of one (two minutes apart) to km/h. -/
 private def WINDOW_KMH_PER_M : Float := 0.03
 
+/-- The median reported accuracy of a fix on the narrated days (10 m), for a
+    fix that carries none. -/
+private def ACCURACY_DEFAULT_M : Float := 10
+
 /-- With `SegmentEmission` the awake heart rate is scored per segment
     (`segEmAt`) and fix presence by its chain: the minute's own terms for the
     two come out and the chain's goes in. `0` without it (the shipped model). -/
@@ -251,9 +255,16 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
           if !q.p.speedWindow || t == 0 then own
           else match (c.obs[t - 1]?).bind (·.gps), (c.obs[t + 1]?).bind (·.gps) with
             | some a, some b =>
+              -- The fixes' own accuracy, in quadrature with the mode's spread
+              -- (`accuracyNoise`); a fix without one gets the corpus median.
+              let sd := if !q.p.accuracyNoise then prior.speedStd else
+                let ea := a.accuracyM.getD ACCURACY_DEFAULT_M
+                let eb := b.accuracyM.getD ACCURACY_DEFAULT_M
+                Float.sqrt (prior.speedStd * prior.speedStd
+                  + (ea * ea + eb * eb) * WINDOW_KMH_PER_M * WINDOW_KMH_PER_M)
               FloatScore.logNormalPdf
                 (FloatScore.haversineMeters a.lat a.lon b.lat b.lon * WINDOW_KMH_PER_M)
-                prior.speedMean prior.speedStd
+                prior.speedMean sd
             | _, _ => own
         c.weights.base * (windowed - own + SegmentEmission.speedRobust q.p st.mode windowed)
       | none => SEG_ZERO

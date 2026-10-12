@@ -158,15 +158,15 @@ private def obsTrain : ObsRow :=
     inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
     prevGpsFix := some ⟨1000, 51.50, -0.10⟩, nextGpsFix := some ⟨1600, 51.55, -0.05⟩ }
 private def obsStat : ObsRow :=
-  { ts := 1000, gps := some ⟨51.5201, -0.1301, 0⟩, hr := some 70, cadence := some 0, hourLocal := 0,
+  { ts := 1000, gps := some ⟨51.5201, -0.1301, 0, none⟩, hr := some 70, cadence := some 0, hourLocal := 0,
     dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
     prevGpsFix := some ⟨940, 51.60, -0.30⟩, nextGpsFix := some ⟨1000, 51.5201, -0.1301⟩ }
 private def obsWalk : ObsRow :=
-  { ts := 1000, gps := some ⟨51.53, -0.12, 5⟩, hr := some 100, cadence := some 100, hourLocal := 0,
+  { ts := 1000, gps := some ⟨51.53, -0.12, 5, none⟩, hr := some 100, cadence := some 100, hourLocal := 0,
     dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
     prevGpsFix := none, nextGpsFix := none }
 private def obsReacq : ObsRow :=
-  { ts := 1000, gps := some ⟨51.5201, -0.1301, 8⟩, hr := some 70, cadence := some 0, hourLocal := 0,
+  { ts := 1000, gps := some ⟨51.5201, -0.1301, 8, none⟩, hr := some 70, cadence := some 0, hourLocal := 0,
     dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := some 1,
     prevGpsFix := some ⟨1000, 51.5201, -0.1301⟩, nextGpsFix := some ⟨1000, 51.5201, -0.1301⟩ }
 -- Stationary no-fix minute whose most-recent fix is near the prior place → continuity fires.
