@@ -948,7 +948,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let gapPairs := ((f.getObjVal? "gapPairs") >>= (·.getBool?)).toOption.getD false
     let dispPosterior := ((f.getObjVal? "dispPosterior") >>= (·.getBool?)).toOption.getD false
     let accuracyNoise := ((f.getObjVal? "accuracyNoise") >>= (·.getBool?)).toOption.getD false
-    let unlistedCentre := ((f.getObjVal? "unlistedCentre") >>= (·.getBool?)).toOption.getD false
+    let unlistedCentre := (f.getObjVal? "unlistedCentre").toOption >>= num
     let asleep : Option Verified.Hsmm.SegmentEmission.SleepParams := do
       let arr ← ((f.getObjVal? "asleep") >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
@@ -973,7 +973,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let segPref := Verified.Hsmm.SegmentEmission.withPositions
     (Verified.Hsmm.SegmentEmission.prefixOf obs) obs posRef
     Verified.Hsmm.Emissions.PLACE_RADIUS_M Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M
-  let placePrior := Verified.Hsmm.SegmentEmission.placePriorOf posRef
+  let placePrior := Verified.Hsmm.SegmentEmission.placesLocal posRef
     (places.toList.map fun (_, lat, lon, _, _) => (lat, lon))
   let windowSpeed := Verified.Hsmm.Assemble.windowSpeedTable obs
   let segEm := segEm.map (Verified.Hsmm.SegmentEmission.prepare · obs.size)

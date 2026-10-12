@@ -112,6 +112,7 @@ place entry normalised over places per hour.
 | s28: s27 with the asleep heart rate per segment, for every state | 117 | 297 | 59 | 51 | 5 | 132 |
 | s29a: s28 with the Tube and mainline train speeds fitted apart | 119 | 298 | 60 | 52 | 5 | 133 |
 | s30: s29a with a standstill component in a vehicle's windowed speed | 113 | 300 | 62 | 51 | 9 | 133 |
+| s31: s29a with the placeless stay's centre a latent, one Gaussian prior over the listed places | 119 | 296 | 60 | 51 | 5 | 131 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -425,22 +426,41 @@ unlisted place once at the entry. The stop share stays off; the form it
 asked for — a stop is a run of minutes, a chain, not a share — waits behind
 the place term.
 
-Next: the unlisted place's centre as a latent, marginalised once per
-segment (below); then the edge minute's offset as a latent (the one-stop
-hop's first minute is the walk onto the train, and the decoder now places a
-one-minute ride there); the fix's accuracy in a position model rather than
-a speed term.
+**The placeless stay's centre as a latent** (s31, `unlistedCentre`). The
+fixes scatter around a centre at the place radius and their own reported
+accuracy, the centre a draw from a prior, integrated out in closed form
+from weighted position prefix sums: the scatter about the centroid and one
+Occam factor per segment, floored at every fix an outlier (the listed
+place's per-minute floor; without the floor a stay hypothesis spanning a
+day's travel overflowed the packed trellis). Two things found on the way.
+The duration tensor is built once per class keyed by mode and named train,
+with the class's first state standing in for all of them, so a per-segment
+term that depends on the place is silently scored with the wrong state:
+the placeless stay is now its own class, and `path_debug` and the trellis
+agree again. And the prior matters: as one Gaussian over the listed places
+its spread is 221 km (London to Spain), so a free centre pays the Occam
+factor of that disc — −16.6 for a seven-minute in-station stop at Baker
+Street that the per-minute term charged −14, and the decoder boards the
+Met five minutes early. Journeys and phantoms level with s29a; leg modes
+−2, a station and two referee points, both boundary shifts: that stop, and
+two slow station-approach minutes on 10-08 that the placeless stay takes
+from the walk by 2.4 nats. Measured on the narrated days: 9 of 110 lit
+stays are beyond 150 m of every listed place, all within 700 m, root mean
+square 308 m — an unlisted place is near a listed one. The prior is a
+mixture of Gaussians at that bandwidth over the listed places (s32), the
+bandwidth a number in the fit artefact.
+
+Next: the edge minute's offset as a latent (the one-stop hop's first
+minute is the walk onto the train, and the decoder now places a one-minute
+ride there); the fix's accuracy in a position model rather than a speed
+term.
 
 ## Next
 
-- The placeless stay's position per segment: its centre is a latent with a
-  prior from where his listed places are (their mean and spread), the fixes
-  scatter around it with the place radius and their own reported accuracy,
-  and the centre is integrated out in closed form from weighted prefix sums
-  — the scatter about the centroid plus one Occam factor per segment. It
-  replaces the per-minute `OFF_NETWORK_LOG_PRIOR`, which grew without bound
-  with a stay's length (s30's phantoms). The listed place's per-minute
-  Gaussian and its floor are the same form's next step.
+- The listed place's per-minute Gaussian and its floor are the next step of
+  the placeless stay's form (s31/s32): the same prefix sums score a stay at
+  a known centre in closed form, with a fitted outlier share in place of the
+  floor.
 - The edge minute: a boundary falls inside a minute, so the minute is a
   mixture of two modes. Three forms that loosened a mode everywhere were
   refuted above; the form still open is the boundary's offset inside its one

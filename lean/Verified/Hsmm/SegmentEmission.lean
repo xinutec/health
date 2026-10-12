@@ -125,10 +125,11 @@ structure Params where
       so a night at Home wanted to become a placeless stay at waking. -/
   asleep : Option SleepParams := none
   /-- A stay at no listed place has a centre: a latent with a prior from where
-      the listed places are, integrated out once per segment (`centreScore`).
-      Replaces the per-minute off-network term, which charged a per-segment
-      fact on every lit minute and so grew with the stay's length. -/
-  unlistedCentre : Bool := false
+      the listed places are — a Gaussian of this bandwidth (metres) around each
+      — integrated out once per segment (`centreScore`). Replaces the
+      per-minute off-network term, which charged a per-segment fact on every
+      lit minute and so grew with the stay's length. -/
+  unlistedCentre : Option Float := none
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of
@@ -182,19 +183,10 @@ def withPositions (p : Prefix) (obs : Array ObsRow) (ref : Float × Float)
     wrr := wrr.push (wrr.back?.getD ZERO + drr)
   return { p with posW := w, posWX := wx, posWY := wy, posWRR := wrr }
 
-/-- The prior over an unlisted place's centre: the listed places' mean and
-    their isotropic spread (the two axes' variances averaged), in local
-    metres; `none` under two places. -/
-def placePriorOf (ref : Float × Float) (coords : List (Float × Float)) :
-    Option (Float × Float × Float) :=
-  let pts := coords.map fun (lat, lon) => localXY ref lat lon
-  let n := Verified.FloatConst.natToFloat pts.length
-  if n < TWO then none else
-  let mx := (pts.foldl (fun a q => a + q.1) ZERO) / n
-  let my := (pts.foldl (fun a q => a + q.2) ZERO) / n
-  let s2 := (pts.foldl (fun a q => a + (q.1 - mx) * (q.1 - mx) + (q.2 - my) * (q.2 - my)) ZERO)
-    / (TWO * n)
-  some (mx, my, s2)
+/-- The listed places in local metres: the centres of the unlisted place's
+    prior (`centreScore`). -/
+def placesLocal (ref : Float × Float) (coords : List (Float × Float)) : Array (Float × Float) :=
+  (coords.map fun (lat, lon) => localXY ref lat lon).toArray
 
 /-- The day's first fix, the origin of the local metres. -/
 def refOf (obs : Array ObsRow) : Float × Float :=
@@ -271,28 +263,36 @@ def hrScore (p : Params) (m : ModeParams) (st : Stats) : Float :=
 
 /-- A stay at no listed place, its centre integrated out: the fixes scatter
     around a centre `μ` (each at its own weight `w = 1/σ²`), `μ` a draw from
-    the listed places' prior `(mx, my, s2)`. With `W = Σw`, `x̄` the weighted
-    centroid and `S` the weighted scatter about it,
-    `∫ Π N(x; μ, 1/w) N(μ; m, s2) dμ = e^{−S/2} · (2π/W) · N(x̄; m, s2 + 1/W)`,
+    the prior — an unlisted place is near a listed one, a Gaussian of
+    bandwidth `h` around each of the `K` places (on the narrated days every
+    lit stay beyond 150 m of a listed place lies within 700 m of one; `h` is
+    their root-mean-square in the fit artefact). With `W = Σw`, `x̄` the
+    weighted centroid and `S` the weighted scatter about it,
+    `∫ Π N(x; μ, 1/w) (1/K) Σ_k N(μ; P_k, h²) dμ
+       = e^{−S/2} · (2π/W) · (1/K) Σ_k N(x̄; P_k, h² + 1/W)`,
     in the same frame as the listed place's per-minute term (the per-fix
     normalisers dropped). A long stay pays its scatter and one Occam factor;
     a short stop pays about what the per-minute term charged it. `0` with no
-    lit minute.
+    lit minute or no listed place.
 
     The tail: each fix is an outlier with the listed place's per-minute floor
     (`PLACE_DISTANCE_FLOOR`), so the segment is at least the floor times its
     lit minutes — the mixture's lower bound with every fix an outlier. Without
     it a stay hypothesis spanning a day's travel is quadratic in the distance
     and overflows the packed trellis. -/
-def centreScore (st : Stats) (prior : Float × Float × Float) : Float :=
-  if st.posW ≤ ZERO then ZERO else
-  let (mx, my, s2) := prior
+def centreScore (st : Stats) (h : Float) (places : Array (Float × Float)) : Float :=
+  if st.posW ≤ ZERO || places.isEmpty then ZERO else
   let xb := st.posWX / st.posW
   let yb := st.posWY / st.posW
   let scatter := max ZERO (st.posWRR - (st.posWX * st.posWX + st.posWY * st.posWY) / st.posW)
-  let v := s2 + ONE / st.posW
-  let gauss := ZERO - HALF * scatter + Float.log (TWO_PI / st.posW) - Float.log (TWO_PI * v)
-    - ((xb - mx) * (xb - mx) + (yb - my) * (yb - my)) / (TWO * v)
+  let v := h * h + ONE / st.posW
+  let r2 := fun (p : Float × Float) => (xb - p.1) * (xb - p.1) + (yb - p.2) * (yb - p.2)
+  let near := places.foldl (fun a p => min a (r2 p)) (r2 places[0]!)
+  -- log Σ_k exp(−r_k²/2v), taken from the nearest place so nothing underflows.
+  let lse := Float.log (places.foldl (fun a p => a + Float.exp ((near - r2 p) / (TWO * v))) ZERO)
+    - near / (TWO * v)
+  let gauss := ZERO - HALF * scatter + Float.log (TWO_PI / st.posW)
+    - Float.log (Verified.FloatConst.natToFloat places.size) - Float.log (TWO_PI * v) + lse
   max gauss (Verified.Hsmm.Emissions.PLACE_DISTANCE_FLOOR * st.fixN)
 
 /-- The segment's asleep heart-rate marginal, the same for every state
@@ -463,17 +463,19 @@ private def pTest : Params :=
 #guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ + 10
 #guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ - 1
 #guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ == 0
--- An 84-minute café at 30 m scatter, 150 m place radius, the places spread
--- 5 km: a few nats of scatter and one Occam factor, not 168.
+-- An 84-minute café at 30 m scatter, 150 m place radius, 300 m from the
+-- nearest of three listed places at a 300 m bandwidth: a few nats of scatter
+-- and one Occam factor, not 168.
 private def cafe : Stats :=
   { n := 84, hrN := 0, hrSum := 0, hrSq := 0, fixN := 84,
     posW := 84 / 22500, posWX := 0, posWY := 0, posWRR := 84 * 1800 / 22500 }
-#guard centreScore cafe (0, 0, 25000000) > -20
-#guard centreScore cafe (0, 0, 25000000) < -5
--- The same stay with its centre 20 km from every listed place pays more.
-#guard centreScore cafe (20000, 0, 25000000) < centreScore cafe (0, 0, 25000000) - 5
+private def threePlaces : Array (Float × Float) := #[(300, 0), (5000, 5000), (-8000, 2000)]
+#guard centreScore cafe 300 threePlaces > -20
+#guard centreScore cafe 300 threePlaces < -5
+-- The same stay 20 km from every listed place pays more.
+#guard centreScore cafe 300 #[(20000, 0)] < centreScore cafe 300 threePlaces - 5
 -- A "stay" whose fixes span 100 km is floored at every fix an outlier.
-#guard centreScore { cafe with posWRR := 84 * 10000000000 / 22500 } (0, 0, 25000000)
+#guard centreScore { cafe with posWRR := 84 * 10000000000 / 22500 } 300 threePlaces
   == Verified.Hsmm.Emissions.PLACE_DISTANCE_FLOOR * 84
 -- The tables agree with the closed form.
 private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩
