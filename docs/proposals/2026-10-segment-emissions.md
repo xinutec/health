@@ -102,7 +102,7 @@ place entry normalised over places per hour.
 | s19: s16 + the fixes' reported accuracy in the windowed speed's noise | 113 | 296 | 57 | 37 | — | not run |
 | s20: s16 + the entry prior as smoothed counts of visits | 115 | 296 | 59 | 44 | 12 | not run |
 | s21: s20 + the reacquire correction taken out with the Gaussian | 114 | 293 | 59 | 50 | 12 | 130 |
-| s22: s21 + the fixes' accuracy in the windowed speed's noise | 115 | 296 | 59 | 50 | — | — |
+| s22: s21 + the fixes' accuracy in the windowed speed's noise | 115 | 296 | 59 | 50 | 12 | 132 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
