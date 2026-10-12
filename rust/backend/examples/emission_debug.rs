@@ -25,6 +25,11 @@ struct Args {
     from: i64,
     /// Window end, unix seconds
     to: i64,
+    /// A state key (`stationary|6325`, `walking`): print its base terms per
+    /// minute as a second line — speed Gaussian, reacquire correction, place,
+    /// geometric reach, gap share, cadence, heart rate — beside its emission.
+    #[arg(long)]
+    state: Option<String>,
 }
 
 fn hhmm(ts: i64) -> String {
@@ -138,6 +143,31 @@ fn main() -> Result<()> {
             vouched,
             bests.join("  ")
         );
+        if let Some(key) = &args.state
+            && let Some(s) = r["states"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|s| s["state"].as_str() == Some(key))
+        {
+            let p = &s["parts"];
+            let f = |k: &str| {
+                p[k].as_f64()
+                    .map_or("   -".to_string(), |x| format!("{x:6.1}"))
+            };
+            println!(
+                "        {key}: emit {} = speed {} corr {} place {} geom {} gap {} cad {} hr {}  (+seg {})",
+                num(&s["emit"]),
+                f("speed"),
+                f("corr"),
+                f("place"),
+                f("geom"),
+                f("gap"),
+                f("cad"),
+                f("hr"),
+                num(&s["seg"])
+            );
+        }
     }
     Ok(())
 }

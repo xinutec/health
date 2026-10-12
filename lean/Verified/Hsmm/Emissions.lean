@@ -192,7 +192,7 @@ def rideHeadSpeedAdjust (mode : Mode) (speedKmh : Option Float) : Float :=
 #guard isPlaceholderLine "head" && isPlaceholderLine "unknown_rail" && !isPlaceholderLine "Jubilee Line"
 
 /-- Speed / GPS-null-plane term. -/
-private def speedTerm (s : State) (o : Observation) (prior : ModePrior) : Float :=
+def speedTerm (s : State) (o : Observation) (prior : ModePrior) : Float :=
   match o.gps with
   | some g => logNormalPdf g.speedKmh prior.speedMean prior.speedStd
   | none => if s.mode == .plane then -8.0 else 0.0
@@ -210,7 +210,7 @@ def hrTerm (s : State) (o : Observation) (prior : ModePrior) : Float :=
 
 /-- Place-distance term. `placeCoord` is the resolved centroid for `s.placeId`
     (`none` if the state has no place, or its id was not in the place map). -/
-private def placeTerm (s : State) (o : Observation) (placeCoord : Option (Float × Float)) : Float :=
+def placeTerm (s : State) (o : Observation) (placeCoord : Option (Float × Float)) : Float :=
   if s.mode == .stationary then
     match o.gps with
     | none => 0.0

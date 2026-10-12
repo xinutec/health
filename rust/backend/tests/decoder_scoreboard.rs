@@ -114,23 +114,74 @@ fn live_arm() {
     eprintln!(
         "scoreboard-live: date        journeys  legMode  legLine  stations  phantom   (live | blessed)"
     );
+    // The days decode in parallel over the Lean worker pool (`SCOREBOARD_JOBS`,
+    // default 4): each is about twenty seconds of Lean and the scoring shares
+    // nothing, so one pass over 43 days is minutes, not the better part of an
+    // hour. Printed in date order once every day is in.
+    let jobs: usize = std::env::var("SCOREBOARD_JOBS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4);
+    let dates: Vec<&String> = blessed.keys().collect();
+    let results: std::sync::Mutex<BTreeMap<String, (Value, Value)>> = std::sync::Mutex::default();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.min(dates.len()) {
+            std::thread::Builder::new()
+                .stack_size(256 * 1024 * 1024)
+                .spawn_scoped(scope, || {
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let Some(date) = dates.get(i) else { break };
+                        // dev-lint: allow-pii the golden corpus is filed under the account
+                        let name = format!("{date}-pippijn.json");
+                        let fx = backend::decode_fixture::read(&name).expect("fixture parses");
+                        let tz = fx["meta"]["tz"].as_str().unwrap_or("Europe/London");
+                        let req = backend::decode_fixture::request(&fx)
+                            .unwrap_or_else(|e| panic!("{name}: {e:#}"));
+                        let Some(segments) =
+                            backend::lean::assemble_segments(&req).expect("assemble answers")
+                        else {
+                            eprintln!("scoreboard-live: {date}  DEGENERATE decode");
+                            continue;
+                        };
+                        let rendered =
+                            backend::row_json::render_segments(&segments).expect("segments render");
+                        let live = score(
+                            date,
+                            tz,
+                            scoreboard_segs(rendered.as_array().map_or(&[][..], Vec::as_slice)),
+                        );
+                        results
+                            .lock()
+                            .expect("results lock")
+                            .insert((*date).clone(), (live, rendered));
+                    }
+                })
+                .expect("spawn a scoreboard worker");
+        }
+    });
+    let results = results.into_inner().expect("results lock");
     for (date, want) in &blessed {
-        // dev-lint: allow-pii the golden corpus is filed under the account
-        let name = format!("{date}-pippijn.json");
-        let fx = backend::decode_fixture::read(&name).expect("fixture parses");
-        let tz = fx["meta"]["tz"].as_str().unwrap_or("Europe/London");
-        let req = backend::decode_fixture::request(&fx).unwrap_or_else(|e| panic!("{name}: {e:#}"));
-        let Some(segments) = backend::lean::assemble_segments(&req).expect("assemble answers")
-        else {
-            eprintln!("scoreboard-live: {date}  DEGENERATE decode");
+        let Some((live, rendered)) = results.get(date) else {
             continue;
         };
-        let rendered = backend::row_json::render_segments(&segments).expect("segments render");
-        let live = score(
-            date,
-            tz,
-            scoreboard_segs(rendered.as_array().map_or(&[][..], Vec::as_slice)),
-        );
+        // `DECODE_DUMP_OUT=<path>`: this arm's decode per day, one JSON line
+        // each, appended — the segments the phantom lister and the served-day
+        // referee read, from the same decode the counts came from.
+        if let Ok(path) = std::env::var("DECODE_DUMP_OUT") {
+            use std::io::Write;
+            // dev-lint: allow-pii the golden corpus is filed under the account
+            let name = format!("{date}-pippijn.json");
+            let line = format!("{}\n", json!({ "name": name, "segments": rendered }));
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .expect("DECODE_DUMP_OUT opens")
+                .write_all(line.as_bytes())
+                .expect("DECODE_DUMP_OUT writes");
+        }
         // `SCOREBOARD_JOURNEYS=1`: every truth journey the live decode misses,
         // with both mode shapes — which journeys fail, not only how many.
         if std::env::var("SCOREBOARD_JOURNEYS").is_ok() {
@@ -159,28 +210,28 @@ fn live_arm() {
         }
         let g = |v: &Value, f: &str| v.get(f).and_then(Value::as_i64).unwrap_or(0);
         for f in FIELDS {
-            *tot_live.entry(f).or_default() += g(&live, f);
+            *tot_live.entry(f).or_default() += g(live, f);
             *tot_blessed.entry(f).or_default() += g(want, f);
         }
         eprintln!(
             "scoreboard-live: {date}  {:>2}/{:<2}|{:>2}/{:<2}  {:>2}/{:<3}|{:>2}/{:<3} {:>2}/{:<2}|{:>2}/{:<2} {:>2}/{:<2}|{:>2}/{:<2}  {:>2}|{:<2}",
-            g(&live, "journeysMatched"),
-            g(&live, "journeysExpected"),
+            g(live, "journeysMatched"),
+            g(live, "journeysExpected"),
             g(want, "journeysMatched"),
             g(want, "journeysExpected"),
-            g(&live, "legModeMatching"),
-            g(&live, "legModeScorable"),
+            g(live, "legModeMatching"),
+            g(live, "legModeScorable"),
             g(want, "legModeMatching"),
             g(want, "legModeScorable"),
-            g(&live, "legLineMatching"),
-            g(&live, "legLineScorable"),
+            g(live, "legLineMatching"),
+            g(live, "legLineScorable"),
             g(want, "legLineMatching"),
             g(want, "legLineScorable"),
-            g(&live, "stationsMatching"),
-            g(&live, "stationsAsserted"),
+            g(live, "stationsMatching"),
+            g(live, "stationsAsserted"),
             g(want, "stationsMatching"),
             g(want, "stationsAsserted"),
-            g(&live, "phantomRides"),
+            g(live, "phantomRides"),
             g(want, "phantomRides"),
         );
     }

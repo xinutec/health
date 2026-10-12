@@ -120,6 +120,9 @@ structure ModelContext where
       `placeByEntry`): a transition into a stay gives that back, so the place
       is chosen by the entry prior alone and not also by the even split. -/
   stayEntryLog : Array Float := #[]
+  /-- Per minute, the net speed between the nearest fixes either side of it
+      and the squared GPS noise on that span (`windowSpeedTable`). -/
+  windowSpeed : Array (Option (Float × Float)) := #[]
   /-- Per place, its count of visits (stay beginnings), when the request
       carries them. -/
   visitCounts : Std.HashMap Int Float := {}
@@ -232,12 +235,43 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
 private def coveredAt (c : ModelContext) (ts : Int) : Bool := TrainCandidates.isCovered c.coverage ts
 
 private def SEG_ZERO : Float := 0
-/-- Metres between the minutes either side of one (two minutes apart) to km/h. -/
-private def WINDOW_KMH_PER_M : Float := 0.03
 
 /-- The median reported accuracy of a fix on the narrated days (10 m), for a
     fix that carries none. -/
 private def ACCURACY_DEFAULT_M : Float := 10
+
+private def KMH_PER_MS : Float := 3.6
+private def MIN_ONE : Float := 1
+private def MIN_TWO : Float := 2
+private def SECONDS_PER_MINUTE_F : Float := 60
+
+/-- Per minute, the net speed (km/h) across the minute and the squared GPS
+    noise on that span in (km/h)², for the windowed speed term: between the
+    neighbouring minutes' aggregates when both are lit (two minutes), from
+    the one lit neighbour to this minute's own aggregate when the other is
+    dark (one minute), `none` when both are dark. A span across a dark gap
+    would describe the gap, not the minute — the gap term owns that — and a
+    lit minute beside a dark one must not fall back to its fix's
+    instantaneous speed (a stay's fix that jumped 200 m read as 20 km/h). A
+    fix without a reported accuracy carries the corpus median. -/
+def windowSpeedTable (obs : Array ObsRow) : Array (Option (Float × Float)) :=
+  let n := obs.size
+  let at_ := fun (i : Nat) => (obs[i]?).bind (·.gps)
+  (Array.range n).map fun t =>
+    let own := at_ t
+    let prev := if t == 0 then none else at_ (t - 1)
+    let next := at_ (t + 1)
+    let span := fun (a b : Observation.GpsAgg) (minutes : Float) =>
+      let perS := KMH_PER_MS / (minutes * SECONDS_PER_MINUTE_F)
+      let ea := a.accuracyM.getD ACCURACY_DEFAULT_M
+      let eb := b.accuracyM.getD ACCURACY_DEFAULT_M
+      some (FloatScore.haversineMeters a.lat a.lon b.lat b.lon * perS,
+            (ea * ea + eb * eb) * perS * perS)
+    match prev, next, own with
+    | some a, some b, _ => span a b MIN_TWO
+    | some a, none, some g => span a g MIN_ONE
+    | none, some b, some g => span g b MIN_ONE
+    | _, _, _ => none
 
 /-- With `SegmentEmission` the awake heart rate is scored per segment
     (`segEmAt`) and fix presence by its chain: the minute's own terms for the
@@ -261,20 +295,15 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
         let own := FloatScore.logNormalPdf g.speedKmh prior.speedMean prior.speedStd
           + EmissionFull.reacquireCorrection st o c.reacquireRobust c.priors
         let windowed :=
-          if !q.p.speedWindow || t == 0 then own
-          else match (c.obs[t - 1]?).bind (·.gps), (c.obs[t + 1]?).bind (·.gps) with
-            | some a, some b =>
+          if !q.p.speedWindow then own
+          else match (c.windowSpeed[t]?).getD none with
+            | some (v, noise) =>
               -- The fixes' own accuracy, in quadrature with the mode's spread
-              -- (`accuracyNoise`); a fix without one gets the corpus median.
+              -- (`accuracyNoise`).
               let sd := if !q.p.accuracyNoise then prior.speedStd else
-                let ea := a.accuracyM.getD ACCURACY_DEFAULT_M
-                let eb := b.accuracyM.getD ACCURACY_DEFAULT_M
-                Float.sqrt (prior.speedStd * prior.speedStd
-                  + (ea * ea + eb * eb) * WINDOW_KMH_PER_M * WINDOW_KMH_PER_M)
-              FloatScore.logNormalPdf
-                (FloatScore.haversineMeters a.lat a.lon b.lat b.lon * WINDOW_KMH_PER_M)
-                prior.speedMean sd
-            | _, _ => own
+                Float.sqrt (prior.speedStd * prior.speedStd + noise)
+              FloatScore.logNormalPdf v prior.speedMean sd
+            | none => own
         c.weights.base * (windowed - own + SegmentEmission.speedRobust q.p st.mode windowed)
       | none => SEG_ZERO
     let chain := match SegmentEmission.obsMinute q.p st.mode (SegmentEmission.obsClass o)

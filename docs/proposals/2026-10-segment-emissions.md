@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); twenty-two arms measured; s22 ahead of the shipped decoder on leg modes (296 vs 286), lines (59 vs 53) and stations (50 vs 47), behind on scoreboard journeys (115 vs 121) and phantoms
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); twenty-three arms measured; s23 ahead of the shipped decoder on the referee (132 vs 126), leg modes (296 vs 286), lines (59 vs 53) and stations (50 vs 47), level on scoreboard phantoms (6), behind on scoreboard journeys (115 vs 121)
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -103,6 +103,7 @@ place entry normalised over places per hour.
 | s20: s16 + the entry prior as smoothed counts of visits | 115 | 296 | 59 | 44 | 12 | not run |
 | s21: s20 + the reacquire correction taken out with the Gaussian | 114 | 293 | 59 | 50 | 12 | 130 |
 | s22: s21 + the fixes' accuracy in the windowed speed's noise | 115 | 296 | 59 | 50 | 12 | 132 |
+| s23: s22 with the duration cap at a whole day | 115 | 296 | 59 | 50 | 8 | 132 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -309,6 +310,31 @@ three counts went to `driving` blips on fast reacquire fixes inside walks,
 which the bogus credit had been covering. **The accuracy as the speed's
 noise, re-measured on the fixed arm** (s22): those three back, stations
 held — s19's station loss was the bug's, not the accuracy's. The flag is on.
+
+**The pottering stays are the cap.** `path_debug` scores the single home stay
+26 and 19 nats *above* the decoded path on 06-09 and 05-20: those stays are
+995 and 1070 minutes, over the 720-minute cap, so the trellis has to break
+them somewhere, and a few minutes of `driving` at the pottering minutes is
+the cheapest break — the 4-hour blips of the shipped cap, at the next cap.
+With the cap at a whole day the decoder finds the single stay (wall 49 → 58 s
+on that day). The duration prior's support has to cover the longest real
+stay; a cap below it is a compensation, and it manufactures a ride. Measured
+(s23): phantoms 12 → 8 on the lister and 10 → 6 on the scoreboard, level with
+the shipped decoder; every other count unchanged. The scoreboard now decodes
+the days in parallel over the Lean worker pool and writes the arm's dump in
+the same pass (391 s for the 43 days, counts identical to the serial run):
+an arm is minutes, not an hour.
+
+**The four `driving` blips that remain at stays are a fix that jumped beside
+a dark minute.** `emission_debug` now prints the base's parts for a named
+state: at 10-02 10:05 the stay's −203 is the speed Gaussian on the fix's own
+20 km/h — the windowed speed fell back to the raw fix speed whenever a
+neighbouring minute was dark, and the phone's 300 m-accuracy fixes beside it
+had been dropped as outliers, so the neighbour *was* dark. The window is now
+the net speed between the nearest fixes either side of the minute (tabled
+once per minute, `windowSpeedTable`), the same quantity as before when both
+neighbours are lit and the span's own GPS noise when they are not. The two
+stays read as stays (+198 and +52 at the jump minutes).
 
 Next: the edge minute's offset as a latent (the one-stop hop's first minute
 is the walk onto the train, and the decoder now places a one-minute ride

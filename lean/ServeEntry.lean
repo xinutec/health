@@ -935,6 +935,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0))
     (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)
   let segPref := Verified.Hsmm.SegmentEmission.prefixOf obs
+  let windowSpeed := Verified.Hsmm.Assemble.windowSpeedTable obs
   let segEm := segEm.map (Verified.Hsmm.SegmentEmission.prepare · obs.size)
   -- A fitted mode-to-mode transition matrix (harness-only): `{src: {dst: p}}`.
   let modesAll : List Verified.Hsmm.Emissions.Mode :=
@@ -999,7 +1000,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | _, _ => #[]
     | none => #[]
   let ctx := { ctx with priors, fits, weights, segEm, segPref, transWeight, selfLoop, stayEntryLog,
-                        visitCounts, entryTable }
+                        visitCounts, entryTable, windowSpeed }
   let lineProxBest := match segEm with
     | some q => if q.p.lineRankOnly then Verified.Hsmm.Assemble.lineProxBestTable ctx else #[]
     | none => #[]
@@ -1459,6 +1460,25 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
                   ("emit", Lean.toJson (Verified.Hsmm.Assemble.emitAt c t s)),
                   -- The segment-emission arm's per-minute adjustment, apart.
                   ("seg", Lean.toJson (Verified.Hsmm.Assemble.segMinuteAt c t st o)),
+                  -- The base's parts, for the state a reader asks about: the
+                  -- speed Gaussian, the reacquire correction, the place term,
+                  -- the geometric reach, the gap share, the cadence, the heart rate.
+                  ("parts", let prior := Verified.Hsmm.Emissions.priorOf c.priors st
+                    let thin := Verified.Hsmm.EmissionFull.toThin o
+                    let placeCoord := st.placeId.bind (c.placeCoords.get? ·)
+                    let geo := fun (f : Verified.Hsmm.Observation.Fix) =>
+                      (⟨Verified.FloatConst.natToFloat f.ts.toNat, f.lat, f.lon⟩ : Verified.Hsmm.Geometric.GpsFix)
+                    Json.mkObj [
+                      ("speed", Lean.toJson (Verified.Hsmm.Emissions.speedTerm st thin prior)),
+                      ("corr", Lean.toJson (Verified.Hsmm.EmissionFull.reacquireCorrection st o c.reacquireRobust c.priors)),
+                      ("place", Lean.toJson (Verified.Hsmm.Emissions.placeTerm st thin placeCoord)),
+                      ("geom", Lean.toJson (Verified.Hsmm.Geometric.geometricFeasibility st (Verified.FloatConst.natToFloat o.ts.toNat)
+                        (o.prevGpsFix.map geo) (o.nextGpsFix.map geo) placeCoord c.priors)),
+                      ("gap", Lean.toJson (Verified.Hsmm.Geometric.gapTerm st o.gps.isSome
+                        (o.prevGpsFix.map geo) (o.nextGpsFix.map geo) c.priors)),
+                      ("cad", Lean.toJson (match o.cadence with
+                        | some cd => Verified.Hsmm.Emissions.logCadencePdf cd prior | none => (0 : Float))),
+                      ("hr", Lean.toJson (Verified.Hsmm.Emissions.hrTerm st thin prior))]),
                   ("entry", Lean.toJson (Verified.Hsmm.Assemble.entryAt c t s))]
     Json.mkObj [("ts", Lean.toJson o.ts),
                 ("speedKmh", optF (o.gps.map (·.speedKmh))),
