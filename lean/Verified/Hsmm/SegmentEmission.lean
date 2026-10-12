@@ -93,6 +93,20 @@ structure Params where
       term is subtracted from every train state's, so the term says which line
       and nothing about train against other modes (`obsChain` says that). -/
   lineRankOnly : Bool := false
+  /-- Score each segment's net displacement (`dispScore`). Off, the modes in
+      `disp` keep their fitted parameters for `gapPairs` and nothing is scored
+      per segment: a density per segment is about `−log(scale)` whatever the
+      displacement, so every extra segment paid for existing. -/
+  dispSegment : Bool := true
+  /-- Each fix-to-fix pair that brackets dark minutes is one observation of
+      the mode's net displacement (`dispScore` over the pair), spread evenly
+      over the dark minutes it spans, so the count of terms does not depend on
+      the segmentation. Lit minutes are the windowed speed's. -/
+  gapPairs : Bool := false
+  /-- The segment's displacement as its vote for the mode (`dispPosteriorScore`)
+      rather than a density: at most `0`, about `0` when the displacement fits
+      the mode, the log odds against when it fits another. -/
+  dispPosterior : Bool := false
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of
@@ -174,6 +188,21 @@ def dispScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentEvidence.W
       else logNormalDensity (dist / KM_M / hours) q.mu q.sigma / (hours * KM_M)
     Float.log ((ONE - q.eps) * main + q.eps / (p.uMaxKmh * hours * KM_M))
   | _, _ => ZERO
+
+/-- `log f_mode(D) − log Σ_m f_m(D)` over the modes with a fitted displacement:
+    the posterior of the mode given the segment's net displacement under a flat
+    prior over those modes. A density per segment is about `−log(scale)` for
+    any displacement, so every extra segment paid for existing; this is at most
+    `0` and about `0` for a displacement typical of the mode. `0` without
+    bracketing fixes. -/
+def dispPosteriorScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentEvidence.Window) : Float :=
+  match w with
+  | none => ZERO
+  | some _ =>
+    let own := dispScore p mode d w
+    let all := p.disp.map fun (m, _) => dispScore p m d w
+    let mx := all.foldl max own
+    own - (mx + Float.log (all.foldl (fun acc v => acc + Float.exp (v - mx)) ZERO))
 
 /-- Within GPS noise of a railway: 99% of fixes fall within 31 m of the truth. -/
 def RAIL_NEAR_M : Float := 30

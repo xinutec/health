@@ -116,6 +116,10 @@ structure ModelContext where
   transWeight : State → State → Float := Transitions.transitionWeight
   /-- Per minute, the best train state's line-proximity term (`lineRankOnly`). -/
   lineProxBest : Array Float := #[]
+  /-- Per source state, `log` of the stay states it may move to (harness arm
+      `placeByEntry`): a transition into a stay gives that back, so the place
+      is chosen by the entry prior alone and not also by the even split. -/
+  stayEntryLog : Array Float := #[]
 
 /-- The longest segment the HSMM will consider, in minutes.
 
@@ -261,7 +265,17 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
       if q.p.lineRankOnly && st.mode == .train then
         -c.weights.lineProximity * (c.lineProxBest[t]?).getD SEG_ZERO
       else SEG_ZERO
-    chain - out + speed + rank
+    -- A dark minute's share of the pair bracketing it (`gapPairs`).
+    let pair := match o.gps, o.prevGpsFix, o.nextGpsFix with
+      | none, some a, some b =>
+        if !q.p.gapPairs then SEG_ZERO else
+        let k := ((b.ts - a.ts) / Observation.SECONDS_PER_MINUTE).toNat
+        if k < 2 then SEG_ZERO else
+        let dM := FloatScore.haversineMeters a.lat a.lon b.lat b.lon
+        c.weights.base * SegmentEmission.dispScore q.p st.mode k (some ⟨dM, SEG_ZERO, SEG_ZERO⟩)
+          / Verified.FloatConst.natToFloat (k - 1)
+      | _, _, _ => SEG_ZERO
+    chain - out + speed + rank + pair
 
 /-- `emission(s, obs[t])` — the full composed emission. Coverage does not reach
     it (#238, 2026-09-29): the per-minute line factors stay live on a
@@ -352,7 +366,8 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
   | some q, some x =>
     SegmentEmission.scorePrepared q x.mode st
       + (if q.p.disp.any (·.1 == x.mode) then
-           SegmentEmission.dispScore q.p x.mode d w
+           (if q.p.dispPosterior then SegmentEmission.dispPosteriorScore q.p x.mode d w
+            else if q.p.dispSegment then SegmentEmission.dispScore q.p x.mode d w else SEG_ZERO)
              - (if c.segEvidenceOn then
                   c.weights.segmentEvidence * SegmentEvidence.segmentEvidenceOf x.mode d w
                 else SEG_ZERO)
@@ -419,6 +434,11 @@ def durAt (c : ModelContext) (s d e : Nat) : Float :=
 theorem durAt_eq_durAtFrom (c : ModelContext) (s d e : Nat) :
     durAt c s d e = durAtFrom c s d e (durPriorBase c s d) := rfl
 
+/-- What a transition into a stay gives back under `placeByEntry` (see
+    `ModelContext.stayEntryLog`); `0` otherwise. -/
+def stayEntryAt (c : ModelContext) (a : Nat) (dst : State) : Float :=
+  if dst.mode == .stationary then c.stayEntryLog.getD a SEG_ZERO else SEG_ZERO
+
 /-- `transition(a, b, obs[t])` — static prior + chain context (with the `−∞`
     short-circuit), chain penalty resolved over the model + place coords. -/
 def transAt (c : ModelContext) (a b t : Nat) : Float :=
@@ -434,6 +454,7 @@ def transAt (c : ModelContext) (a b t : Nat) : Float :=
   let placeNear := fun (pid : Int) (line : String) => c.placeNearLine.contains s!"{pid}|{line}"
   Assembly.transitionLogProbFull placeNear c.states.toList c.selfLoop src dst c.chainOn
     (c.weights.chain * chainVal) c.transWeight
+    + stayEntryAt c a dst
 
 /-- Quantised emission tensor `emit[t][s]`. -/
 def buildEmit (c : ModelContext) : Array (Array (Option Float)) :=

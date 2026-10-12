@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`); thirteen arms measured; s12 level with the shipped decoder on the referee
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`); nineteen arms measured; s16 (no self-loop mass, displacement as the mode's posterior, fitted durations) ahead of the shipped decoder on leg modes and lines, behind on journeys (115 vs 121), stations (44 vs 47) and phantoms (12 vs 6)
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -91,6 +91,14 @@ place entry normalised over places per hour.
 | s11: s8 without `LineProximity` | 110 | 291 | 40 | 34 | 11 | not run |
 | s12: s8 with `LineProximity` ranking lines only | 110 | 291 | 59 | 46 | 11 | 126 |
 | s13: s12 + a step chain in place of the cadence term | 93 | 265 | 52 | 28 | 5 | not run |
+| s14b: s12 + the place chosen by the entry alone | 110 | 293 | 60 | 45 | 10 | not run |
+| s14a: s12 without the self-loop's cross mass | 113 | 295 | 61 | 46 | 10 | not run |
+| s14ab: both | 113 | 296 | 60 | 45 | 11 | not run |
+| s15a: s14a without the per-segment displacement | 114 | 298 | 60 | 44 | 21 | not run |
+| s15b: s15a + gap pairs spread over their dark minutes | 115 | 297 | 59 | 44 | 19 | not run |
+| s17: s14a with the displacement as the mode's posterior | 115 | 296 | 59 | 44 | 11 | not run |
+| s16: s17 + duration priors fitted on the narrated runs | 115 | 296 | 59 | 44 | 12 | not run |
+| s18: s16 + the measured stationary cadence (16% of stay minutes with steps) | 115 | 288 | 60 | 44 | — | not run |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -182,6 +190,90 @@ carriage), so a train pays about 0.3 nats a minute more than a walk for a
 walk's steps, where the hand-set term charged about 50. Journeys 110 → 93,
 stations 46 → 28. About 70 such transitions cannot tell labelling from
 behaviour; the strict hand-set step term stays until they can.
+
+## Where s12 loses: the price of a segment
+
+Of the 149 truth journeys, s12 misses 39 (`SCOREBOARD_JOURNEYS=1`). Read one
+by one, most are one shape: a short segment the decoder does not place — a
+10-minute pharmacy stop inside a walk (06-18), a 4-minute walk between two
+hospital buildings (06-18), a 135 m walk from a hotel to dinner and back
+(09-30), a one-stop hop of two minutes between walks (07-01, 07-02, 07-14,
+07-15). Each lost stay also joins two truth journeys into one decoder journey,
+so it costs twice.
+
+`path_debug` (the decoded path against the truth's segmentation, term by term,
+with the model's own cells) puts the margin at 1 to 12 nats, and names what
+a segment pays before any evidence is read:
+
+| term | per boundary or segment | form |
+|---|---|---|
+| the self-loop's cross mass, `log 0.05` | −3.0 per boundary | a compensation: the duration prior already owns a segment's length |
+| the even split of a mode's share over its states | −4.8 per entry into a stay (119 stay states), −2 to −3 into a line | the place is also chosen by the entry prior, so it is paid twice |
+| the entry prior | −5 to −12 per stay (a 4-visit place at an hour its profile never saw: −11.7) | floors (`0.001` an hour, `1/(10·nPlaces)` a place) multiplied: a prior with no smoothing |
+| the heart-rate marginal's between term | about −3 per segment | a proper Occam factor for a new segment mean |
+| the net-displacement density | −4 to −8 per segment | a per-segment statistic scored as an independent observation |
+| the duration prior | −3.6 for a short walk, −4.6 for a 2-minute ride, −10 under the floor | hand-set gammas, nearly flat |
+
+A stay–walk–stay excursion therefore starts about 35 nats behind, and a
+one-stop hop about 25. The first three rows are compensations (design Rule 8)
+and the fifth is a count bias: a density over a segment's net displacement is
+about `−log(scale)` whatever the displacement, so every extra segment pays
+−4 to −8 for existing — the single 25-minute walk on 07-14 pays one such term
+where walk–hop–walk pays three. The honest form scores each fix-to-fix pair
+once, under the mode of the minutes it spans, so the count of terms does not
+depend on the segmentation. On the narrated runs the pairs that matter are the
+gap-bridging ones: stays' fixes two or more minutes apart land a median 5 m
+from the last (p90 50 m), trains' a median 35 km/h (p10 16); walks are lit
+every minute, where the windowed speed already scores them.
+
+**The cross mass** (s14a, `transFit.noSelfMass`): journeys 110 → 113, with
+both 06-18 segments, three one-stop hops and the 09-30 return walk found, and
+three lost to new edge segments (a walk minute before a taxi, one after a
+drive, a cycling blip). **The place split** (s14b, `transFit.placeByEntry`)
+finds the pharmacy and loses a journey to a short drive; on top of s14a it
+adds nothing. Kept out until the entry prior is remodelled, since both are
+about who chooses the place.
+
+**Refuted: the displacement off, and as gap pairs** (s15a, s15b). Without
+the per-segment density, phantoms 10 → 21: dark stretches inside stays read
+as rides again (09-14: 33 minutes of `train` inside an eight-hour dark stay,
+on a few pottering steps a minute), because the density was also the only
+term that priced a ride with no net displacement. Scoring each gap-bridging
+pair once and spreading it over the dark minutes it spans (`gapPairs`) does
+not restore that: a 33-minute phantom inside an eight-hour gap carries a
+thirtieth of the pair's evidence. The pair's displacement belongs to the
+moving minutes inside the gap, which a per-minute term cannot know.
+
+The form that keeps the evidence and drops the count bias: the segment's
+displacement as its *vote for the mode* — `log f_mode(D) − log Σ_m f_m(D)`
+over the modes with a fitted displacement (`dispPosterior`), the posterior
+of the mode under a flat prior. At most 0, about 0 for a displacement typical
+of the mode, the log odds against for one typical of another; a ride with no
+net displacement still pays, and a segment no longer pays for existing.
+
+**The posterior form** (s17): journeys 115, phantoms 11 — the count bias gone
+without s15's phantoms. Against s14a it finds five more (a drive, the 09-30
+dinner walk, three short segments) and loses four to short `driving` blips
+inside lit walks; stations −2. **Fitted durations** (s16, maximum likelihood
+on the narrated run lengths: walking Γ(2.4, 0.19), train Γ(1.1, 0.046),
+stationary Γ(0.84, 0.006), driving Γ(1.3, 0.08)): the same four counts, one
+more phantom. Nearly flat below fifteen minutes — one-stop hops are common in
+the narrated runs — so they replace four hand-set pairs and price out no blip.
+
+What is left of the phantoms is one shape: a stay whose wearer potters (steps
+in 16% of a stay's minutes on the narrated days, against the hand-set 1%)
+while the fixes scatter at 1–3 km/h, read as six to eight minutes of
+`driving` or `cycling`. **Refuted: the measured stationary cadence** (s18,
+zero share 0.84, 22 ± 21 steps when not): leg modes 296 → 288 and phantoms
+up — stays absorb the walks' edge minutes, the s9 pattern for one mode. The
+scatter is the fixes' own reported accuracy (40–150 m indoors), which the
+frozen fixtures and the observation rows do not carry; the term that reads it
+is the next form, and the capture-side fixtures have it.
+
+Next: the fix's accuracy on the observation row and in the windowed speed's
+noise; the entry prior as smoothed counts of stay beginnings; the edge
+minute's offset as a latent (the one-stop hop's first minute is the walk onto
+the train, and the decoder now places a one-minute ride there).
 
 ## Next
 

@@ -913,12 +913,16 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       pure (m, ← num v)
     let speedWindow := ((f.getObjVal? "speedWindow") >>= (·.getBool?)).toOption.getD false
     let lineRankOnly := ((f.getObjVal? "lineRankOnly") >>= (·.getBool?)).toOption.getD false
+    let dispSegment := ((f.getObjVal? "dispSegment") >>= (·.getBool?)).toOption.getD true
+    let gapPairs := ((f.getObjVal? "gapPairs") >>= (·.getBool?)).toOption.getD false
+    let dispPosterior := ((f.getObjVal? "dispPosterior") >>= (·.getBool?)).toOption.getD false
     let obsChain := all.filterMap fun m => do
       let rows ← (((f.getObjVal? "obsChain") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)))
         >>= (·.getArr?)).toOption
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, obsChain, lineRankOnly }
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, obsChain, lineRankOnly,
+           dispSegment, gapPairs, dispPosterior }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
@@ -933,8 +937,20 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let modesAll : List Verified.Hsmm.Emissions.Mode :=
     [.stationary, .walking, .cycling, .driving, .train, .plane, .unknown]
   let modeOf := fun (n : String) => modesAll.find? (Verified.Hsmm.StateSpace.modeName · == n)
+  -- Per source state, how many states of each mode it may move to (the even
+  -- split's denominator); shared by the fitted matrix and `placeByEntry`.
+  let placeNear := fun (pid : Int) (line : String) => ctx.placeNearLine.contains s!"{pid}|{line}"
+  let statesL := ctx.states.toList
+  let counts : Std.HashMap String (List (Verified.Hsmm.Emissions.Mode × Nat)) :=
+    ctx.states.foldl (fun m src =>
+      m.insert (Verified.Hsmm.StateSpace.stateKey src) (modesAll.map fun md =>
+        (md, (statesL.filter fun dst => dst.mode == md && !Verified.Hsmm.Transitions.sameState src dst
+           && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst).length))) {}
+  let count := fun (src : Verified.Hsmm.Emissions.State) (md : Verified.Hsmm.Emissions.Mode) =>
+    (((counts.get? (Verified.Hsmm.StateSpace.stateKey src)).getD []).find? (·.1 == md)).map (·.2) |>.getD 0
+  let transFit := (flags.getObjVal? "transFit").toOption.filter (!·.isNull)
   let transWeight : Verified.Hsmm.Emissions.State → Verified.Hsmm.Emissions.State → Float :=
-    match (flags.getObjVal? "transFit").toOption.filter (!·.isNull) with
+    match transFit with
     | none => Verified.Hsmm.Transitions.transitionWeight
     | some tf =>
       let entries : List (Verified.Hsmm.Emissions.Mode × Verified.Hsmm.Emissions.Mode × Float) :=
@@ -949,17 +965,19 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         | .error _ => []
       let matrix := fun (a b : Verified.Hsmm.Emissions.Mode) =>
         (entries.find? fun (x, y, _) => x == a && y == b).map (·.2.2)
-      let placeNear := fun (pid : Int) (line : String) => ctx.placeNearLine.contains s!"{pid}|{line}"
-      let statesL := ctx.states.toList
-      let counts : Std.HashMap String (List (Verified.Hsmm.Emissions.Mode × Nat)) :=
-        ctx.states.foldl (fun m src =>
-          m.insert (Verified.Hsmm.StateSpace.stateKey src) (modesAll.map fun md =>
-            (md, (statesL.filter fun dst => dst.mode == md && !Verified.Hsmm.Transitions.sameState src dst
-               && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst).length))) {}
-      let count := fun (src : Verified.Hsmm.Emissions.State) (md : Verified.Hsmm.Emissions.Mode) =>
-        (((counts.get? (Verified.Hsmm.StateSpace.stateKey src)).getD []).find? (·.1 == md)).map (·.2) |>.getD 0
       Verified.Hsmm.Transitions.fittedWeight matrix count
-  let ctx := { ctx with priors, fits, weights, segEm, segPref, transWeight }
+  -- Two harness arms on the same file: `noSelfMass` drops the self-loop's
+  -- cross mass (the duration prior alone owns a segment's length);
+  -- `placeByEntry` gives a transition into a stay the even split back (the
+  -- entry prior alone chooses the place).
+  let tfKnob := fun (k : String) =>
+    (transFit >>= fun tf => (tf.getObjVal? k >>= (·.getBool?)).toOption).getD false
+  let selfLoop := if tfKnob "noSelfMass" then Verified.Hsmm.FloatScore.negInf else ctx.selfLoop
+  let stayEntryLog : Array Float :=
+    if tfKnob "placeByEntry" then
+      ctx.states.map fun src => Float.log (Verified.FloatConst.natToFloat (count src .stationary))
+    else #[]
+  let ctx := { ctx with priors, fits, weights, segEm, segPref, transWeight, selfLoop, stayEntryLog }
   let lineProxBest := match segEm with
     | some q => if q.p.lineRankOnly then Verified.Hsmm.Assemble.lineProxBestTable ctx else #[]
     | none => #[]
@@ -1116,12 +1134,13 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   -- nothing by index: the state comes from the iteration itself.
   let weighted : Array ((Verified.Hsmm.Emissions.State × Float) × Nat) :=
     (c.states.map fun s => (s, Verified.Hsmm.Transitions.crossWeightSumP placeNear statesL s c.transWeight)).zipIdx
-  let baseTransF := fun (src dst : Verified.Hsmm.Emissions.State) (ws : Float) =>
+  let baseTransF := fun (src dst : Verified.Hsmm.Emissions.State) (ws : Float) (a : Nat) =>
     Verified.Hsmm.Transitions.transitionLogProbPre placeNear c.selfLoop ws src dst c.transWeight
+      + Verified.Hsmm.Assemble.stayEntryAt c a dst
   let mut transBase : Array Nat := Array.replicate (S * S) 0
   for ((src, ws), a) in weighted do
     for ((dst, _), b) in weighted do
-      transBase := transBase.set! (a * S + b) (← encScore pOB (quant (baseTransF src dst ws)))
+      transBase := transBase.set! (a * S + b) (← encScore pOB (quant (baseTransF src dst ws a)))
   -- Override rows for chain-eligible, non-hard-zero pairs (superset of the pairs
   -- whose chain term can be non-zero — hard-zeros keep their −∞, chain not added).
   let chainEligible := fun (src dst : Verified.Hsmm.Emissions.State) =>
@@ -1164,7 +1183,7 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
       for ((src, ws), a) in weighted do
         for ((dst, _), b) in weighted do
           if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
-            let base := baseTransF src dst ws
+            let base := baseTransF src dst ws a
             -- The place-anchored boarding penalty once per pair; each minute adds
             -- only what depends on it (`chainContext` is this composition, #1774).
             let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
