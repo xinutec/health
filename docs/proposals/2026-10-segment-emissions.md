@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); thirty arms measured; s29a ahead of the shipped decoder on the referee (133 vs 126), leg modes (298 vs 286), lines (60 vs 53), stations (52 vs 47) and phantoms (5 vs 6), behind on scoreboard journeys (119 vs 121) — the one gate bar left
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); thirty-two arms measured; s32 ahead of the shipped decoder on the referee (132 vs 126), leg modes (297 vs 286), lines (60 vs 53), stations (52 vs 47) and phantoms (5 vs 6), behind on scoreboard journeys (119 vs 121) — the one gate bar left
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -113,6 +113,7 @@ place entry normalised over places per hour.
 | s29a: s28 with the Tube and mainline train speeds fitted apart | 119 | 298 | 60 | 52 | 5 | 133 |
 | s30: s29a with a standstill component in a vehicle's windowed speed | 113 | 300 | 62 | 51 | 9 | 133 |
 | s31: s29a with the placeless stay's centre a latent, one Gaussian prior over the listed places | 119 | 296 | 60 | 51 | 5 | 131 |
+| s32: s31 with the prior a mixture over the listed places at a 308 m bandwidth | 119 | 297 | 60 | 52 | 5 | 132 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -448,7 +449,12 @@ from the walk by 2.4 nats. Measured on the narrated days: 9 of 110 lit
 stays are beyond 150 m of every listed place, all within 700 m, root mean
 square 308 m — an unlisted place is near a listed one. The prior is a
 mixture of Gaussians at that bandwidth over the listed places (s32), the
-bandwidth a number in the fit artefact.
+bandwidth a number in the fit artefact. Measured: the in-station stop is
+back; journeys, lines, stations and phantoms level with s29a, a leg mode
+and a referee point behind on 10-08's two approach minutes. The per-minute
+off-network term is retired in the arm, and s32 is the recipe: the stop
+share (s30) can be re-measured on it, since the place term no longer leans
+on the vehicle's speed to price a long unlisted stay.
 
 Next: the edge minute's offset as a latent (the one-stop hop's first
 minute is the walk onto the train, and the decoder now places a one-minute
