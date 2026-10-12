@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); twenty-three arms measured; s23 ahead of the shipped decoder on the referee (132 vs 126), leg modes (296 vs 286), lines (59 vs 53) and stations (50 vs 47), level on scoreboard phantoms (6), behind on scoreboard journeys (115 vs 121)
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); twenty-five arms measured; s25 ahead of the shipped decoder on the referee (131 vs 126), leg modes (296 vs 286), lines (59 vs 53) and stations (50 vs 47), level on phantoms (6), behind on scoreboard journeys (115 vs 121) — the one gate bar left
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -104,6 +104,8 @@ place entry normalised over places per hour.
 | s21: s20 + the reacquire correction taken out with the Gaussian | 114 | 293 | 59 | 50 | 12 | 130 |
 | s22: s21 + the fixes' accuracy in the windowed speed's noise | 115 | 296 | 59 | 50 | 12 | 132 |
 | s23: s22 with the duration cap at a whole day | 115 | 296 | 59 | 50 | 8 | 132 |
+| s24: s23 with the window over the nearest fixes either side | 112 | 295 | 58 | 51 | 6 | 127 |
+| s25: s23 with the window one minute each side, one-sided beside a dark minute | 115 | 296 | 59 | 50 | 6 | 131 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -335,6 +337,23 @@ the net speed between the nearest fixes either side of the minute (tabled
 once per minute, `windowSpeedTable`), the same quantity as before when both
 neighbours are lit and the span's own GPS noise when they are not. The two
 stays read as stays (+198 and +52 at the jump minutes).
+
+Measured two ways. **Over the nearest fixes either side, however far** (s24):
+the stays are right and phantoms reach 6 on the lister, but the referee
+falls 132 → 127: a lit minute after a tunnel was handed the whole gap's net
+speed as its own (30 km/h on the first walking minute off a train), and
+`driving` and `cycling` blips appeared at alightings. **One minute each
+side, one-sided beside a dark minute, never across a gap** (s25): the same
+counts as s23 on everything, phantoms 8 → 6 on the lister and 6 → 4 on the
+scoreboard, referee 131. The gap term owns the gap; a window describes its
+minute or nothing.
+
+Against the gate: phantoms level with the shipped decoder's 6, referee 131
+against 126, stations 50 against 47; scoreboard journeys 115 against 121 is
+the bar left. The six phantoms left are three one-minute Metropolitan blips
+inside walks, a one-minute night blip, and two `driving` stretches at stays
+(04-29 on the hospital grounds, which the narrative itself marks partial;
+06-17, three minutes).
 
 Next: the edge minute's offset as a latent (the one-stop hop's first minute
 is the walk onto the train, and the decoder now places a one-minute ride
