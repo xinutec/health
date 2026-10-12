@@ -393,12 +393,14 @@ private def hourShare (profiles : Std.HashMap Int (Array Float)) (p : Int) (h : 
     two pseudo-counts (`alpha` on the place, `beta` on its hour): a place's
     share `(n_p + α) / (V + α·(K + 1))`, its hour `(n_p·prof_p[h] + β·g[h]) /
     (n_p + β)` with `g` the visit-weighted hour profile over all places, and
-    a place not on the list `α / (V + α·(K + 1)) · g[h]`; normalised over the
+    a place not on the list `α / (V + α·(K + 1)) · g[h]`, or a measured share
+    of stays at no listed place when `newShare` is given; normalised over the
     places and that one. Per hour: each place's log probability and the
     unlisted place's. Replaces the entry prior's ratios and floors, which gave
     a four-visit place at an unprofiled hour about −12. -/
 def entryCountsTable (places : List Int) (visits : Std.HashMap Int Float)
-    (profiles : Std.HashMap Int (Array Float)) (alpha beta : Float) :
+    (profiles : Std.HashMap Int (Array Float)) (alpha beta : Float)
+    (newShare : Option Float := none) :
     Array (Std.HashMap Int Float × Float) :=
   let v := places.foldl (fun a p => a + visits.getD p SEG_ZERO) SEG_ZERO
   let k := Verified.FloatConst.natToFloat places.length
@@ -409,8 +411,14 @@ def entryCountsTable (places : List Int) (visits : Std.HashMap Int Float)
     let w := places.map fun p =>
       let n := visits.getD p SEG_ZERO
       (p, (n + alpha) / (v + alpha * (k + SEG_ONE)) * ((n * hourShare profiles p h + beta * g) / (n + beta)))
-    let unk := alpha / (v + alpha * (k + SEG_ONE)) * g
-    let tot := w.foldl (fun a (_, x) => a + x) unk
+    -- The unlisted place's mass: the Dirichlet's `α / (V + α(K+1))`, or a
+    -- measured share of stays at no listed place (`newShare`), the listed
+    -- places sharing the rest.
+    let known := w.foldl (fun a (_, x) => a + x) SEG_ZERO
+    let unk := match newShare with
+      | some p => if p < SEG_ONE then known * p / (SEG_ONE - p) else known
+      | none => alpha / (v + alpha * (k + SEG_ONE)) * g
+    let tot := known + unk
     (w.foldl (fun m (p, x) => m.insert p (Float.log (x / tot))) {}, Float.log (unk / tot))
 
 /-- The counts model's entry for a stay at hour `h`, when the table is built. -/
@@ -462,7 +470,7 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
   match c.segEm, c.states[s]? with
   | some q, some x =>
     SegmentEmission.scorePrepared q x.mode st
-      + (if q.p.disp.any (·.1 == x.mode) then
+      + (if q.p.disp.any (·.1 == x.mode) || q.p.dispPosterior then
            (if q.p.dispPosterior then SegmentEmission.dispPosteriorScore q.p x.mode d w
             else if q.p.dispSegment then SegmentEmission.dispScore q.p x.mode d w else SEG_ZERO)
              - (if c.segEvidenceOn then

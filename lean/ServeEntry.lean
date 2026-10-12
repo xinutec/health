@@ -997,6 +997,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       match num "alpha", num "beta" with
       | some alpha, some beta =>
         Verified.Hsmm.Assemble.entryCountsTable (ctx.placeCoords.toList.map (·.1)) visitCounts ctx.hourProfiles alpha beta
+          (num "newShare")
       | _, _ => #[]
     | none => #[]
   let ctx := { ctx with priors, fits, weights, segEm, segPref, transWeight, selfLoop, stayEntryLog,

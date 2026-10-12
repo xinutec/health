@@ -196,14 +196,19 @@ def dispScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentEvidence.W
     the posterior of the mode given the segment's net displacement under a flat
     prior over those modes. A density per segment is about `−log(scale)` for
     any displacement, so every extra segment paid for existing; this is at most
-    `0` and about `0` for a displacement typical of the mode. `0` without
-    bracketing fixes. -/
+    `0` and about `0` for a displacement typical of the mode; a mode with no
+    fit votes as the flat component. `0` without bracketing fixes. -/
 def dispPosteriorScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentEvidence.Window) : Float :=
   match w with
   | none => ZERO
-  | some _ =>
-    let own := dispScore p mode d w
-    let all := p.disp.map fun (m, _) => dispScore p m d w
+  | some w' =>
+    -- A mode with no fitted displacement (a plane, a bicycle) is the flat
+    -- component alone: anywhere within `uMaxKmh` over the segment's span, so
+    -- a one-minute "flight" that went nowhere is not a free bridge between
+    -- two stays.
+    let flat := Float.log (ONE / (p.uMaxKmh * (Verified.FloatConst.natToFloat d / MIN_PER_H) * KM_M))
+    let own := if p.disp.any (·.1 == mode) then dispScore p mode d w else flat
+    let all := (p.disp.map fun (m, _) => dispScore p m d w) ++ [flat]
     let mx := all.foldl max own
     own - (mx + Float.log (all.foldl (fun acc v => acc + Float.exp (v - mx)) ZERO))
 

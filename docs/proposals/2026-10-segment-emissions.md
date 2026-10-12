@@ -106,6 +106,8 @@ place entry normalised over places per hour.
 | s23: s22 with the duration cap at a whole day | 115 | 296 | 59 | 50 | 8 | 132 |
 | s24: s23 with the window over the nearest fixes either side | 112 | 295 | 58 | 51 | 6 | 127 |
 | s25: s23 with the window one minute each side, one-sided beside a dark minute | 115 | 296 | 59 | 50 | 6 | 131 |
+| s26a: s25 + the place chosen by the entry alone | 117 | 296 | 59 | 50 | 7 | 131 |
+| s26b: s26a + the measured share of stays at no listed place (5%) | 117 | 297 | 59 | 51 | 8 | 132 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -354,6 +356,23 @@ the bar left. The six phantoms left are three one-minute Metropolitan blips
 inside walks, a one-minute night blip, and two `driving` stretches at stays
 (04-29 on the hospital grounds, which the narrative itself marks partial;
 06-17, three minutes).
+
+**The 04-29 dark stop, and the entry prior's unlisted place.** A nine-minute
+dark, near-stepless stop reads as `train|unknown_rail`; the placeless stay
+loses by 4.2 nats, paid twice at its entry: the walk-to-stay transition
+still split evenly over 119 stay states, and the counts prior pricing a
+place not on the list at `α/(V + α(K+1))`, about 0.15%. Measured by position
+on the narrated days, 8 of 162 lit stays (5%) are more than 150 m from every
+listed place — the list is mined from his own fixes, so it is wide — so the
+unlisted share is a measured number (`entryCounts.newShare`), not the
+Dirichlet's. The place chosen by the entry alone (`placeByEntry`, neutral in
+the morning on a prior that was ratios and floors) now carries: journeys
+115 → 117, the two 04-29 walks back and nothing else moved (s26a); the
+measured share adds a leg mode, a station and a referee point (s26b). Both
+add a one-minute night blip: a stay at Home becoming a placeless stay at
+waking, bridged by a one-minute `plane` — the stay-to-stay hard zero is
+right, and the bridge is cheap only because a mode with no fitted
+displacement had no vote in the displacement posterior.
 
 Next: the edge minute's offset as a latent (the one-stop hop's first minute
 is the walk onto the train, and the decoder now places a one-minute ride
