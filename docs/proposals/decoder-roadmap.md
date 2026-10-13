@@ -294,6 +294,14 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    day gets and the decoder misses are the work queue, read one by one as the
    scoreboard misses were (`2026-10-segment-emissions.md`, Next). No cascade
    pass is copied into the decoder; each miss names the model term it lacks.
+   Listed journey by journey against the same narratives, fifteen are the
+   served day's alone and five the decoder's: five train journeys with an
+   interchange (06-12, 06-16 twice, 07-07, 10-08 — the decoder breaks a
+   change of trains), three with a bus leg (06-12, 06-16, 09-06 — there is
+   no bus state, roadmap Phase 2), three short rides (04-29, 07-06's one-stop
+   hop, 07-16), the rest of 10-08 (Paris), 10-07's walk and 05-25's drive.
+   The interchange is the largest and the one the decoder's own structure
+   should carry (line and station as state, step 2 of "Order from here").
 2. **C4.4a — station authority per side.** Where the decoder emitted a
    leg's board (alight) station, the served day's train leg takes it and the
    anchor passes stand down on that side. The decoder's segments reach the
