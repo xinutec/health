@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); thirty-four arms measured; s34 clears every gate bar — scoreboard journeys 122 against the shipped 120, leg modes 301 vs 287, lines 62 vs 53, stations 52 vs 47, phantoms 5 vs 6, referee 135 vs 126 (09-30's boarding narrated from the signal); next, held-out fits by day
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); thirty-six arms measured; held out by day (s36loo, every number from `fit_emissions` without the judged day) the decoder clears every gate bar against the shipped one — journeys 120 vs 120, leg modes 298 vs 287, lines 59 vs 53, stations 50 vs 47, phantoms 6 vs 6, referee 130 vs 126; in-sample with the golden numbers (s34) 122 / 301 / 62 / 52 / 5, 135
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -117,6 +117,8 @@ place entry normalised over places per hour.
 | s33a: s32 with s30's standstill component | 120 | 299 | 62 | 51 | 5 | 135 |
 | s34: s33a with the unlisted centre anchored at the minutes either side | 121 | 300 | 62 | 52 | 5 | 135 |
 | s34, 09-30's boarding narrated (shipped: 120 / 287 / 53 / 47 / 6) | 122 | 301 | 62 | 52 | 5 | 135 |
+| s36i: s34's form, every number from `fit_emissions` on all 43 days | 120 | 297 | 59 | 50 | 6 | 129 |
+| s36loo: the same, each day's numbers fitted without that day | 120 | 298 | 59 | 50 | 6 | 130 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -272,7 +274,7 @@ net displacement still pays, and a segment no longer pays for existing.
 **The posterior form** (s17): journeys 115, phantoms 11 — the count bias gone
 without s15's phantoms. Against s14a it finds five more (a drive, the 09-30
 dinner walk, three short segments) and loses four to short `driving` blips
-inside lit walks; stations −2. **Fitted durations** (s16, maximum likelihood
+inside lit walks; stations −2. **Fitted durations** (s16, moments, the variance floored at 4,
 on the narrated run lengths: walking Γ(2.4, 0.19), train Γ(1.1, 0.046),
 stationary Γ(0.84, 0.006), driving Γ(1.3, 0.08)): the same four counts, one
 more phantom. Nearly flat below fifteen minutes — one-stop hops are common in
@@ -507,6 +509,34 @@ minute is the walk onto the train, and the decoder now places a one-minute
 ride there); the fix's accuracy in a position model rather than a speed
 term.
 
+**Held out by day** (s36). Every number in the golden fits had been fitted on
+the days it is judged on, most by throwaway scripts. `fit_emissions` now fits
+all of them from the labelled minutes as the decoder observes them (the
+`emissionDebug` rows carry the windowed speed, the rail class, in-bed and the
+minute's position; a run's displacement is the decoder's own window over
+it), takes the form from the golden files, and writes one set per day without
+that day (`--loo`; the harness reads a directory of per-day files). Held out
+against in-sample under the same fitter: 120 / 298 / 59 / 50 / 6 and referee
+130 against 120 / 297 / 59 / 50 / 6 and 129 — the fit does not lean on the
+day it is judged on. Against the shipped decoder (120 / 287 / 53 / 47 / 6,
+126) it clears every gate bar, journeys at level.
+
+The fitter's own numbers are two journeys, three lines and two stations
+behind s34's golden ones. Swapping one golden file at a time for the
+fitter's names where: segment emission, transitions and entry counts are
+neutral (the heart-rate level 4–6 bpm lower, the displacement mixtures fitted
+on the decoder's window, the unlisted bandwidth 502 m against 308); the
+speed priors carry it all, and within them the Tube row's standstill. Fitted
+as a free two-component mixture its spread is 2 km/h and a train takes slow
+platform minutes (lines −3, stations −3); defined as a minute under the
+stays' 95th percentile it is 0.3 km/h on 4% of Tube minutes, still a journey
+short of the golden 10% at 0.4. The golden stop numbers do not reproduce from
+a fixed definition: the share was chosen across arms judged on these days,
+so s34's last two journeys are in-sample selection, and the held-out decoder
+is level with the shipped one on journeys, not ahead. The fitter's train
+durations are a second gap the swaps measured (one journey): Tube and
+mainline runs share one gamma, and the TGVs make it nearly flat.
+
 ## Next
 
 The 29 journeys s33a misses, read one by one against their narratives
@@ -550,10 +580,9 @@ shapes; counted at s33a, to re-count before acting:
   is their point-of-interest labels, and the notes say he was on foot, so
   the decoder's `driving` there is a decoder miss.
 
-Then, in order: held-out fits by day before anything ships (every number
-in the golden fits was fitted on the days it is judged on); the gate
-(cleared at s34: journeys 122 against the shipped 120 on the corrected
-narratives); the flags become defaults and the
+Then, in order: the train's standstill and its durations by line kind
+(the two measured gaps between the fitter and the golden numbers; a form
+change, judged held out); the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
 asleep and off-network terms, `unknown`, the per-minute mode prior,
 `LineProximity`'s constants, the self-loop mass, the duration cap; the

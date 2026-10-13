@@ -89,13 +89,10 @@ fn term_weights() -> Result<Value> {
 
 /// `HSMM_SEG_EMISSION=<file>`: segment-level heart-rate and fix-presence
 /// parameters (`Verified.Hsmm.SegmentEmission`), harness-only.
-fn seg_emission() -> Result<Value> {
-    json_file("HSMM_SEG_EMISSION")
+fn seg_emission(date: &str) -> Result<Value> {
+    json_file("HSMM_SEG_EMISSION", date)
 }
 
-/// The JSON file the environment variable `var` names, or `null` when unset —
-/// `HSMM_TRANS_FIT=<file>` is a fitted mode-to-mode transition matrix
-/// (`Transitions.fittedWeight`), `{src: {dst: p}}`, harness-only.
 /// The capture-side fixture of the same day (`tests/golden/days`), when present:
 /// the raw rows the frozen request was made from, with what it did not keep.
 fn capture_fixture(fx: &Value) -> Result<Option<Value>> {
@@ -166,12 +163,21 @@ fn attach_accuracy(points: &mut Value, accuracy: &std::collections::HashMap<i64,
     }
 }
 
-fn json_file(var: &str) -> Result<Value> {
+/// The JSON file the environment variable `var` names, or `null` when unset —
+/// `HSMM_TRANS_FIT=<file>` is a fitted mode-to-mode transition matrix
+/// (`Transitions.fittedWeight`), `{src: {dst: p}}`, harness-only. A directory
+/// holds one file per day, `<dir>/<date>.json` (`fit_emissions --loo`: each
+/// fitted without its own day).
+fn json_file(var: &str, date: &str) -> Result<Value> {
     let Ok(path) = std::env::var(var) else {
         return Ok(Value::Null);
     };
+    let mut path = std::path::PathBuf::from(path);
+    if path.is_dir() {
+        path = path.join(format!("{date}.json"));
+    }
     Ok(serde_json::from_str(
-        &std::fs::read_to_string(&path).with_context(|| var.to_string())?,
+        &std::fs::read_to_string(&path).with_context(|| format!("{var}: {}", path.display()))?,
     )?)
 }
 
@@ -208,11 +214,12 @@ pub fn request(fx: &Value) -> Result<Value> {
         if let Ok(v) = std::env::var("HSMM_MAX_D") {
             req["maxD"] = json!(v.parse::<u64>()?);
         }
-        req["flags"]["segEmission"] = seg_emission()?;
-        req["flags"]["transFit"] = json_file("HSMM_TRANS_FIT")?;
+        let date = fx["meta"]["date"].as_str().context("meta.date")?;
+        req["flags"]["segEmission"] = seg_emission(date)?;
+        req["flags"]["transFit"] = json_file("HSMM_TRANS_FIT", date)?;
         attach_accuracy(&mut req["observation"]["points"], &accuracy_by_ts(fx)?);
         attach_visits(&mut req["places"], &visits_by_id(fx)?);
-        req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS")?;
+        req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS", date)?;
         return Ok(req);
     }
     let (meta, inputs) = (&fx["meta"], &fx["inputs"]);
@@ -372,8 +379,8 @@ pub fn request(fx: &Value) -> Result<Value> {
             "unknownBelow": arm_knob("HSMM_UNKNOWN_BELOW"),
             "fittedPriors": fitted_priors(fx)?,
             "termWeights": term_weights()?,
-            "segEmission": seg_emission()?,
-            "transFit": json_file("HSMM_TRANS_FIT")?,
+            "segEmission": seg_emission(date)?,
+            "transFit": json_file("HSMM_TRANS_FIT", date)?,
         },
         "date": date,
         "tz": tz,
@@ -383,6 +390,6 @@ pub fn request(fx: &Value) -> Result<Value> {
     }
     attach_accuracy(&mut req["observation"]["points"], &accuracy_by_ts(fx)?);
     attach_visits(&mut req["places"], &visits_by_id(fx)?);
-    req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS")?;
+    req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS", date)?;
     Ok(req)
 }

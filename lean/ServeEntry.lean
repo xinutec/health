@@ -1489,10 +1489,16 @@ orphan pattern, one day old.
 indexes the observation tensor, so any other source could silently disagree in
 length or order and `groupStates` would return `none` (or worse, agree by
 accident on a shifted window). -/
+private def MINUTES_PER_HOUR : Float := 60
+
 /-- `"emissionDebug": {"fromTs": n, "toTs": n}` on an `assemblesegments` request:
 every state's per-minute emission and entry over the window, beside the state
 the decode chose — the instrument for a minute that went to the wrong mode, as
-`chainDebug` is for a wrong line. -/
+`chainDebug` is for a wrong line. Each minute also carries what the decoder
+observed of it (the windowed speed, the rail class, in bed, the minute's
+position and accuracy), and `"segments": [[fromTs, toTs], …]` asks for each
+span's net-displacement window (`SegmentEvidence.windowAt`): what the fitter
+(`fit_emissions`) measures, observed exactly as the decoder observes it. -/
 private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Array Nat)
     (dj : Json) : Json :=
   let fromTs := (dj.getObjValAs? Int "fromTs").toOption.getD 0
@@ -1533,8 +1539,29 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
                 ("decoded", match decoded with | some k => Json.str k | none => Json.null),
                 ("covered", Json.bool (Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)),
                 ("linesAt", Json.arr ((Verified.Hsmm.TrainCandidates.linesAt c.coverage o.ts).map Json.str).toArray),
+                ("windowKmh", optF (((c.windowSpeed[t]?).getD none).map (·.1))),
+                ("obsClass", Lean.toJson (Verified.Hsmm.SegmentEmission.obsClass o)),
+                ("inBed", Json.bool o.inBed),
+                ("lat", optF (o.gps.map (·.lat))), ("lon", optF (o.gps.map (·.lon))),
+                ("accuracyM", optF (o.gps.bind (·.accuracyM))),
                 ("states", Json.arr per)]
-  Json.mkObj [("emissionDebug", Json.arr rows)]
+  let spans : Array Json := ((dj.getObjVal? "segments") >>= (·.getArr?)).toOption.getD #[]
+  let idxOf := fun (ts : Int) => c.obs.findIdx? (·.ts == ts)
+  let windows := spans.map fun sp =>
+    let a := ((sp.getArrVal? 0) >>= (·.getInt?)).toOption
+    let b := ((sp.getArrVal? 1) >>= (·.getInt?)).toOption
+    match a.bind idxOf, b.bind idxOf with
+    | some i, some e =>
+      if e < i then Json.null else
+      match Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (e - i + 1) e with
+      | some w =>
+        -- The span `dispScore` divides by: the minutes and the bracket slop's.
+        let hours := (Verified.FloatConst.natToFloat (e - i + 1)
+          + Float.sqrt w.slopVar / Verified.Hsmm.SegmentEvidence.SLOP_SPEED_M_PER_MIN) / MINUTES_PER_HOUR
+        Json.mkObj [("dispM", Lean.toJson w.dispM), ("hours", Lean.toJson hours)]
+      | none => Json.null
+    | _, _ => Json.null
+  Json.mkObj [("emissionDebug", Json.arr rows), ("segWindows", Json.arr windows)]
 
 private def PATH_ZERO : Float := 0
 
