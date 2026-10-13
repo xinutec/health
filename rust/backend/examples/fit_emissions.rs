@@ -161,7 +161,7 @@ fn main() -> Result<()> {
                         else {
                             continue;
                         };
-                        match read_day(name, date, &md) {
+                        match read_day(name, date, &md, &form.decoder) {
                             Ok(d) => {
                                 days.lock().expect("days").insert(date.to_string(), d);
                             }
@@ -194,6 +194,10 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// The form's settings that change what the decoder observes, laid on the
+/// fitter's own requests so a fit sees the minutes the decoder will.
+const OBSERVATION_FORM: [&str; 1] = ["dropRepeatedFixes"];
+
 /// The single record the serving pod loads (`DECODER_PARAMS`).
 const RECORD: &str = "decoder-params";
 
@@ -205,7 +209,7 @@ const FILES: [&str; 4] = [
 ];
 
 /// One narrated day's labelled runs, nights, stays and mode changes.
-fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
+fn read_day(name: &str, date: &str, md: &str, form: &Value) -> Result<Day> {
     let fx = backend::decode_fixture::read(name)?;
     let tz = fx["meta"]["tz"]
         .as_str()
@@ -285,6 +289,13 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
         .as_i64()
         .context("startUtc")?;
     req["mode"] = json!("assemblesegments");
+    // The minutes are fitted as the decoder will observe them: the form's
+    // observation settings apply here too.
+    for k in OBSERVATION_FORM {
+        if !form[k].is_null() {
+            req["flags"][k] = form[k].clone();
+        }
+    }
     req["emissionDebug"] = json!({
         "fromTs": start, "toTs": start + 86_340,
         "segments": spans.iter().map(|&(_, s, e)| json!([s, e - 60])).collect::<Vec<_>>(),

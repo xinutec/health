@@ -768,10 +768,19 @@ position to be near anything.
 ⚠ A MINUTE MISSING FROM `proximity` IS `(none, none)`, which is "not known to be
 near either", NOT "far from both". The decoder treats a null as no evidence; a
 large number would be evidence AGAINST rail. -/
-private def parseObservationInput (v : Json)
+private def parseObservationInput (v : Json) (dropRepeats : Bool := false)
     : Except String (Array Verified.Hsmm.Observation.ObsRow) := do
   let startUtc ← (← v.getObjVal? "startUtc").getInt?
   let points ← (← (← v.getObjVal? "points").getArr?).mapM parseGpsPoint
+  -- `dropRepeatedFixes` (the decoder parameters' form): a fix at exactly the
+  -- previous fix's coordinates is the phone re-reporting its last position, not
+  -- a measurement — underground it is 15% of a train's fixes, read as a
+  -- standstill between stations.
+  let points := if !dropRepeats then points else
+    (points.foldl (fun (acc : Array Verified.Hsmm.Observation.GpsPoint × Option (Float × Float)) p =>
+      let (out, prev) := acc
+      let here := (p.lat, p.lon)
+      if prev == some here then (out, prev) else (out.push p, some here)) (#[], none)).1
   let hr ← (← (← v.getObjVal? "hr").getArr?).mapM parseHrPoint
   let steps ← (← (← v.getObjVal? "steps").getArr?).mapM parseStepPoint
   let sleep ← (← (← v.getObjVal? "sleep").getArr?).mapM parseSleepRec
@@ -808,10 +817,12 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   -- ⚠ `observation` WINS when both are present, and that is not arbitrary: the
   -- raw form is the one that cannot be stale, because it is what the tensor
   -- would be built from anyway.
+  let dropRepeats :=
+    (((j.getObjVal? "flags") >>= (·.getObjVal? "dropRepeatedFixes") >>= (·.getBool?)).toOption.getD false)
   let obs ← match j.getObjVal? "observation" with
     | .ok v => if v.isNull then
                  (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
-               else parseObservationInput v
+               else parseObservationInput v dropRepeats
     | .error _ => (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
   let edges ← (← (← j.getObjVal? "edges").getArr?).mapM parseEdge
   let places ← (← (← j.getObjVal? "places").getArr?).mapM parsePlace

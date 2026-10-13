@@ -302,6 +302,19 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    hop, 07-16), the rest of 10-08 (Paris), 10-07's walk and 05-25's drive.
    The interchange is the largest and the one the decoder's own structure
    should carry (line and station as state, step 2 of "Order from here").
+   Read on 06-16 (16:45, King's Cross onto the Metropolitan line): the
+   narrative's reading loses by 2.6 nats. The five minutes standing at the
+   platform cost the train 8.9 more than `driving` (a Tube train is at a
+   standstill on 4% of its minutes), and the train generator's +3 entry
+   credit appears only once the train is seen moving between stations, so
+   the boarding at King's Cross earns nothing and the decoder boards at Great
+   Portland Street instead. A train boarded while it stands at the platform
+   is the station-as-state case; no number in the current form fixes it
+   without moving every other boarding. Measured on the way: exact
+   coordinate repeats (the phone re-reporting its last position
+   underground) are 15% of narrated train fixes and 1% of stays'; dropping
+   them as non-measurements (`dropRepeatedFixes`) is neutral on every count
+   (s39rep in the segment-emissions table) and stays off.
 2. **C4.4a — station authority per side.** Where the decoder emitted a
    leg's board (alight) station, the served day's train leg takes it and the
    anchor passes stand down on that side. The decoder's segments reach the
