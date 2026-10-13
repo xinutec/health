@@ -210,7 +210,7 @@ pub(crate) async fn decode_one(
     // the parser instead of reading the struct.
     let continuity = load_continuity(pool, user_id, date, &places).await?;
 
-    let req = serde_json::json!({
+    let mut req = serde_json::json!({
         "observation": {
             "startUtc": bounds.start_utc,
             "points": cleaned.iter().map(|p| serde_json::json!({
@@ -242,7 +242,9 @@ pub(crate) async fn decode_one(
         //
         // ⚠ `maxD` IS DELIBERATELY ABSENT: it is the model's own trellis depth,
         // and `Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION` is where it lives.
-        // Spelling 240 here would be a second copy that nothing compares.
+        // Spelling 240 here would be a second copy that nothing compares. The
+        // decoder parameters (`DECODER_PARAMS`, below) carry their own, with
+        // the form it belongs to.
         "flags": {
             "reacquireRobust": flag("USE_REACQUIRE_ROBUST_SPEED"),
             "segEvidence": flag("USE_SEGMENT_EVIDENCE"),
@@ -251,6 +253,11 @@ pub(crate) async fn decode_one(
         "date": date,
         "tz": tz,
     });
+    // The fitted decoder (`backend::decoder_params`): its numbers and form, from
+    // the Secret the pod mounts. Unset, the shipped model.
+    if let Some(p) = backend::decoder_params::from_env(date)? {
+        backend::decoder_params::apply(&mut req, &p);
+    }
 
     // ⚠ `None` is DEGENERATE — Lean found no viable path. That is a real answer
     // about the day, not a fault, and it must not be written as zero segments:

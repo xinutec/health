@@ -120,6 +120,7 @@ place entry normalised over places per hour.
 | s36i: s34's form, every number from `fit_emissions` on all 43 days | 120 | 297 | 59 | 50 | 6 | 129 |
 | s36loo: the same, each day's numbers fitted without that day | 120 | 298 | 59 | 50 | 6 | 130 |
 | s37loo: s36 with the mainline's duration fitted apart, held out (in-sample the same) | 120 | 299 | 60 | 50 | 6 | 130 |
+| s38eq: s37loo from the parameter record alone (`DECODER_PARAMS`, no patch, no `HSMM_*`) | 120 | 299 | 60 | 50 | 6 | 130 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -587,6 +588,15 @@ minutes and 19 mainline runs from a local to a five-hour TGV, so the
 TGVs flattened it. A train run is the mainline's when most of its minutes
 are off the route model, which is exactly what the decoder can only call
 `unknown_rail`. Held out: a leg mode and a line, the journeys unchanged.
+
+**One record** (s38eq). `fit_emissions` also writes `decoder-params.json`:
+the four files, the form's settings (`decoder-form.json` in the fits: the
+whole-day cap, the per-minute mode prior off, `dropUnknown`) and which days
+the numbers came from. `backend::decoder_params` lays it on a decode request,
+the serving path's and the harness's alike; the patch that stood beside the
+arms is retired (`unknown` leaves the state space by `dropUnknown`; the place
+entry's renormalisation never fired once the entry counts were on). Held out
+by day through the record alone, every day and every miss identical to s37.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,

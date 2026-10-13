@@ -220,6 +220,9 @@ pub fn request(fx: &Value) -> Result<Value> {
         attach_accuracy(&mut req["observation"]["points"], &accuracy_by_ts(fx)?);
         attach_visits(&mut req["places"], &visits_by_id(fx)?);
         req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS", date)?;
+        if let Some(p) = crate::decoder_params::from_env(date)? {
+            crate::decoder_params::apply(&mut req, &p);
+        }
         return Ok(req);
     }
     let (meta, inputs) = (&fx["meta"], &fx["inputs"]);
@@ -391,5 +394,8 @@ pub fn request(fx: &Value) -> Result<Value> {
     attach_accuracy(&mut req["observation"]["points"], &accuracy_by_ts(fx)?);
     attach_visits(&mut req["places"], &visits_by_id(fx)?);
     req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS", date)?;
+    if let Some(p) = crate::decoder_params::from_env(date)? {
+        crate::decoder_params::apply(&mut req, &p);
+    }
     Ok(req)
 }

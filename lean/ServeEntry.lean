@@ -976,6 +976,11 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (knob "modeMinuteScale" 1.0) (knob "modeEntryScale" 0.0)
     (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0))
     (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)
+  -- `dropUnknown` (the decoder parameters' form): no `unknown` state. It was
+  -- the catch-all the per-minute model needed; with segment-level evidence a
+  -- minute the decoder cannot place goes to the likeliest real mode.
+  let ctx := if ((flags.getObjVal? "dropUnknown") >>= (·.getBool?)).toOption.getD false
+    then { ctx with states := ctx.states.filter (·.mode != .unknown) } else ctx
   let posRef := Verified.Hsmm.SegmentEmission.refOf obs
   let segPref := Verified.Hsmm.SegmentEmission.withPositions
     (Verified.Hsmm.SegmentEmission.prefixOf obs) obs posRef

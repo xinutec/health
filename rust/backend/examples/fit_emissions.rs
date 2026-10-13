@@ -21,9 +21,12 @@
 //! cargo run --release --example fit_emissions -- --form <dir> --out <dir> [--loo <dir>] [--exclude <YYYY-MM-DD>]...
 //! ```
 //!
-//! `--out` gets the fit over every day but `--exclude`; `--loo` gets, per
-//! parameter file, `<loo>/<file>/<date>.json` fitted without that day — point
-//! each harness variable at its directory. Exit 2 when the corpus is absent.
+//! `--out` gets the fit over every day but `--exclude`: the four files, and
+//! `decoder-params.json`, the one record the serving pod loads
+//! (`backend::decoder_params`), with `decoder-form.json`'s settings and the
+//! days it came from. `--loo` gets, per file, `<loo>/<file>/<date>.json` fitted
+//! without that day — point `DECODER_PARAMS` (or a harness variable) at its
+//! directory. Exit 2 when the corpus is absent.
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
@@ -180,7 +183,7 @@ fn main() -> Result<()> {
         for date in days.keys() {
             let tmp = format!("{dir}/.{date}");
             write_fit(&form, &days, std::slice::from_ref(date), &tmp, false)?;
-            for f in FILES {
+            for f in FILES.into_iter().chain([RECORD]) {
                 std::fs::create_dir_all(format!("{dir}/{f}"))?;
                 std::fs::rename(format!("{tmp}/{f}.json"), format!("{dir}/{f}/{date}.json"))?;
             }
@@ -190,6 +193,9 @@ fn main() -> Result<()> {
     }
     Ok(())
 }
+
+/// The single record the serving pod loads (`DECODER_PARAMS`).
+const RECORD: &str = "decoder-params";
 
 const FILES: [&str; 4] = [
     "segment-emission",
@@ -369,6 +375,9 @@ fn metres(a: (f64, f64), b: (f64, f64)) -> f64 {
 /// reaches.
 struct Form {
     files: BTreeMap<&'static str, Value>,
+    /// `decoder-form.json`: the record's settings no day fits (`maxD`,
+    /// `dropUnknown`, the per-minute mode prior's scales).
+    decoder: Value,
 }
 
 impl Form {
@@ -381,7 +390,9 @@ impl Form {
                 serde_json::from_str(&std::fs::read_to_string(&path).context(path)?)?,
             );
         }
-        Ok(Form { files })
+        let path = format!("{dir}/decoder-form.json");
+        let decoder = serde_json::from_str(&std::fs::read_to_string(&path).context(path)?)?;
+        Ok(Form { files, decoder })
     }
 }
 
@@ -777,6 +788,22 @@ fn write_fit(
     ] {
         std::fs::write(format!("{dir}/{f}.json"), serde_json::to_string_pretty(v)?)?;
     }
+    // The one record (`backend::decoder_params`): the four, the form's settings,
+    // and which days the numbers came from.
+    let mut record = form.decoder.clone();
+    record["segEmission"] = se.clone();
+    record["transFit"] = tf.clone();
+    record["entryCounts"] = ec.clone();
+    record["fittedPriors"] = sp.clone();
+    record["provenance"] = json!({
+        "fitter": "examples/fit_emissions",
+        "days": days.keys().filter(|d| !exclude.contains(d)).collect::<Vec<_>>(),
+        "heldOut": exclude,
+    });
+    std::fs::write(
+        format!("{dir}/{RECORD}.json"),
+        serde_json::to_string_pretty(&record)?,
+    )?;
     if verbose {
         for l in &log {
             eprintln!("{l}");

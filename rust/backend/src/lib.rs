@@ -50,6 +50,7 @@ pub mod classification_inputs;
 pub mod config;
 pub mod db;
 pub mod decode_fixture;
+pub mod decoder_params;
 pub mod error;
 pub mod fetch_drain;
 pub mod fetch_queue;
