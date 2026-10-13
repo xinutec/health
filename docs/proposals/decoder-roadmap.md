@@ -272,6 +272,45 @@ deliberately honest about interchange walks the narrative folds into the
 journey. Status: assembler shipped (#228), eval/persistence/UI pending (#227,
 #229, #230).
 
+## The cutover plan (2026-10-13)
+
+**Where it stands.** The served day is the Lean cascade (`Verified.Geo.PassFold`)
+over the raw inputs. The decoder reaches it through one pass, `hsmmOverride`
+(`PlaceOverride.applyHsmmPlaceOverride`): which place a stay is at. Its train
+legs, boundaries and stations do not reach the served day — C4.4 below was
+planned and never built. The decoder itself is the fitted one
+(`2026-10-segment-emissions.md`, shipped with `CLASSIFIER_VERSION` 8).
+
+**The gate is the served day, not the old decoder.** On the journey referee
+(the served day's journey floor, `tests/golden/journey-baseline.json`), the
+served day reconstructs 140 narrated journeys and the held-out decoder 130.
+Flipping now loses ten. Per day: the decoder leads on six days (+6) and trails
+on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
+06-12 (−2) and 06-16 (−2). Re-count with the referee before acting on these.
+
+**Steps, each measured on the floors and the scoreboard before the next:**
+
+1. **Close the gap from the decoder's side.** The sixteen journeys the served
+   day gets and the decoder misses are the work queue, read one by one as the
+   scoreboard misses were (`2026-10-segment-emissions.md`, Next). No cascade
+   pass is copied into the decoder; each miss names the model term it lacks.
+2. **C4.4a — station authority per side.** Where the decoder emitted a
+   leg's board (alight) station, the served day's train leg takes it and the
+   anchor passes stand down on that side. The decoder's segments reach the
+   fold without stations today (`fold_payload::encode_caches`, `HmmSeg`); they
+   gain `boardStation`/`alightStation`. Smallest flip with the existing seam.
+3. **Each mode's longest segment.** Only stays need the whole-day cap; the
+   trellis's single `maxD` makes every mode pay for it (a heavy day decodes in
+   45–60 s against 5–6 at 240). Per class, cut where the fitted duration's tail
+   is negligible. Touches the verified trellis, so it goes with step 4's work.
+4. **Window authority (C4.4b, then stays: #1947).** Where the decoder's
+   posterior clears a bar (`2026-10-posterior-confidence.md`), the served day
+   takes its segments for that window; the cascade keeps the rest. Extended
+   from train journeys to stays, it is #1947.
+5. **The flip.** When the decoder reconstructs at least what the served day
+   does, its segments are the served day; the cascade's journey passes retire
+   one at a time (Phase 5), each with a version bump and a re-decode.
+
 ## Phase 4 — the cutover
 
 Take the user-facing mode from the decoder's per-minute sequence (composed via
@@ -281,10 +320,8 @@ deliverable of this phase. Gate = journey-level truth-check parity: no
 ground-truth narrative regresses. A premature flip (2026-06-13:
 support-fraction ≥ 0.6, no composition, no calibrated confidence) measured
 0 wins, 2 regressions — which is the empirical case for doing Phase 0 + C-bus
-+ C2–C5 + calibration first. Must also close the decoder's *line* gap first
-(its ~50% line accuracy is far below the pipeline's 98%) by feeding the
-pipeline's line attribution in as an emission. Status: pending (#252 landed
-mode-ownership behind the flag; full cutover gated).
++ C2–C5 + calibration first. Status and the current plan: "The cutover plan (2026-10-13)" above, which
+supersedes this section's figures.
 
 ## Phase 5 — retire the heuristic mode passes
 
