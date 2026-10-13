@@ -88,9 +88,35 @@ pub(crate) async fn decode_day(
             dates.to_vec()
         };
 
-        for date in &targets {
+        // The days are independent: `DECODE_JOBS` of them decode at once (each
+        // in its own task, the Lean decode a blocking call), 1 by default — the
+        // cluster's job has one CPU. A Mac re-decode of the history sets it to
+        // the cores it can spare; a heavy day's worker peaks near half a GiB.
+        let jobs: usize = std::env::var("DECODE_JOBS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n| *n >= 1)
+            .unwrap_or(1);
+        let gate = std::sync::Arc::new(tokio::sync::Semaphore::new(jobs));
+        let mut tasks = tokio::task::JoinSet::new();
+        for date in targets.clone() {
+            let (st, pool, user_id, tz, gate) = (
+                st.clone(),
+                pool.clone(),
+                user_id.clone(),
+                tz.clone(),
+                gate.clone(),
+            );
+            tasks.spawn(async move {
+                let _permit = gate.acquire_owned().await;
+                let r = decode_one(&st, &pool, &user_id, &date, &tz, dry_run).await;
+                (date, r)
+            });
+        }
+        while let Some(joined) = tasks.join_next().await {
+            let (date, result) = joined.context("a decode task panicked")?;
             attempted += 1;
-            match decode_one(&st, &pool, user_id, date, &tz, dry_run).await {
+            match result {
                 Ok(n) => {
                     // ⚠ `decode_one` ALREADY PRINTED the dry-run line, including
                     // the fact that nothing was written. Printing "{n} segments"
@@ -285,7 +311,10 @@ pub(crate) async fn decode_one(
         std::fs::write(&path, serde_json::to_string(&fx)?)
             .with_context(|| format!("writing {}", path.display()))?;
     }
-    let Some(segments) = backend::lean::assemble_segments(&req)? else {
+    // Blocking Lean work: the runtime moves its other tasks off this thread, so
+    // `DECODE_JOBS` days decode side by side.
+    let Some(segments) = tokio::task::block_in_place(|| backend::lean::assemble_segments(&req))?
+    else {
         anyhow::bail!("the decode is degenerate — no viable path");
     };
     let segments = backend::row_json::render_segments(&segments)?;
