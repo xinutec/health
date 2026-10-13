@@ -409,9 +409,9 @@
 	},
 	"2026-09-30": {
 		"journeysExpected": 4,
-		"journeysMatched": 3,
-		"legModeScorable": 7,
-		"legModeMatching": 6,
+		"journeysMatched": 2,
+		"legModeScorable": 8,
+		"legModeMatching": 7,
 		"legLineScorable": 0,
 		"legLineMatching": 0,
 		"stationsAsserted": 2,
