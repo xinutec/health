@@ -514,10 +514,13 @@ shapes; counted at s33a, to re-count before acting:
 - **Driving against train** (two): 05-25's drive beside the rails read as
   a train twice; 10-08's Métro 4 ride read as a drive — Paris has no line
   coverage, so the ride is `unknown_rail` against `driving` on speed alone.
-- **The narrative** (four): 04-29's hospital grounds (marked partial),
-  09-30's boarding of a standing train, 10-08's unnarrated six minutes
-  between two walks, 09-30's six-minute stop inside a walk the narrative
-  calls walking.
+- **The narrative** (three): 09-30 leaves 11:35–11:59 unnarrated between
+  the St Pancras wait and the Eurostar's departure, where the decoder walks
+  to the platform and boards at 11:47; 10-08's unnarrated six minutes
+  between two walks; 09-30's six-minute stop inside a walk the narrative
+  calls walking. 04-29's hospital grounds are not one: the rows' "partial"
+  is their point-of-interest labels, and the notes say he was on foot, so
+  the decoder's `driving` there is a decoder miss.
 
 Then, in order: held-out fits by day before anything ships (every number
 in the golden fits was fitted on the days it is judged on); the gate

@@ -949,6 +949,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let dispPosterior := ((f.getObjVal? "dispPosterior") >>= (·.getBool?)).toOption.getD false
     let accuracyNoise := ((f.getObjVal? "accuracyNoise") >>= (·.getBool?)).toOption.getD false
     let unlistedCentre := (f.getObjVal? "unlistedCentre").toOption >>= num
+    let centreAnchor := ((f.getObjVal? "centreAnchor") >>= (·.getBool?)).toOption.getD false
     let asleep : Option Verified.Hsmm.SegmentEmission.SleepParams := do
       let arr ← ((f.getObjVal? "asleep") >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
@@ -960,7 +961,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
     pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, obsChain, lineRankOnly,
-           dispSegment, gapPairs, dispPosterior, accuracyNoise, asleep, unlistedCentre }
+           dispSegment, gapPairs, dispPosterior, accuracyNoise, asleep, unlistedCentre, centreAnchor }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)

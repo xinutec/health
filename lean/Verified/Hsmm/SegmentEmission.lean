@@ -130,6 +130,14 @@ structure Params where
       per-minute off-network term, which charged a per-segment fact on every
       lit minute and so grew with the stay's length. -/
   unlistedCentre : Option Float := none
+  /-- The unlisted place's centre is anchored where the neighbouring segments
+      left the wearer (`Stats.anchorW`): its prior a Gaussian at the lit
+      minutes just outside the segment, at their own noise. A walk is
+      somewhere too and pays nothing for where, because the walk that arrives
+      at a stop already carries its position; a prior over all his places
+      charged the stop for its location a second time. Without a lit
+      neighbour the mixture over the listed places stands. -/
+  centreAnchor : Bool := false
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of
@@ -222,6 +230,20 @@ structure Stats where
   posWX : Float := ZERO
   posWY : Float := ZERO
   posWRR : Float := ZERO
+  /-- The same weighted sums over the lit minutes just outside the segment
+      (the one before it and the one after): where the neighbouring segments
+      left the wearer, the anchor of `centreAnchor`. -/
+  anchorW : Float := ZERO
+  anchorWX : Float := ZERO
+  anchorWY : Float := ZERO
+
+/-- A prefix array's share of the minute before `[lo, hi)` and the minute
+    after it; a minute off the day adds nothing. -/
+private def outside (a : Array Float) (lo hi : Nat) : Float :=
+  let one := fun (i : Nat) => match a[i]?, a[i + 1]? with
+    | some x, some y => y - x
+    | _, _ => ZERO
+  (if lo == 0 then ZERO else one (lo - 1)) + one hi
 
 /-- The segment of length `d` ending at minute `e`. -/
 def statsAt (p : Prefix) (d e : Nat) : Stats :=
@@ -234,7 +256,9 @@ def statsAt (p : Prefix) (d e : Nat) : Stats :=
    get p.bedN hi - get p.bedN lo, get p.bedSum hi - get p.bedSum lo,
    get p.bedSq hi - get p.bedSq lo,
    get p.posW hi - get p.posW lo, get p.posWX hi - get p.posWX lo,
-   get p.posWY hi - get p.posWY lo, get p.posWRR hi - get p.posWRR lo⟩
+   get p.posWY hi - get p.posWY lo, get p.posWRR hi - get p.posWRR lo,
+   -- Minute `lo - 1` and minute `hi`, each `0` when dark or off the day.
+   outside p.posW lo hi, outside p.posWX lo hi, outside p.posWY lo hi⟩
 
 private def TWO_PI : Float := 6.283185307179586
 
@@ -280,11 +304,21 @@ def hrScore (p : Params) (m : ModeParams) (st : Stats) : Float :=
     lit minutes — the mixture's lower bound with every fix an outlier. Without
     it a stay hypothesis spanning a day's travel is quadratic in the distance
     and overflows the packed trellis. -/
-def centreScore (st : Stats) (h : Float) (places : Array (Float × Float)) : Float :=
+def centreScore (st : Stats) (h : Float) (places : Array (Float × Float))
+    (anchored : Bool := false) : Float :=
   if st.posW ≤ ZERO || places.isEmpty then ZERO else
   let xb := st.posWX / st.posW
   let yb := st.posWY / st.posW
   let scatter := max ZERO (st.posWRR - (st.posWX * st.posWX + st.posWY * st.posWY) / st.posW)
+  if anchored && st.anchorW > ZERO then
+    -- `∫ Π N(x; μ, 1/w) N(μ; a, 1/Wa) dμ = e^{−S/2}·(2π/W)·N(x̄; a, 1/Wa + 1/W)`.
+    let ax := st.anchorWX / st.anchorW
+    let ay := st.anchorWY / st.anchorW
+    let va := ONE / st.anchorW + ONE / st.posW
+    let g := ZERO - HALF * scatter + Float.log (TWO_PI / st.posW) - Float.log (TWO_PI * va)
+      - ((xb - ax) * (xb - ax) + (yb - ay) * (yb - ay)) / (TWO * va)
+    max g (Verified.Hsmm.Emissions.PLACE_DISTANCE_FLOOR * st.fixN)
+  else
   let v := h * h + ONE / st.posW
   let r2 := fun (p : Float × Float) => (xb - p.1) * (xb - p.1) + (yb - p.2) * (yb - p.2)
   let near := places.foldl (fun a p => min a (r2 p)) (r2 places[0]!)
@@ -460,9 +494,9 @@ private def pTest : Params :=
 #guard dispScore pTest .stationary 109 (some ⟨50, 0, 0⟩) > dispScore pTest .train 109 (some ⟨50, 0, 0⟩) + 10
 #guard dispScore pTest .train 20 (some ⟨8000, 0, 0⟩) > dispScore pTest .stationary 20 (some ⟨8000, 0, 0⟩) + 3
 #guard dispScore pTest .walking 20 (some ⟨8000, 0, 0⟩) == 0
-#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ + 10
-#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ - 1
-#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ == 0
+#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ + 10
+#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ - 1
+#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ == 0
 -- An 84-minute café at 30 m scatter, 150 m place radius, 300 m from the
 -- nearest of three listed places at a 300 m bandwidth: a few nats of scatter
 -- and one Occam factor, not 168.
@@ -477,8 +511,15 @@ private def threePlaces : Array (Float × Float) := #[(300, 0), (5000, 5000), (-
 -- A "stay" whose fixes span 100 km is floored at every fix an outlier.
 #guard centreScore { cafe with posWRR := 84 * 10000000000 / 22500 } 300 threePlaces
   == Verified.Hsmm.Emissions.PLACE_DISTANCE_FLOOR * 84
+-- A five-minute stop where the walk left him: about the log of n+1, not the
+-- price of a location among all his places.
+private def stop5 : Stats :=
+  { n := 5, hrN := 0, hrSum := 0, hrSq := 0, fixN := 5,
+    posW := 5 / 22500, posWX := 0, posWY := 0, posWRR := 5 * 1800 / 22500,
+    anchorW := 2 / 22500, anchorWX := 0, anchorWY := 0 }
+#guard centreScore stop5 300 threePlaces true > -3
 -- The tables agree with the closed form.
-private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩
+private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩
 #guard Float.abs (scorePrepared (prepare pTest 400) .train stT - score pTest .train stT) < 1e-6
 #guard Float.abs (scorePrepared (prepare pTest 400) .stationary stT - score pTest .stationary stT) < 1e-6
 

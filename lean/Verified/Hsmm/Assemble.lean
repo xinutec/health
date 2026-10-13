@@ -496,7 +496,7 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
       + (match q.p.unlistedCentre with
          | some h =>
            if x.mode == .stationary && x.placeId.isNone then
-             SegmentEmission.centreScore st h c.placePrior
+             SegmentEmission.centreScore st h c.placePrior q.p.centreAnchor
            else SEG_ZERO
          | none => SEG_ZERO)
       + (if q.p.disp.any (·.1 == x.mode) || q.p.dispPosterior then
