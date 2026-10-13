@@ -326,7 +326,14 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    Tube standstill rises from 4% to 13% of minutes: the platform waits inside
    narrated train rows were the standstills the coverage had been hiding.
    Against the served day: ten journeys its alone (from fifteen), five the
-   decoder's. A train boarded while it stands at the platform
+   decoder's. Then 10-08's three were the narrative's: derived rows the
+   steps contradict (the walk to Loiola ended at 06:53, the Hendaye walk was
+   08:18–08:21 with no steps after, a stop 15:51–15:59 on the way to Paul),
+   corrected from the signal and every floor re-blessed on them (f8c6154).
+   Now seven are the served day's alone and six the decoder's: served 141,
+   decoder 140. Left: three bus legs (no bus state), 07-07's above-ground
+   Metropolitan tail, 04-29's short ride, 05-25's walk-and-drive, 10-07's
+   walk. A train boarded while it stands at the platform
    is the station-as-state case; no number in the current form fixes it
    without moving every other boarding. Measured on the way: exact
    coordinate repeats (the phone re-reporting its last position
