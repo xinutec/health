@@ -330,10 +330,16 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    steps contradict (the walk to Loiola ended at 06:53, the Hendaye walk was
    08:18–08:21 with no steps after, a stop 15:51–15:59 on the way to Paul),
    corrected from the signal and every floor re-blessed on them (f8c6154).
-   Now seven are the served day's alone and six the decoder's: served 141,
-   decoder 140. Left: three bus legs (no bus state), 07-07's above-ground
-   Metropolitan tail, 04-29's short ride, 05-25's walk-and-drive, 10-07's
-   walk. A train boarded while it stands at the platform
+   Then 10-07 (a 17-minute stop inside the beach walk, about 10 steps a
+   minute; he said he might have stopped) and 04-29 (4 steps in nine minutes
+   at Arnhem: no transfer walk) were corrected the same way; 05-25 was not —
+   its note records a 293 m crawl in the car, so the decoder's stay there is
+   the miss. **The decoder ties the served day: six journeys each side, 141
+   apiece.** The served day's six: three bus legs (no bus state), 07-07's
+   above-ground Metropolitan tail (read as `cycling`; pooled chains for the
+   unobserved modes, `poolUnobservedModes`, measured neutral, s41c), 04-29's
+   short ride, 05-25's crawl. Step 1 is met; the cutover's journey gate holds
+   at parity. A train boarded while it stands at the platform
    is the station-as-state case; no number in the current form fixes it
    without moving every other boarding. Measured on the way: exact
    coordinate repeats (the phone re-reporting its last position

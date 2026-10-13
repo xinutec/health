@@ -123,6 +123,8 @@ place entry normalised over places per hour.
 | s38eq: s37loo from the parameter record alone (`DECODER_PARAMS`, no patch, no `HSMM_*`) | 120 | 299 | 60 | 50 | 6 | 130 |
 | s39rep: s38 with exact coordinate repeats dropped (`dropRepeatedFixes`), refitted held out | 120 | 299 | 60 | 50 | 6 | 130 |
 | s40bw: s38 with the generator's window reaching back over the boarding wait (`generatorBoardingWait`), refitted held out | 123 | 300 | 61 | 54 | 6 | 135 |
+| s40c: s40 on the narratives with 10-08, 10-07 and 04-29's derived rows corrected from the signal | 127 | 305 | 61 | 54 | 6 | 140 |
+| s41c: s40c with pooled chains for the modes no narrated minute reaches (`poolUnobservedModes`) | 127 | 305 | 61 | 54 | 6 | 140 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or

@@ -389,6 +389,9 @@ struct Form {
     /// `decoder-form.json`: the record's settings no day fits (`maxD`,
     /// `dropUnknown`, the per-minute mode prior's scales).
     decoder: Value,
+    /// `decoder-form.json`'s `poolUnobservedModes`: a mode no narrated minute
+    /// reaches takes the pooled chains.
+    pool_unobserved: bool,
 }
 
 impl Form {
@@ -402,8 +405,13 @@ impl Form {
             );
         }
         let path = format!("{dir}/decoder-form.json");
-        let decoder = serde_json::from_str(&std::fs::read_to_string(&path).context(path)?)?;
-        Ok(Form { files, decoder })
+        let decoder: Value = serde_json::from_str(&std::fs::read_to_string(&path).context(path)?)?;
+        let pool_unobserved = decoder["poolUnobservedModes"].as_bool().unwrap_or(false);
+        Ok(Form {
+            files,
+            decoder,
+            pool_unobserved,
+        })
     }
 }
 
@@ -622,6 +630,30 @@ fn write_fit(
         if se["obsChain"][m].is_array() && cls.iter().flatten().sum::<f64>() >= MIN_N as f64 {
             se["obsChain"][m] = json!(chain_rows(&cls));
         }
+    }
+    // A mode no narrated minute reaches (cycling, a plane) takes the chains
+    // pooled over every narrated minute: the population is the honest prior for
+    // a mode with no data of its own. Without them it paid nothing for where
+    // its fixes fall, so a train's tail along the tracks read as a bicycle.
+    if form.pool_unobserved {
+        let (mut c, mut cls) = ([[0.0f64; 2]; 2], vec![vec![0.0f64; 3]; 3]);
+        for r in &runs {
+            for w in r.inner.windows(2) {
+                c[usize::from(w[0].lit)][usize::from(w[1].lit)] += 1.0;
+                cls[w[0].cls][w[1].cls] += 1.0;
+            }
+        }
+        for m in MODES {
+            if !se["obsChain"][m].is_array() {
+                se["obsChain"][m] = json!(chain_rows(&cls));
+            }
+            if !se["fixMarkov"][m].is_array() {
+                let p11 = c[1][1] / (c[1][0] + c[1][1]).max(1.0);
+                let p01 = c[0][1] / (c[0][0] + c[0][1]).max(1.0);
+                se["fixMarkov"][m] = json!([round4(p11), round4(p01)]);
+            }
+        }
+        log.push("pooled chains for the modes with no narrated minutes".into());
     }
     let nights: Vec<Vec<Option<f64>>> =
         used.iter().flat_map(|d| d.nights.iter().cloned()).collect();

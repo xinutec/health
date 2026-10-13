@@ -144,9 +144,14 @@ const POST_TS: &[&str] = &[
 /// 07-01's unclear "return to UCLH" replaced by the walk to Euston Square and
 /// a wait there, 07-06's walk from Work — rows +3, enforceable +3, unparseable
 /// −1 (the unclear cell), journeys −1, three more walking legs.
+///
+/// 04-29's "walking + brief stationary" at Arnhem settled from the steps (4 in
+/// nine minutes while the train stood: no transfer walk) into a `{derived}`
+/// stay — rows unchanged, enforceable +1 (the `likely correct` row enforced
+/// nothing).
 const TS_FILES: usize = 31;
 const TS_ROWS: usize = 403;
-const TS_ENFORCEABLE: usize = 377;
+const TS_ENFORCEABLE: usize = 378;
 const TS_UNPARSEABLE: usize = 4;
 /// Narratives whose `Times:` is not London: 04-29 (Amsterdam), 06-24 (UTC), and
 /// 10-02 to 10-07 (Madrid).
