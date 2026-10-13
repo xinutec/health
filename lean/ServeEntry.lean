@@ -819,6 +819,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   -- would be built from anyway.
   let dropRepeats :=
     (((j.getObjVal? "flags") >>= (·.getObjVal? "dropRepeatedFixes") >>= (·.getBool?)).toOption.getD false)
+  let boardingWait :=
+    (((j.getObjVal? "flags") >>= (·.getObjVal? "generatorBoardingWait") >>= (·.getBool?)).toOption.getD false)
   let obs ← match j.getObjVal? "observation" with
     | .ok v => if v.isNull then
                  (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
@@ -843,8 +845,11 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let nodeById : Std.HashMap String Verified.Hsmm.TrainCandidates.StationNode :=
         nodes.foldl (fun m n => m.insert n.id n) {}
       let sg : Verified.Hsmm.TrainCandidates.StationGraph := { model, nodeById, edgeById }
-      pure (Verified.Hsmm.TrainCandidates.buildCoverage
-        (Verified.Hsmm.TrainCandidates.enumerateTrainCandidates sg obs Verified.Hsmm.Assemble.KNOWN_LINES) obs)
+      let cands := Verified.Hsmm.TrainCandidates.enumerateTrainCandidates sg obs Verified.Hsmm.Assemble.KNOWN_LINES
+      -- `generatorBoardingWait` (the decoder parameters' form): each window
+      -- reaches back over the wait at its boarding station.
+      let cands := if boardingWait then cands.map (Verified.Hsmm.TrainCandidates.boardingWait sg obs) else cands
+      pure (Verified.Hsmm.TrainCandidates.buildCoverage cands obs)
   let continuity ← parseContinuity j
   let placeNearLine : Std.HashSet String ←
     match j.getObjVal? "placeNearLine" with

@@ -196,7 +196,7 @@ fn main() -> Result<()> {
 
 /// The form's settings that change what the decoder observes, laid on the
 /// fitter's own requests so a fit sees the minutes the decoder will.
-const OBSERVATION_FORM: [&str; 1] = ["dropRepeatedFixes"];
+const OBSERVATION_FORM: [&str; 2] = ["dropRepeatedFixes", "generatorBoardingWait"];
 
 /// The single record the serving pod loads (`DECODER_PARAMS`).
 const RECORD: &str = "decoder-params";

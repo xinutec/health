@@ -315,7 +315,18 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    going to the moving boarding (−3.0) and two short durations (−3.6). The
    lever is the generator's boarding credit (`TrainGenerator.VALID_LINE_BOOST`,
    a hand constant, granted only inside a window the generator saw moving):
-   a ride from station A is evidence for the platform wait at A too. A train boarded while it stands at the platform
+   a ride from station A is evidence for the platform wait at A too.
+   **Measured (s40bw, held out):** each generator window reaches back over
+   the visit to its boarding station (`TrainCandidates.boardingWait`: fixes
+   within the station radius, or dark, back to the first fix elsewhere); the
+   credit only lets a train segment begin there, and the minutes' evidence
+   picks where. Scoreboard 123 / 300 / 61 / 54 / 6 against 120 / 299 / 60 /
+   50 / 6, referee 135 against 130; 06-16's King's Cross change, 07-06's
+   one-stop hop and 10-08's evening boarding found, nothing lost. The fitted
+   Tube standstill rises from 4% to 13% of minutes: the platform waits inside
+   narrated train rows were the standstills the coverage had been hiding.
+   Against the served day: ten journeys its alone (from fifteen), five the
+   decoder's. A train boarded while it stands at the platform
    is the station-as-state case; no number in the current form fixes it
    without moving every other boarding. Measured on the way: exact
    coordinate repeats (the phone re-reporting its last position

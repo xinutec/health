@@ -175,6 +175,27 @@ def enumerateTrainCandidates (g : StationGraph) (obs : Array ObsRow) (knownLines
     | _, _ => pure ()
   return out
 
+/-- The candidate with its window reaching back over the visit to its boarding
+    station: the minutes before `startMin` whose fix is within `R_STATION_M` of
+    that station, or dark, back to the first fix elsewhere. A ride from station
+    A is evidence for the wait on A's platform as much as for the ride; the
+    coverage only lets a train segment BEGIN there, and the minutes' own
+    evidence decides where (a walk to the station pays a train its steps, a
+    long stay its standstill). -/
+def boardingWait (g : StationGraph) (obs : Array ObsRow) (c : Candidate) : Candidate := Id.run do
+  let some station := g.nodeById.get? c.boardStationId | return c
+  let mut s := c.startMin
+  while s > 0 do
+    match obs[s - 1]? with
+    | none => break
+    | some row =>
+      match row.gps with
+      | some p =>
+        if haversineMeters p.lat p.lon station.lat station.lon ≤ R_STATION_M then s := s - 1
+        else break
+      | none => s := s - 1
+  return { c with startMin := s }
+
 /-- Coverage map `ts → lines vouched there` (port of `buildTrainEntryFromCandidates`'s
     coverage). Feeds `isCovered`/`linesAt`, i.e. the `covered`/`lineValid` facts the
     train-entry prior and per-minute route factors consume. -/

@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 
 /// The request flags the record sets, by its own key.
-const FLAGS: [&str; 8] = [
+const FLAGS: [&str; 9] = [
     "segEmission",
     "transFit",
     "entryCounts",
@@ -32,6 +32,7 @@ const FLAGS: [&str; 8] = [
     "modeMinuteScaleWithGps",
     "dropUnknown",
     "dropRepeatedFixes",
+    "generatorBoardingWait",
 ];
 
 /// The record for `date`: `DECODER_PARAMS` names a file, or a directory of one
