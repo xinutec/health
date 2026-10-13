@@ -308,7 +308,14 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    standstill on 4% of its minutes), and the train generator's +3 entry
    credit appears only once the train is seen moving between stations, so
    the boarding at King's Cross earns nothing and the decoder boards at Great
-   Portland Street instead. A train boarded while it stands at the platform
+   Portland Street instead. Read as the decoder's own structure would carry
+   it — a five-minute placeless stay on the platform, then the ride, which
+   `foldRideWaits` folds into the journey — it loses by 2.1: better on the
+   evidence by 3.8, worse on the stay's 5% entry (−2.5), the generator's +3
+   going to the moving boarding (−3.0) and two short durations (−3.6). The
+   lever is the generator's boarding credit (`TrainGenerator.VALID_LINE_BOOST`,
+   a hand constant, granted only inside a window the generator saw moving):
+   a ride from station A is evidence for the platform wait at A too. A train boarded while it stands at the platform
    is the station-as-state case; no number in the current form fixes it
    without moving every other boarding. Measured on the way: exact
    coordinate repeats (the phone re-reporting its last position
