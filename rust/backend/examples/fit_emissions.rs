@@ -800,9 +800,11 @@ fn write_fit(
         "days": days.keys().filter(|d| !exclude.contains(d)).collect::<Vec<_>>(),
         "heldOut": exclude,
     });
+    // ONE LINE: the record travels as an environment value, and
+    // `scripts/prod-db.sh` mirrors the pod's environment line by line.
     std::fs::write(
         format!("{dir}/{RECORD}.json"),
-        serde_json::to_string_pretty(&record)?,
+        serde_json::to_string(&record)?,
     )?;
     if verbose {
         for l in &log {

@@ -8,6 +8,11 @@
 //! few kilobytes); the harness names a file or a per-day directory in
 //! `DECODER_PARAMS`. Neither set, a decode is the shipped model's, unchanged.
 //!
+//! ⚠ THE SECRET HOLDS ONE LINE. `scripts/prod-db.sh` mirrors the pod's
+//! environment as `NAME=VALUE` lines, so a pretty-printed record reaches a Mac
+//! replay as its first line, `{`, and every day fails to decode.
+//! `fit_emissions` writes it compact.
+//!
 //! ```json
 //! { "segEmission": {…}, "transFit": {…}, "entryCounts": {…}, "fittedPriors": {…},
 //!   "maxD": 1440, "modeMinuteScale": 0, "modeMinuteScaleWithGps": 0,
