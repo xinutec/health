@@ -504,10 +504,10 @@
 		"phantomRides": 0
 	},
 	"2026-10-08": {
-		"journeysExpected": 6,
-		"journeysMatched": 3,
-		"legModeScorable": 13,
-		"legModeMatching": 11,
+		"journeysExpected": 8,
+		"journeysMatched": 5,
+		"legModeScorable": 14,
+		"legModeMatching": 13,
 		"legLineScorable": 1,
 		"legLineMatching": 0,
 		"stationsAsserted": 4,
