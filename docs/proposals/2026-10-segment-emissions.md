@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); thirty-six arms measured; held out by day (s36loo, every number from `fit_emissions` without the judged day) the decoder clears every gate bar against the shipped one — journeys 120 vs 120, leg modes 298 vs 287, lines 59 vs 53, stations 50 vs 47, phantoms 6 vs 6, referee 130 vs 126; in-sample with the golden numbers (s34) 122 / 301 / 62 / 52 / 5, 135
+status: SHIPPED 2026-10-13 — the fitted decoder decodes production from one parameter record (`DECODER_PARAMS_JSON` from Secret `health-decoder`, written by `fit_emissions`; CLASSIFIER_VERSION 8); held out by day it clears every gate bar against the old decoder (journeys 120 vs 120, leg modes 299 vs 287, lines 60 vs 53, stations 50 vs 47, phantoms 6 vs 6, referee 130 vs 126); history before 2026-10-06 awaits a re-decode
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
