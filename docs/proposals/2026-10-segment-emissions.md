@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); thirty-three arms measured; s33a ahead of the shipped decoder on the referee (135 vs 126), leg modes (299 vs 286), lines (62 vs 53), stations (51 vs 47) and phantoms (5 vs 6), behind on scoreboard journeys (120 vs 121) — the one gate bar left
+status: built behind harness flags (`flags.segEmission`, `flags.transFit`, `flags.entryCounts`); thirty-four arms measured; s34 clears every gate bar — scoreboard journeys 122 against the shipped 120, leg modes 301 vs 287, lines 62 vs 53, stations 52 vs 47, phantoms 5 vs 6, referee 135 vs 126 (09-30's boarding narrated from the signal); next, held-out fits by day
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md
@@ -115,6 +115,8 @@ place entry normalised over places per hour.
 | s31: s29a with the placeless stay's centre a latent, one Gaussian prior over the listed places | 119 | 296 | 60 | 51 | 5 | 131 |
 | s32: s31 with the prior a mixture over the listed places at a 308 m bandwidth | 119 | 297 | 60 | 52 | 5 | 132 |
 | s33a: s32 with s30's standstill component | 120 | 299 | 62 | 51 | 5 | 135 |
+| s34: s33a with the unlisted centre anchored at the minutes either side | 121 | 300 | 62 | 52 | 5 | 135 |
+| s34, 09-30's boarding narrated (shipped: 120 / 287 / 53 / 47 / 6) | 122 | 301 | 62 | 52 | 5 | 135 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -474,6 +476,32 @@ its platform have the same speed; what names the stay is the journey's
 structure (the station-stay convention), which is the roadmap's line and
 station as decoder state, not a speed term. The chain is not built.
 
+**A stop's centre is where the walk left him** (s34, `centreAnchor`). Read
+on the five-minute stops the decoder did not place (Asda on 06-24, a stop
+inside a walk on 09-06): the stop loses by 21.8 and 8.5 nats, of which its
+own emission against walking's is 2.8. Most of the rest is the centre's
+prior: the mixture over his places charges a stop for *where* it is, and no
+other mode pays for where — a walk's minutes are scored by their
+displacement, and the walk that arrives at a stop already carries its
+position. The prior is now a Gaussian at the lit minutes just outside the
+segment, at their own noise; the mixture stands only for a stay with no lit
+neighbour. A five-minute stop's centre then costs about `−log 3.5` where it
+cost about `−6`. Both stops decode (Asda as three minutes of its five, the
+09-06 stop exactly); 07-01's in-station stop at Baker Street, lost to the
+stop share in s33a, is back. Journeys 120 → 121, leg modes 300, stations
+52, phantoms level; nothing lost. On the uncorrected narratives that is
+level with the shipped decoder's 121 and ahead on every other count.
+
+**09-30's boarding, narrated from the signal.** The narrative jumped from
+the St Pancras wait (to 11:35) to the Eurostar's departure (11:59). He
+walked to the platform and does not remember when; the steps say it:
+1–30 steps a minute from 11:39 with the heart rate rising (the boarding
+queue), 90–115 from 11:44 to 11:46 (the platform), none from 11:47 (on
+board). Three `{derived}` rows fill the gap; his departure row stands. The
+decoder had decoded exactly that; the shipped decoder, scored on the same
+narrative, loses the journey (121 → 120). On the corrected truth: s34 122
+journeys against 120, every gate bar clear.
+
 Next: the edge minute's offset as a latent (the one-stop hop's first
 minute is the walk onto the train, and the decoder now places a one-minute
 ride there); the fix's accuracy in a position model rather than a speed
@@ -524,8 +552,8 @@ shapes; counted at s33a, to re-count before acting:
 
 Then, in order: held-out fits by day before anything ships (every number
 in the golden fits was fitted on the days it is judged on); the gate
-(scoreboard journeys not below the shipped 121 — 120 at s33a; phantoms,
-referee and stations already clear it); the flags become defaults and the
+(cleared at s34: journeys 122 against the shipped 120 on the corrected
+narratives); the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
 asleep and off-network terms, `unknown`, the per-minute mode prior,
 `LineProximity`'s constants, the self-loop mass, the duration cap; the
