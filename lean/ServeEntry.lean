@@ -909,6 +909,12 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     match row "durationFits" m with
     | some #[a, b] => ({ alpha := a, beta := b, sampleCount := 10 } : Verified.Hsmm.Duration.GammaFit)
     | _ => Verified.Hsmm.Assemble.baselineFit m
+  let mainlineFit : Option Verified.Hsmm.Duration.GammaFit := do
+    let f ← fitted
+    let arr ← ((f.getObjVal? "durationFits") >>= (·.getObjVal? "mainline") >>= (·.getArr?)).toOption
+    match arr.toList.filterMap (fun v => (v.getNum?).toOption.map (·.toFloat)) with
+    | [a, b] => some { alpha := a, beta := b, sampleCount := 10 }
+    | _ => none
   -- Segment-level emissions (harness-only): `{sigmaW, rho, modes: {mode: [hrMean,
   -- hrTau, fixA, fixB]}}`; absent keeps the per-minute heart-rate and fix terms.
   let segEm : Option Verified.Hsmm.SegmentEmission.Params := do
@@ -1041,7 +1047,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
           (num "newShare")
       | _, _ => #[]
     | none => #[]
-  let ctx := { ctx with priors, fits, weights, segEm, segPref, placePrior, transWeight, selfLoop, stayEntryLog,
+  let ctx := { ctx with priors, fits, mainlineFit, weights, segEm, segPref, placePrior, transWeight, selfLoop, stayEntryLog,
                         visitCounts, entryTable, windowSpeed }
   let lineProxBest := match segEm with
     | some q => if q.p.lineRankOnly then Verified.Hsmm.Assemble.lineProxBestTable ctx else #[]
@@ -1160,14 +1166,18 @@ private def packDeltaRef (qE qR : Int64) (h : Nat) : Nat × Option Int :=
     line-independent), and the unlisted centre (`unlistedCentre`) the placeless
     stay alone. So this partition is EXACT (no iterative refinement): every
     state in a class has identical `dur(·,d,e)` at every cell. Named train ⇒ 7;
-    unknown_rail train ⇒ 4; the placeless stay ⇒ 8. -/
+    the mainline (`unknown_rail`, its own duration fit) ⇒ 9; another unnamed
+    train ⇒ 4; the placeless stay ⇒ 8. -/
 private def durClassKey (s : Verified.Hsmm.Emissions.State) : Nat :=
   match s.mode with
   | .stationary => if s.placeId.isNone then 8 else 0
   | .walking => 1 | .cycling => 2 | .driving => 3
   | .plane => 5 | .unknown => 6
   | .train => match s.lineName with
-    | some l => if !Verified.Hsmm.Emissions.isPlaceholderLine l then 7 else 4 | none => 4
+    | some l =>
+      if !Verified.Hsmm.Emissions.isPlaceholderLine l then 7
+      else if Verified.Hsmm.Emissions.isMainline s then 9 else 4
+    | none => 4
 
 /-- Reference `segEnd` for the duration baseline (matches TS `REF_E`). -/
 private def assembleRefE : Nat := 720

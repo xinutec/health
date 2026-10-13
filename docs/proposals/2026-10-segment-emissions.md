@@ -119,6 +119,7 @@ place entry normalised over places per hour.
 | s34, 09-30's boarding narrated (shipped: 120 / 287 / 53 / 47 / 6) | 122 | 301 | 62 | 52 | 5 | 135 |
 | s36i: s34's form, every number from `fit_emissions` on all 43 days | 120 | 297 | 59 | 50 | 6 | 129 |
 | s36loo: the same, each day's numbers fitted without that day | 120 | 298 | 59 | 50 | 6 | 130 |
+| s37loo: s36 with the mainline's duration fitted apart, held out (in-sample the same) | 120 | 299 | 60 | 50 | 6 | 130 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -580,9 +581,14 @@ shapes; counted at s33a, to re-count before acting:
   is their point-of-interest labels, and the notes say he was on foot, so
   the decoder's `driving` there is a decoder miss.
 
-Then, in order: the train's standstill and its durations by line kind
-(the two measured gaps between the fitter and the golden numbers; a form
-change, judged held out); the flags become defaults and the
+**The mainline's duration apart** (s37, `durationFits.mainline`, its own
+duration class). One gamma served every train: 66 Tube runs of 16 ± 9
+minutes and 19 mainline runs from a local to a five-hour TGV, so the
+TGVs flattened it. A train run is the mainline's when most of its minutes
+are off the route model, which is exactly what the decoder can only call
+`unknown_rail`. Held out: a leg mode and a line, the journeys unchanged.
+
+Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
 asleep and off-network terms, `unknown`, the per-minute mode prior,
 `LineProximity`'s constants, the self-loop mass, the duration cap; the

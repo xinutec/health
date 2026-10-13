@@ -720,19 +720,51 @@ fn write_fit(
             xs.len()
         ));
     }
-    for m in MODES {
-        let ls: Vec<f64> = of(m)
-            .iter()
+    // A train run is the mainline's when most of its minutes are off the route
+    // model (the decoder can only call those `unknown_rail`); its length is
+    // fitted apart: a TGV and a Tube hop are not one distribution.
+    let mainline_run = |r: &Run| {
+        let off = r.inner.iter().filter(|m| !m.covered).count();
+        2 * off > r.inner.len()
+    };
+    let lengths = |rs: Vec<&Run>| -> Vec<f64> {
+        rs.iter()
             .map(|r| r.minutes_long)
             .filter(|l| *l > 0.0)
-            .collect();
-        if ls.len() >= MIN_RUNS && sp["durationFits"][m].is_array() {
+            .collect()
+    };
+    let mut groups: Vec<(&str, Vec<f64>)> = MODES
+        .iter()
+        .filter(|m| **m != "train")
+        .map(|m| (*m, lengths(of(m))))
+        .collect();
+    groups.push((
+        "train",
+        lengths(
+            trains
+                .iter()
+                .copied()
+                .filter(|r| !mainline_run(r))
+                .collect(),
+        ),
+    ));
+    groups.push((
+        "mainline",
+        lengths(trains.iter().copied().filter(|r| mainline_run(r)).collect()),
+    ));
+    for (m, ls) in groups {
+        if ls.len() >= MIN_RUNS && (sp["durationFits"][m].is_array() || m == "mainline") {
             let n = ls.len() as f64;
             let mean = ls.iter().sum::<f64>() / n;
             let var =
                 (ls.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / n).max(DUR_VAR_FLOOR);
             sp["durationFits"][m] =
                 json!([round4(mean * mean / var), (mean / var * 1e5).round() / 1e5]);
+            log.push(format!(
+                "duration {m}: {} runs, mean {mean:.1} min, sd {:.1}",
+                ls.len(),
+                var.sqrt()
+            ));
         }
     }
 

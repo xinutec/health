@@ -103,6 +103,9 @@ structure ModelContext where
   priors : Mode → Emissions.ModePrior := Emissions.modePriors
   /-- The duration Gamma per mode, likewise. -/
   fits : Mode → GammaFit := baselineFit
+  /-- The mainline's duration (`unknown_rail`), when fitted apart from the
+      named lines': a TGV and a Tube hop are not one length distribution. -/
+  mainlineFit : Option GammaFit := none
   /-- Per-family weights (`EmissionFull.TermWeights`), all `1` when shipped. -/
   weights : EmissionFull.TermWeights := {}
   /-- `SegmentEmission`'s terms (heart rate per segment, fix presence as a
@@ -483,7 +486,11 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
   | some st =>
     -- A ride's head lasts at most `rideHeadMin` minutes (#366).
     if Emissions.isRideHead st && d > c.rideHeadMin then negInf
-    else c.weights.duration * Duration.logDurationProb d.toFloat (c.fits st.mode) (Duration.minDurationByMode st.mode)
+    else
+      let fit := match c.mainlineFit with
+        | some f => if Emissions.isMainline st then f else c.fits st.mode
+        | none => c.fits st.mode
+      c.weights.duration * Duration.logDurationProb d.toFloat fit (Duration.minDurationByMode st.mode)
 
 /-- The segment-level emission of state `s` over a segment of length `d` with
     window `w` and statistics `st`. Where it scores the displacement, the
