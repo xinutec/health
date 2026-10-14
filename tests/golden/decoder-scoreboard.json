@@ -98,13 +98,13 @@
 	"2026-05-22": {
 		"journeysExpected": 5,
 		"journeysMatched": 4,
-		"legModeScorable": 11,
-		"legModeMatching": 11,
+		"legModeScorable": 12,
+		"legModeMatching": 12,
 		"legLineScorable": 3,
-		"legLineMatching": 2,
+		"legLineMatching": 3,
 		"stationsAsserted": 2,
-		"stationsMatching": 1,
-		"stationsMissing": 1,
+		"stationsMatching": 2,
+		"stationsMissing": 0,
 		"phantomRides": 0
 	},
 	"2026-05-25": {
