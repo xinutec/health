@@ -1061,7 +1061,13 @@ def dayResult (j : Json) : Json :=
           linesLookup := fun lat lon =>
             env.linesAtPoint lat lon Verified.Geo.PassFold.LINES_AT_POINT_DEFAULT_RADIUS_M }
         segs env.points env.railStops)
-    let chosen := if decoderHead then #[unnamedRail] ++ chosen.filter (DECODER_TAIL.contains ·.1)
+    -- Under the head the stays take the enrichment stage's naming (its
+    -- stationary branch, `nameStay`) and nothing else of that stage, which
+    -- also rewrites modes and labels; the decoder's places then override.
+    let nameStays : Verified.Geo.PassFold.Pass := ("nameStays", fun segs =>
+      segs.map fun s => if s.mode == "stationary" then env.nameStay s else s)
+    let chosen := if decoderHead
+      then #[unnamedRail, nameStays] ++ chosen.filter (DECODER_TAIL.contains ·.1)
       else chosen
     let chosen := chosen.map fun (n, f) => (n, fun s => DayEntry.Host.timed s!"pass.{n}" fun _ => f s)
     let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs

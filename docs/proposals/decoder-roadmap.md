@@ -390,7 +390,20 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    05-18's last leg, 07-02's Metropolitan from Finchley Road), 06-18's board
    (Great Portland Street for Euston Square), and three names the fill-in
    labeller spells apart from the narrative ("Centraal Station" for Arnhem
-   Centraal, "Gare du Nord (Métro)", Vavin for Montparnasse-Bienvenüe). Step 2 therefore waits on the chain's
+   Centraal, "Gare du Nord (Métro)", Vavin for Montparnasse-Bienvenüe).
+   Those three are segmentation, not spelling, but for "Gare du Nord
+   (Métro)": the decoder rides 04-29 from 47 minutes before Arnhem through
+   the nine-minute stop there, and ends 10-01's Métro leg a stop early.
+   **Stays under the head.** The enrichment stage in the head costs
+   journeys (132) and stations (64 and 71): it rewrites modes and labels as
+   well as naming. Its stay branch alone (`nameStay`, a head-only pass
+   before the decoder's places) keeps journeys at 143. The name-confidence
+   grader then moves on 33 days: the headed day names 170 of 190 graded
+   stays right there, the served day 188 of 199 — a night fewer graded on
+   most of them (the decoder's home place where the served day's sleep rule
+   names it), one more wrong on several, 10-08 4 of 8 against 8 of 8. The
+   flip waits on the stays: the decoder's authority over them (step 4,
+   #1947), not their names. Step 2 therefore waits on the chain's
    underground ends (#238) and on names for the legs it calls `unknown_rail`.
 3. **Each mode's longest segment.** Only stays need the whole-day cap; the
    trellis's single `maxD` makes every mode pay for it (a heavy day decodes in
