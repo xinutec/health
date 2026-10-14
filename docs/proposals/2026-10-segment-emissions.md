@@ -125,6 +125,7 @@ place entry normalised over places per hour.
 | s40bw: s38 with the generator's window reaching back over the boarding wait (`generatorBoardingWait`), refitted held out | 123 | 300 | 61 | 54 | 6 | 135 |
 | s40c: s40 on the narratives with 10-08, 10-07 and 04-29's derived rows corrected from the signal | 127 | 305 | 61 | 54 | 6 | 140 |
 | s41c: s40c with pooled chains for the modes no narrated minute reaches (`poolUnobservedModes`) | 127 | 305 | 61 | 54 | 6 | 140 |
+| s42sided: s40c with a minute's windowed speed the span to either neighbour, equally likely | 122 | 300 | 61 | 49 | 5 | 136 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -601,6 +602,20 @@ the serving path's and the harness's alike; the patch that stood beside the
 arms is retired (`unknown` leaves the state space by `dropUnknown`; the place
 entry's renormalisation never fired once the entry counts were on). Held out
 by day through the record alone, every day and every miss identical to s37.
+
+**Refuted: a minute's speed from either side** (s42sided). The windowed speed
+spans the minutes either side of a minute, so the last minute of a stop wait
+carries half the pull-away after it: 09-06 18:52 reads 9 km/h from a
+standstill, a stay pays −11.7 for it, and the 48 boarding steps there make a
+one-minute walk the decoder stretches over the pull-away. Scored as the span
+to the minute before or to the minute after, equally likely, the 09-06
+boarding decodes as narrated. Held out it loses five journeys and five
+stations: short rides (06-22, 07-06, 07-16, 07-30, the 06-12 bus) decode as
+walking, because on a ride of two or three lit minutes every minute is an
+edge, each has a slow side, and walking's tight low-speed prior takes it —
+s10's blend again, one level down. The side a minute's span belongs to is
+the segmentation's to decide: speed scored on the pairs of minutes inside a
+segment, with the pair across a boundary scored apart.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
