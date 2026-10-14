@@ -351,19 +351,20 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    anchor passes stand down on that side. The decoder's segments reach the
    fold without stations today (`fold_payload::encode_caches`, `HmmSeg`); they
    gain `boardStation`/`alightStation`. Smallest flip with the existing seam.
-   **Measured before building it:** on the 87 narrated train legs with
+   **Measured before building it:** on the 90 narrated train legs with
    stations, the served day names 84 boards and 86 alights, the decoder's
-   own chain (s43c) 64 and 67, and the decoder is never right where the
-   served day is wrong — authority per side would lose stations. Its misses
-   are legs it names nothing on (`unknown_rail`: the mainline and foreign
-   trains) and wrong underground ends (Baker Street for Euston Square three
-   times, Farringdon for King's Cross, Great Portland Street for Euston
-   Square). The cascade's station passes run over the decoder's segments
+   own chain (s43c) 66 and 72 — authority per side would lose stations. Its
+   misses are legs it names nothing on (`unknown_rail`: the mainline and
+   foreign trains) and wrong underground ends (Farringdon for King's Cross,
+   Great Portland Street for Euston Square). Its three "Baker Street for
+   Euston Square" alights were right: he changed trains there on 05-18,
+   06-23 and 06-24 (three minutes of steps; his answer), where the
+   narratives had one through ride, and the served day still serves one. The cascade's station passes run over the decoder's segments
    (`railRuns` to `alightAtLastFix` added to `DECODER_TAIL`, reverted) name
    70 and 76: they fill the unnamed legs but merge the decoder's correct
    changes of trains (05-20 and 07-16 at Baker Street, 06-09 and 06-12 at
    King's Cross). The decoder's stations where it names one and the
-   cascade's elsewhere: 78 and 78. Step 2 therefore waits on the chain's
+   cascade's elsewhere: 80 and 84. Step 2 therefore waits on the chain's
    underground ends (#238) and on names for the legs it calls `unknown_rail`.
 3. **Each mode's longest segment.** Only stays need the whole-day cap; the
    trellis's single `maxD` makes every mode pay for it (a heavy day decodes in
