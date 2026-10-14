@@ -335,6 +335,47 @@ def detectBoardingWait (fixes : List Fix) (segStartTs : Int) : Option (Int × Fl
   return some (durationS, lat, lon)
 
 /--
+The boarding wait for a leg whose start may sit up to `slackS` either side of
+the pull-away (the decoder's segments, whose boundaries fall on whole minutes):
+the LAST standstill run of at least `BOARDING_WAIT_MIN_S` that ends between
+`BOARDING_PULLAWAY_TRIM_S + slackS` before the start and `slackS` after it. A
+short dwell just inside the leg (a junction, the next stop) is passed over
+rather than taken for the wait, which the walk-back from the boundary would do.
+-/
+def detectBoardingWaitNear (fixes : List Fix) (segStartTs slackS : Int) :
+    Option (Int × Float × Float) := Id.run do
+  let win := (fixes.filter (fun p =>
+    decide (p.ts < segStartTs + slackS) &&
+      decide (p.ts ≥ segStartTs - BOARDING_WAIT_LOOKBACK_S))).toArray
+  let endFloor := segStartTs - BOARDING_PULLAWAY_TRIM_S - slackS
+  let mut best : Option (Array Fix) := none
+  let mut runStart := 0
+  for hm_i : i in [1:win.size + 1] do
+    -- A run closes at a fast pair or at the end of the window.
+    let slow := match win[i - 1]?, win[i]? with
+      | some a, some b => decide (pairSpeedKmh a b < DWELL_MAX_SPEED_KMH)
+      | _, _ => false
+    if !slow then
+      let run := win.extract runStart i
+      match run[0]?, run.back? with
+      | some f, some l =>
+        if decide (l.ts - f.ts ≥ BOARDING_WAIT_MIN_S) && decide (l.ts ≥ endFloor) then
+          best := some run
+      | _, _ => pure ()
+      runStart := i
+  let some run := best | return none
+  let some f := run[0]? | return none
+  let some l := run.back? | return none
+  let (lat, lon) := centroid run
+  return some (l.ts - f.ts, lat, lon)
+
+/-- The boarding wait at `slackS`: the cascade's walk-back at 0, else
+`detectBoardingWaitNear`. -/
+def boardingWaitAt (fixes : List Fix) (segStartTs slackS : Int) : Option (Int × Float × Float) :=
+  if slackS == 0 then detectBoardingWait fixes segStartTs
+  else detectBoardingWaitNear fixes segStartTs slackS
+
+/--
 Standstill runs inside the moving leg: maximal runs of consecutive pair speeds
 under `DWELL_MAX_SPEED_KMH` lasting ≥ `DWELL_MIN_S`. The centroid is where the
 orchestrator queries for stop/signal proximity.
@@ -577,6 +618,28 @@ private def waitFixes : List Fix :=
 #guard (detectBoardingWait [⟨950, 51.5030, -0.1520⟩] 1000).isNone
 #guard (detectBoardingWait [⟨300, 51.5030, -0.1520⟩, ⟨400, 51.50301, -0.15201⟩] 1000).isNone
 
+/-! ### `detectBoardingWaitNear` -/
+
+/-- The same wait, the ride after it, and a 30 s dwell at 1060–1090: a decoder
+leg starting at 1060, a minute after the pull-away. -/
+private def nearFixes : List Fix :=
+  waitFixes ++ [⟨1030, 51.5070, -0.1530⟩, ⟨1060, 51.5100, -0.1540⟩,
+                ⟨1075, 51.51001, -0.15401⟩, ⟨1090, 51.5100, -0.1540⟩, ⟨1120, 51.5130, -0.1550⟩]
+
+-- From the boundary the cascade's walk-back finds nothing: the pull-away is
+-- more than the trim before it.
+#guard (detectBoardingWait nearFixes 1060).isNone
+-- With a minute's slack the 120 s wait is found, and the dwell inside the leg,
+-- too short to be a wait, is passed over rather than taken for one.
+#guard match detectBoardingWaitNear nearFixes 1060 60 with
+       | some (d, lat, _) => d == 120 && approx lat 51.503011999999998
+       | none => false
+-- A wait that ended more than trim + slack before the start is a prior stay.
+#guard (detectBoardingWaitNear nearFixes 1200 60).isNone
+-- At no slack the cascade's walk-back answers, unchanged.
+#guard boardingWaitAt nearFixes 1060 0 == detectBoardingWait nearFixes 1060
+#guard boardingWaitAt waitFixes 1000 0 == detectBoardingWait waitFixes 1000
+
 /-! ### `detectVehicleDwells` -/
 
 private def legFixes : List Fix :=
@@ -682,14 +745,15 @@ def nearestOfSubtype (stops : Array TransitStop) (subtype : String) : Option Flo
 evidence clears `BUS_EVIDENCE_THRESHOLD_NATS`. Everything else passes through
 untouched — this pass only ever adds a label. -/
 def annotateBusEvidence (segments : Array BusSeg) (fixes : List Fix)
-    (stopsLookup : Float → Float → Float → Array TransitStop) : Array BusSeg :=
+    (stopsLookup : Float → Float → Float → Array TransitStop) (slackS : Int := 0) :
+    Array BusSeg :=
   segments.map fun seg =>
     let effective := seg.refinedMode.getD seg.mode
     if effective ≠ "driving" || decide (seg.endTs - seg.startTs < MIN_LEG_S) then seg
     else
       let nearest (lat lon : Float) (subtype : String) : Option Float :=
         nearestOfSubtype (stopsLookup lat lon TRANSIT_QUERY_RADIUS_M) subtype
-      let wait := detectBoardingWait fixes seg.startTs
+      let wait := boardingWaitAt fixes seg.startTs slackS
       let dwells := detectVehicleDwells fixes seg.startTs seg.endTs
       let ev : BusEvidence :=
         { boardingWaitS := wait.map (·.1)
@@ -869,7 +933,7 @@ the part of the record the trace lost, and nothing here invents it. -/
 def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes : List BusRoute)
     (anchorM : Float := BUS_STOP_ANCHOR_M) (stopPassM : Float := BUS_STOP_PASS_M)
     (minCoverage : Float := BUS_MIN_INTERMEDIATE_COVERAGE)
-    (stayAlightM : Float := BUS_STAY_ALIGHT_M) : Array BusRouteSeg :=
+    (stayAlightM : Float := BUS_STAY_ALIGHT_M) (slackS : Int := 0) : Array BusRouteSeg :=
   if routes.isEmpty then segments
   else segments.mapIdx fun i seg =>
     if seg.refinedMode.getD seg.mode ≠ "driving" then seg
@@ -890,7 +954,7 @@ def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes
         -- for the evidence pass; it leads the trace so the pull-away stretch
         -- can corroborate stops too. With no wait the first fix stands.
         let (board, trace) : LatLon × List LatLon :=
-          match detectBoardingWait points seg.startTs with
+          match boardingWaitAt points seg.startTs slackS with
           | some (_, la, lo) => (⟨la, lo⟩, ⟨la, lo⟩ :: legFixes.map fun p => ⟨p.lat, p.lon⟩)
           | none => (⟨first.lat, first.lon⟩, legFixes.map fun p => ⟨p.lat, p.lon⟩)
         let leg : VehicleLeg :=

@@ -368,13 +368,19 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    and road geometry, bus evidence and routes, zone, biometrics, the decoder's
    places). On the s41c held-out decode: 141 narrated journeys against the
    served day's 142, six the served day's alone and five the fold's. The
-   naming tail does label a decoder ride a bus (06-09). It misses 06-12 and
-   09-06 on the boarding boundary: the decoder starts the 06-12 ride 1.7
-   minutes early and reads the 09-06 stop wait as two minutes of walking, so
-   neither labeller finds the standstill at the stop it anchors on
-   (`detectBoardingWait`). The bus misses are therefore the decoder's
-   boundary at a bus boarding — the train's platform-wait case
-   (`boardingWait`) on the road — not a missing label.
+   naming tail does label a decoder ride a bus (06-09). On 06-12 and 09-06 the
+   bus labellers found no wait at first: they look for the stop wait strictly
+   before the leg, and the decoder's minute boundaries put it inside the 06-12
+   ride and a minute before the 09-06 one. With the head, the bus passes take
+   the wait within a minute of the start either side
+   (`Bus.detectBoardingWaitNear`, `Env.boundarySlackS`; the cascade's walk-back
+   is unchanged at 0), and both rides read `bus`. Neither journey turns: on
+   06-12 the decoder's alight is 09:28, where the steps put it (61 a minute),
+   against his narrated 09:29; on 09-06 the decoder reads 18:53, the pull-away
+   at 19–40 km/h, as walking, because the 48 boarding steps at 18:52 make a
+   walk and the walking duration prior costs one minute −10 against two
+   minutes' −3 (the evidence prefers the ride from 18:53 by 3.5, the path
+   loses by 2.1).
 
 ## Phase 4 — the cutover
 

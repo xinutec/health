@@ -117,6 +117,10 @@ structure Env where
   /-- The HSMM's decode for this day, or empty when the cron has not run. The
   TS tests the decode for null; empty carries the same meaning here. -/
   hmmDecode : Array Verified.Geo.PlaceOverride.HmmSeg := #[]
+  /-- How far a leg's start may sit from its pull-away, for the bus passes'
+  boarding wait (`Bus.detectBoardingWait`): 0 for the cascade's legs, a
+  minute when the decoder's minute-aligned segments head the fold. -/
+  boundarySlackS : Int := 0
   /-- Place id → display name and centroid, for resolving the HSMM's picks. -/
   hsmmPlaces : List (Int × Verified.Geo.PlaceOverride.PlaceLookup) := []
   /-- Mined focus places, for the far-phantom swallow. -/
@@ -1000,14 +1004,15 @@ def passes (e : Env) : Array Pass := #[
   -- bus_stop nodes is a bus. After all mode refinement, so it judges the FINAL
   -- driving legs.
   ("busEvidence", fun segs =>
-    Verified.Geo.Bus.annotateBusEvidence segs e.geoFixes.toList e.transitStops),
+    Verified.Geo.Bus.annotateBusEvidence segs e.geoFixes.toList e.transitStops e.boundarySlackS),
 
   -- Stronger than the dwell evidence above: anchor a leg's boarding wait (or,
   -- without one, its first fix) and its last fix to a mirrored route's stops
   -- and, on a match, name the bus. Catches short rides with too few dwells to
   -- score — a non-stopping bus can emit nothing else.
   ("busRoutes", fun segs =>
-    Verified.Geo.Bus.annotateBusRoutes segs e.geoFixes.toList e.busRouteCache),
+    Verified.Geo.Bus.annotateBusRoutes segs e.geoFixes.toList e.busRouteCache
+      (slackS := e.boundarySlackS)),
 
   -- Snap each road-vehicle leg onto the street network so the map draws it on
   -- the road instead of the raw GPS zigzag through buildings. After all mode

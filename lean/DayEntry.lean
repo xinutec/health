@@ -905,6 +905,10 @@ def DECODER_TAIL : Array String :=
     "biomEnrich", "hsmmOverride", "railSnapFinal", "vehicleIdentity"]
 
 def MS_TO_KMH : Float := 3.6
+
+/-- The decoder's boundaries fall on whole minutes, so a ride's pull-away may
+sit up to one either side of its start. -/
+def DECODER_BOUNDARY_SLACK_S : Int := 60
 def ZERO_F : Float := 0
 
 /-- `Seg`'s defaults, built once: its Float defaults are literals. -/
@@ -1027,6 +1031,7 @@ def dayResult (j : Json) : Json :=
     -- The carved-stop namer is the enrichment stage's own stationary branch,
     -- bound over the same reads and mined places the stage ran with.
     let env := { env with
+      boundarySlackS := if decoderHead then DECODER_BOUNDARY_SLACK_S else 0
       nameStay := fun seg =>
         Verified.Geo.EnrichFold.nameStay enrichReads
           { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
