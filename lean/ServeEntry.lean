@@ -965,6 +965,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let v ← ((f.getObjVal? "speedEps") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m))).toOption
       pure (m, ← num v)
     let speedWindow := ((f.getObjVal? "speedWindow") >>= (·.getBool?)).toOption.getD false
+    let speedPairs := ((f.getObjVal? "speedPairs") >>= (·.getBool?)).toOption.getD false
+    let pairBoundaryMeanKmh := (f.getObjVal? "pairBoundaryMeanKmh").toOption >>= num
     let lineRankOnly := ((f.getObjVal? "lineRankOnly") >>= (·.getBool?)).toOption.getD false
     let dispSegment := ((f.getObjVal? "dispSegment") >>= (·.getBool?)).toOption.getD true
     let gapPairs := ((f.getObjVal? "gapPairs") >>= (·.getBool?)).toOption.getD false
@@ -982,7 +984,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         >>= (·.getArr?)).toOption
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, obsChain, lineRankOnly,
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, speedPairs, pairBoundaryMeanKmh,
+           obsChain, lineRankOnly,
            dispSegment, gapPairs, dispPosterior, accuracyNoise, asleep, unlistedCentre, centreAnchor }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
@@ -1073,7 +1076,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let lineProxBest := match segEm with
     | some q => if q.p.lineRankOnly then Verified.Hsmm.Assemble.lineProxBestTable ctx else #[]
     | none => #[]
-  return ({ ctx with lineProxBest }, maxD)
+  let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx
+  return ({ ctx with lineProxBest, pairPref, pairBoundary }, maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json
@@ -1571,6 +1575,7 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
                 ("covered", Json.bool (Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)),
                 ("linesAt", Json.arr ((Verified.Hsmm.TrainCandidates.linesAt c.coverage o.ts).map Json.str).toArray),
                 ("windowKmh", optF (((c.windowSpeed[t]?).getD none).map (·.1))),
+                ("pairKmh", optF ((Verified.Hsmm.Assemble.pairSpan c.obs t).map (·.1))),
                 ("obsClass", Lean.toJson (Verified.Hsmm.SegmentEmission.obsClass o)),
                 ("inBed", Json.bool o.inBed),
                 ("lat", optF (o.gps.map (·.lat))), ("lon", optF (o.gps.map (·.lon))),

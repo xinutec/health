@@ -92,6 +92,15 @@ structure Params where
       its own fixes: a fix that scatters 100 m sideways reads as 12 km/h over
       thirty seconds and as nothing over two minutes. -/
   speedWindow : Bool := false
+  /-- Speed scored on the pairs of consecutive lit minutes INSIDE a segment
+      (the one-minute span between them, under the segment's mode), and the
+      pair across a boundary scored apart, uniform over 0–`uMaxKmh`: the side
+      a minute's span belongs to is the segmentation's. Replaces the
+      per-minute speed term. -/
+  speedPairs : Bool := false
+  /-- With `speedPairs`, the pair across a boundary as an exponential of
+      this mean (km/h, fitted on the narrated boundaries) instead of uniform. -/
+  pairBoundaryMeanKmh : Option Float := none
   /-- A minute as one of three classes — no fix, a fix within `RAIL_NEAR_M` of a
       railway, a fix elsewhere — scored given the minute before by a 3×3 chain
       per mode (rows: the class before). It carries fix presence and rail
@@ -236,6 +245,10 @@ structure Stats where
   anchorW : Float := ZERO
   anchorWX : Float := ZERO
   anchorWY : Float := ZERO
+  /-- The segment's minutes `[lo, hi)`, for the terms tabulated per state
+      (`speedPairs`). -/
+  lo : Nat := 0
+  hi : Nat := 0
 
 /-- A prefix array's share of the minute before `[lo, hi)` and the minute
     after it; a minute off the day adds nothing. -/
@@ -258,7 +271,7 @@ def statsAt (p : Prefix) (d e : Nat) : Stats :=
    get p.posW hi - get p.posW lo, get p.posWX hi - get p.posWX lo,
    get p.posWY hi - get p.posWY lo, get p.posWRR hi - get p.posWRR lo,
    -- Minute `lo - 1` and minute `hi`, each `0` when dark or off the day.
-   outside p.posW lo hi, outside p.posWX lo hi, outside p.posWY lo hi⟩
+   outside p.posW lo hi, outside p.posWX lo hi, outside p.posWY lo hi, lo, hi⟩
 
 private def TWO_PI : Float := 6.283185307179586
 
@@ -494,9 +507,9 @@ private def pTest : Params :=
 #guard dispScore pTest .stationary 109 (some ⟨50, 0, 0⟩) > dispScore pTest .train 109 (some ⟨50, 0, 0⟩) + 10
 #guard dispScore pTest .train 20 (some ⟨8000, 0, 0⟩) > dispScore pTest .stationary 20 (some ⟨8000, 0, 0⟩) + 3
 #guard dispScore pTest .walking 20 (some ⟨8000, 0, 0⟩) == 0
-#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ + 10
-#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ - 1
-#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ == 0
+#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩ + 10
+#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩ - 1
+#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩ == 0
 -- An 84-minute café at 30 m scatter, 150 m place radius, 300 m from the
 -- nearest of three listed places at a 300 m bandwidth: a few nats of scatter
 -- and one Occam factor, not 168.
@@ -519,7 +532,7 @@ private def stop5 : Stats :=
     anchorW := 2 / 22500, anchorWX := 0, anchorWY := 0 }
 #guard centreScore stop5 300 threePlaces true > -3
 -- The tables agree with the closed form.
-private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩
+private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩
 #guard Float.abs (scorePrepared (prepare pTest 400) .train stT - score pTest .train stT) < 1e-6
 #guard Float.abs (scorePrepared (prepare pTest 400) .stationary stT - score pTest .stationary stT) < 1e-6
 

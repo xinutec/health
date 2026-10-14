@@ -129,6 +129,12 @@ structure ModelContext where
   /-- Per minute, the net speed between the nearest fixes either side of it
       and the squared GPS noise on that span (`windowSpeedTable`). -/
   windowSpeed : Array (Option (Float × Float)) := #[]
+  /-- Per state, the prefix sums over minute pairs `(t, t+1)` of the pair's
+      speed score under the state (`speedPairs`, `pairTables`): entry `i` sums
+      the pairs before `i`. -/
+  pairPref : Array (Array Float) := #[]
+  /-- Per minute `t`, the score of pair `(t, t+1)` across a boundary. -/
+  pairBoundary : Array Float := #[]
   /-- Per place, its count of visits (stay beginnings), when the request
       carries them. -/
   visitCounts : Std.HashMap Int Float := {}
@@ -279,6 +285,60 @@ def windowSpeedTable (obs : Array ObsRow) : Array (Option (Float × Float)) :=
     | none, some b, some g => span g b MIN_ONE
     | _, _, _ => none
 
+/-- A span's speed `v` (km/h, squared GPS noise `noise`) under a mode's prior:
+    the moving Gaussian, the fixes' accuracy in quadrature with its spread
+    (`accuracyNoise`), and beside it a standstill component for a vehicle that
+    stops (`ModePrior.stopShare`). -/
+def spanScore (p : SegmentEmission.Params) (prior : Emissions.ModePrior) (v noise : Float) : Float :=
+  let extra := if p.accuracyNoise then noise else SEG_ZERO
+  let sd := Float.sqrt (prior.speedStd * prior.speedStd + extra)
+  let moving := FloatScore.logNormalPdf v prior.speedMean sd
+  if prior.stopShare > SEG_ZERO then
+    let stopped := FloatScore.logNormalPdf v SEG_ZERO
+      (Float.sqrt (prior.stopStd * prior.stopStd + extra))
+    let mx := max moving stopped
+    mx + Float.log (prior.stopShare * Float.exp (stopped - mx)
+      + (MIN_ONE - prior.stopShare) * Float.exp (moving - mx))
+  else moving
+
+/-- The one-minute span between minute `t` and `t + 1`, both lit:
+    `(km/h, (km/h)² noise)`. -/
+def pairSpan (obs : Array ObsRow) (t : Nat) : Option (Float × Float) := do
+  let a ← (obs[t]?).bind (·.gps)
+  let b ← (obs[t + 1]?).bind (·.gps)
+  let perS := KMH_PER_MS / (MIN_ONE * SECONDS_PER_MINUTE_F)
+  let ea := a.accuracyM.getD ACCURACY_DEFAULT_M
+  let eb := b.accuracyM.getD ACCURACY_DEFAULT_M
+  pure (FloatScore.haversineMeters a.lat a.lon b.lat b.lon * perS,
+    (ea * ea + eb * eb) * perS * perS)
+
+/-- `speedPairs`' tables: per state the prefix sums of each pair's score under
+    it (with the mode's outlier share), and per minute the score of its pair
+    across a boundary: exponential at `pairBoundaryMeanKmh`, else uniform over
+    0–`uMaxKmh`. Both weighted as the base
+    emission; empty without the flag. -/
+def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
+  match c.segEm with
+  | some q =>
+    if !q.p.speedPairs then (#[], #[]) else
+    let spans := (Array.range c.obs.size).map (pairSpan c.obs)
+    let pref := c.states.map fun st =>
+      let prior := Emissions.priorOf c.priors st
+      spans.foldl (fun acc sp =>
+        let x := match sp with
+          | some (v, noise) =>
+            let g := spanScore q.p prior v noise
+            c.weights.base * (g + SegmentEmission.speedRobust q.p st.mode g)
+          | none => SEG_ZERO
+        acc.push (acc.back! + x)) #[SEG_ZERO]
+    let bound := spans.map fun sp =>
+      match sp, q.p.pairBoundaryMeanKmh with
+      | some (v, _), some m => c.weights.base * (SEG_ZERO - Float.log m - v / m)
+      | some _, none => c.weights.base * (SEG_ZERO - Float.log q.p.uMaxKmh)
+      | none, _ => SEG_ZERO
+    (pref, bound)
+  | none => (#[], #[])
+
 /-- With `SegmentEmission` the awake heart rate is scored per segment
     (`segEmAt`) and fix presence by its chain: the minute's own terms for the
     two come out and the chain's goes in. `0` without it (the shipped model). -/
@@ -314,23 +374,11 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
         let windowed :=
           if !q.p.speedWindow then own
           else match (c.windowSpeed[t]?).getD none with
-            | some (v, noise) =>
-              -- The fixes' own accuracy, in quadrature with the mode's spread
-              -- (`accuracyNoise`).
-              let extra := if q.p.accuracyNoise then noise else SEG_ZERO
-              let sd := Float.sqrt (prior.speedStd * prior.speedStd + extra)
-              let moving := FloatScore.logNormalPdf v prior.speedMean sd
-              -- A vehicle stops: a standstill component beside the moving one
-              -- (`ModePrior.stopShare`), each with the span's GPS noise.
-              if prior.stopShare > SEG_ZERO then
-                let stopped := FloatScore.logNormalPdf v SEG_ZERO
-                  (Float.sqrt (prior.stopStd * prior.stopStd + extra))
-                let mx := max moving stopped
-                mx + Float.log (prior.stopShare * Float.exp (stopped - mx)
-                  + (MIN_ONE - prior.stopShare) * Float.exp (moving - mx))
-              else moving
+            | some (v, noise) => spanScore q.p prior v noise
             | none => own
-        c.weights.base * (windowed - own + SegmentEmission.speedRobust q.p st.mode windowed)
+        -- With `speedPairs` the speed is the segment's (`pairTables`).
+        if q.p.speedPairs then c.weights.base * (SEG_ZERO - own)
+        else c.weights.base * (windowed - own + SegmentEmission.speedRobust q.p st.mode windowed)
       | none => SEG_ZERO
     let chain := match SegmentEmission.obsMinute q.p st.mode (SegmentEmission.obsClass o)
         (if t == 0 then none else (c.obs[t - 1]?).map SegmentEmission.obsClass) with
@@ -506,6 +554,11 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
              SegmentEmission.centreScore st h c.placePrior q.p.centreAnchor
            else SEG_ZERO
          | none => SEG_ZERO)
+      + (if !q.p.speedPairs || st.hi == 0 then SEG_ZERO else
+           -- The pairs inside `[lo, hi)`, and the one across its end.
+           let pr := (c.pairPref[s]?).getD #[]
+           (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
+             + (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO)
       + (if q.p.disp.any (·.1 == x.mode) || q.p.dispPosterior then
            (if q.p.dispPosterior then SegmentEmission.dispPosteriorScore q.p x.mode d w
             else if q.p.dispSegment then SegmentEmission.dispScore q.p x.mode d w else SEG_ZERO)

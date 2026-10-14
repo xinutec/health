@@ -104,6 +104,8 @@ fn decoder_mode(m: &str) -> Option<&'static str> {
 struct Minute {
     lit: bool,
     window_kmh: Option<f64>,
+    /// The one-minute span to the next minute (`speedPairs`).
+    pair_kmh: Option<f64>,
     /// Awake heart rate; an in-bed minute's belongs to its night (`Day::nights`).
     hr: Option<f64>,
     cls: usize,
@@ -130,6 +132,8 @@ struct Day {
     nights: Vec<Vec<Option<f64>>>,
     /// Each lit stay's distance to the nearest listed place, metres.
     stay_dist: Vec<f64>,
+    /// The one-minute span across each boundary between adjacent runs, km/h.
+    boundary: Vec<f64>,
 }
 
 fn main() -> Result<()> {
@@ -311,6 +315,7 @@ fn read_day(name: &str, date: &str, md: &str, form: &Value) -> Result<Day> {
     let minute = |r: &Value| Minute {
         lit: !r["lat"].is_null(),
         window_kmh: r["windowKmh"].as_f64(),
+        pair_kmh: r["pairKmh"].as_f64(),
         hr: if r["inBed"].as_bool() == Some(true) {
             None
         } else {
@@ -340,6 +345,9 @@ fn read_day(name: &str, date: &str, md: &str, form: &Value) -> Result<Day> {
         });
         if i > 0 && spans[i - 1].0 != mode && (s - spans[i - 1].2).abs() <= 60 {
             day.changes.push((spans[i - 1].0, mode));
+            if let Some(v) = by_ts.get(&(s - 60)).and_then(|r| r["pairKmh"].as_f64()) {
+                day.boundary.push(v);
+            }
         }
     }
     for r in rows.iter().flatten() {
@@ -576,6 +584,22 @@ fn write_fit(
     // Segment emission.
     let mut se = form.files["segment-emission"].clone();
     let u_max = se["uMaxKmh"].as_f64().unwrap_or(300.0);
+    // With `speedPairs`, the span across a boundary: exponential, its mean
+    // the narrated boundaries'.
+    if se["speedPairs"].as_bool() == Some(true) {
+        let b: Vec<f64> = used
+            .iter()
+            .flat_map(|d| d.boundary.iter().copied())
+            .collect();
+        if b.len() >= MIN_N {
+            let mean = b.iter().sum::<f64>() / b.len() as f64;
+            se["pairBoundaryMeanKmh"] = json!(round4(mean));
+            log.push(format!(
+                "boundary pairs: {} spans, mean {mean:.2} km/h",
+                b.len()
+            ));
+        }
+    }
     let awake = |rs: &[&Run]| -> Vec<Vec<Option<f64>>> {
         rs.iter()
             .map(|r| r.inner.iter().map(|m| m.hr).collect())
@@ -714,13 +738,16 @@ fn write_fit(
 
     // Speed priors: the windowed speed per mode; a vehicle's as stopped-or-moving.
     let mut sp = form.files["speed-priors"].clone();
+    // With `speedPairs` the decoder scores the span from each minute to the
+    // next inside a segment; an inner minute's next is inside the row too.
+    let pairs = form.files["segment-emission"]["speedPairs"].as_bool() == Some(true);
     let speeds_where = |rs: &[&Run], keep: &dyn Fn(&Minute) -> bool| -> Vec<f64> {
         rs.iter()
             .flat_map(|r| {
                 r.inner
                     .iter()
                     .filter(|m| keep(m))
-                    .filter_map(|m| m.window_kmh)
+                    .filter_map(|m| if pairs { m.pair_kmh } else { m.window_kmh })
             })
             .collect()
     };
