@@ -420,7 +420,17 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    gate passes, no journey and no graded stay name moves on any narrated day.
    The served day takes only stay places from the decoder (`hsmmOverride`),
    and those agree. So the decoder's improvements reach him at the flip, and
-   their re-decode waits for it. Step 2 therefore waits on the chain's
+   their re-decode waits for it.
+   **A change of trains, as the narratives write it.** His rows write an
+   in-station change as a stay at the station (06-29, 07-01: "stationary @
+   Baker Street"); the five derived Baker Street changes now do too. Two
+   head-side readings measured and kept out: a walk of at most a journey's
+   pause between two train legs drawn as the stay (stays gap 11 → 8 named
+   right, but 06-29, where his rows walk to the platform and then stay, loses
+   its journey: 141 against the served 142); and a ride's standing start or
+   end at its station split off as the stay (the chain's wait, measured with
+   the station lookup), which breaks journeys wherever the wait outlasts the
+   pause (134). Step 2 therefore waits on the chain's
    underground ends (#238) and on names for the legs it calls `unknown_rail`.
 3. **Each mode's longest segment.** Only stays need the whole-day cap; the
    trellis's single `maxD` makes every mode pay for it (a heavy day decodes in
