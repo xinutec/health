@@ -474,6 +474,63 @@ fn hr_effect(groups: &[Vec<Option<f64>>]) -> Option<(f64, f64, f64, f64)> {
     Some((mu, (between - sampling).max(1.0).sqrt(), s2.sqrt(), rho))
 }
 
+/// EM steps for the outlier fits.
+const EM_STEPS: usize = 100;
+
+fn normal_pdf(x: f64, mu: f64, sd: f64) -> f64 {
+    let z = (x - mu) / sd;
+    (-0.5 * z * z).exp() / (sd * (2.0 * std::f64::consts::PI).sqrt())
+}
+
+/// The outlier share `ε` of `xs` against the density `f`, uniform over
+/// 0–`u_max` beside it, by EM. Returns `(ε, responsibilities)`.
+fn outlier_share(xs: &[f64], u_max: f64, f: &dyn Fn(f64) -> f64) -> (f64, Vec<f64>) {
+    let mut eps = 0.01;
+    let mut r = vec![0.0; xs.len()];
+    for _ in 0..EM_STEPS {
+        for (ri, &x) in r.iter_mut().zip(xs) {
+            let o = eps / u_max;
+            *ri = o / (o + (1.0 - eps) * f(x));
+        }
+        eps = (r.iter().sum::<f64>() / xs.len() as f64).clamp(1e-6, 0.5);
+    }
+    (eps, r)
+}
+
+/// A Gaussian with an outlier share uniform over 0–`u_max`, by EM: `(μ, σ, ε)`.
+fn robust_gauss(xs: &[f64], u_max: f64, sd_floor: f64) -> (f64, f64, f64) {
+    let (mut mu, mut sd) = mean_std(xs);
+    sd = sd.max(sd_floor);
+    let mut eps = 0.01;
+    for _ in 0..EM_STEPS {
+        let (e, r) = outlier_share(xs, u_max, &|x| normal_pdf(x, mu, sd));
+        eps = e;
+        let w: f64 = r.iter().map(|ri| 1.0 - ri).sum();
+        mu = xs.iter().zip(&r).map(|(x, ri)| (1.0 - ri) * x).sum::<f64>() / w;
+        let var = xs
+            .iter()
+            .zip(&r)
+            .map(|(x, ri)| (1.0 - ri) * (x - mu) * (x - mu))
+            .sum::<f64>()
+            / w;
+        sd = var.sqrt().max(sd_floor);
+    }
+    (mu, sd, eps)
+}
+
+/// An exponential with an outlier share uniform over 0–`u_max`, by EM: `(mean, ε)`.
+fn robust_exp(xs: &[f64], u_max: f64) -> (f64, f64) {
+    let mut m = xs.iter().sum::<f64>() / xs.len() as f64;
+    let mut eps = 0.01;
+    for _ in 0..EM_STEPS {
+        let (e, r) = outlier_share(xs, u_max, &|x| (-x / m).exp() / m);
+        eps = e;
+        let w: f64 = r.iter().map(|ri| 1.0 - ri).sum();
+        m = xs.iter().zip(&r).map(|(x, ri)| (1.0 - ri) * x).sum::<f64>() / w;
+    }
+    (m, eps)
+}
+
 /// A vehicle's windowed speeds split at `cut`: the share under it, their
 /// spread about a standstill, and the moving rest's mean and spread.
 /// Returns `(π, s0, μ, σ)`.
@@ -592,11 +649,13 @@ fn write_fit(
             .flat_map(|d| d.boundary.iter().copied())
             .collect();
         if b.len() >= MIN_N {
-            let mean = b.iter().sum::<f64>() / b.len() as f64;
+            let (mean, eps) = robust_exp(&b, u_max);
             se["pairBoundaryMeanKmh"] = json!(round4(mean));
+            se["pairBoundaryEps"] = json!(round4(eps));
             log.push(format!(
-                "boundary pairs: {} spans, mean {mean:.2} km/h",
-                b.len()
+                "boundary pairs: {} spans, mean {mean:.2} km/h, outliers {:.2}%",
+                b.len(),
+                100.0 * eps
             ));
         }
     }
@@ -755,11 +814,21 @@ fn write_fit(
     for m in ["stationary", "walking"] {
         let xs = speeds(&of(m));
         if xs.len() >= MIN_N && sp["modePriors"][m].is_array() {
-            let (mu, sd) = mean_std(&xs);
+            // On pairs, a fix that jumped is an outlier share, not spread.
+            let (mu, sd, eps) = if pairs {
+                robust_gauss(&xs, u_max, 1.0)
+            } else {
+                let (mu, sd) = mean_std(&xs);
+                (mu, sd.max(1.0), 0.0)
+            };
             sp["modePriors"][m][1] = json!(round4(mu));
-            sp["modePriors"][m][2] = json!(round4(sd.max(1.0)));
+            sp["modePriors"][m][2] = json!(round4(sd));
+            if pairs {
+                se["speedEps"][m] = json!(round4(eps));
+            }
             log.push(format!(
-                "speed {m}: {mu:.2} ± {sd:.2} km/h ({} min)",
+                "speed {m}: {mu:.2} ± {sd:.2} km/h, outliers {:.2}% ({} min)",
+                100.0 * eps,
                 xs.len()
             ));
         }
@@ -788,6 +857,12 @@ fn write_fit(
             continue;
         }
         let (pi, sstop, mu, sd) = stop_split(&xs, stop_cut);
+        if pairs && key != "mainline" {
+            let f = |x: f64| (1.0 - pi) * normal_pdf(x, mu, sd) + pi * normal_pdf(x, 0.0, sstop);
+            let (eps, _) = outlier_share(&xs, u_max, &f);
+            se["speedEps"][key] = json!(round4(eps));
+            log.push(format!("speed {key}: outliers {:.2}%", 100.0 * eps));
+        }
         if key == "mainline" {
             sp["mainlineSpeed"] = json!([round4(mu), round4(sd)]);
         } else {

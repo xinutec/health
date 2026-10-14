@@ -333,7 +333,9 @@ def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
         acc.push (acc.back! + x)) #[SEG_ZERO]
     let bound := spans.map fun sp =>
       match sp, q.p.pairBoundaryMeanKmh with
-      | some (v, _), some m => c.weights.base * (SEG_ZERO - Float.log m - v / m)
+      | some (v, _), some m =>
+        let e := q.p.pairBoundaryEps.getD SEG_ZERO
+        c.weights.base * Float.log ((MIN_ONE - e) * Float.exp (SEG_ZERO - v / m) / m + e / q.p.uMaxKmh)
       | some _, none => c.weights.base * (SEG_ZERO - Float.log q.p.uMaxKmh)
       | none, _ => SEG_ZERO
     (pref, bound)

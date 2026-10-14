@@ -967,6 +967,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let speedWindow := ((f.getObjVal? "speedWindow") >>= (·.getBool?)).toOption.getD false
     let speedPairs := ((f.getObjVal? "speedPairs") >>= (·.getBool?)).toOption.getD false
     let pairBoundaryMeanKmh := (f.getObjVal? "pairBoundaryMeanKmh").toOption >>= num
+    let pairBoundaryEps := (f.getObjVal? "pairBoundaryEps").toOption >>= num
     let lineRankOnly := ((f.getObjVal? "lineRankOnly") >>= (·.getBool?)).toOption.getD false
     let dispSegment := ((f.getObjVal? "dispSegment") >>= (·.getBool?)).toOption.getD true
     let gapPairs := ((f.getObjVal? "gapPairs") >>= (·.getBool?)).toOption.getD false
@@ -984,7 +985,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         >>= (·.getArr?)).toOption
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, speedPairs, pairBoundaryMeanKmh,
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, speedPairs, pairBoundaryMeanKmh, pairBoundaryEps,
            obsChain, lineRankOnly,
            dispSegment, gapPairs, dispPosterior, accuracyNoise, asleep, unlistedCentre, centreAnchor }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model

@@ -129,6 +129,7 @@ place entry normalised over places per hour.
 | s43pairs: s40c with speed on the minute pairs inside a segment (`speedPairs`), the boundary pair uniform, priors as s40c | 125 | 303 | 61 | 49 | 4 | 140 |
 | s43fit: s43pairs with the speed priors refitted on the pairs, held out | 125 | 303 | 61 | 48 | 4 | 141 |
 | s43b: s43fit with the boundary pair exponential at the narrated boundaries' mean (7.3 km/h) | 124 | 304 | 61 | 53 | 7 | 141 |
+| s43c: s43b with an outlier share fitted for every mode's pairs and the boundary pair (EM) | 125 | 305 | 61 | 54 | 6 | 142 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -635,6 +636,16 @@ head (`FOLD_DECODER_HEAD`, the bus labellers run) it reaches the served
 day's 142, from 141. Lost: 07-01's second journey and 07-02 (a `cycling`
 minute inside a train journey); 09-06's 13:23 stop (six minutes at 1 km/h
 with 12–26 steps a minute) is read as part of the walk and loses by 1.4.
+07-02 was a fix that jumped (187 km/h): no mode's pairs had an outlier
+share, so the jump cost about −650 inside any segment and −28 as a boundary
+pair, and a jump drew a boundary. s43c fits each mode's Gaussian and its
+outlier share together by EM (uniform over 0–300 km/h beside it; a vehicle's
+share beside its fitted stop/move mixture), and the boundary pair's
+exponential with its own share (mean 2.2 km/h, 13%). Every frozen floor
+clears, the referee is 142 against s40c's 140, and under the decoder head
+143 against the served day's 142. Against s40c the scoreboard loses two
+walks behind a short stop with steps (09-06 13:23 by 1.4 nats, 10-08 14:51
+by 0.9), which the served day misses too.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,

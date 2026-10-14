@@ -101,6 +101,8 @@ structure Params where
   /-- With `speedPairs`, the pair across a boundary as an exponential of
       this mean (km/h, fitted on the narrated boundaries) instead of uniform. -/
   pairBoundaryMeanKmh : Option Float := none
+  /-- The boundary pair's outlier share, uniform over 0–`uMaxKmh`. -/
+  pairBoundaryEps : Option Float := none
   /-- A minute as one of three classes — no fix, a fix within `RAIL_NEAR_M` of a
       railway, a fix elsewhere — scored given the minute before by a 3×3 chain
       per mode (rows: the class before). It carries fix presence and rail
