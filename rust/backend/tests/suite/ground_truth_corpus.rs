@@ -150,25 +150,26 @@ const POST_TS: &[&str] = &[
 /// stay — rows unchanged, enforceable +1 (the `likely correct` row enforced
 /// nothing).
 ///
-/// 05-18, 06-23 and 06-24's outbound Metropolitan rides changed trains at
-/// Baker Street (three minutes of steps there; his answer): each ride row
-/// becomes two rides and a walk — rows +6, enforceable +6, legs +6 (three
-/// trains, three walks), journeys unchanged.
+/// 05-18, 06-23, 06-24 and 07-02's outbound rides change trains at Baker
+/// Street by the signal (steps, the fixes' dwell there, the ride against the
+/// return's; `{derived}`, he thinks so but does not remember clearly): each
+/// ride row becomes two rides and a walk — rows +8, enforceable +8, legs +8
+/// (four trains, four walks), journeys unchanged.
 const TS_FILES: usize = 31;
-const TS_ROWS: usize = 409;
-const TS_ENFORCEABLE: usize = 384;
+const TS_ROWS: usize = 411;
+const TS_ENFORCEABLE: usize = 386;
 const TS_UNPARSEABLE: usize = 4;
 /// Narratives whose `Times:` is not London: 04-29 (Amsterdam), 06-24 (UTC), and
 /// 10-02 to 10-07 (Madrid).
 const TS_DECLARED_TZ: usize = 8;
 /// `groundTruthJourneys` over the same corpus, same source, same day.
 const TS_JOURNEYS: usize = 93;
-const TS_LEGS: usize = 239;
+const TS_LEGS: usize = 241;
 /// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. The leg total could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
 /// to `stationary`, changes what a leg IS without changing how many there are.
 const TS_LEG_MODES: [(&str, usize); 4] =
-    [("bus", 3), ("driving", 6), ("train", 79), ("walking", 151)];
+    [("bus", 3), ("driving", 6), ("train", 80), ("walking", 152)];
 
 #[test]
 fn the_narrative_corpus_matches_its_blessed_shape() {

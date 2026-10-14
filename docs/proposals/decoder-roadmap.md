@@ -356,10 +356,14 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    own chain (s43c) 66 and 72 — authority per side would lose stations. Its
    misses are legs it names nothing on (`unknown_rail`: the mainline and
    foreign trains) and wrong underground ends (Farringdon for King's Cross,
-   Great Portland Street for Euston Square). Its three "Baker Street for
-   Euston Square" alights were right: he changed trains there on 05-18,
-   06-23 and 06-24 (three minutes of steps; his answer), where the
-   narratives had one through ride, and the served day still serves one. The cascade's station passes run over the decoder's segments
+   Great Portland Street for Euston Square). Its "Baker Street" ends on
+   05-18, 06-23, 06-24 and 07-02 match the signal: steps at Baker Street,
+   the fixes dwelling there one to six minutes, then Great Portland Street
+   and Euston Square, and outbound rides 6–12 minutes longer than the
+   returns. The narratives had through rides (on 06-23 his own account on
+   the day); asked again he thinks he changed but does not remember clearly,
+   so the change rows are `{derived}`. The served day still serves through
+   rides. The cascade's station passes run over the decoder's segments
    (`railRuns` to `alightAtLastFix` added to `DECODER_TAIL`, reverted) name
    70 and 76: they fill the unnamed legs but merge the decoder's correct
    changes of trains (05-20 and 07-16 at Baker Street, 06-09 and 06-12 at
