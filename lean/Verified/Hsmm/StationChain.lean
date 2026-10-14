@@ -761,6 +761,9 @@ structure SideEval where
       same as `some 0`, and the plausibility gate depends on the difference. -/
   trajPen : Option Float
   servedPen : Float
+  /-- Where the ride starts (board) or ends (alight) for this station: the
+      leg's boundary, or past a wait there (`waitBound`). -/
+  effTs : Int := 0
   deriving Inhabited, Repr
 
 structure PairCandidate where
@@ -823,16 +826,63 @@ private def footprintSssp (g : ChainGraph) (line : String) (node : ChainNode) :
     Std.HashMap String Float :=
   ssspMap (lineSssp g line ((stationFootprintNodes g node).toList.map (fun id => (id, 0.0))).toArray)
 
+/-- No served-station penalty. -/
+private def SERVED_FREE : Float := 0
+
+/-- A wait at `station` at the leg's edge: the in-leg fixes from the start
+    (board) or to the end (alight) that all sit within `STATION_PASS_M` of it.
+    The ride leaves (reaches) the station at the run's last (first) fix, not at
+    the leg's boundary, which may sit in the dark before (after) it (06-12: a
+    Metropolitan leg starting dark at 14:59, the fixes standing at King's Cross
+    15:01–15:03). Only DISTINCT positions count: a fix the phone re-reports
+    unchanged is its last position held underground, not him standing there,
+    so a run of one position is no wait. `none` without such a run. -/
+def waitBound (fixes : Array InLegFix) (station : ChainNode) (side : Side) : Option Int :=
+  let isNear := fun (f : InLegFix) =>
+    haversineMeters f.lat f.lon station.lat station.lon ≤ STATION_PASS_M
+  -- The run in time order, then its fixes that moved from the one before.
+  let run := match side with
+    | .board => fixes.toList.takeWhile isNear
+    | .alight => (fixes.toList.reverse.takeWhile isNear).reverse
+  let distinct := (run.zip (none :: run.map some)).filterMap fun (f, prev) =>
+    match prev with
+    | some p => if p.lat == f.lat && p.lon == f.lon then none else some f
+    | none => some f
+  if distinct.length < 2 then none
+  else match side with
+    | .board => distinct.getLast?.map (·.ts)
+    | .alight => distinct.head?.map (·.ts)
+
+-- A station, and fixes 50 m off it (0.00045° of latitude) and a kilometre off.
+private def waitStn : ChainNode := { id := "w", lat := 51.53, lon := -0.12, stationName := some "W", edgeIds := [] }
+private def atW (t : Int) (dLat : Float) : InLegFix := ⟨t, 51.53045 + dLat, -0.12⟩
+private def awayW (t : Int) : InLegFix := ⟨t, 51.54, -0.12⟩
+-- Standing at the station, then the ride: it leaves at the last fix there.
+#guard waitBound #[atW 100 0, atW 130 0.0001, awayW 200] waitStn .board == some 130
+-- The mirror at the end.
+#guard waitBound #[awayW 100, atW 160 0, atW 190 0.0001] waitStn .alight == some 160
+-- One position re-reported (held underground) is no wait.
+#guard waitBound #[atW 100 0, atW 130 0, atW 160 0, awayW 200] waitStn .board == none
+-- The leg seen elsewhere first: no wait at its start.
+#guard waitBound #[awayW 100, atW 130 0, atW 160 0.0001] waitStn .board == none
+
 /-- Score one side of one leg. The four channels stay separate; see `SideEval`. -/
 private def evalSide (g : ChainGraph) (line : String) (served : Option (Std.HashSet String))
     (inLegFixes : Array InLegFix) (trackFixes : Array TrackFix) (legStartTs legEndTs : Int)
     (c : SideCandidate) (side : Side) : SideEval :=
+  -- Past a wait at the station, the ride's own start (end), and the track
+  -- fixes without the wait's.
+  let wait := waitBound inLegFixes c.node side
+  let startTs := if side == .board then wait.getD legStartTs else legStartTs
+  let endTs := if side == .alight then wait.getD legEndTs else legEndTs
+  let ride := trackFixes.filter fun tf => decide (tf.ts ≥ startTs) && decide (tf.ts ≤ endTs)
   { node := c.node
     anchorPen := c.anchorPenalty
-    dwellPen := terminalDwellPenalty inLegFixes c.node legStartTs legEndTs side
+    dwellPen := terminalDwellPenalty inLegFixes c.node startTs endTs side
+    effTs := if side == .board then startTs else endTs
     trajPen :=
-      if trackFixes.isEmpty then none
-      else trajectoryPenalty trackFixes (footprintSssp g line c.node) legStartTs legEndTs side
+      if ride.isEmpty then none
+      else trajectoryPenalty ride (footprintSssp g line c.node) startTs endTs side
     -- Served by NAME (`stationNameServed`, which also sees through the
     -- National Rail "London " prefix, #238). ⚠ NOT by proximity to a served
     -- node: measured 2026-10-06, counting a station served because a served
@@ -840,8 +890,8 @@ private def evalSide (g : ChainGraph) (line : String) (served : Option (Std.Hash
     -- 15 to 5 — the served term is what separates co-located stations of
     -- different names, and ties there fall silent.
     servedPen := match served, c.node.stationName with
-      | some sv, some nm => if stationNameServed sv nm then 0 else NOT_SERVED_PENALTY
-      | _, _ => 0 }
+      | some sv, some nm => if stationNameServed sv nm then SERVED_FREE else NOT_SERVED_PENALTY
+      | _, _ => SERVED_FREE }
 
 /-- Build one resolvable leg: its candidates on both sides, and the cross product
     of pairs that survive the same-station and minimum-path filters. -/
@@ -851,7 +901,6 @@ private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (S
     (prev next : Option ChainSeg := none) : ChainLeg :=
   let bAnchor := (boardAnchorAt obs firstIdx seg.startTs).map fun (a, ts) => a.pacedBy ts prev
   let aAnchor := (alightAnchorAt obs lastIdx seg.endTs).map fun (a, ts) => a.pacedBy ts next
-  let observedMin := mins seg.endTs seg.startTs
   -- A boundary is OBSERVED when a fresh fix sits at it, or when the segment
   -- beside it carries its own evidence — a walk (steps, speed) or a stay. Only
   -- a boundary against a ride, an unknown stretch or nothing at all is
@@ -898,7 +947,9 @@ private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (S
             let calls := match b.node.stationName, a.node.stationName with
               | some bn, some an => callsBetween bn an
               | _, _ => none
-            let durPen := durationPenalty observedMin pathM boundaryUnobserved (calls.map (·.size))
+            -- The ride between the two stations' own boundaries.
+            let durPen := durationPenalty (mins a.effTs b.effTs) pathM boundaryUnobserved
+              (calls.map (·.size))
             let passPen := (calls.map (passPenalty moving)).getD 0
             acc.push
             { board := b, alight := a, line, durPen, passPen

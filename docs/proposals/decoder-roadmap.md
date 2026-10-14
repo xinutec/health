@@ -368,7 +368,16 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    70 and 76: they fill the unnamed legs but merge the decoder's correct
    changes of trains (05-20 and 07-16 at Baker Street, 06-09 and 06-12 at
    King's Cross). The decoder's stations where it names one and the
-   cascade's elsewhere: 80 and 84. Step 2 therefore waits on the chain's
+   cascade's elsewhere: 80 and 84. Then the chain learned the wait at a
+   station (`StationChain.waitBound`): where the in-leg fixes stand at a
+   candidate station from the leg's start (to its end) — at least two
+   distinct positions, so a fix held underground is no wait — the ride
+   leaves (reaches) it at the wait's last (first) fix, and the dwell,
+   trajectory and duration terms read from there. 06-12's Metropolitan leg
+   started dark at 14:59 with the fixes standing at King's Cross until
+   15:03, and the chain had boarded it at Farringdon. The decoder's own
+   stations: 72 and 74 of 90; scoreboard stations 59 → 67 held out, lines
+   +1, nothing else moves. Step 2 therefore waits on the chain's
    underground ends (#238) and on names for the legs it calls `unknown_rail`.
 3. **Each mode's longest segment.** Only stays need the whole-day cap; the
    trellis's single `maxD` makes every mode pay for it (a heavy day decodes in
