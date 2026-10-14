@@ -897,6 +897,42 @@ private def episodeJson (e : Verified.Geo.EpisodeGeometry.Episode) : Json :=
     ("points", Json.arr (e.points.map fun p =>
       Json.mkObj [("lat", fBits p.lat), ("lon", fBits p.lon), ("ts", jOptF p.ts)]))]
 
+/-- The fold's naming tail: the passes that label segments others drew —
+track geometry, bus, road and walk matching, zone, biometrics, the decoder's
+places. `decoderHead` runs these alone. -/
+def DECODER_TAIL : Array String :=
+  #["railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
+    "biomEnrich", "hsmmOverride", "railSnapFinal", "vehicleIdentity"]
+
+def MS_TO_KMH : Float := 3.6
+def ZERO_F : Float := 0
+
+/-- `Seg`'s defaults, built once: its Float defaults are literals. -/
+def HEAD_SEG : Seg := { startTs := 0, endTs := 0, mode := "" }
+
+/-- The decoder's segments as the fold's input, measured from the fixes inside
+each: mean speed over the path, the fixes' centroid and count. A train keeps
+its line as `wayName`. ⚠ A measurement seam (`FOLD_DECODER_HEAD`), never served. -/
+def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
+    (pts : Array Verified.SpeedFix) : Array Seg :=
+  hmm.map fun h =>
+    let w := pts.filter fun p => decide (p.ts ≥ h.startTs) && decide (p.ts ≤ h.endTs)
+    let path := (w.toList.zip w.toList.tail).foldl (fun s (a, b) =>
+      s + Verified.Hsmm.FloatScore.haversineMeters a.lat a.lon b.lat b.lon) ZERO_F
+    let dur := Float.ofInt (h.endTs - h.startTs)
+    let n := Verified.FloatConst.natToFloat w.size
+    let centre := if w.isEmpty then (none, none)
+      else (some (w.foldl (· + ·.lat) ZERO_F / n), some (w.foldl (· + ·.lon) ZERO_F / n))
+    { HEAD_SEG with
+      startTs := h.startTs
+      endTs := h.endTs
+      mode := h.mode
+      avgSpeed := if dur > ZERO_F then path / dur * MS_TO_KMH else ZERO_F
+      pointCount := w.size
+      wayName := if h.mode == "train" then h.lineName else none
+      centroidLat := centre.1
+      centroidLon := centre.2 }
+
 /-- The passes whose output differs from what they were handed — computed from
 the trace rather than declared, so it cannot drift from what ran. This is the
 witness question at real-day scale: `PassFold.unwitnessed` names the 11 passes
@@ -924,13 +960,18 @@ def dayResult (j : Json) : Json :=
     -- carries the OSM enrichment stage that would otherwise split the chain in
     -- two and force the corrections to start from another arm's output.
     let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
+    -- ⚠ `decoderHead` (`FOLD_DECODER_HEAD`): the decoder's segments head the
+    -- fold, the segmentation stages and passes stand down, and only
+    -- `DECODER_TAIL` runs. The flip, measured; never served or blessed.
+    let decoderHead ← optBool envJson "decoderHead" false
+    let headSegs := decoderSegs env.hmmDecode env.points
     -- The watch's last sync: the step stream is complete only up to it.
     let stepsThrough ← optInt envJson "stepsThrough"
     let splitCtx : Stays.SplitContext :=
       { hr := (env.hr.map fun h => ⟨h.ts, h.bpm⟩).toArray
         steps := env.steps.map fun s => ⟨s.ts, s.steps⟩
         stepsThrough }
-    let segsSplit := DayEntry.Host.timed "splitFold" fun _ =>
+    let segsSplit := if decoderHead then headSegs else DayEntry.Host.timed "splitFold" fun _ =>
       Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
     -- The OSM enrichment stage, chained on both sides so the two sub-chains
     -- meet here rather than through another arm's output (#430 B2).
@@ -965,7 +1006,8 @@ def dayResult (j : Json) : Json :=
     -- `dbgTrace` so the ablation announces itself FROM LEAN: the Rust warning
     -- only proves the flag was written, not that it was read.
     let segsEnriched :=
-      if skipEnrich then dbgTrace "lean: skipEnrich — enrichment stage skipped" fun _ => segsSplit
+      if decoderHead then segsSplit
+      else if skipEnrich then dbgTrace "lean: skipEnrich — enrichment stage skipped" fun _ => segsSplit
       else DayEntry.Host.timed "enrichFold" fun _ => Verified.Geo.EnrichFold.enrichFold enrichReads
         { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
           steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
@@ -976,7 +1018,7 @@ def dayResult (j : Json) : Json :=
     -- pass before it, so a shell that re-imposed the sequence would put the
     -- thing under test outside the test. Their observations are the fold's own
     -- `steps` and `hr`, which is why only `modeStats` was added to the wire.
-    let segs := DayEntry.Host.timed "preFold" fun _ =>
+    let segs := if decoderHead then segsEnriched else DayEntry.Host.timed "preFold" fun _ =>
       Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsEnriched env.rawFixes
     -- ⚠ `passLimit` RUNS A PREFIX OF THE CASCADE, for #1071's per-pass memory
     -- attribution. Absent it runs them all, which is every caller but the
@@ -996,6 +1038,7 @@ def dayResult (j : Json) : Json :=
         dbgTrace s!"lean: passLimit {n} — running {min n.toNat allPasses.size} of {allPasses.size} passes"
           fun _ => allPasses.extract 0 n.toNat
       | none => allPasses
+    let chosen := if decoderHead then chosen.filter (DECODER_TAIL.contains ·.1) else chosen
     let chosen := chosen.map fun (n, f) => (n, fun s => DayEntry.Host.timed s!"pass.{n}" fun _ => f s)
     let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs
     -- The fold's output is the chain's input, which is the whole reason these

@@ -362,6 +362,19 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
 5. **The flip.** When the decoder reconstructs at least what the served day
    does, its segments are the served day; the cascade's journey passes retire
    one at a time (Phase 5), each with a version bump and a re-decode.
+   **Measured as a harness seam (`FOLD_DECODER_HEAD`):** the decoder's
+   segments head the day fold, the split, enrichment and correction stages
+   stand down, and only the naming tail runs (`DayEntry.DECODER_TAIL`: track
+   and road geometry, bus evidence and routes, zone, biometrics, the decoder's
+   places). On the s41c held-out decode: 141 narrated journeys against the
+   served day's 142, six the served day's alone and five the fold's. The
+   naming tail does label a decoder ride a bus (06-09). It misses 06-12 and
+   09-06 on the boarding boundary: the decoder starts the 06-12 ride 1.7
+   minutes early and reads the 09-06 stop wait as two minutes of walking, so
+   neither labeller finds the standstill at the stop it anchors on
+   (`detectBoardingWait`). The bus misses are therefore the decoder's
+   boundary at a bus boarding — the train's platform-wait case
+   (`boardingWait`) on the road — not a missing label.
 
 ## Phase 4 — the cutover
 

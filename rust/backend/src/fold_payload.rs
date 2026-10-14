@@ -1042,6 +1042,31 @@ pub fn encode_geocode(v: &Value) -> Value {
 /// object by name, but the byte-diff against the TypeScript is what makes this
 /// checkable at all, and `preserve_order` means the order written here is the
 /// order emitted. It follows `buildDayRequest`'s.
+/// The day's segments in the decoder dump `FOLD_DECODER_HEAD` names, one
+/// `{name, segments}` line per fixture; `None` when the variable is unset or
+/// the dump has no line for the day.
+fn decoder_head_segments(inputs: &Map<String, Value>) -> Result<Option<Value>> {
+    let Ok(path) = std::env::var("FOLD_DECODER_HEAD") else {
+        return Ok(None);
+    };
+    let date = inputs
+        .get("identity")
+        .and_then(|v| v.get("date"))
+        .and_then(Value::as_str)
+        .context("FOLD_DECODER_HEAD: the inputs carry no identity.date")?;
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("FOLD_DECODER_HEAD: reading {path}"))?;
+    for line in text.lines() {
+        let row: Value =
+            serde_json::from_str(line).context("FOLD_DECODER_HEAD: a line is not JSON")?;
+        if row["name"].as_str().is_some_and(|n| n.starts_with(date)) {
+            return Ok(Some(row["segments"].clone()));
+        }
+    }
+    // A day the dump does not hold (no narrative to score) folds as served.
+    Ok(None)
+}
+
 pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     let c = cap.as_object().context("capture is not an object")?;
     let i = inputs.as_object().context("inputs is not an object")?;
@@ -1103,8 +1128,17 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     // optimisation must not be smuggled through it — it belongs one level up,
     // where it is visible at the call site and has its own test.
     let bus_reachable = reachable_bus_routes(i.get("busRouteCache"), obs.get("points"));
+    // ⚠ `FOLD_DECODER_HEAD` HEADS THE FOLD WITH THE DECODER: the day's segments
+    // from a decoder dump (the scoreboard's `DECODE_DUMP_OUT`) replace the stored
+    // decode, and Lean runs only the naming tail over them — the flip, measured.
+    // Never served or blessed.
+    let decoder_head = decoder_head_segments(i)?;
+    if decoder_head.is_some() {
+        eprintln!("⚠ FOLD_DECODER_HEAD — the decoder heads this fold; this day is an experiment");
+        env.insert("decoderHead".into(), Value::Bool(true));
+    }
     for (k, v) in encode_caches(
-        i.get("hsmmDecode"),
+        decoder_head.as_ref().or_else(|| i.get("hsmmDecode")),
         i.get("railRouteCache"),
         bus_reachable.as_ref().or_else(|| i.get("busRouteCache")),
         i.get("railStopsCache"),
