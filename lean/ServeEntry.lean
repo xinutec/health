@@ -966,6 +966,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       pure (m, ← num v)
     let speedWindow := ((f.getObjVal? "speedWindow") >>= (·.getBool?)).toOption.getD false
     let speedPairs := ((f.getObjVal? "speedPairs") >>= (·.getBool?)).toOption.getD false
+    let centreSigmaM := (f.getObjVal? "centreSigmaM").toOption >>= num
     let pairBoundaryMeanKmh := (f.getObjVal? "pairBoundaryMeanKmh").toOption >>= num
     let pairBoundaryEps := (f.getObjVal? "pairBoundaryEps").toOption >>= num
     let lineRankOnly := ((f.getObjVal? "lineRankOnly") >>= (·.getBool?)).toOption.getD false
@@ -985,7 +986,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         >>= (·.getArr?)).toOption
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, speedPairs, pairBoundaryMeanKmh, pairBoundaryEps,
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, speedPairs, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
            obsChain, lineRankOnly,
            dispSegment, gapPairs, dispPosterior, accuracyNoise, asleep, unlistedCentre, centreAnchor }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
@@ -1004,7 +1005,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let posRef := Verified.Hsmm.SegmentEmission.refOf obs
   let segPref := Verified.Hsmm.SegmentEmission.withPositions
     (Verified.Hsmm.SegmentEmission.prefixOf obs) obs posRef
-    Verified.Hsmm.Emissions.PLACE_RADIUS_M Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M
+    ((segEm.bind (·.centreSigmaM)).getD Verified.Hsmm.Emissions.PLACE_RADIUS_M)
+    Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M
   let placePrior := Verified.Hsmm.SegmentEmission.placesLocal posRef
     (places.toList.map fun (_, lat, lon, _, _) => (lat, lon))
   let windowSpeed := Verified.Hsmm.Assemble.windowSpeedTable obs

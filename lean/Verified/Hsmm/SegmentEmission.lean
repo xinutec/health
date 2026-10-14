@@ -98,6 +98,9 @@ structure Params where
       a minute's span belongs to is the segmentation's. Replaces the
       per-minute speed term. -/
   speedPairs : Bool := false
+  /-- The spread of a stay's fixes about its centre, metres, fitted on the
+      narrated stays; `none` keeps `PLACE_RADIUS_M`. -/
+  centreSigmaM : Option Float := none
   /-- With `speedPairs`, the pair across a boundary as an exponential of
       this mean (km/h, fitted on the narrated boundaries) instead of uniform. -/
   pairBoundaryMeanKmh : Option Float := none

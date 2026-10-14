@@ -133,6 +133,8 @@ place entry normalised over places per hour.
 | s44wait: s43c with the station chain's wait at the board (alight) station, on 2026-10-14's narratives (s43c there: 125 / 311 / 61 / 59 / 6, 142) | 125 | 311 | 62 | 67 | 6 | 142 |
 | s45cad: s44wait with the step cadence fitted for stays, walks and trains (zero share, mean, spread) | 125 | 303 | 59 | 49 | 5 | 137 |
 | s45stay: s44wait with the step cadence fitted for stays alone | 127 | 309 | 63 | 68 | 5 | 137 |
+| s46sig: s44wait with a stay's position spread fitted (σ 7 m; `centreSigmaM`, hand-set 150 m) | 126 | 315 | 63 | 70 | 6 | 142 |
+| s47: s46sig with s45stay's cadence | 128 | 310 | 63 | 68 | 5 | 138 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -660,6 +662,18 @@ and under the decoder head the stays gain on the served day (the gap 12 → 8
 named right), but short narrated walks dissolve into the stays either side:
 the referee and the headed day lose five journeys (142 → 137). A stay's steps
 and a short walk's are told apart by where they go, not by how many.
+
+**A stay's spread fitted** (s46sig, `centreSigmaM`). The placeless stay's
+position term weighs each fix by `1 / (σ² + accuracy²)` about the stay's
+centre, σ hand-set at `PLACE_RADIUS_M` (150 m). Fitted by maximum likelihood
+on the narrated stays' lit minutes, each scattered about its own stay's
+centre with its reported accuracy in quadrature: σ 7 m — the fixes' error is
+the scatter, the stay itself barely moves. Held out against s44wait every
+count rises (journeys 126, leg modes 315, lines 63, stations 70), the referee
+holds at 142, no day loses; under the decoder head journeys and stations
+hold and the stays gap to the served day is 11 named right (from 12). With
+s45stay's cadence beside it (s47) short walks still dissolve into stays: the
+referee and the headed day 138. The cadence stays hand-set.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
