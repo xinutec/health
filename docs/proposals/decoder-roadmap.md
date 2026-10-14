@@ -279,7 +279,7 @@ over the raw inputs. The decoder reaches it through one pass, `hsmmOverride`
 (`PlaceOverride.applyHsmmPlaceOverride`): which place a stay is at. Its train
 legs, boundaries and stations do not reach the served day — C4.4 below was
 planned and never built. The decoder itself is the fitted one
-(`2026-10-segment-emissions.md`, shipped with `CLASSIFIER_VERSION` 8).
+(`2026-10-segment-emissions.md`; the s43c record at `CLASSIFIER_VERSION` 10).
 
 **The gate is the served day, not the old decoder.** On the journey referee
 (the served day's journey floor, `tests/golden/journey-baseline.json`), the
@@ -380,7 +380,11 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    at 19–40 km/h, as walking, because the 48 boarding steps at 18:52 make a
    walk and the walking duration prior costs one minute −10 against two
    minutes' −3 (the evidence prefers the ride from 18:53 by 3.5, the path
-   loses by 2.1).
+   loses by 2.1). With speed on the minute pairs inside a segment (s43c in
+   the segment-emissions table) the 09-06 boarding decodes as narrated and
+   06-16's bus becomes a vehicle segment; under the head the decoder
+   reconstructs 143 narrated journeys against the served day's 142. Shipped
+   as `CLASSIFIER_VERSION` 10.
 
 ## Phase 4 — the cutover
 
