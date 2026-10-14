@@ -130,6 +130,9 @@ place entry normalised over places per hour.
 | s43fit: s43pairs with the speed priors refitted on the pairs, held out | 125 | 303 | 61 | 48 | 4 | 141 |
 | s43b: s43fit with the boundary pair exponential at the narrated boundaries' mean (7.3 km/h) | 124 | 304 | 61 | 53 | 7 | 141 |
 | s43c: s43b with an outlier share fitted for every mode's pairs and the boundary pair (EM) | 125 | 305 | 61 | 54 | 6 | 142 |
+| s44wait: s43c with the station chain's wait at the board (alight) station, on 2026-10-14's narratives (s43c there: 125 / 311 / 61 / 59 / 6, 142) | 125 | 311 | 62 | 67 | 6 | 142 |
+| s45cad: s44wait with the step cadence fitted for stays, walks and trains (zero share, mean, spread) | 125 | 303 | 59 | 49 | 5 | 137 |
+| s45stay: s44wait with the step cadence fitted for stays alone | 127 | 309 | 63 | 68 | 5 | 137 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -646,6 +649,17 @@ clears, the referee is 142 against s40c's 140, and under the decoder head
 143 against the served day's 142. Against s40c the scoreboard loses two
 walks behind a short stop with steps (09-06 13:23 by 1.4 nats, 10-08 14:51
 by 0.9), which the served day misses too.
+
+**Refuted: the step cadence fitted** (s45cad, s45stay). The cadence term's
+numbers are hand-set (a stay 99% step-free, else 10 ± 20 a minute); fitted on
+the narrated minutes a stay is 83% step-free, else 22 ± 21, and a train 82%,
+else 28 ± 32 — the platform walks inside narrated train rows. Fitted for
+every mode, trains absorb the walks at their ends: stations 67 → 49. Fitted
+for stays alone the scoreboard gains (journeys 127, lines 63, stations 68),
+and under the decoder head the stays gain on the served day (the gap 12 → 8
+named right), but short narrated walks dissolve into the stays either side:
+the referee and the headed day lose five journeys (142 → 137). A stay's steps
+and a short walk's are told apart by where they go, not by how many.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
