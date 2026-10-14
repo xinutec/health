@@ -200,8 +200,17 @@ def stateForInterval (start finish : Int) (seg : Option Seg) (sleep : Option Sle
     | none => some (makeStateFromSegment s start finish segMode false)
     | some w =>
       if segMode == "stationary" then
+        -- A stay with no place under a window that has one: asleep there. The
+        -- window's place is the night's (named from where the evening ended);
+        -- a stay nobody placed asserts nowhere else. The decoder covers a dark
+        -- night with such a stay where the cascade leaves no segment at all.
+        if w.place.isSome && s.place.isNone then
+          some { startTs := start, endTs := finish, mode := "sleeping", place := w.place,
+                 placeSource := some "sleep", placeAt := w.placeAt,
+                 tz := if w.tz.isSome then w.tz else s.displayTz,
+                 minutesAsleep := if w.minutesAsleep > 0 then some w.minutesAsleep else none }
         -- Stationary AT the sleep place: rewrite to sleeping.
-        if w.place.isSome && s.place == w.place then
+        else if w.place.isSome && s.place == w.place then
           -- Prefer the window's tz over the segment's displayTz so the
           -- rewritten half matches the synthesized half — otherwise strict
           -- string equality in `sameState` would stop the two halves of one
@@ -594,6 +603,13 @@ private def sw (startTs endTs : Int) (place : Option String) (minutesAsleep : In
   [sg T0 (T0+3600) (place := some "Home"), sg (T0+3600) (T0+7200) (place := some "Home")] []).length == 1
 #guard (segmentsToDayStates
   [sg T0 (T0+3600) (place := some "Home"), sg (T0+3600) (T0+7200) (place := some "Work")] []).length == 2
+-- A stay nobody placed, under a sleep window that has a place: asleep there.
+#guard segmentsToDayStates [sg T0 (T0+3600)] [sw T0 (T0+3600) (some "Home")]
+  == [{ startTs := T0, endTs := T0+3600, mode := "sleeping", place := some "Home",
+        placeSource := some "sleep" }]
+-- A stay placed elsewhere keeps its place: awake there.
+#guard (segmentsToDayStates [sg T0 (T0+3600) (place := some "Work")]
+  [sw T0 (T0+3600) (some "Home")]).head!.place == some "Work"
 -- refinedMode wins over mode; vehicleKind "bus" wins over both.
 #guard (segmentsToDayStates
   [sg T0 (T0+3600) "driving" (refinedMode := some "train") (wayName := some "A → B · Line")] []).head!.mode

@@ -901,10 +901,12 @@ private def episodeJson (e : Verified.Geo.EpisodeGeometry.Episode) : Json :=
 
 /-- The fold's naming tail: the passes that label segments others drew —
 track geometry, bus, road and walk matching, zone, biometrics, the decoder's
-places. `decoderHead` runs these alone. -/
+places, a station's name on the stay beside a ride. `decoderHead` runs these
+alone. -/
 def DECODER_TAIL : Array String :=
   #["railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
-    "biomEnrich", "hsmmOverride", "railSnapFinal", "vehicleIdentity"]
+    "biomEnrich", "hsmmOverride", "interchangeStayLabel", "boardingStayLabel",
+    "railSnapFinal", "vehicleIdentity"]
 
 def MS_TO_KMH : Float := 3.6
 

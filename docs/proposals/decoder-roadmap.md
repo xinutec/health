@@ -403,7 +403,17 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    most of them (the decoder's home place where the served day's sleep rule
    names it), one more wrong on several, 10-08 4 of 8 against 8 of 8. The
    flip waits on the stays: the decoder's authority over them (step 4,
-   #1947), not their names. Step 2 therefore waits on the chain's
+   #1947), not their names. Two of the gap's causes were naming after all: the waits at a
+   station (`boardingStayLabel`, `interchangeStayLabel` in the head's tail:
+   Loiola and Hendaye on 10-08 had taken a school and a bar), and the dark
+   night. The cascade leaves no segment over a night without fixes and the
+   sleep window draws the sleeping state at its place; the decoder covers
+   that night with a stay at no place, which no sleep window could name. A
+   stay nobody placed under a window that has a place is now asleep there
+   (`DayState.stateForInterval`; the served day unmoved). Headed: 176 of 192
+   right against 188 of 199 on the days that move; what is left is a stay
+   the headed day does not have (a short stop inside a walk, a wait at a
+   station), on eleven days one each, 07-16 two. Step 2 therefore waits on the chain's
    underground ends (#238) and on names for the legs it calls `unknown_rail`.
 3. **Each mode's longest segment.** Only stays need the whole-day cap; the
    trellis's single `maxD` makes every mode pay for it (a heavy day decodes in
