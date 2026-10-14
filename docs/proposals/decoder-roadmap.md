@@ -413,7 +413,14 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    (`DayState.stateForInterval`; the served day unmoved). Headed: 176 of 192
    right against 188 of 199 on the days that move; what is left is a stay
    the headed day does not have (a short stop inside a walk, a wait at a
-   station), on eleven days one each, 07-16 two. Step 2 therefore waits on the chain's
+   station), on eleven days one each, 07-16 two.
+   **What a re-decode would change today: nothing graded.** The served day
+   fed the live decode (s43c) or the next (the chain's wait, a stay's fitted
+   spread) in place of each fixture's stored one (`FOLD_DECODE_FROM`): every
+   gate passes, no journey and no graded stay name moves on any narrated day.
+   The served day takes only stay places from the decoder (`hsmmOverride`),
+   and those agree. So the decoder's improvements reach him at the flip, and
+   their re-decode waits for it. Step 2 therefore waits on the chain's
    underground ends (#238) and on names for the legs it calls `unknown_rail`.
 3. **Each mode's longest segment.** Only stays need the whole-day cap; the
    trellis's single `maxD` makes every mode pay for it (a heavy day decodes in

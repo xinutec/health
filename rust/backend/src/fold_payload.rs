@@ -1042,23 +1042,22 @@ pub fn encode_geocode(v: &Value) -> Value {
 /// object by name, but the byte-diff against the TypeScript is what makes this
 /// checkable at all, and `preserve_order` means the order written here is the
 /// order emitted. It follows `buildDayRequest`'s.
-/// The day's segments in the decoder dump `FOLD_DECODER_HEAD` names, one
+/// The day's segments in the decoder dump `var` names, one
 /// `{name, segments}` line per fixture; `None` when the variable is unset or
 /// the dump has no line for the day.
-fn decoder_head_segments(inputs: &Map<String, Value>) -> Result<Option<Value>> {
-    let Ok(path) = std::env::var("FOLD_DECODER_HEAD") else {
+fn decoder_head_segments(inputs: &Map<String, Value>, var: &str) -> Result<Option<Value>> {
+    let Ok(path) = std::env::var(var) else {
         return Ok(None);
     };
     let date = inputs
         .get("identity")
         .and_then(|v| v.get("date"))
         .and_then(Value::as_str)
-        .context("FOLD_DECODER_HEAD: the inputs carry no identity.date")?;
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("FOLD_DECODER_HEAD: reading {path}"))?;
+        .with_context(|| format!("{var}: the inputs carry no identity.date"))?;
+    let text = std::fs::read_to_string(&path).with_context(|| format!("{var}: reading {path}"))?;
     for line in text.lines() {
         let row: Value =
-            serde_json::from_str(line).context("FOLD_DECODER_HEAD: a line is not JSON")?;
+            serde_json::from_str(line).with_context(|| format!("{var}: a line is not JSON"))?;
         if row["name"].as_str().is_some_and(|n| n.starts_with(date)) {
             return Ok(Some(row["segments"].clone()));
         }
@@ -1132,11 +1131,25 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     // from a decoder dump (the scoreboard's `DECODE_DUMP_OUT`) replace the stored
     // decode, and Lean runs only the naming tail over them — the flip, measured.
     // Never served or blessed.
-    let decoder_head = decoder_head_segments(i)?;
+    let decoder_head = decoder_head_segments(i, "FOLD_DECODER_HEAD")?;
     if decoder_head.is_some() {
         eprintln!("⚠ FOLD_DECODER_HEAD — the decoder heads this fold; this day is an experiment");
         env.insert("decoderHead".into(), Value::Bool(true));
     }
+    // ⚠ `FOLD_DECODE_FROM` replaces the stored decode with a dump's, and the
+    // cascade serves as usual: what a re-decode would change in the served day.
+    let decoder_head = match decoder_head {
+        Some(h) => Some(h),
+        None => {
+            let d = decoder_head_segments(i, "FOLD_DECODE_FROM")?;
+            if d.is_some() {
+                eprintln!(
+                    "⚠ FOLD_DECODE_FROM — the stored decode is replaced; this day is an experiment"
+                );
+            }
+            d
+        }
+    };
     for (k, v) in encode_caches(
         decoder_head.as_ref().or_else(|| i.get("hsmmDecode")),
         i.get("railRouteCache"),
