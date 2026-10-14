@@ -1145,6 +1145,21 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     )? {
         env.insert(k, v);
     }
+    // A train's stations, as the decoder's chain resolved them, onto the
+    // decode `encode_caches` wrote. Here and not in it: `fold_env` pins that
+    // encoder against the TypeScript's, which never carried them.
+    let decode_rows = decoder_head.as_ref().or_else(|| i.get("hsmmDecode"));
+    if let (Some(Value::Array(out)), Some(Value::Array(src))) =
+        (env.get_mut("hmmDecode"), decode_rows)
+    {
+        for (o, h) in out.iter_mut().zip(src) {
+            if let (Some(o), Some(h)) = (o.as_object_mut(), h.as_object()) {
+                for k in ["boardStation", "alightStation"] {
+                    o.insert(k.into(), opt_str(h, k));
+                }
+            }
+        }
+    }
     let segs: Vec<Value> = c
         .get("segsRaw")
         .and_then(Value::as_array)

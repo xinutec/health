@@ -236,6 +236,8 @@ private def parseHmmSeg (j : Json) : Except String Verified.Geo.PlaceOverride.Hm
     mode := ← (← j.getObjVal? "mode").getStr?
     lineName := ← optStr j "lineName"
     placeId := ← optInt j "placeId"
+    boardStation := ← optStr j "boardStation"
+    alightStation := ← optStr j "alightStation"
   }
 
 /-- `[id, displayName|null, latBits|null, lonBits|null]`. -/
@@ -916,7 +918,8 @@ def HEAD_SEG : Seg := { startTs := 0, endTs := 0, mode := "" }
 
 /-- The decoder's segments as the fold's input, measured from the fixes inside
 each: mean speed over the path, the fixes' centroid and count. A train keeps
-its line as `wayName`. ⚠ A measurement seam (`FOLD_DECODER_HEAD`), never served. -/
+its route as `wayName` (`board → alight · line`) when the decoder's chain named
+both ends, else its line. ⚠ A measurement seam (`FOLD_DECODER_HEAD`), never served. -/
 def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
     (pts : Array Verified.SpeedFix) : Array Seg :=
   hmm.map fun h =>
@@ -933,7 +936,12 @@ def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
       mode := h.mode
       avgSpeed := if dur > ZERO_F then path / dur * MS_TO_KMH else ZERO_F
       pointCount := w.size
-      wayName := if h.mode == "train" then h.lineName else none
+      wayName := if h.mode != "train" then none
+        else match h.boardStation, h.alightStation, h.lineName with
+          | some b, some a, some l =>
+            some (if l == "unknown_rail" then s!"{b} → {a}" else s!"{b} → {a} · {l}")
+          | some b, some a, none => some s!"{b} → {a}"
+          | _, _, l => l
       centroidLat := centre.1
       centroidLon := centre.2 }
 
@@ -1043,7 +1051,18 @@ def dayResult (j : Json) : Json :=
         dbgTrace s!"lean: passLimit {n} — running {min n.toNat allPasses.size} of {allPasses.size} passes"
           fun _ => allPasses.extract 0 n.toNat
       | none => allPasses
-    let chosen := if decoderHead then chosen.filter (DECODER_TAIL.contains ·.1) else chosen
+    -- Under the head, the train legs the decoder's chain named nothing on (a
+    -- mainline or foreign ride) take the cascade's rail-run label, one leg at a
+    -- time; the named legs and the changes between them stay as decoded.
+    let unnamedRail : Verified.Geo.PassFold.Pass := ("railUnnamed", fun segs =>
+      Verified.Geo.RailRunAnnotate.labelUnnamedTrains
+        { stationsLookup := fun lat lon =>
+            env.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M
+          linesLookup := fun lat lon =>
+            env.linesAtPoint lat lon Verified.Geo.PassFold.LINES_AT_POINT_DEFAULT_RADIUS_M }
+        segs env.points env.railStops)
+    let chosen := if decoderHead then #[unnamedRail] ++ chosen.filter (DECODER_TAIL.contains ·.1)
+      else chosen
     let chosen := chosen.map fun (n, f) => (n, fun s => DayEntry.Host.timed s!"pass.{n}" fun _ => f s)
     let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs
     -- The fold's output is the chain's input, which is the whole reason these

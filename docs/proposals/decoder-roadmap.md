@@ -377,7 +377,20 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    started dark at 14:59 with the fixes standing at King's Cross until
    15:03, and the chain had boarded it at Farringdon. The decoder's own
    stations: 72 and 74 of 90; scoreboard stations 59 → 67 held out, lines
-   +1, nothing else moves. Step 2 therefore waits on the chain's
+   +1, nothing else moves.
+   **Stations reach the fold** (`HmmSeg.boardStation`/`alightStation`,
+   carried onto the decode in `build_day_request`): under the decoder head a
+   train leg the chain named reads `board → alight · line`, and only a leg it
+   named nothing on takes the cascade's rail-run label, one leg at a time
+   (`RailRunAnnotate.labelUnnamedTrains`), so no change of trains is merged.
+   The headed day names 82 boards and 84 alights of 90 against the served
+   day's 84 and 86, and reconstructs 143 journeys against 142. It wins the
+   Baker Street changes the served day rides through (05-18, 06-23, 06-24);
+   it loses where the decoder has no leg (05-22's Jubilee from Baker Street,
+   05-18's last leg, 07-02's Metropolitan from Finchley Road), 06-18's board
+   (Great Portland Street for Euston Square), and three names the fill-in
+   labeller spells apart from the narrative ("Centraal Station" for Arnhem
+   Centraal, "Gare du Nord (Métro)", Vavin for Montparnasse-Bienvenüe). Step 2 therefore waits on the chain's
    underground ends (#238) and on names for the legs it calls `unknown_rail`.
 3. **Each mode's longest segment.** Only stays need the whole-day cap; the
    trellis's single `maxD` makes every mode pay for it (a heavy day decodes in
