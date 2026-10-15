@@ -468,6 +468,27 @@ def dropUncertain (pts : Array PedFix) : Array PedFix :=
           && off ≤ ACCURACY_95_PER_68 * ap then none else some p
     | _, _, _ => some p
 
+private def KMH_PER_MPS : Float := 3.6
+
+/-- Whether reaching `b` from `a` is a walk even granting both fixes their whole
+    stated error: the distance less both accuracies, over the time, within
+    `WALK_SPEED_CAP_KMH`. A fix without an accuracy is no evidence either way. -/
+def walkable (a b : PedFix) : Bool :=
+  match a.accuracy, b.accuracy with
+  | some aa, some ab =>
+    let dt := Float.ofInt (b.ts - a.ts)
+    if dt ≤ F_ZERO then true
+    else
+      let d := Verified.Geo.EpisodeGeometry.equirectMeters a.lat a.lon b.lat b.lon
+      (d - aa - ab) / dt * KMH_PER_MPS ≤ WALK_SPEED_CAP_KMH
+  | _, _ => true
+
+/-- Hold the walk at its last fix past every fix it could not have walked to,
+    errors granted (10-15 13:36: two fixes 250 m back at ~50 m accuracy, 13 s
+    apart, drew the return 250 m back and the detour veto threw the match away). -/
+def holdUnwalkable (pts : Array PedFix) : Array PedFix :=
+  (holdSpeed walkable (fun i => pts.getD i default) pts.size).toArray
+
 private def pf (lat lon acc : Float) (ts : Int) : PedFix := { ts, lat, lon, accuracy := some acc }
 -- 10-15's corner: the 65 m fix 60 m back up the hill between fixes at 17 and
 -- 11 m goes; the good fixes stay.
@@ -481,6 +502,10 @@ private def BACK : Array PedFix :=
 -- A stray beyond the fix's own 95% radius stays: that is not its noise.
 #guard (dropUncertain (BACK.modify 1 fun p => { p with accuracy := some 30 })).size == 3
 #guard Float.abs (ACCURACY_95_PER_68 - 1.6215) < 1e-3
+-- 10-15 13:36: 250 m in 15 s at 54 and 49 m is not a walk; 10 m in 3 s at 10 m is.
+#guard !walkable (pf 51.562366 (-0.279642) 54 0) (pf 51.560043 (-0.279352) 49 15)
+#guard walkable (pf 51.5 (-0.1) 10 0) (pf 51.50009 (-0.1) 10 3)
+#guard walkable { ts := 0, lat := 51.5, lon := -0.1 } { ts := 1, lat := 51.6, lon := -0.1 }
 
 private def PedFix.walkFix (p : PedFix) : WalkFix :=
   { lat := p.lat, lon := p.lon, ts := Float.ofInt p.ts, accuracyM := p.accuracy }
@@ -595,7 +620,10 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
     (cascadeName : Option String) :
     Array TPt × Bool × Bool × Option String × Array (String × Nat) := Id.run do
   let geom : Ways := ways.map Way.coords
-  let fixes := clean.map PedFix.pathPt
+  -- The matcher follows every fix it is given, so it is given only the ones
+  -- the walk could reach (`holdUnwalkable`); the raw line and the corrector
+  -- keep their own sets.
+  let fixes := (holdUnwalkable clean).map PedFix.pathPt
   let result := env.matcher fixes ways buildings
   -- Decision parity (#369): the gate, the salvage and the refinement's
   -- engagement test all consume `coarsePath`, never the finer display line.
