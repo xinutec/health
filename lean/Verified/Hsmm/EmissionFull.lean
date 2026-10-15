@@ -111,6 +111,25 @@ structure TermWeights where
   segmentEvidence : Float := 1.0
   deriving Inhabited
 
+/-- Every term of `emissionLogProbFullWith` but the base: what a minute pays
+    beside its base emission, whichever form that base takes. -/
+def emissionRestWith
+    (modeledLines : List String) (minute : RouteModel.MinuteLines) (railEv : Float)
+    (placeCoords : Std.HashMap Int (Float × Float))
+    (continuity : Option Continuity.ContinuityContext)
+    (s : State) (o : ObsRow) (priors : Mode → Emissions.ModePrior := modePriors)
+    (w : TermWeights := {}) : Float :=
+  let placeCoord := match s.placeId with | some pid => placeCoords.get? pid | none => none
+  w.geometric * Geometric.geometricFeasibility s (Verified.FloatConst.natToFloat o.ts.toNat)
+        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord priors
+    + w.gap * Geometric.gapTerm s o.gps.isSome
+        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) priors
+    -- The kernels' `isCovered` is the TypeScript gate, held open (see above).
+    + w.rail * railEv
+    + w.lineProximity * RouteModel.lineProximityFactorWith modeledLines minute s o false
+    + w.continuity * Continuity.continuityLogLikelihood s o.gps.isSome
+        (o.prevGpsFix.map (fun f => (f.lat, f.lon))) continuity
+
 /-- Full per-cell emission log-probability over the model — the TS
     `buildEmissionFn` closure plus the geometric/rail/line-proximity terms the
     model sums onto it. `placeCoords` resolves `s.placeId`; `reacquireRobust`
@@ -126,15 +145,7 @@ def emissionLogProbFullWith
     (w : TermWeights := {}) : Float :=
   let placeCoord := match s.placeId with | some pid => placeCoords.get? pid | none => none
   w.base * baseEmissionWithReacquire s o placeCoord reacquireRobust priors
-    + w.geometric * Geometric.geometricFeasibility s o.ts.toNat.toFloat
-        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord priors
-    + w.gap * Geometric.gapTerm s o.gps.isSome
-        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) priors
-    -- The kernels' `isCovered` is the TypeScript gate, held open (see above).
-    + w.rail * railEv
-    + w.lineProximity * RouteModel.lineProximityFactorWith modeledLines minute s o false
-    + w.continuity * Continuity.continuityLogLikelihood s o.gps.isSome
-        (o.prevGpsFix.map (fun f => (f.lat, f.lon))) continuity
+    + emissionRestWith modeledLines minute railEv placeCoords continuity s o priors w
 
 /-- The per-cell emission with its per-minute facts computed in place — what
     every caller read before #1774 hoisted them, and what the parity guards pin.

@@ -1496,8 +1496,10 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
     let per := c.states.zipIdx.map fun (st, s) =>
       Json.mkObj [("state", Json.str (Verified.Hsmm.StateSpace.stateKey st)),
                   ("emit", Lean.toJson (Verified.Hsmm.Assemble.emitAt c t s)),
-                  -- The segment-emission arm's per-minute adjustment, apart.
-                  ("seg", Lean.toJson (Verified.Hsmm.Assemble.segMinuteAt c t st o)),
+                  -- What `SegmentEmission` changes in the minute's emission:
+                  -- its own minus the plain base path's.
+                  ("seg", Lean.toJson (Verified.Hsmm.Assemble.emitAt c t s
+                    - Verified.Hsmm.Assemble.emitAt { c with segEm := none } t s)),
                   -- The base's parts, for the state a reader asks about: the
                   -- speed Gaussian, the reacquire correction, the place term,
                   -- the geometric reach, the gap share, the cadence, the heart rate.

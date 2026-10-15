@@ -780,6 +780,11 @@ every record). A segment never continues into itself, so the self-loop holds
 no mass, and a transition into a stay gives the even split back, so the
 entry prior alone chooses the place; the golden transition form is the
 matrix alone. The 43 frozen decodes replay identically.
+**Retired: the base minus what the segment scores.** Under the segment
+emission a minute's base is composed of what it still carries (cadence, the
+bed, a listed place's distance, a fitless mode's presence and heart rate, a
+fixless minute's speed term) instead of the whole base with the segment's
+terms subtracted again. The 43 frozen decodes replay identically.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,

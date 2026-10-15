@@ -298,47 +298,39 @@ def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
     (pref, bound)
   | none => (#[], #[])
 
-/-- With `SegmentEmission` the awake heart rate is scored per segment
-    (`segEmAt`) and fix presence by its chain: the minute's own terms for the
-    two come out and the chain's goes in. `0` without it (the shipped model). -/
-def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :=
-  match c.segEm with
-  | none => SEG_ZERO
-  | some q =>
-    let prior := Emissions.priorOf c.priors st
-    let out :=
-      (if !q.p.byMode.any (·.1 == st.mode) then SEG_ZERO
-       else
-        c.weights.base * (FloatScore.logBernoulli o.gps.isSome prior.gpsPresentProb
-          + (if o.inBed then SEG_ZERO else Emissions.hrTerm st (EmissionFull.toThin o) prior)))
-      -- With `asleep`, the asleep minutes' heart rate is scored per segment
-      -- for every state, so the minute term (whose mean depended on the
-      -- state) comes out everywhere.
-      + (if q.p.asleep.isSome && o.inBed then
-           c.weights.base * Emissions.hrTerm st (EmissionFull.toThin o) prior
-         else SEG_ZERO)
-      -- With `unlistedCentre` the placeless stay's position is scored per
-      -- segment (`segEmFrom`), so its per-minute off-network term comes out.
-      + (if q.p.unlistedCentre.isSome && st.mode == .stationary && st.placeId.isNone && o.gps.isSome then
-           c.weights.base * Emissions.OFF_NETWORK_LOG_PRIOR
-         else SEG_ZERO)
-    let speed := match o.gps with
-      | some g =>
-        let prior := Emissions.priorOf c.priors st
-        -- The base's whole speed term: the Gaussian and, after a gap, the
-        -- reacquire correction on top of it; the windowed speed replaces both.
-        let own := FloatScore.logNormalPdf g.speedKmh prior.speedMean prior.speedStd
-          + EmissionFull.reacquireCorrection st o c.reacquireRobust c.priors
-        -- The speed is the segment's (`pairTables`): the base's own comes out.
-        c.weights.base * (SEG_ZERO - own)
-      | none => SEG_ZERO
-    let chain := (SegmentEmission.obsMinute q.p st.mode (SegmentEmission.obsClass o)
-        (if t == 0 then none else (c.obs[t - 1]?).map SegmentEmission.obsClass)).getD SEG_ZERO
-    let rank :=
-      if st.mode == .train then
-        -c.weights.lineProximity * (c.lineProxBest[t]?).getD SEG_ZERO
-      else SEG_ZERO
-    chain - out + speed + rank
+/-- The base emission's terms a minute still carries under `SegmentEmission`:
+    the segment scores the awake heart rate and fix presence of every mode it
+    has parameters for (`segEmAt`), the asleep heart rate with `asleep`, the
+    placeless stay's position with `unlistedCentre`, and every fix's speed
+    (`pairTables`); the minute keeps the rest — cadence, the bed, a listed
+    place's distance, a fitless mode's presence and heart rate, and a fixless
+    minute's speed term. -/
+def segBaseAt (q : SegmentEmission.Prepared) (c : ModelContext) (st : State) (o : ObsRow) : Float :=
+  let thin := EmissionFull.toThin o
+  let prior := Emissions.priorOf c.priors st
+  let fitted := q.p.byMode.any (·.1 == st.mode)
+  let presence := if fitted then SEG_ZERO else FloatScore.logBernoulli o.gps.isSome prior.gpsPresentProb
+  let keepHr := if o.inBed then q.p.asleep.isNone else !fitted
+  let hr := if keepHr then Emissions.hrTerm st thin prior else SEG_ZERO
+  let speed := if o.gps.isSome then SEG_ZERO else Emissions.speedTerm st thin prior
+  let cad := match o.cadence with | none => SEG_ZERO | some k => Emissions.logCadencePdf k prior
+  let bed := if o.inBed then Float.log (Emissions.inBedProbByMode st.mode) else SEG_ZERO
+  let placeCoord := match st.placeId with | some pid => c.placeCoords.get? pid | none => none
+  let place := if q.p.unlistedCentre.isSome && st.mode == .stationary && st.placeId.isNone then SEG_ZERO
+    else Emissions.placeTerm st thin placeCoord
+  presence + speed + hr + cad + bed + place
+
+/-- What `SegmentEmission` adds per minute: the fix chain's class given the
+    minute before, and a train's best line-proximity rank. -/
+def segMinuteAt (q : SegmentEmission.Prepared) (c : ModelContext) (t : Nat) (st : State)
+    (o : ObsRow) : Float :=
+  let chain := (SegmentEmission.obsMinute q.p st.mode (SegmentEmission.obsClass o)
+      (if t == 0 then none else (c.obs[t - 1]?).map SegmentEmission.obsClass)).getD SEG_ZERO
+  let rank :=
+    if st.mode == .train then
+      -c.weights.lineProximity * (c.lineProxBest[t]?).getD SEG_ZERO
+    else SEG_ZERO
+  chain + rank
 
 /-- `emission(s, obs[t])` — the full composed emission. Coverage does not reach
     it (#238, 2026-09-29): the per-minute line factors stay live on a
@@ -348,16 +340,20 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
   -- are built over exactly `obs.size × states.size`, so it is never asked.
   match c.obs[t]?, c.states[s]? with
   | some o, some st =>
-    EmissionFull.emissionLogProbFullWith c.modeledLines
-      (c.minuteLines.getD t (RouteModel.minuteLines c.model o))
-      (if st.mode != .train then 0.0
-       else match c.railByMinute[t]? with
-         | some m => m.getD (StateSpace.stateKey st) 0.0
-         | none => RouteModel.routeRailEvidence c.model c.connGraph st o false)
-      c.placeCoords c.reacquireRobust c.continuity st o c.priors c.weights
-    -- With `SegmentEmission` the awake heart rate is scored per segment
-    -- (`segEmAt`) and fix presence by its chain, so their minute terms go.
-    + segMinuteAt c t st o
+    let minute := c.minuteLines.getD t (RouteModel.minuteLines c.model o)
+    let railEv := if st.mode != .train then 0.0
+      else match c.railByMinute[t]? with
+        | some m => m.getD (StateSpace.stateKey st) 0.0
+        | none => RouteModel.routeRailEvidence c.model c.connGraph st o false
+    match c.segEm with
+    | none =>
+      EmissionFull.emissionLogProbFullWith c.modeledLines minute railEv
+        c.placeCoords c.reacquireRobust c.continuity st o c.priors c.weights
+    | some q =>
+      c.weights.base * segBaseAt q c st o
+        + EmissionFull.emissionRestWith c.modeledLines minute railEv c.placeCoords c.continuity
+            st o c.priors c.weights
+        + segMinuteAt q c t st o
   | _, _ => negInf
 
 private def SEG_ONE : Float := 1
