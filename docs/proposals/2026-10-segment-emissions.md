@@ -738,6 +738,12 @@ a walk, and the place term carries none of that. Four arms down
 until the per-minute model retires as a whole (the roadmap's cutover: every
 mode's position under one frame), not term by term.
 
+**The replays run under the golden record** (`decoder_params::from_env`
+falls back to `tests/golden/fits/decoder-params.json`; an arm's
+`DECODER_PARAMS` still wins): the frozen decodes and the blessed scoreboard
+are the shipped model's (125 / 309 / 63 / 69 / 4), so an old path can retire
+against byte-identical replays, and an arm reads against what is served.
+
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
 asleep and off-network terms, `unknown`, the per-minute mode prior,

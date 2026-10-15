@@ -36,17 +36,30 @@ const FLAGS: [&str; 10] = [
     "durationNoFloor",
 ];
 
+/// The golden copy of the record the serving pod loads (the Secret's line):
+/// what a replay runs under when no arm names another.
+const GOLDEN_RECORD: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/golden/fits/decoder-params.json"
+);
+
 /// The record for `date`: `DECODER_PARAMS` names a file, or a directory of one
 /// record per day, `<dir>/<date>.json` (each fitted without that day,
-/// `fit_emissions --loo`); else `DECODER_PARAMS_JSON` is the record itself.
-/// `None` when neither is set.
+/// `fit_emissions --loo`); else `DECODER_PARAMS_JSON` is the record itself;
+/// else the golden record, when the golden corpus is checked out. `None`
+/// only without it: a replay then runs the fixture's frozen request alone.
 pub fn from_env(date: &str) -> Result<Option<Value>> {
     let Ok(path) = std::env::var("DECODER_PARAMS") else {
         return match std::env::var("DECODER_PARAMS_JSON") {
             Ok(text) => Ok(Some(
                 serde_json::from_str(&text).context("DECODER_PARAMS_JSON is not JSON")?,
             )),
-            Err(_) => Ok(None),
+            Err(_) => match std::fs::read_to_string(GOLDEN_RECORD) {
+                Ok(text) => Ok(Some(
+                    serde_json::from_str(&text).context("the golden record is not JSON")?,
+                )),
+                Err(_) => Ok(None),
+            },
         };
     };
     let mut path = std::path::PathBuf::from(path);
