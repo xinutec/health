@@ -101,6 +101,14 @@ structure Params where
   /-- The spread of a stay's fixes about its centre, metres, fitted on the
       narrated stays; `none` keeps `PLACE_RADIUS_M`. -/
   centreSigmaM : Option Float := none
+  /-- The listed place's per-minute distance term as a two-scale mixture about
+      the place: a fix is near it (`placeSigmaM`) or astray (`placeWideSigmaM`,
+      with share `placeEps`), each spread widened by the fix's own accuracy,
+      the three fitted on the narrated stays naming a listed place. Replaces
+      `Emissions.placeTerm`'s hand-set spread and floor; `none` keeps them. -/
+  placeSigmaM : Option Float := none
+  placeWideSigmaM : Option Float := none
+  placeEps : Option Float := none
   /-- With `speedPairs`, the pair across a boundary as an exponential of
       this mean (km/h, fitted on the narrated boundaries) instead of uniform. -/
   pairBoundaryMeanKmh : Option Float := none

@@ -139,6 +139,8 @@ place entry normalised over places per hour.
 | s48nf: s46now with no floor under the duration prior (`durationNoFloor`) | 126 | 311 | 63 | 71 | 7 | 143 |
 | s49place: s48nf with the listed place's spread fitted (σ 15 m, hand-set 150 m) | 122 | 310 | 63 | 70 | 13 | 145 |
 | s49mix: s48nf with the listed place's term a fitted two-scale mixture (σ 5 m; astray σ 60 m, 6%) | 121 | 310 | 63 | 70 | 16 | 144 |
+| s50place: s49mix on the blessed decode's own stays, a spread per place (σ 5–59 m; astray σ 75 m, 24%) | 119 | 310 | 63 | 70 | 20 | 144 |
+| s51: s50place with a stay's inside-pair speed term out (`stayPairsOff`; its place explains its fixes) | 120 | 297 | 56 | 58 | 16 | 132 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -711,6 +713,30 @@ listed place's spread is per place (a house and a campus differ by an order of
 magnitude), and comes from the place's own cluster, not from one σ over the
 named stays. The decoder's short stops wait on it: see the roadmap's
 "stays gap, row by row".
+
+**Refuted a third time, and the frame named** (s50place;
+`fits/arm-placemix2-2026-10-15.patch`). The fit's population made the term's:
+each narrated stay tied to the listed place the blessed decode put its
+midpoint at (8156 minutes, 37 places, 27 with the minutes for their own near
+spread: Home 5 m, Work 11, the hospital 21, one cluster 59), the astray
+share 24% at 75 m. Phantoms 7 → 20, journeys 126 → 119. A quarter of the
+minutes at a listed place sit beyond its near spread, and no spread covers a
+fix 300 m off: the fitted tail charges it −17 a minute where the hand-set
+floor charges −3, and the floor is not a statement about fixes at all — it
+is what keeps a stay whole against modes that pay nothing for where their
+fixes are. The asymmetry is the frame: every mode's position is already
+scored by the pair term (`speedPairs`), and a stay at a listed place pays
+the place term on top. The form that can express the fit: a stay's fixes
+are explained by its place (the mixture, per place) and NOT by the pair
+term; the moving modes keep the pair term. Measured (s51,
+`fits/arm-staypairsoff-2026-10-15.patch`): legs 311 → 297, lines 63 → 56,
+stations 71 → 58, the headed day 144 → 132. The pair term inside a stay is
+not a double count of its position: a stay's near-zero spans under the
+stationary speed model are most of what tells a stay from a slow ride or
+a walk, and the place term carries none of that. Four arms down
+(s49place, s49mix, s50place, s51); the listed place's hand-set term stays
+until the per-minute model retires as a whole (the roadmap's cutover: every
+mode's position under one frame), not term by term.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,

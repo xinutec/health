@@ -404,7 +404,26 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
         c.weights.base * SegmentEmission.dispScore q.p st.mode k (some ⟨dM, SEG_ZERO, SEG_ZERO⟩)
           / Verified.FloatConst.natToFloat (k - 1)
       | _, _, _ => SEG_ZERO
-    chain - out + speed + rank + pair
+    -- With `placeSigmaM` the listed place's distance term is the fitted
+    -- two-scale mixture, in the hand-set term's frame (0 at the place): the
+    -- hand-set term comes out, the mixture goes in.
+    let placeMix := match q.p.placeSigmaM, q.p.placeWideSigmaM, q.p.placeEps, st.placeId, o.gps with
+      | some s1, some s2, some eps, some pid, some g =>
+        if st.mode != .stationary then SEG_ZERO else
+        match c.placeCoords.get? pid with
+        | some (plat, plon) =>
+          let d := FloatScore.haversineMeters g.lat g.lon plat plon
+          let acc := g.accuracyM.getD ACCURACY_DEFAULT_M
+          let v1 := s1 * s1 + acc * acc
+          let v2 := s2 * s2 + acc * acc
+          let mix := Float.log ((MIN_ONE - eps) * Float.exp (SEG_ZERO - d * d / (MIN_TWO * v1))
+            + eps * (v1 / v2) * Float.exp (SEG_ZERO - d * d / (MIN_TWO * v2)))
+          let r := Emissions.PLACE_RADIUS_M
+          let old := max Emissions.PLACE_DISTANCE_FLOOR (SEG_ZERO - d * d / (MIN_TWO * r * r))
+          c.weights.base * (mix - old)
+        | none => SEG_ZERO
+      | _, _, _, _, _ => SEG_ZERO
+    chain - out + speed + rank + pair + placeMix
 
 /-- `emission(s, obs[t])` — the full composed emission. Coverage does not reach
     it (#238, 2026-09-29): the per-minute line factors stay live on a
