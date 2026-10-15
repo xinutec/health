@@ -422,6 +422,66 @@ def hold (pts : Array PedFix) : Array PedFix :=
   (holdSpeed (fun a b => speedOk WALK_SPEED_CAP_KMH a.rawFix b.rawFix)
     (fun i => pts.getD i default) pts.size).toArray
 
+/-- Android reports a fix's accuracy as the radius of 68% confidence; under a
+    2-D normal the radius of 95% is `√(−2 ln 0.05) / √(−2 ln 0.32)` ≈ 1.62 of it. -/
+def ACCURACY_95_PER_68 : Float :=
+  Float.sqrt (-2 * Float.log 0.05) / Float.sqrt (-2 * Float.log 0.32)
+private def M_PER_DEG : Float := 111320
+private def DEG_PER_HALF_TURN : Float := 180
+private def F_ZERO : Float := 0
+private def F_ONE : Float := 1
+
+/-- How far `b` lies from the segment `a`–`c`, metres (local plane at `b`), and
+    where it projects along `a`→`c` (`0` at `a`, `1` at `c`, unclamped). -/
+def offChordM (a b c : PedFix) : Float × Float :=
+  let cl := Float.cos (b.lat * Verified.FloatConst.pi / DEG_PER_HALF_TURN)
+  let x := fun (p : PedFix) => (p.lon - b.lon) * M_PER_DEG * cl
+  let y := fun (p : PedFix) => (p.lat - b.lat) * M_PER_DEG
+  let (ax, ay, cx, cy) := (x a, y a, x c, y c)
+  let dx := cx - ax
+  let dy := cy - ay
+  let len2 := dx * dx + dy * dy
+  let dot := (F_ZERO - ax) * dx + (F_ZERO - ay) * dy
+  let raw := if len2 > F_ZERO then dot / len2 else F_ZERO
+  let t := max F_ZERO (min F_ONE raw)
+  (Float.sqrt ((ax + t * dx) * (ax + t * dx) + (ay + t * dy) * (ay + t * dy)), raw)
+
+/-- Drop a stray only the fix's own noise explains: it is the least certain of
+    itself and its two neighbours, and it lies off the line between them
+    farther than either neighbour's 95% radius but within its own. Such a fix
+    draws an out-and-back spur (10-15: two fixes at 52 and 65 m among fixes at
+    7–17 m pulled the line 60 m back up a hill twice). A fix the neighbours'
+    own noise could put where it is carries the walk's timing and stays, as
+    does one whose stray its accuracy does not cover. A neighbour without an
+    accuracy keeps the fix. -/
+def dropUncertain (pts : Array PedFix) : Array PedFix :=
+  if pts.size < 3 then pts else
+  (Array.range pts.size).filterMap fun i =>
+    let p := pts.getD i default
+    if i == 0 || i + 1 == pts.size then some p else
+    let a := pts.getD (i - 1) default
+    let c := pts.getD (i + 1) default
+    match p.accuracy, a.accuracy, c.accuracy with
+    | some ap, some aa, some ac =>
+      let (off, _) := offChordM a p c
+      if ap > aa && ap > ac && off > ACCURACY_95_PER_68 * max aa ac
+          && off ≤ ACCURACY_95_PER_68 * ap then none else some p
+    | _, _, _ => some p
+
+private def pf (lat lon acc : Float) (ts : Int) : PedFix := { ts, lat, lon, accuracy := some acc }
+-- 10-15's corner: the 65 m fix 60 m back up the hill between fixes at 17 and
+-- 11 m goes; the good fixes stay.
+private def BACK : Array PedFix :=
+  #[pf 51.565910 (-0.278826) 17 0, pf 51.566399 (-0.278427) 65 29, pf 51.565603 (-0.277717) 11 61]
+#guard (dropUncertain BACK).map (·.ts) == #[0, 61]
+-- A poor fix near the line between its neighbours carries the timing, and stays.
+#guard (dropUncertain #[pf 51.5 (-0.1) 10 0, pf 51.5005 (-0.1002) 40 30, pf 51.501 (-0.1) 10 60]).size == 3
+-- A precise fix off the line is evidence, and stays.
+#guard (dropUncertain (BACK.modify 1 fun p => { p with accuracy := some 5 })).size == 3
+-- A stray beyond the fix's own 95% radius stays: that is not its noise.
+#guard (dropUncertain (BACK.modify 1 fun p => { p with accuracy := some 30 })).size == 3
+#guard Float.abs (ACCURACY_95_PER_68 - 1.6215) < 1e-3
+
 private def PedFix.walkFix (p : PedFix) : WalkFix :=
   { lat := p.lat, lon := p.lon, ts := Float.ofInt p.ts, accuracyM := p.accuracy }
 private def PedFix.pathPt (p : PedFix) : PathPt := ⟨p.lat, p.lon, Float.ofInt p.ts⟩
@@ -659,7 +719,7 @@ def walkMemoKey (draw : Draw) (flags : Flags) (inWin : Array PedFix) (ways : Arr
 def drawWalk (env : Env) (draw : Draw) (flags : Flags) (inWin : Array PedFix) (ways : Array Way)
     (buildings : Array Ring) (stepsWalked : Option Float) (ev : WalkEvidence)
     (cascadeName : Option String) : WalkPatch := Id.run do
-  let clean := despike inWin
+  let clean := dropUncertain (despike inWin)
   let held := hold clean
   -- The walk's one badness context — the way grid and the footprint grid —
   -- for the display gate, the corrector and the passage snap alike (it was
@@ -749,7 +809,7 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
         -- From here on a buildings read was made for this ground, and every
         -- branch below says so — including the ones that keep the raw line.
         let seg := { seg with walkBuildingsMeasured := some measured }
-        let clean := despike p.inWin
+        let clean := dropUncertain (despike p.inWin)
         if clean.size < MIN_LEG_FIXES then
           out := out.push seg
         else
