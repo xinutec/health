@@ -182,15 +182,15 @@ private def obsCont : ObsRow :=
 
 -- The train pays its share of a 40 km/h gap, which its speed prior almost always covers.
 #guard approxF (emissionLogProbFull m cg ml pc false none ⟨.train, none, some "Test Line"⟩ obsTrain)
-  (-1.3928522584398717 + Geometric.gapTerm ⟨.train, none, some "Test Line"⟩ false
+  (1.6028800151141191 + Geometric.gapTerm ⟨.train, none, some "Test Line"⟩ false
     (obsTrain.prevGpsFix.map toGeoFix) (obsTrain.nextGpsFix.map toGeoFix))
 #guard Geometric.gapTerm ⟨.train, none, some "Test Line"⟩ false
     (obsTrain.prevGpsFix.map toGeoFix) (obsTrain.nextGpsFix.map toGeoFix) > -0.05
 -- 14 km in the minute before (840 km/h): beyond every ground mode, the
 -- mainline's tail included, and no outlier explains 14 km.
-#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.stationary, some 5, none⟩ obsStat) (-74.095848820918)
-#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.walking, none, none⟩ obsWalk) (-12.180968195475526)
-#guard approxF (emissionLogProbFull m cg ml pc true none ⟨.stationary, some 5, none⟩ obsReacq) (-7.8254058300548115)
-#guard approxF (emissionLogProbFull m cg ml pc false (some contCtx) ⟨.stationary, some 5, none⟩ obsCont) (-2.185651821103)
+#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.stationary, some 5, none⟩ obsStat) (-73.73917387697927)
+#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.walking, none, none⟩ obsWalk) (-9.87838310248148)
+#guard approxF (emissionLogProbFull m cg ml pc true none ⟨.stationary, some 5, none⟩ obsReacq) (-7.468730886116079)
+#guard approxF (emissionLogProbFull m cg ml pc false (some contCtx) ⟨.stationary, some 5, none⟩ obsCont) (-1.8289768771642674)
 
 end Verified.Hsmm.EmissionFull

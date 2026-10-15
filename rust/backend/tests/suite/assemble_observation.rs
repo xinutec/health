@@ -25,13 +25,23 @@ fn local_ctx() -> Vec<[i64; 2]> {
     (0..1440).map(|m| [(m / 60) % 24, 1]).collect()
 }
 
+/// The shipped decoder's record on a synthetic request, as `decode-day` lays
+/// it on a real one: these days describe the decoder that serves, and the
+/// per-minute terms it retired are not there to carry them.
+fn with_record(mut r: serde_json::Value) -> serde_json::Value {
+    if let Some(p) = backend::decoder_params::from_env("2026-01-01").expect("the record reads") {
+        backend::decoder_params::apply(&mut r, &p);
+    }
+    r
+}
+
 fn request(observation: serde_json::Value) -> serde_json::Value {
-    serde_json::json!({
+    with_record(serde_json::json!({
         "observation": observation,
         "edges": [], "places": [], "nodes": null, "continuity": null,
         "flags": { "reacquireRobust": true, "segEvidence": true, "chainContext": true },
         "maxD": 30,
-    })
+    }))
 }
 
 /// The same request with no `maxD` at all — what `decode-day` sends.
@@ -313,7 +323,7 @@ fn ride_request(relations: serde_json::Value) -> serde_json::Value {
         .map(|m| serde_json::json!([T0 + m * 60, b(400.0), b(3.0)]))
         .collect();
 
-    serde_json::json!({
+    with_record(serde_json::json!({
         "observation": {
             "startUtc": T0, "points": points, "hr": [], "steps": [], "sleep": [],
             "localCtx": local_ctx(), "proximity": proximity, "imputeCadence": false,
@@ -322,7 +332,7 @@ fn ride_request(relations: serde_json::Value) -> serde_json::Value {
         "continuity": null,
         "railStopRelations": relations,
         "flags": { "reacquireRobust": true, "segEvidence": true, "chainContext": true },
-    })
+    }))
 }
 
 /// ⚠ THE POSITIVE CASE, WITHOUT WHICH THE ABSENT-KEY TEST ABOVE IS VACUOUS. A

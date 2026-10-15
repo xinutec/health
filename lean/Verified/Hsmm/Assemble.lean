@@ -74,14 +74,6 @@ structure ModelContext where
   continuity : Option Continuity.ContinuityContext
   reacquireRobust : Bool
   segEvidenceOn : Bool
-  /-- #366's three arm knobs, carried in the request's `flags` and absent from
-      every production request, so the defaults are the shipped model: the
-      per-minute mode prior's scale at minutes without a GPS fix (the
-      no-evidence fallback) and at minutes with one, and the scale of
-      `modeEntryLog`, the per-segment entry prior derived from it. -/
-  modeMinuteScale : Float := 1.0
-  modeMinuteScaleWithGps : Float := 1.0
-  modeEntryScale : Float := 0.0
   /-- Longest ride's head, in minutes; 0 = no head state in the space (#366). -/
   rideHeadMin : Nat := 0
   /-- No floor under the duration prior: a segment as short as the decoder's
@@ -166,9 +158,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float))
     (coverage : Std.HashMap Int (List String)) (placeNearLine : Std.HashSet String)
     (continuity : Option Continuity.ContinuityContext)
-    (reacquireRobust segEvidenceOn chainOn : Bool)
-    (modeMinuteScale : Float := 1.0) (modeEntryScale : Float := 0.0)
-    (modeMinuteScaleWithGps : Float := 1.0) (rideHeadMin : Nat := 0)
+    (reacquireRobust segEvidenceOn chainOn : Bool) (rideHeadMin : Nat := 0)
     (rideHeadCredit : Float := 1.0) : ModelContext :=
   -- A line is a state only where the day's route graph has its track: abroad
   -- a London line had no evidence against it and named a TGV (10-01).
@@ -192,7 +182,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     modeledLines := RouteModel.linesInGraph model
     edgesByLine := RouteModel.buildEdgesByLine model
     placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
-    reacquireRobust, segEvidenceOn, chainOn, modeMinuteScale, modeEntryScale, modeMinuteScaleWithGps
+    reacquireRobust, segEvidenceOn, chainOn
     rideHeadMin, rideHeadCredit
     stepPref := SegmentEvidence.stepPrefix obs
     selfLoop := Transitions.defaultSelfLoop
@@ -440,10 +430,6 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
          | some m => m.getD (StateSpace.stateKey st) 0.0
          | none => RouteModel.routeRailEvidence c.model c.connGraph st o false)
       c.placeCoords c.reacquireRobust c.continuity st o c.priors c.weights
-    -- The per-minute mode prior is inside the sum above at scale 1; the arm
-    -- knob adds the difference, so the shipped model is untouched at 1.
-    + ((if o.gps.isSome then c.modeMinuteScaleWithGps else c.modeMinuteScale) - 1.0)
-        * Emissions.modePriorLog st.mode
     -- The ride's head is `driving` with the crawl mixture, priced per minute
     -- like a stay rather than like a ride (#366): the per-minute mode prior
     -- is the no-evidence fallback, and a crawling fix IS evidence — charged
@@ -458,20 +444,6 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
     -- (`segEmAt`) and fix presence by its chain, so their minute terms go.
     + segMinuteAt c t st o
   | _, _ => negInf
-
-/-- The per-SEGMENT entry log-prior by mode (#366): the entry rate that, with
-    the mode's typical duration, reproduces the per-minute occupancy prior —
-    `rate_m ∝ P(m) / D̄_m`, `D̄_m` the mode's Gamma mean (α/β), normalised over
-    the modes. "Entering a ride is rare" charged ONCE, where the per-minute
-    prior charges it every minute and so grows without bound with a true ride's
-    length (05-25's crawl: 35.6 of a 37.6-nat margin against the true state). -/
-def modeEntryLog (m : Mode) : Float :=
-  let rate := fun (x : Mode) =>
-    let f := baselineFit x
-    Float.exp (Emissions.modePriorLog x) / (f.alpha / f.beta)
-  let modes : List Mode := [.stationary, .walking, .cycling, .driving, .train, .plane, .unknown]
-  let total := modes.foldl (fun a x => a + rate x) 0.0
-  Float.log (rate m / total)
 
 private def SEG_ONE : Float := 1
 /-- A flat hour profile, for a place without one. -/
@@ -539,10 +511,9 @@ def entryAt (c : ModelContext) (t s : Nat) : Float :=
   let profile := match st.placeId with | some pid => c.hourProfiles.get? pid | none => none
   let weight := match st.placeId with | some pid => c.visitWeights.get? pid | none => none
   match (if st.mode == .stationary then entryCountsAt c st o.hourLocal else none) with
-  | some v => c.weights.entry * v + c.modeEntryScale * modeEntryLog st.mode
+  | some v => c.weights.entry * v
   | none =>
     c.weights.entry * Assembly.entryLogProbFull st o.hourLocal true profile c.nPlaces weight covered lineValid
-      + c.modeEntryScale * modeEntryLog st.mode
 
 /-- `initial(s)` — uniform 0. -/
 def initAt (c : ModelContext) (s : Nat) : Float :=
@@ -729,7 +700,7 @@ private def approxG (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 
 -- The ride's head (#366): absent at 0, present when asked, crawl-adjusted, capped.
 private def ctxH : ModelContext :=
-  buildContext #[obsTrain] jm places {} {} none false false false 1.0 0.0 1.0 10
+  buildContext #[obsTrain] jm places {} {} none false false false 10
 private def headIdx : Nat := (ctxH.states.findIdx? Emissions.isRideHead).getD 0
 private def drvIdx : Nat := (ctxH.states.findIdx? (fun s => s.mode == .driving && !Emissions.isRideHead s)).getD 0
 #guard ctxU.states.any Emissions.isRideHead == false

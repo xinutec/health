@@ -245,14 +245,16 @@ def placeTerm (s : State) (o : Observation) (placeCoord : Option (Float × Float
           if raw > PLACE_DISTANCE_FLOOR then raw else PLACE_DISTANCE_FLOOR
   else 0.0
 
-/-- The base-path emission log-probability, summed in `emissions.ts` order. -/
+/-- The base-path emission log-probability, summed in `emissions.ts` order
+    less its first term: the per-minute mode prior (`modePriorLog`) retired
+    with the fitted entry prior (`entryCounts`), which charges a mode once per
+    segment where the minute prior grew with a true ride's length. -/
 def emissionLogProb (s : State) (o : Observation) (placeCoord : Option (Float × Float))
     (priors : Mode → ModePrior := modePriors) : Float :=
   let prior := priorOf priors s
   let pCad := match o.cadence with | none => 0.0 | some c => logCadencePdf c prior
   let pBed := if o.inBed then Float.log (inBedProbByMode s.mode) else 0.0
-  modePriorLog s.mode
-    + logBernoulli o.gps.isSome prior.gpsPresentProb
+  logBernoulli o.gps.isSome prior.gpsPresentProb
     + speedTerm s o prior
     + hrTerm s o prior
     + pCad
@@ -309,16 +311,16 @@ private def stt (m : Mode) (pid : Option Int) : State := ⟨m, pid, none⟩
 private def place5 : Option (Float × Float) := some (51.52, -0.13)
 
 #guard emissionLogProb (stt .stationary (some 5)) (obs (some (g 51.5201 (-0.1301) 0)) (some 70) (some 0) false)
-  place5 == -5.7721301172670145
+  place5 == -5.415455173328282
 #guard emissionLogProb (stt .walking none) (obs (some (g 51.53 (-0.12) 5)) (some 100) (some 100) false)
-  none == -12.180968195475526
+  none == -9.878383102481479
 #guard emissionLogProb (stt .stationary none) (obs (some (g 51.5201 (-0.1301) 0)) (some 70) none false)
-  none == -7.758268321508008
+  none == -7.4015933775692755
 #guard emissionLogProb (stt .plane none) (obs none (some 70) none false)
-  none == -18.8224260857408
+  none == -13.524108719192764
 #guard emissionLogProb (stt .train none) (obs (some (g 51.7 0.1 90)) (some 75) none true)
-  none == -14.29684983410841
+  none == -11.30111756055442
 #guard emissionLogProb (stt .stationary (some 5)) (obs (some (g 51.7 0.4 0)) (some 70) (some 0) false)
-  place5 == -8.768318657361508
+  place5 == -8.411643713422777
 
 end Verified.Hsmm.Emissions

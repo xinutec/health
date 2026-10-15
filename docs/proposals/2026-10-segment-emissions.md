@@ -744,6 +744,12 @@ falls back to `tests/golden/fits/decoder-params.json`; an arm's
 are the shipped model's (125 / 309 / 63 / 69 / 4), so an old path can retire
 against byte-identical replays, and an arm reads against what is served.
 
+**Retired: the per-minute mode prior** (`modePriorLog` out of the base
+sum, `modeMinuteScale`, `modeMinuteScaleWithGps`, `modeEntryScale` and
+`modeEntryLog` gone): 0 in the record since s3, so the 43 frozen decodes
+replay identically and the floor holds; the fitted entry prior charges a mode
+once per segment, which is what the minute prior could not do.
+
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
 asleep and off-network terms, `unknown`, the per-minute mode prior,

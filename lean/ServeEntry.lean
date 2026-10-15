@@ -998,8 +998,6 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
     (← (← flags.getObjVal? "segEvidence").getBool?)
     (← (← flags.getObjVal? "chainContext").getBool?)
-    (knob "modeMinuteScale" 1.0) (knob "modeEntryScale" 0.0)
-    (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0))
     (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)
   -- `dropUnknown` (the decoder parameters' form): no `unknown` state. It was
   -- the catch-all the per-minute model needed; with segment-level evidence a

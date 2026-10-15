@@ -202,9 +202,6 @@ pub fn request(fx: &Value) -> Result<Value> {
         req["flags"]["fittedPriors"] = fitted_priors(fx)?;
         req["flags"]["termWeights"] = term_weights()?;
         for (k, env) in [
-            ("modeMinuteScale", "HSMM_MODE_MINUTE_SCALE"),
-            ("modeEntryScale", "HSMM_MODE_ENTRY_SCALE"),
-            ("modeMinuteScaleWithGps", "HSMM_MODE_MINUTE_SCALE_GPS"),
             ("rideHeadMin", "HSMM_RIDE_HEAD_MIN"),
             ("rideHeadCredit", "HSMM_RIDE_HEAD_CREDIT"),
             ("unknownBelow", "HSMM_UNKNOWN_BELOW"),
@@ -374,9 +371,6 @@ pub fn request(fx: &Value) -> Result<Value> {
             "chainContext": flags["chainContext"],
             // ⚠ ARM KNOBS (#366), harness-only: absent unless the environment
             // sets them, and production never builds its request here.
-            "modeMinuteScale": arm_knob("HSMM_MODE_MINUTE_SCALE"),
-            "modeEntryScale": arm_knob("HSMM_MODE_ENTRY_SCALE"),
-            "modeMinuteScaleWithGps": arm_knob("HSMM_MODE_MINUTE_SCALE_GPS"),
             "rideHeadMin": arm_knob("HSMM_RIDE_HEAD_MIN"),
             "rideHeadCredit": arm_knob("HSMM_RIDE_HEAD_CREDIT"),
             "unknownBelow": arm_knob("HSMM_UNKNOWN_BELOW"),
