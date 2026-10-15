@@ -2,13 +2,17 @@
 
 use backend::routes::velocity::{fold_slot, fold_slot_free};
 
+/// The slot is the process's, and other tests fold days: "free" is only
+/// observable while this test holds it, and its return by taking it again.
 #[tokio::test]
 async fn there_is_exactly_one_fold_slot() {
-    assert!(fold_slot_free(), "the slot starts free");
     let held = fold_slot().await;
     assert!(!fold_slot_free(), "a fold in flight takes the only slot");
     drop(held);
-    assert!(fold_slot_free(), "the slot returns when the fold ends");
+    let again = tokio::time::timeout(std::time::Duration::from_secs(60), fold_slot())
+        .await
+        .expect("the slot returns when the fold ends");
+    drop(again);
 }
 
 #[tokio::test]

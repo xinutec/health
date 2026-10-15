@@ -58,10 +58,21 @@ enum Store {
         handle: tokio::runtime::Handle,
         version: String,
     },
-    Mem(std::sync::Mutex<std::collections::HashMap<String, String>>),
 }
 
 static STORE: OnceLock<Store> = OnceLock::new();
+
+thread_local! {
+    /// The test's store: this thread's alone, so a fold another test runs in
+    /// the same process neither reads it nor moves its counters.
+    static MEM: std::cell::RefCell<Option<std::collections::HashMap<String, String>>> =
+        const { std::cell::RefCell::new(None) };
+    static MEM_STATS: std::cell::Cell<MemStats> = const { std::cell::Cell::new(MemStats {
+        served: 0,
+        missed: 0,
+        puts: 0,
+    }) };
+}
 
 /// What the in-memory store has been asked, for the test that proves the
 /// second replay READ it: `memo.walkGet`s served, `memo.walkGet`s missed,
@@ -74,28 +85,24 @@ pub struct MemStats {
     pub puts: u64,
 }
 
-static MEM_STATS: std::sync::Mutex<MemStats> = std::sync::Mutex::new(MemStats {
-    served: 0,
-    missed: 0,
-    puts: 0,
-});
-
-/// The in-memory store's counters so far, and reset them.
+/// This thread's in-memory counters so far, and reset them.
 pub fn take_mem_stats() -> MemStats {
-    let mut s = MEM_STATS.lock().expect("walk memo stats");
-    std::mem::take(&mut *s)
+    MEM_STATS.with(|s| s.take())
 }
 
 fn count(f: impl FnOnce(&mut MemStats)) {
-    if let Ok(mut s) = MEM_STATS.lock() {
-        f(&mut s);
-    }
+    MEM_STATS.with(|s| {
+        let mut v = s.get();
+        f(&mut v);
+        s.set(v);
+    });
 }
 
-/// A store in memory, for this process. For tests only: nothing outlives the
-/// process, and no code version is needed because the code cannot change.
+/// A store in memory, for the folds this thread runs. For tests only: nothing
+/// outlives the thread, and no code version is needed because the code cannot
+/// change.
 pub fn init_in_memory() {
-    let _ = STORE.set(Store::Mem(Default::default()));
+    MEM.with(|m| *m.borrow_mut() = Some(Default::default()));
 }
 
 /// Turn the store on for this process: hash the Lean binary, clear rows of any
@@ -139,37 +146,40 @@ fn block<T: Send>(
 /// Answer a `memo.*` ask: the stored result for `memo.walkGet`, nothing for
 /// `memo.walkPut` (whose key is `hash|value`) once it is stored.
 pub fn answer(ask: &Ask) -> Option<Value> {
+    if let Some(hit) = MEM.with(|m| m.borrow_mut().as_mut().map(|map| answer_mem(ask, map))) {
+        return hit;
+    }
     match STORE.get()? {
-        Store::Mem(map) => {
-            let mut map = map.lock().ok()?;
-            match ask.what.as_str() {
-                "memo.walkGet" => {
-                    let hit = map.get(&ask.key).and_then(|t| serde_json::from_str(t).ok());
-                    count(|s| {
-                        if hit.is_some() {
-                            s.served += 1
-                        } else {
-                            s.missed += 1
-                        }
-                    });
-                    hit
-                }
-                "memo.walkPut" => {
-                    if let Some((key, value)) = ask.key.split_once('|') {
-                        map.entry(key.to_string())
-                            .or_insert_with(|| value.to_string());
-                    }
-                    count(|s| s.puts += 1);
-                    None
-                }
-                _ => None,
-            }
-        }
         Store::Db {
             pool,
             handle,
             version,
         } => answer_db(ask, pool, handle, version),
+    }
+}
+
+fn answer_mem(ask: &Ask, map: &mut std::collections::HashMap<String, String>) -> Option<Value> {
+    match ask.what.as_str() {
+        "memo.walkGet" => {
+            let hit = map.get(&ask.key).and_then(|t| serde_json::from_str(t).ok());
+            count(|s| {
+                if hit.is_some() {
+                    s.served += 1
+                } else {
+                    s.missed += 1
+                }
+            });
+            hit
+        }
+        "memo.walkPut" => {
+            if let Some((key, value)) = ask.key.split_once('|') {
+                map.entry(key.to_string())
+                    .or_insert_with(|| value.to_string());
+            }
+            count(|s| s.puts += 1);
+            None
+        }
+        _ => None,
     }
 }
 
