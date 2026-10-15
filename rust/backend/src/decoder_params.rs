@@ -23,13 +23,11 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 
 /// The request flags the record sets, by its own key.
-const FLAGS: [&str; 7] = [
+const FLAGS: [&str; 5] = [
     "segEmission",
     "transFit",
     "entryCounts",
     "fittedPriors",
-    "dropRepeatedFixes",
-    "generatorBoardingWait",
     "durationNoFloor",
 ];
 

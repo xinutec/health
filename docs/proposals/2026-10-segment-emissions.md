@@ -752,6 +752,11 @@ once per segment, which is what the minute prior could not do.
 **Retired: the `unknown` state** (`dropUnknown`): `MOVEMENT_MODES` no
 longer builds it and the flag is gone; the 43 frozen decodes replay
 identically. The mode stays in the enum for the served day's labels.
+**Retired: the two observation-form flags.** The generator's boarding wait
+(`generatorBoardingWait`, true in every record since s32) is the generator;
+the repeated-fix drop (`dropRepeatedFixes`, s39rep, neutral and never in a
+record) is gone; the golden form is `maxD` alone. The 43 frozen decodes
+replay identically.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,

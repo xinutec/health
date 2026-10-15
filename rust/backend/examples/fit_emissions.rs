@@ -170,7 +170,7 @@ fn main() -> Result<()> {
                         else {
                             continue;
                         };
-                        match read_day(name, date, &md, &form.decoder) {
+                        match read_day(name, date, &md) {
                             Ok(d) => {
                                 days.lock().expect("days").insert(date.to_string(), d);
                             }
@@ -203,10 +203,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// The form's settings that change what the decoder observes, laid on the
-/// fitter's own requests so a fit sees the minutes the decoder will.
-const OBSERVATION_FORM: [&str; 2] = ["dropRepeatedFixes", "generatorBoardingWait"];
-
 /// The single record the serving pod loads (`DECODER_PARAMS`).
 const RECORD: &str = "decoder-params";
 
@@ -218,7 +214,7 @@ const FILES: [&str; 4] = [
 ];
 
 /// One narrated day's labelled runs, nights, stays and mode changes.
-fn read_day(name: &str, date: &str, md: &str, form: &Value) -> Result<Day> {
+fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
     let fx = backend::decode_fixture::read(name)?;
     let tz = fx["meta"]["tz"]
         .as_str()
@@ -314,13 +310,6 @@ fn read_day(name: &str, date: &str, md: &str, form: &Value) -> Result<Day> {
         .as_i64()
         .context("startUtc")?;
     req["mode"] = json!("assemblesegments");
-    // The minutes are fitted as the decoder will observe them: the form's
-    // observation settings apply here too.
-    for k in OBSERVATION_FORM {
-        if !form[k].is_null() {
-            req["flags"][k] = form[k].clone();
-        }
-    }
     req["emissionDebug"] = json!({
         "fromTs": start, "toTs": start + 86_340,
         "segments": spans.iter().map(|&(_, s, e)| json!([s, e - 60])).collect::<Vec<_>>(),
@@ -438,8 +427,8 @@ fn metres(a: (f64, f64), b: (f64, f64)) -> f64 {
 /// reaches.
 struct Form {
     files: BTreeMap<&'static str, Value>,
-    /// `decoder-form.json`: the record's settings no day fits (`maxD`, the
-    /// generator's boarding wait, which fits the form takes).
+    /// `decoder-form.json`: the record's settings no day fits (`maxD`, which
+    /// fits the form takes).
     decoder: Value,
     /// `decoder-form.json`'s `poolUnobservedModes`: a mode no narrated minute
     /// reaches takes the pooled chains.
