@@ -684,7 +684,7 @@ private def approxG (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 
 -- State space built correctly: KNOWN_LINES present, place 5 present.
 #guard KNOWN_LINES.length == 11
-#guard ctxU.states.size == 10          -- 5 movement + 2 stationary + the graph's one line + unknown_rail + unknown_metro
+#guard ctxU.states.size == 9           -- 4 movement + 2 stationary + the graph's one line + unknown_rail + unknown_metro
 #guard ctxU.nPlaces == 1
 
 -- emitAt: the composed value is EmissionFull's V8-pinned emission, and coverage
@@ -720,7 +720,7 @@ private def drvIdx : Nat := (ctxH.states.findIdx? (fun s => s.mode == .driving &
 #guard transAt { ctxU with chainOn := true } statIdx noneIdx 0 == negInf  -- stat@5 → stat@none
 
 -- tensor dims.
-#guard (buildEmit ctxU).size == 1 && (buildEmit ctxU)[0]!.size == 10
-#guard (buildInit ctxU).size == 10
+#guard (buildEmit ctxU).size == 1 && (buildEmit ctxU)[0]!.size == 9
+#guard (buildInit ctxU).size == 9
 
 end Verified.Hsmm.Assemble

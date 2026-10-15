@@ -9,7 +9,7 @@ fn the_record_fills_what_the_request_leaves_unset() {
     apply(
         &mut req,
         &json!({ "segEmission": { "rho": 0.8 }, "transFit": { "fitted": 1 }, "maxD": 1440,
-                 "dropUnknown": true, "provenance": { "days": 43 } }),
+                 "generatorBoardingWait": true, "provenance": { "days": 43 } }),
     );
     assert_eq!(req["flags"]["segEmission"], json!({ "rho": 0.8 }));
     assert_eq!(
@@ -17,7 +17,7 @@ fn the_record_fills_what_the_request_leaves_unset() {
         json!({ "own": 1 }),
         "the request's own wins"
     );
-    assert_eq!(req["flags"]["dropUnknown"], json!(true));
+    assert_eq!(req["flags"]["generatorBoardingWait"], json!(true));
     assert_eq!(req["flags"]["reacquireRobust"], json!(true));
     assert_eq!(req["maxD"], json!(1440));
     assert!(

@@ -53,8 +53,10 @@ structure FocusPlaceRef where
   id : Int
   displayName : Option String
 
-/-- Movement modes: no place, no line. -/
-def MOVEMENT_MODES : List Mode := [.walking, .cycling, .driving, .plane, .unknown]
+/-- Movement modes: no place, no line. `unknown` is not a state: it was the
+    catch-all the per-minute model needed, and with segment-level evidence a
+    minute the decoder cannot place goes to the likeliest real mode. -/
+def MOVEMENT_MODES : List Mode := [.walking, .cycling, .driving, .plane]
 
 /-- Append in order, dropping any state whose key already appeared (mirrors the
     TS `seen`-set `push`, first occurrence wins). -/
@@ -82,10 +84,10 @@ private def places : List FocusPlaceRef := [⟨5, some "Home"⟩, ⟨7, some "Wo
 private def lines : List String := ["Jubilee Line", "Central Line", "Jubilee Line"]
 
 #guard (buildStateSpace places lines).map stateKey ==
-  ["walking", "cycling", "driving", "plane", "unknown",
+  ["walking", "cycling", "driving", "plane",
    "stationary|none", "stationary|5", "stationary|7",
    "train|Jubilee Line", "train|Central Line", "train|unknown_rail"]
 
-#guard (buildStateSpace places lines).length == 11
+#guard (buildStateSpace places lines).length == 10
 
 end Verified.Hsmm.StateSpace

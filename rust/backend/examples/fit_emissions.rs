@@ -438,8 +438,8 @@ fn metres(a: (f64, f64), b: (f64, f64)) -> f64 {
 /// reaches.
 struct Form {
     files: BTreeMap<&'static str, Value>,
-    /// `decoder-form.json`: the record's settings no day fits (`maxD`,
-    /// `dropUnknown`, the per-minute mode prior's scales).
+    /// `decoder-form.json`: the record's settings no day fits (`maxD`, the
+    /// generator's boarding wait, which fits the form takes).
     decoder: Value,
     /// `decoder-form.json`'s `poolUnobservedModes`: a mode no narrated minute
     /// reaches takes the pooled chains.

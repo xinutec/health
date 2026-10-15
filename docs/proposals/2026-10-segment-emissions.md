@@ -749,6 +749,9 @@ sum, `modeMinuteScale`, `modeMinuteScaleWithGps`, `modeEntryScale` and
 `modeEntryLog` gone): 0 in the record since s3, so the 43 frozen decodes
 replay identically and the floor holds; the fitted entry prior charges a mode
 once per segment, which is what the minute prior could not do.
+**Retired: the `unknown` state** (`dropUnknown`): `MOVEMENT_MODES` no
+longer builds it and the flag is gone; the 43 frozen decodes replay
+identically. The mode stays in the enum for the served day's labels.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,

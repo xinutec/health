@@ -16,19 +16,18 @@
 //! ```json
 //! { "segEmission": {…}, "transFit": {…}, "entryCounts": {…}, "fittedPriors": {…},
 //!   "maxD": 1440,
-//!   "dropUnknown": true, "provenance": {…} }
+//!   "provenance": {…} }
 //! ```
 
 use anyhow::{Context, Result};
 use serde_json::Value;
 
 /// The request flags the record sets, by its own key.
-const FLAGS: [&str; 8] = [
+const FLAGS: [&str; 7] = [
     "segEmission",
     "transFit",
     "entryCounts",
     "fittedPriors",
-    "dropUnknown",
     "dropRepeatedFixes",
     "generatorBoardingWait",
     "durationNoFloor",
