@@ -935,12 +935,6 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | _ => none
     let uMaxKmh := ((f.getObjVal? "uMaxKmh").toOption.bind num).getD
       Verified.Hsmm.SegmentEmission.DEFAULT_U_MAX_KMH
-    let fixMarkov := all.filterMap fun m => do
-      let arr ← (((f.getObjVal? "fixMarkov") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)))
-        >>= (·.getArr?)).toOption
-      match arr.toList.filterMap num with
-      | [p11, p01] => some (m, (p11, p01))
-      | _ => none
     let byMode := all.filterMap fun m => do
       let arr ← ((modes.getObjVal? (Verified.Hsmm.StateSpace.modeName m)) >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
@@ -964,7 +958,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         >>= (·.getArr?)).toOption
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
            obsChain, asleep, unlistedCentre }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity

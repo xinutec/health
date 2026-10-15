@@ -102,7 +102,6 @@ fn decoder_mode(m: &str) -> Option<&'static str> {
 
 #[derive(Clone, Default)]
 struct Minute {
-    lit: bool,
     /// The one-minute span to the next minute (the pair tables).
     pair_kmh: Option<f64>,
     /// Awake heart rate; an in-bed minute's belongs to its night (`Day::nights`).
@@ -304,7 +303,6 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
         .collect();
     let windows = out["segWindows"].as_array().cloned().unwrap_or_default();
     let minute = |r: &Value| Minute {
-        lit: !r["lat"].is_null(),
         pair_kmh: r["pairKmh"].as_f64(),
         hr: if r["inBed"].as_bool() == Some(true) {
             None
@@ -739,17 +737,11 @@ fn write_fit(
                 ws.len()
             ));
         }
-        let (mut c, mut cls) = ([[0.0f64; 2]; 2], vec![vec![0.0f64; 3]; 3]);
+        let mut cls = vec![vec![0.0f64; 3]; 3];
         for r in of(m) {
             for w in r.inner.windows(2) {
-                c[usize::from(w[0].lit)][usize::from(w[1].lit)] += 1.0;
                 cls[w[0].cls][w[1].cls] += 1.0;
             }
-        }
-        if se["fixMarkov"][m].is_array() && c[1][0] + c[1][1] > 0.0 && c[0][0] + c[0][1] > 0.0 {
-            let p11 = c[1][1] / (c[1][0] + c[1][1]);
-            let p01 = c[0][1] / (c[0][0] + c[0][1]);
-            se["fixMarkov"][m] = json!([round4(p11), round4(p01)]);
         }
         if se["obsChain"][m].is_array() && cls.iter().flatten().sum::<f64>() >= MIN_N as f64 {
             se["obsChain"][m] = json!(chain_rows(&cls));
@@ -760,21 +752,15 @@ fn write_fit(
     // a mode with no data of its own. Without them it paid nothing for where
     // its fixes fall, so a train's tail along the tracks read as a bicycle.
     if form.pool_unobserved {
-        let (mut c, mut cls) = ([[0.0f64; 2]; 2], vec![vec![0.0f64; 3]; 3]);
+        let mut cls = vec![vec![0.0f64; 3]; 3];
         for r in &runs {
             for w in r.inner.windows(2) {
-                c[usize::from(w[0].lit)][usize::from(w[1].lit)] += 1.0;
                 cls[w[0].cls][w[1].cls] += 1.0;
             }
         }
         for m in MODES {
             if !se["obsChain"][m].is_array() {
                 se["obsChain"][m] = json!(chain_rows(&cls));
-            }
-            if !se["fixMarkov"][m].is_array() {
-                let p11 = c[1][1] / (c[1][0] + c[1][1]).max(1.0);
-                let p01 = c[0][1] / (c[0][0] + c[0][1]).max(1.0);
-                se["fixMarkov"][m] = json!([round4(p11), round4(p01)]);
             }
         }
         log.push("pooled chains for the modes with no narrated minutes".into());

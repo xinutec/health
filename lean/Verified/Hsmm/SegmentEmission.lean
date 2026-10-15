@@ -21,7 +21,7 @@ Here each is scored under a model of how it is generated:
   segment's minutes has a closed form in their count, sum and sum of squares.
   Asleep minutes keep the per-minute term (`Emissions`).
 * **Fix presence** switches between regimes (indoors none, outdoors every
-  minute), so it is a two-state chain per mode (`fixMinute`): a regime change
+  minute), so it is part of a chain per mode (`obsMinute`): a regime change
   costs one switch, not the segment. Without a chain for the mode, the
   segment's fix share is a draw from Beta(`fixA`, `fixB`) and its sequence
   scores the beta-binomial's `B(k+a, n−k+b) / B(a, b)` — which reads a stay
@@ -79,10 +79,6 @@ structure Params where
   byMode : List (Mode × ModeParams)
   disp : List (Mode × DispParams) := []
   uMaxKmh : Float := DEFAULT_U_MAX_KMH
-  /-- Fix presence as a two-state chain per mode: `P(fix | fix a minute ago)`,
-      `P(fix | none a minute ago)`. A mode listed here is scored per minute
-      (`fixMinute`) and not by the segment's beta-binomial. -/
-  fixMarkov : List (Mode × (Float × Float)) := []
   /-- A minute's speed is the mode's Gaussian with this share of outliers spread
       evenly over 0–`uMaxKmh` (a fix that jumped): one bad fix must not outvote
       the steps and the minutes around it. -/
@@ -98,7 +94,8 @@ structure Params where
   /-- A minute as one of three classes — no fix, a fix within `RAIL_NEAR_M` of a
       railway, a fix elsewhere — scored given the minute before by a 3×3 chain
       per mode (rows: the class before). It carries fix presence and rail
-      adjacency together, and replaces `fixMarkov` for a mode it lists. -/
+      adjacency together; a mode it lists is not scored by the segment's
+      beta-binomial. -/
   obsChain : List (Mode × Array (Array Float)) := []
   /-- Asleep minutes' heart rate per segment, one physiology for every state:
       the night's mean a draw around `hrMean` (spread `hrTau`), the minutes
@@ -377,17 +374,6 @@ def obsMinute (p : Params) (mode : Mode) (cls : Nat) (prev : Option Nat) : Optio
     | some i => Float.log (((m[i]?).bind (·[cls]?)).getD ONE_THIRD)
     | none => Float.log ONE_THIRD
 
-/-- A minute's fix presence under the mode's chain, given the minute before
-    (`none` at the day's first minute: the chain's stationary share). `none`
-    when the mode has no chain. -/
-def fixMinute (p : Params) (mode : Mode) (lit : Bool) (prevLit : Option Bool) : Option Float :=
-  (p.fixMarkov.find? (·.1 == mode)).map fun (_, (p11, p01)) =>
-    let pFix := match prevLit with
-      | some true => p11
-      | some false => p01
-      | none => p01 / (ONE - p11 + p01)
-    Float.log (if lit then pFix else ONE - pFix)
-
 /-- What the speed outlier share adds to a minute whose Gaussian speed term is
     `gauss`: `log((1−ε)·e^gauss + ε/uMax) − gauss`. `0` without a share. -/
 def speedRobust (p : Params) (mode : Mode) (gauss : Float) : Float :=
@@ -451,7 +437,7 @@ def scorePrepared (q : Prepared) (mode : Mode) (st : Stats) : Float :=
   | some t =>
     let n := idx st.n
     let k := idx st.fixN
-    let fix := if q.p.fixMarkov.any (·.1 == mode) then ZERO
+    let fix := if q.p.obsChain.any (·.1 == mode) then ZERO
       else t.lgA.getD k ZERO + t.lgB.getD (n - k) ZERO - t.lgAB.getD n ZERO - t.lbAB
     let hn := idx st.hrN
     let hr := if hn == 0 then ZERO else

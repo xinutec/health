@@ -328,7 +328,6 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
       + (if q.p.unlistedCentre.isSome && st.mode == .stationary && st.placeId.isNone && o.gps.isSome then
            c.weights.base * Emissions.OFF_NETWORK_LOG_PRIOR
          else SEG_ZERO)
-    let prevLit := if t == 0 then none else (c.obs[t - 1]?).map (·.gps.isSome)
     let speed := match o.gps with
       | some g =>
         let prior := Emissions.priorOf c.priors st
@@ -339,10 +338,8 @@ def segMinuteAt (c : ModelContext) (t : Nat) (st : State) (o : ObsRow) : Float :
         -- The speed is the segment's (`pairTables`): the base's own comes out.
         c.weights.base * (SEG_ZERO - own)
       | none => SEG_ZERO
-    let chain := match SegmentEmission.obsMinute q.p st.mode (SegmentEmission.obsClass o)
-        (if t == 0 then none else (c.obs[t - 1]?).map SegmentEmission.obsClass) with
-      | some v => v
-      | none => (SegmentEmission.fixMinute q.p st.mode o.gps.isSome prevLit).getD SEG_ZERO
+    let chain := (SegmentEmission.obsMinute q.p st.mode (SegmentEmission.obsClass o)
+        (if t == 0 then none else (c.obs[t - 1]?).map SegmentEmission.obsClass)).getD SEG_ZERO
     let rank :=
       if st.mode == .train then
         -c.weights.lineProximity * (c.lineProxBest[t]?).getD SEG_ZERO

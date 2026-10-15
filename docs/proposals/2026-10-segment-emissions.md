@@ -765,11 +765,15 @@ replay identically.
 so is the s49mix code that had ridden into 5caa2cc9 inert. The golden
 segment-emission form loses the six keys. The 43 frozen decodes replay
 identically.
+**Retired: the two-state fix chain** (`fixMarkov`, `fixMinute`). The
+three-class `obsChain` lists the same four modes in every record and replaces
+it for each, so the two-state chain was never reached; a mode `obsChain`
+lists is the one the segment's beta-binomial skips. The 43 frozen decodes
+replay identically.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
-asleep and off-network terms, `unknown`, the per-minute mode prior,
-`LineProximity`'s constants, the self-loop mass, the duration cap; the
+asleep and off-network terms, `LineProximity`'s constants, the self-loop mass, the duration cap; the
 listed place's per-minute Gaussian and its floor into the placeless stay's
 form (the same prefix sums, a fitted outlier share for the floor); the
 fix's accuracy in a position model rather than a speed term (the plumbing
