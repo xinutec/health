@@ -911,9 +911,10 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     match arr.toList.filterMap (fun v => (v.getNum?).toOption.map (·.toFloat)) with
     | [a, b] => some { alpha := a, beta := b, sampleCount := 10 }
     | _ => none
-  -- Segment-level emissions (harness-only): `{sigmaW, rho, modes: {mode: [hrMean,
-  -- hrTau, fixA, fixB]}}`; absent keeps the per-minute heart-rate and fix terms.
-  let segEm : Option Verified.Hsmm.SegmentEmission.Params := do
+  -- Segment-level emissions, the decoder record's `segEmission`: `{sigmaW,
+  -- rho, modes: {mode: [hrMean, hrTau, fixA, fixB]}, …}`. Required: the
+  -- decoder has no form without it.
+  let segEm? : Option Verified.Hsmm.SegmentEmission.Params := do
     let f ← (flags.getObjVal? "segEmission").toOption.filter (!·.isNull)
     let num := fun (v : Json) => (v.getNum?).toOption.map (·.toFloat)
     let sigmaW ← num (← (f.getObjVal? "sigmaW").toOption)
@@ -954,19 +955,20 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
            obsChain, asleep, unlistedCentre }
+  let some segEm := segEm?
+    | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
     (← (← flags.getObjVal? "segEvidence").getBool?)
-    (← (← flags.getObjVal? "chainContext").getBool?)
+    (← (← flags.getObjVal? "chainContext").getBool?) segEm
   let posRef := Verified.Hsmm.SegmentEmission.refOf obs
   let segPref := Verified.Hsmm.SegmentEmission.withPositions
     (Verified.Hsmm.SegmentEmission.prefixOf obs) obs posRef
-    ((segEm.bind (·.centreSigmaM)).getD Verified.Hsmm.Emissions.PLACE_RADIUS_M)
+    (segEm.centreSigmaM.getD Verified.Hsmm.Emissions.PLACE_RADIUS_M)
     Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M
   let placePrior := Verified.Hsmm.SegmentEmission.placesLocal posRef
     (places.toList.map fun (_, lat, lon, _, _) => (lat, lon))
-  let segEm := segEm.map (Verified.Hsmm.SegmentEmission.prepare · obs.size)
   -- A fitted mode-to-mode transition matrix (harness-only): `{src: {dst: p}}`.
   let modesAll : List Verified.Hsmm.Emissions.Mode :=
     [.stationary, .walking, .cycling, .driving, .train, .plane, .unknown]
@@ -1024,11 +1026,9 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | _, _ => #[]
     | none => #[]
   let durationNoFloor := ((flags.getObjVal? "durationNoFloor") >>= (·.getBool?)).toOption.getD false
-  let ctx := { ctx with priors, fits, mainlineFit, weights, segEm, segPref, placePrior, transWeight, stayEntryLog, durationNoFloor,
+  let ctx := { ctx with priors, fits, mainlineFit, weights, segPref, placePrior, transWeight, stayEntryLog, durationNoFloor,
                         visitCounts, entryTable }
-  let lineProxBest := match segEm with
-    | some _ => Verified.Hsmm.Assemble.lineProxBestTable ctx
-    | none => #[]
+  let lineProxBest := Verified.Hsmm.Assemble.lineProxBestTable ctx
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx
   return ({ ctx with lineProxBest, pairPref, pairBoundary }, maxD)
 
@@ -1497,9 +1497,12 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
       Json.mkObj [("state", Json.str (Verified.Hsmm.StateSpace.stateKey st)),
                   ("emit", Lean.toJson (Verified.Hsmm.Assemble.emitAt c t s)),
                   -- What `SegmentEmission` changes in the minute's emission:
-                  -- its own minus the plain base path's.
-                  ("seg", Lean.toJson (Verified.Hsmm.Assemble.emitAt c t s
-                    - Verified.Hsmm.Assemble.emitAt { c with segEm := none } t s)),
+                  -- its base remainder and minute terms against the whole base.
+                  ("seg", Lean.toJson (c.weights.base
+                      * (Verified.Hsmm.Assemble.segBaseAt c.segEm c st o
+                        - Verified.Hsmm.EmissionFull.baseEmissionWithReacquire st o
+                            (st.placeId.bind (c.placeCoords.get? ·)) c.reacquireRobust c.priors)
+                    + Verified.Hsmm.Assemble.segMinuteAt c.segEm c t st o)),
                   -- The base's parts, for the state a reader asks about: the
                   -- speed Gaussian, the reacquire correction, the place term,
                   -- the geometric reach, the gap share, the cadence, the heart rate.

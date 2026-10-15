@@ -11,6 +11,7 @@
 //! two small lookup tables; shipping the 1440 rows instead is the 33-40 MiB per
 //! day #411 measures.
 
+use crate::with_record;
 use backend::lean;
 
 fn setup() {
@@ -23,16 +24,6 @@ const T0: i64 = 1_000_000;
 /// because it is not pure.
 fn local_ctx() -> Vec<[i64; 2]> {
     (0..1440).map(|m| [(m / 60) % 24, 1]).collect()
-}
-
-/// The shipped decoder's record on a synthetic request, as `decode-day` lays
-/// it on a real one: these days describe the decoder that serves, and the
-/// per-minute terms it retired are not there to carry them.
-fn with_record(mut r: serde_json::Value) -> serde_json::Value {
-    if let Some(p) = backend::decoder_params::from_env("2026-01-01").expect("the record reads") {
-        backend::decoder_params::apply(&mut r, &p);
-    }
-    r
 }
 
 fn request(observation: serde_json::Value) -> serde_json::Value {

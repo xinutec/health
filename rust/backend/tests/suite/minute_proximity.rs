@@ -132,7 +132,7 @@ fn the_table_feeds_assemblesegments_unread() {
         "the table must carry the bit pattern, got {table}"
     );
 
-    let segs = lean::assemble_segments(&serde_json::json!({
+    let segs = lean::assemble_segments(&crate::with_record(serde_json::json!({
         "observation": {
             "startUtc": T0,
             "points": pts.iter().map(|(ts, lat, lon)| serde_json::json!({
@@ -146,7 +146,7 @@ fn the_table_feeds_assemblesegments_unread() {
         "edges": [], "places": [], "nodes": null, "continuity": null,
         "flags": { "reacquireRobust": true, "segEvidence": true, "chainContext": true },
         "maxD": 30,
-    }))
+    })))
     .expect("the decoder must accept the table this pipeline produces")
     .expect("a viable path");
     assert!(!segs.as_array().unwrap().is_empty());

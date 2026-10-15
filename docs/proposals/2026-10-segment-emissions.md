@@ -785,6 +785,12 @@ emission a minute's base is composed of what it still carries (cadence, the
 bed, a listed place's distance, a fitless mode's presence and heart rate, a
 fixless minute's speed term) instead of the whole base with the segment's
 terms subtracted again. The 43 frozen decodes replay identically.
+**Retired: the decoder without a segment emission.** `flags.segEmission` is
+required: a request without the record is refused by name, the context
+carries the segment emission unconditionally, and the plain per-minute base
+remains only as the parity reference the guards pin (a record with no fitted
+mode composes to it). Both production workloads carry the record. The 43
+frozen decodes replay identically.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,

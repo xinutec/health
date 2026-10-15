@@ -87,8 +87,8 @@ fn term_weights() -> Result<Value> {
     }
 }
 
-/// `HSMM_SEG_EMISSION=<file>`: segment-level heart-rate and fix-presence
-/// parameters (`Verified.Hsmm.SegmentEmission`), harness-only.
+/// `HSMM_SEG_EMISSION=<file>`: an arm's segment emission
+/// (`Verified.Hsmm.SegmentEmission`) in place of the record's, harness-only.
 fn seg_emission(date: &str) -> Result<Value> {
     json_file("HSMM_SEG_EMISSION", date)
 }

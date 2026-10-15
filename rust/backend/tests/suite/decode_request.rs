@@ -39,13 +39,13 @@ fn known_row(id: i64, lat: f64, lon: f64) -> serde_json::Value {
 }
 
 fn request(places: serde_json::Value, place_near_line: serde_json::Value) -> serde_json::Value {
-    serde_json::json!({
+    crate::with_record(serde_json::json!({
         "obs": [],
         "edges": [], "nodes": null, "continuity": null,
         "places": places,
         "placeNearLine": place_near_line,
         "flags": { "reacquireRobust": true, "segEvidence": true, "chainContext": true },
-    })
+    }))
 }
 
 /// ⚠ THE ROW SHAPE IS REFUSED BY NAME. This is the exact request `decode-day`

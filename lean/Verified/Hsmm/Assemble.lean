@@ -99,10 +99,9 @@ structure ModelContext where
   /-- Per-family weights (`EmissionFull.TermWeights`), all `1` when shipped. -/
   weights : EmissionFull.TermWeights := {}
   /-- `SegmentEmission`'s terms (heart rate per segment, fix presence as a
-      chain, net displacement) in place of the per-minute heart-rate and
-      fix-presence terms and `SegmentEvidence`; `none`, the shipped model,
-      keeps those. Harness-only (`flags.segEmission`). -/
-  segEm : Option SegmentEmission.Prepared := none
+      chain, net displacement, the speed of each pair of fixes), from the
+      decoder record's `segEmission`. -/
+  segEm : SegmentEmission.Prepared
   segPref : SegmentEmission.Prefix := default
   /-- The listed places in local metres (`SegmentEmission.placesLocal`), the
       centres of the unlisted place's prior (`unlistedCentre`). -/
@@ -155,7 +154,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float))
     (coverage : Std.HashMap Int (List String)) (placeNearLine : Std.HashSet String)
     (continuity : Option Continuity.ContinuityContext)
-    (reacquireRobust segEvidenceOn chainOn : Bool) : ModelContext :=
+    (reacquireRobust segEvidenceOn chainOn : Bool) (segEm : SegmentEmission.Params) : ModelContext :=
   -- A line is a state only where the day's route graph has its track: abroad
   -- a London line had no evidence against it and named a TGV (10-01).
   let lines := KNOWN_LINES.filter (RouteModel.linesInGraph model).contains
@@ -178,6 +177,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     edgesByLine := RouteModel.buildEdgesByLine model
     placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
     reacquireRobust, segEvidenceOn, chainOn
+    segEm := SegmentEmission.prepare segEm obs.size
     stepPref := SegmentEvidence.stepPrefix obs
     minuteLines := obs.map (RouteModel.minuteLines model)
     railByMinute :=
@@ -276,27 +276,25 @@ def pairSpan (obs : Array ObsRow) (t : Nat) : Option (Float × Float) := do
     0–`uMaxKmh`. Both weighted as the base
     emission; empty without the flag. -/
 def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
-  match c.segEm with
-  | some q =>
-    let spans := (Array.range c.obs.size).map (pairSpan c.obs)
-    let pref := c.states.map fun st =>
-      let prior := Emissions.priorOf c.priors st
-      spans.foldl (fun acc sp =>
-        let x := match sp with
-          | some (v, noise) =>
-            let g := spanScore q.p prior v noise
-            c.weights.base * (g + SegmentEmission.speedRobust q.p st.mode g)
-          | none => SEG_ZERO
-        acc.push (acc.back! + x)) #[SEG_ZERO]
-    let bound := spans.map fun sp =>
-      match sp, q.p.pairBoundaryMeanKmh with
-      | some (v, _), some m =>
-        let e := q.p.pairBoundaryEps.getD SEG_ZERO
-        c.weights.base * Float.log ((MIN_ONE - e) * Float.exp (SEG_ZERO - v / m) / m + e / q.p.uMaxKmh)
-      | some _, none => c.weights.base * (SEG_ZERO - Float.log q.p.uMaxKmh)
-      | none, _ => SEG_ZERO
-    (pref, bound)
-  | none => (#[], #[])
+  let q := c.segEm
+  let spans := (Array.range c.obs.size).map (pairSpan c.obs)
+  let pref := c.states.map fun st =>
+    let prior := Emissions.priorOf c.priors st
+    spans.foldl (fun acc sp =>
+      let x := match sp with
+        | some (v, noise) =>
+          let g := spanScore q.p prior v noise
+          c.weights.base * (g + SegmentEmission.speedRobust q.p st.mode g)
+        | none => SEG_ZERO
+      acc.push (acc.back! + x)) #[SEG_ZERO]
+  let bound := spans.map fun sp =>
+    match sp, q.p.pairBoundaryMeanKmh with
+    | some (v, _), some m =>
+      let e := q.p.pairBoundaryEps.getD SEG_ZERO
+      c.weights.base * Float.log ((MIN_ONE - e) * Float.exp (SEG_ZERO - v / m) / m + e / q.p.uMaxKmh)
+    | some _, none => c.weights.base * (SEG_ZERO - Float.log q.p.uMaxKmh)
+    | none, _ => SEG_ZERO
+  (pref, bound)
 
 /-- The base emission's terms a minute still carries under `SegmentEmission`:
     the segment scores the awake heart rate and fix presence of every mode it
@@ -345,15 +343,10 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
       else match c.railByMinute[t]? with
         | some m => m.getD (StateSpace.stateKey st) 0.0
         | none => RouteModel.routeRailEvidence c.model c.connGraph st o false
-    match c.segEm with
-    | none =>
-      EmissionFull.emissionLogProbFullWith c.modeledLines minute railEv
-        c.placeCoords c.reacquireRobust c.continuity st o c.priors c.weights
-    | some q =>
-      c.weights.base * segBaseAt q c st o
-        + EmissionFull.emissionRestWith c.modeledLines minute railEv c.placeCoords c.continuity
-            st o c.priors c.weights
-        + segMinuteAt q c t st o
+    c.weights.base * segBaseAt c.segEm c st o
+      + EmissionFull.emissionRestWith c.modeledLines minute railEv c.placeCoords c.continuity
+          st o c.priors c.weights
+      + segMinuteAt c.segEm c t st o
   | _, _ => negInf
 
 private def SEG_ONE : Float := 1
@@ -450,8 +443,9 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
     `SegmentEvidence` term the duration already holds is taken back out. -/
 def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
     (st : SegmentEmission.Stats) : Float :=
-  match c.segEm, c.states[s]? with
-  | some q, some x =>
+  let q := c.segEm
+  match c.states[s]? with
+  | some x =>
     SegmentEmission.scorePrepared q x.mode st
       + (match q.p.unlistedCentre with
          | some h =>
@@ -468,7 +462,7 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
       - (if c.segEvidenceOn then
            c.weights.segmentEvidence * SegmentEvidence.segmentEvidenceOf x.mode d w
          else SEG_ZERO)
-  | _, _ => SEG_ZERO
+  | none => SEG_ZERO
 
 /-- Per minute, the best line-proximity term over the train states. -/
 def lineProxBestTable (c : ModelContext) : Array Float :=
@@ -576,11 +570,13 @@ private def obsTrain : ObsRow :=
     prevGpsFix := some ⟨1000, 51.50, -0.10⟩, nextGpsFix := some ⟨1600, 51.55, -0.05⟩ }
 private def places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float) :=
   [(⟨5, some "Home"⟩, 51.52, -0.13, none, 100.0)]
+-- A record with no fitted mode: every base term stays per minute.
+private def segNone : SegmentEmission.Params := { sigmaW := 8, rho := 0.8, byMode := [] }
 -- Uncovered day, and a day where the generator vouches "Jubilee Line" at ts 1600.
-private def ctxU : ModelContext := buildContext #[obsTrain] jm places {} {} none false false false
+private def ctxU : ModelContext := buildContext #[obsTrain] jm places {} {} none false false false segNone
 private def ctxC : ModelContext :=
   buildContext #[obsTrain] jm places (({} : Std.HashMap Int (List String)).insert 1600 ["Jubilee Line"])
-    {} none false false false
+    {} none false false false segNone
 private def jubIdx : Nat := (ctxU.states.findIdx? (fun s => s.lineName == some "Jubilee Line")).getD 0
 private def statIdx : Nat := (ctxU.states.findIdx? (fun s => s.placeId == some 5)).getD 0
 private def noneIdx : Nat := (ctxU.states.findIdx? (fun s => s.mode == .stationary && s.placeId == none)).getD 0
@@ -592,8 +588,9 @@ private def approxG (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 #guard ctxU.states.size == 9           -- 4 movement + 2 stationary + the graph's one line + unknown_rail + unknown_metro
 #guard ctxU.nPlaces == 1
 
--- emitAt: the composed value is EmissionFull's V8-pinned emission, and coverage
--- does not reach it — it flows through the entry and duration terms (below).
+-- emitAt: with no fitted mode the composed value is EmissionFull's V8-pinned
+-- emission, and coverage does not reach it — it flows through the entry and
+-- duration terms (below).
 #guard approxG (emitAt ctxU 0 jubIdx)
   (EmissionFull.emissionLogProbFull jm (RouteModel.toConnGraph jm) (RouteModel.linesInGraph jm)
     ctxU.placeCoords false none jub obsTrain)

@@ -132,3 +132,12 @@ mod velocity_route;
 mod venue_rank_probe;
 mod walk_memo;
 mod watch_battery;
+
+/// The shipped decoder's record on a synthetic request, as `decode-day` lays
+/// it on a real one: the decoder refuses a request without its record.
+fn with_record(mut r: serde_json::Value) -> serde_json::Value {
+    if let Some(p) = backend::decoder_params::from_env("2026-01-01").expect("the record reads") {
+        backend::decoder_params::apply(&mut r, &p);
+    }
+    r
+}
