@@ -137,6 +137,7 @@ place entry normalised over places per hour.
 | s47: s46sig with s45stay's cadence | 128 | 310 | 63 | 68 | 5 | 138 |
 | s46now: s46sig on 2026-10-15's narratives (the baseline below) | 126 | 311 | 63 | 70 | 6 | 143 |
 | s48nf: s46now with no floor under the duration prior (`durationNoFloor`) | 126 | 311 | 63 | 71 | 7 | 143 |
+| s49place: s48nf with the listed place's spread fitted (σ 15 m, hand-set 150 m) | 122 | 310 | 63 | 70 | 13 | 145 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -685,6 +686,15 @@ one-minute walk and the hop to Euston Square lose by 5.8 nats, the floor
 alone costing 6.3. Without it the minute is the decoder's resolution and the
 fitted duration decides: 05-18 gains the hop (a leg mode and a station),
 06-16 loses a leg mode, the totals hold (stations +1), the referee 143.
+
+**Refuted: the listed place's spread fitted** (s49place). The listed place's
+per-minute distance term is −(d/150 m)²/2 floored at −3. Fitted on the fixes
+of the narrated stays that name a listed place, σ is 15 m; with it a stay at
+Home or Work pays the floor whenever an indoor fix strays 45 m, and the
+decoder breaks it into phantom trips (phantoms 6 → 12, journeys 126 → 122,
+10-07, 04-29, 06-18, 07-16), though the referee gains two. The term's form —
+no outlier share, a hard floor — is what fails, not its number: fitted, it
+needs the outlier share the speed pairs have.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
