@@ -135,6 +135,8 @@ place entry normalised over places per hour.
 | s45stay: s44wait with the step cadence fitted for stays alone | 127 | 309 | 63 | 68 | 5 | 137 |
 | s46sig: s44wait with a stay's position spread fitted (σ 7 m; `centreSigmaM`, hand-set 150 m) | 126 | 315 | 63 | 70 | 6 | 142 |
 | s47: s46sig with s45stay's cadence | 128 | 310 | 63 | 68 | 5 | 138 |
+| s46now: s46sig on 2026-10-15's narratives (the baseline below) | 126 | 311 | 63 | 70 | 6 | 143 |
+| s48nf: s46now with no floor under the duration prior (`durationNoFloor`) | 126 | 311 | 63 | 71 | 7 | 143 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -674,6 +676,15 @@ holds at 142, no day loses; under the decoder head journeys and stations
 hold and the stays gap to the served day is 11 named right (from 12). With
 s45stay's cadence beside it (s47) short walks still dissolve into stays: the
 referee and the headed day 138. The cadence stays hand-set.
+
+**No floor under the duration prior** (s48nf, `durationNoFloor`).
+`Duration.minDurationByMode` gives every mode a hand-set two-minute minimum,
+under which a segment scores a flat −10 whatever its fitted gamma says (−3.7
+for a one-minute walk). It is what lost 05-18's change at Baker Street: the
+one-minute walk and the hop to Euston Square lose by 5.8 nats, the floor
+alone costing 6.3. Without it the minute is the decoder's resolution and the
+fitted duration decides: 05-18 gains the hop (a leg mode and a station),
+06-16 loses a leg mode, the totals hold (stations +1), the referee 143.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,

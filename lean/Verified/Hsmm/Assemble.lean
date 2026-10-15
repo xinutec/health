@@ -84,6 +84,10 @@ structure ModelContext where
   modeEntryScale : Float := 0.0
   /-- Longest ride's head, in minutes; 0 = no head state in the space (#366). -/
   rideHeadMin : Nat := 0
+  /-- No floor under the duration prior: a segment as short as the decoder's
+      minute is scored by its mode's fitted duration, not by
+      `Duration.minDurationByMode`'s hand-set two minutes. -/
+  durationNoFloor : Bool := false
   /-- How much of the stay–ride gap in the per-minute mode prior a head minute
       is credited: 1 prices it like a stay, 0 like its ride. -/
   rideHeadCredit : Float := 1.0
@@ -540,7 +544,8 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
       let fit := match c.mainlineFit with
         | some f => if Emissions.isMainline st then f else c.fits st.mode
         | none => c.fits st.mode
-      c.weights.duration * Duration.logDurationProb d.toFloat fit (Duration.minDurationByMode st.mode)
+      c.weights.duration * Duration.logDurationProb d.toFloat fit
+        (if c.durationNoFloor then MIN_ONE else Duration.minDurationByMode st.mode)
 
 /-- The segment-level emission of state `s` over a segment of length `d` with
     window `w` and statistics `st`. Where it scores the displacement, the

@@ -1074,7 +1074,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
           (num "newShare")
       | _, _ => #[]
     | none => #[]
-  let ctx := { ctx with priors, fits, mainlineFit, weights, segEm, segPref, placePrior, transWeight, selfLoop, stayEntryLog,
+  let durationNoFloor := ((flags.getObjVal? "durationNoFloor") >>= (·.getBool?)).toOption.getD false
+  let ctx := { ctx with priors, fits, mainlineFit, weights, segEm, segPref, placePrior, transWeight, selfLoop, stayEntryLog, durationNoFloor,
                         visitCounts, entryTable, windowSpeed }
   let lineProxBest := match segEm with
     | some q => if q.p.lineRankOnly then Verified.Hsmm.Assemble.lineProxBestTable ctx else #[]
