@@ -30,7 +30,7 @@
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 /// Fit every decoder parameter on the narrated days.
 #[derive(clap::Parser)]
@@ -103,8 +103,7 @@ fn decoder_mode(m: &str) -> Option<&'static str> {
 #[derive(Clone, Default)]
 struct Minute {
     lit: bool,
-    window_kmh: Option<f64>,
-    /// The one-minute span to the next minute (`speedPairs`).
+    /// The one-minute span to the next minute (the pair tables).
     pair_kmh: Option<f64>,
     /// Awake heart rate; an in-bed minute's belongs to its night (`Day::nights`).
     hr: Option<f64>,
@@ -135,8 +134,6 @@ struct Day {
     /// Each lit stay minute's squared distance from its stay's centre and its
     /// fix's squared reported accuracy, metres² (`fitCentreSigma`).
     stay_scatter: Vec<(f64, f64)>,
-    /// The same about the listed place a narrated stay names (`fitPlaceMix`).
-    place_scatter: Vec<(f64, f64)>,
     /// The one-minute span across each boundary between adjacent runs, km/h.
     boundary: Vec<f64>,
 }
@@ -236,22 +233,9 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
     struct Row {
         mode: Option<&'static str>,
         sleeping: bool,
-        /// The listed place the narrated row names, if the request lists it.
-        place: Option<(f64, f64)>,
         s: i64,
         e: i64,
     }
-    let named: HashMap<&str, (f64, f64)> = req["places"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|p| {
-            Some((
-                p["name"].as_str()?,
-                (p["lat"].as_f64()?, p["lon"].as_f64()?),
-            ))
-        })
-        .collect();
     let mut rows: Vec<Option<Row>> = Vec::new();
     for row in gt["rows"].as_array().into_iter().flatten() {
         let prov = row["provenance"].as_str().unwrap_or("");
@@ -277,9 +261,6 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
                 Some(Row {
                     mode: decoder_mode(tm),
                     sleeping: tm == "sleeping",
-                    place: row["truth"]["place"]
-                        .as_str()
-                        .and_then(|n| named.get(n).copied()),
                     s,
                     e,
                 })
@@ -324,7 +305,6 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
     let windows = out["segWindows"].as_array().cloned().unwrap_or_default();
     let minute = |r: &Value| Minute {
         lit: !r["lat"].is_null(),
-        window_kmh: r["windowKmh"].as_f64(),
         pair_kmh: r["pairKmh"].as_f64(),
         hr: if r["inBed"].as_bool() == Some(true) {
             None
@@ -394,10 +374,6 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
                 for (f, a) in fixes.iter().zip(&acc) {
                     let d = metres(c, *f);
                     day.stay_scatter.push((d * d, a * a));
-                    if let Some(p) = r.place {
-                        let dp = metres(p, *f);
-                        day.place_scatter.push((dp * dp, a * a));
-                    }
                 }
             }
             if fixes.len() >= MIN_STAY_FIXES && !places.is_empty() {
@@ -515,55 +491,6 @@ const ACCURACY_DEFAULT_M: f64 = 10.0;
 
 /// EM steps for the outlier fits.
 const EM_STEPS: usize = 100;
-/// The search range for the astray fixes' spread about a listed place, metres.
-const WIDE_SIGMA_MAX_M: u16 = 2000;
-const WIDE_SIGMA_STEP_M: u16 = 5;
-
-/// The 2-D Gaussian log-density of a squared distance at variance `v` per axis.
-fn log_scatter(d2: f64, v: f64) -> f64 {
-    -(2.0 * std::f64::consts::PI * v).ln() - d2 / (2.0 * v)
-}
-
-/// The spread maximising the weighted likelihood of squared distances about a
-/// centre, each at variance `σ² + accuracy²`, over a grid of metres.
-fn weighted_sigma(pts: &[(f64, f64)], w: &[f64], grid: impl Iterator<Item = u16>) -> f64 {
-    let ll = |s: f64| -> f64 {
-        pts.iter()
-            .zip(w)
-            .map(|((d2, a2), wi)| wi * log_scatter(*d2, s * s + a2))
-            .sum()
-    };
-    grid.map(f64::from)
-        .max_by(|a, b| ll(*a).total_cmp(&ll(*b)))
-        .unwrap_or(f64::from(CENTRE_SIGMA_MAX_M))
-}
-
-/// A stay's fixes about its listed place: near (σ₁) or astray (σ₂, share ε),
-/// by EM over a grid of spreads. Returns `(σ₁, σ₂, ε)`.
-fn place_mixture(pts: &[(f64, f64)]) -> (f64, f64, f64) {
-    let ones = vec![1.0; pts.len()];
-    let mut s1 = weighted_sigma(pts, &ones, CENTRE_SIGMA_MIN_M..=CENTRE_SIGMA_MAX_M);
-    let mut s2 = f64::from(WIDE_SIGMA_MAX_M) / 4.0;
-    let mut eps = 0.05;
-    let mut r = vec![0.0; pts.len()];
-    for _ in 0..EM_STEPS {
-        for (ri, (d2, a2)) in r.iter_mut().zip(pts) {
-            let near = (1.0 - eps) * log_scatter(*d2, s1 * s1 + a2).exp();
-            let far = eps * log_scatter(*d2, s2 * s2 + a2).exp();
-            *ri = far / (near + far);
-        }
-        eps = (r.iter().sum::<f64>() / pts.len() as f64).clamp(1e-4, 0.5);
-        let near_w: Vec<f64> = r.iter().map(|ri| 1.0 - ri).collect();
-        s1 = weighted_sigma(pts, &near_w, CENTRE_SIGMA_MIN_M..=CENTRE_SIGMA_MAX_M);
-        let lo = (s1 as u16).max(CENTRE_SIGMA_MIN_M);
-        s2 = weighted_sigma(
-            pts,
-            &r,
-            (lo..=WIDE_SIGMA_MAX_M).step_by(WIDE_SIGMA_STEP_M as usize),
-        );
-    }
-    (s1, s2, eps)
-}
 
 fn normal_pdf(x: f64, mu: f64, sd: f64) -> f64 {
     let z = (x - mu) / sd;
@@ -755,29 +682,9 @@ fn write_fit(
             log.push(format!("stay scatter: σ {sigma} m ({} minutes)", pts.len()));
         }
     }
-    // With `fitPlaceMix`, a stay's fixes about the listed place it names: a
-    // two-scale mixture (near, astray with share ε), each spread widened by
-    // the fix's accuracy, by EM (`SegmentEmission.Params.placeSigmaM`).
-    if form.decoder["fitPlaceMix"].as_bool() == Some(true) {
-        let pts: Vec<(f64, f64)> = used
-            .iter()
-            .flat_map(|d| d.place_scatter.iter().copied())
-            .collect();
-        if pts.len() >= MIN_N {
-            let (s1, s2, eps) = place_mixture(&pts);
-            se["placeSigmaM"] = json!(s1);
-            se["placeWideSigmaM"] = json!(s2);
-            se["placeEps"] = json!(round4(eps));
-            log.push(format!(
-                "place mixture: σ {s1} m, astray σ {s2} m, share {:.2}% ({} minutes)",
-                100.0 * eps,
-                pts.len()
-            ));
-        }
-    }
-    // With `speedPairs`, the span across a boundary: exponential, its mean
-    // the narrated boundaries'.
-    if se["speedPairs"].as_bool() == Some(true) {
+    // The span across a boundary: exponential, its mean the narrated
+    // boundaries'.
+    {
         let b: Vec<f64> = used
             .iter()
             .flat_map(|d| d.boundary.iter().copied())
@@ -931,16 +838,15 @@ fn write_fit(
 
     // Speed priors: the windowed speed per mode; a vehicle's as stopped-or-moving.
     let mut sp = form.files["speed-priors"].clone();
-    // With `speedPairs` the decoder scores the span from each minute to the
-    // next inside a segment; an inner minute's next is inside the row too.
-    let pairs = form.files["segment-emission"]["speedPairs"].as_bool() == Some(true);
+    // The decoder scores the span from each minute to the next inside a
+    // segment; an inner minute's next is inside the row too.
     let speeds_where = |rs: &[&Run], keep: &dyn Fn(&Minute) -> bool| -> Vec<f64> {
         rs.iter()
             .flat_map(|r| {
                 r.inner
                     .iter()
                     .filter(|m| keep(m))
-                    .filter_map(|m| if pairs { m.pair_kmh } else { m.window_kmh })
+                    .filter_map(|m| m.pair_kmh)
             })
             .collect()
     };
@@ -948,18 +854,11 @@ fn write_fit(
     for m in ["stationary", "walking"] {
         let xs = speeds(&of(m));
         if xs.len() >= MIN_N && sp["modePriors"][m].is_array() {
-            // On pairs, a fix that jumped is an outlier share, not spread.
-            let (mu, sd, eps) = if pairs {
-                robust_gauss(&xs, u_max, 1.0)
-            } else {
-                let (mu, sd) = mean_std(&xs);
-                (mu, sd.max(1.0), 0.0)
-            };
+            // A fix that jumped is an outlier share, not spread.
+            let (mu, sd, eps) = robust_gauss(&xs, u_max, 1.0);
             sp["modePriors"][m][1] = json!(round4(mu));
             sp["modePriors"][m][2] = json!(round4(sd));
-            if pairs {
-                se["speedEps"][m] = json!(round4(eps));
-            }
+            se["speedEps"][m] = json!(round4(eps));
             log.push(format!(
                 "speed {m}: {mu:.2} ± {sd:.2} km/h, outliers {:.2}% ({} min)",
                 100.0 * eps,
@@ -991,7 +890,7 @@ fn write_fit(
             continue;
         }
         let (pi, sstop, mu, sd) = stop_split(&xs, stop_cut);
-        if pairs && key != "mainline" {
+        if key != "mainline" {
             let f = |x: f64| (1.0 - pi) * normal_pdf(x, mu, sd) + pi * normal_pdf(x, 0.0, sstop);
             let (eps, _) = outlier_share(&xs, u_max, &f);
             se["speedEps"][key] = json!(round4(eps));

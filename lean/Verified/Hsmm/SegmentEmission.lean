@@ -87,29 +87,10 @@ structure Params where
       evenly over 0–`uMaxKmh` (a fix that jumped): one bad fix must not outvote
       the steps and the minutes around it. -/
   speedEps : List (Mode × Float) := []
-  /-- Score a minute's speed as the net speed between the minutes either side
-      of it (their mean positions, two minutes apart) instead of the speed of
-      its own fixes: a fix that scatters 100 m sideways reads as 12 km/h over
-      thirty seconds and as nothing over two minutes. -/
-  speedWindow : Bool := false
-  /-- Speed scored on the pairs of consecutive lit minutes INSIDE a segment
-      (the one-minute span between them, under the segment's mode), and the
-      pair across a boundary scored apart, uniform over 0–`uMaxKmh`: the side
-      a minute's span belongs to is the segmentation's. Replaces the
-      per-minute speed term. -/
-  speedPairs : Bool := false
   /-- The spread of a stay's fixes about its centre, metres, fitted on the
       narrated stays; `none` keeps `PLACE_RADIUS_M`. -/
   centreSigmaM : Option Float := none
-  /-- The listed place's per-minute distance term as a two-scale mixture about
-      the place: a fix is near it (`placeSigmaM`) or astray (`placeWideSigmaM`,
-      with share `placeEps`), each spread widened by the fix's own accuracy,
-      the three fitted on the narrated stays naming a listed place. Replaces
-      `Emissions.placeTerm`'s hand-set spread and floor; `none` keeps them. -/
-  placeSigmaM : Option Float := none
-  placeWideSigmaM : Option Float := none
-  placeEps : Option Float := none
-  /-- With `speedPairs`, the pair across a boundary as an exponential of
+  /-- The pair across a boundary as an exponential of
       this mean (km/h, fitted on the narrated boundaries) instead of uniform. -/
   pairBoundaryMeanKmh : Option Float := none
   /-- The boundary pair's outlier share, uniform over 0–`uMaxKmh`. -/
@@ -119,27 +100,6 @@ structure Params where
       per mode (rows: the class before). It carries fix presence and rail
       adjacency together, and replaces `fixMarkov` for a mode it lists. -/
   obsChain : List (Mode × Array (Array Float)) := []
-  /-- `LineProximity` only ranks a train's lines: at each minute the best line's
-      term is subtracted from every train state's, so the term says which line
-      and nothing about train against other modes (`obsChain` says that). -/
-  lineRankOnly : Bool := false
-  /-- Score each segment's net displacement (`dispScore`). Off, the modes in
-      `disp` keep their fitted parameters for `gapPairs` and nothing is scored
-      per segment: a density per segment is about `−log(scale)` whatever the
-      displacement, so every extra segment paid for existing. -/
-  dispSegment : Bool := true
-  /-- Each fix-to-fix pair that brackets dark minutes is one observation of
-      the mode's net displacement (`dispScore` over the pair), spread evenly
-      over the dark minutes it spans, so the count of terms does not depend on
-      the segmentation. Lit minutes are the windowed speed's. -/
-  gapPairs : Bool := false
-  /-- The segment's displacement as its vote for the mode (`dispPosteriorScore`)
-      rather than a density: at most `0`, about `0` when the displacement fits
-      the mode, the log odds against when it fits another. -/
-  dispPosterior : Bool := false
-  /-- The windowed speed's noise includes the two bracketing fixes' reported
-      accuracy: a stay whose fixes scatter at 50 m is not moving at 3 km/h. -/
-  accuracyNoise : Bool := false
   /-- Asleep minutes' heart rate per segment, one physiology for every state:
       the night's mean a draw around `hrMean` (spread `hrTau`), the minutes
       around it (`sigmaW`, lag-1 `rho`). Replaces the per-minute asleep term,
@@ -152,14 +112,6 @@ structure Params where
       per-minute off-network term, which charged a per-segment fact on every
       lit minute and so grew with the stay's length. -/
   unlistedCentre : Option Float := none
-  /-- The unlisted place's centre is anchored where the neighbouring segments
-      left the wearer (`Stats.anchorW`): its prior a Gaussian at the lit
-      minutes just outside the segment, at their own noise. A walk is
-      somewhere too and pays nothing for where, because the walk that arrives
-      at a stop already carries its position; a prior over all his places
-      charged the stop for its location a second time. Without a lit
-      neighbour the mixture over the listed places stands. -/
-  centreAnchor : Bool := false
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of
@@ -254,12 +206,12 @@ structure Stats where
   posWRR : Float := ZERO
   /-- The same weighted sums over the lit minutes just outside the segment
       (the one before it and the one after): where the neighbouring segments
-      left the wearer, the anchor of `centreAnchor`. -/
+      left the wearer, the anchor. -/
   anchorW : Float := ZERO
   anchorWX : Float := ZERO
   anchorWY : Float := ZERO
   /-- The segment's minutes `[lo, hi)`, for the terms tabulated per state
-      (`speedPairs`). -/
+      (the pair tables). -/
   lo : Nat := 0
   hi : Nat := 0
 

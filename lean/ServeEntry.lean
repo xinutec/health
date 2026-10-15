@@ -950,21 +950,10 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let speedEps := all.filterMap fun m => do
       let v ← ((f.getObjVal? "speedEps") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m))).toOption
       pure (m, ← num v)
-    let speedWindow := ((f.getObjVal? "speedWindow") >>= (·.getBool?)).toOption.getD false
-    let speedPairs := ((f.getObjVal? "speedPairs") >>= (·.getBool?)).toOption.getD false
     let centreSigmaM := (f.getObjVal? "centreSigmaM").toOption >>= num
-    let placeSigmaM := (f.getObjVal? "placeSigmaM").toOption >>= num
-    let placeWideSigmaM := (f.getObjVal? "placeWideSigmaM").toOption >>= num
-    let placeEps := (f.getObjVal? "placeEps").toOption >>= num
     let pairBoundaryMeanKmh := (f.getObjVal? "pairBoundaryMeanKmh").toOption >>= num
     let pairBoundaryEps := (f.getObjVal? "pairBoundaryEps").toOption >>= num
-    let lineRankOnly := ((f.getObjVal? "lineRankOnly") >>= (·.getBool?)).toOption.getD false
-    let dispSegment := ((f.getObjVal? "dispSegment") >>= (·.getBool?)).toOption.getD true
-    let gapPairs := ((f.getObjVal? "gapPairs") >>= (·.getBool?)).toOption.getD false
-    let dispPosterior := ((f.getObjVal? "dispPosterior") >>= (·.getBool?)).toOption.getD false
-    let accuracyNoise := ((f.getObjVal? "accuracyNoise") >>= (·.getBool?)).toOption.getD false
     let unlistedCentre := (f.getObjVal? "unlistedCentre").toOption >>= num
-    let centreAnchor := ((f.getObjVal? "centreAnchor") >>= (·.getBool?)).toOption.getD false
     let asleep : Option Verified.Hsmm.SegmentEmission.SleepParams := do
       let arr ← ((f.getObjVal? "asleep") >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
@@ -975,10 +964,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         >>= (·.getArr?)).toOption
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, speedWindow, speedPairs, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
-           placeSigmaM, placeWideSigmaM, placeEps,
-           obsChain, lineRankOnly,
-           dispSegment, gapPairs, dispPosterior, accuracyNoise, asleep, unlistedCentre, centreAnchor }
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, fixMarkov, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
+           obsChain, asleep, unlistedCentre }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
@@ -992,7 +979,6 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M
   let placePrior := Verified.Hsmm.SegmentEmission.placesLocal posRef
     (places.toList.map fun (_, lat, lon, _, _) => (lat, lon))
-  let windowSpeed := Verified.Hsmm.Assemble.windowSpeedTable obs
   let segEm := segEm.map (Verified.Hsmm.SegmentEmission.prepare · obs.size)
   -- A fitted mode-to-mode transition matrix (harness-only): `{src: {dst: p}}`.
   let modesAll : List Verified.Hsmm.Emissions.Mode :=
@@ -1059,9 +1045,9 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     | none => #[]
   let durationNoFloor := ((flags.getObjVal? "durationNoFloor") >>= (·.getBool?)).toOption.getD false
   let ctx := { ctx with priors, fits, mainlineFit, weights, segEm, segPref, placePrior, transWeight, selfLoop, stayEntryLog, durationNoFloor,
-                        visitCounts, entryTable, windowSpeed }
+                        visitCounts, entryTable }
   let lineProxBest := match segEm with
-    | some q => if q.p.lineRankOnly then Verified.Hsmm.Assemble.lineProxBestTable ctx else #[]
+    | some _ => Verified.Hsmm.Assemble.lineProxBestTable ctx
     | none => #[]
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx
   return ({ ctx with lineProxBest, pairPref, pairBoundary }, maxD)
@@ -1561,7 +1547,6 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
                 ("decoded", match decoded with | some k => Json.str k | none => Json.null),
                 ("covered", Json.bool (Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)),
                 ("linesAt", Json.arr ((Verified.Hsmm.TrainCandidates.linesAt c.coverage o.ts).map Json.str).toArray),
-                ("windowKmh", optF (((c.windowSpeed[t]?).getD none).map (·.1))),
                 ("pairKmh", optF ((Verified.Hsmm.Assemble.pairSpan c.obs t).map (·.1))),
                 ("obsClass", Lean.toJson (Verified.Hsmm.SegmentEmission.obsClass o)),
                 ("inBed", Json.bool o.inBed),

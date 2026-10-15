@@ -757,6 +757,14 @@ identically. The mode stays in the enum for the served day's labels.
 the repeated-fix drop (`dropRepeatedFixes`, s39rep, neutral and never in a
 record) is gone; the golden form is `maxD` alone. The 43 frozen decodes
 replay identically.
+**Retired: the segment-emission switches.** The six the record sets
+(`speedPairs`, `speedWindow`, `lineRankOnly`, `dispPosterior`,
+`accuracyNoise`, `centreAnchor`) are the only behaviour; their off-paths
+(the per-minute speed term and its windowed form, `windowSpeedTable`,
+`dispSegment`'s density, `gapPairs`, the unanchored centre) are gone, and
+so is the s49mix code that had ridden into 5caa2cc9 inert. The golden
+segment-emission form loses the six keys. The 43 frozen decodes replay
+identically.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
