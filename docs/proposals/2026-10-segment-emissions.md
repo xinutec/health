@@ -770,6 +770,11 @@ three-class `obsChain` lists the same four modes in every record and replaces
 it for each, so the two-state chain was never reached; a mode `obsChain`
 lists is the one the segment's beta-binomial skips. The 43 frozen decodes
 replay identically.
+**Retired: the ride's head** (#366: `rideHeadMin`, `rideHeadCredit`, the
+`driving|head` and `train|head` states, the crawl mixture, the nearest-line
+boarding). No record ever set `rideHeadMin`, so the states were never in the
+space; with them go the per-minute mode prior's last reader and the harness's
+two knobs. The 43 frozen decodes replay identically.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,

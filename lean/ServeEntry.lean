@@ -849,12 +849,6 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let maxD ← match j.getObjVal? "maxD" with
     | .ok v => if v.isNull then pure Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION else v.getNat?
     | .error _ => pure Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION
-  -- #366's arm knobs: absent from every production request, so the defaults
-  -- are the shipped model.
-  let knob (name : String) (dflt : Float) : Float :=
-    match flags.getObjVal? name with
-    | .ok v => match v.getNum? with | .ok n => n.toFloat | .error _ => dflt
-    | .error _ => dflt
   -- A fitted parameter table (`examples/fit_emissions`), harness-only: each
   -- mode it names replaces the shipped prior and duration fit, the rest stay.
   let fitted := (flags.getObjVal? "fittedPriors").toOption.filter (!·.isNull)
@@ -965,7 +959,6 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
     (← (← flags.getObjVal? "segEvidence").getBool?)
     (← (← flags.getObjVal? "chainContext").getBool?)
-    (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0)
   let posRef := Verified.Hsmm.SegmentEmission.refOf obs
   let segPref := Verified.Hsmm.SegmentEmission.withPositions
     (Verified.Hsmm.SegmentEmission.prefixOf obs) obs posRef
@@ -1223,7 +1216,6 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   -- per minute rather than once per pair per minute (#1774, 2026-09-30).
   let placeIds := c.placeCoords.toList.map (·.1)
   let lineNames := c.edgesByLine.toList.map (·.1)
-  let withHead := c.states.any Verified.Hsmm.Emissions.isRideHead
   -- The fix's distances to every line and place once per DISTINCT fix: a
   -- gap's minutes all share one `prevGpsFix` (#1774, 2026-10-07).
   let minutes : Array (Verified.Hsmm.RouteModel.ChainMinute × Bool) :=
@@ -1236,7 +1228,7 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
             fd := some (Verified.Hsmm.RouteModel.fixDists c.edgesByLine c.placeCoords placeIds lineNames fx)
         out := out.push
           (Verified.Hsmm.RouteModel.chainMinuteTabledD c.edgesByLine c.placeCoords placeIds lineNames
-             withHead fd o,
+             fd o,
            Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)
       return out
     else #[]
@@ -1650,11 +1642,8 @@ private def assembleSegmentsResult (j : Json) : Json :=
             | some s => pure (acc.push
                 { mode := Verified.Hsmm.StateSpace.modeName s.mode
                 , placeId := s.placeId
-                  -- A ride's head IS the ride: it leaves as plain `driving`
-                  -- and `groupStates` joins it to the minutes that follow.
-                , lineName := if Verified.Hsmm.Emissions.isRideHead s then none
-                    -- An unnamed metro is rail with no line to every reader.
-                    else if s.lineName == some Verified.Hsmm.Emissions.UNKNOWN_METRO then some "unknown_rail"
+                  -- An unnamed metro is rail with no line to every reader.
+                , lineName := if s.lineName == some Verified.Hsmm.Emissions.UNKNOWN_METRO then some "unknown_rail"
                     else s.lineName })) #[]
         match states with
         | .error e => Json.mkObj [("error", Json.str e)]

@@ -66,16 +66,6 @@ def modePriors : Mode → ModePrior
   | .plane      => ⟨uniformGpsPresentProb, 600, 200, 70, 15, 0.99, 5, 10, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD, NO_STOP_SHARE, STOP_STD_DEFAULT, NO_STOP_SHARE, STOP_STD_DEFAULT⟩
   | .unknown    => ⟨uniformGpsPresentProb, 20, 200, 80, 100, 0.5, 50, 100, MAINLINE_SPEED_MEAN, MAINLINE_SPEED_STD, NO_STOP_SHARE, STOP_STD_DEFAULT, NO_STOP_SHARE, STOP_STD_DEFAULT⟩
 
-/-- `MODE_PRIOR_LOG`: per-minute `log P(mode)`. -/
-def modePriorLog : Mode → Float
-  | .stationary => Float.log 0.7
-  | .walking    => Float.log 0.1
-  | .cycling    => Float.log 0.01
-  | .driving    => Float.log 0.02
-  | .train      => Float.log 0.05
-  | .plane      => Float.log 0.005
-  | .unknown    => Float.log 0.1
-
 /-- `IN_BED_PROB_BY_MODE`. -/
 def inBedProbByMode : Mode → Float
   | .stationary => 0.99
@@ -120,45 +110,10 @@ structure State where
   lineName : Option String := none
   deriving Inhabited
 
-/-! ## A ride's head (#366)
-
-The first minutes of a road ride can crawl — out of a car park, a queue at a
-junction, a taxi in traffic. Per minute such a fix reads like standing still
-(1.2 km/h scores 4 nats against `driving`), and the per-minute charge grows
-with the crawl, so a ten-minute crawl decodes as a stay however clearly a
-ride follows (2026-05-25 12:40 local). The head state carries `driving`'s
-emission with its speed term widened to a mixture: half the cruising prior,
-half a crawl. It is a separate STATE, not a τ-dependent emission, so the
-proved trellis is untouched; the transitions confine it to the front of a
-ride ({@link Verified.Hsmm.Transitions.isHardZero}) and the duration prior caps
-it ({@link Verified.Hsmm.Assemble.durPriorBase}). Off unless the context asks
-for it.
-
-⚠ MEASURED 2026-09-29 AND NOT SHIPPED (`HSMM_RIDE_HEAD_MIN=10`, the live
-scoreboard over the eleven frozen days). Priced per minute like `driving` the
-head never decodes — the eleven days re-decode identically. Priced like a
-stay it takes the 05-25 crawl (journeys 0 → 1) and undercuts every TRAIN
-start: 05-15's Bakerloo and Jubilee hops and 06-16's line legs come out
-`driving`, legLine 9 → 6, journeys 18 → 17, one more phantom. No pricing
-between the two serves both: 05-25 needs at least 0.36 of the stay–driving
-gap credited per minute and any credit above 0.25 beats `train`'s own prior.
-What would restore fairness is a head for every ride mode (a platform wait
-for `train`), so that the line evidence decides between them; not built. -/
-
-def RIDE_HEAD_CRAWL_MEAN_KMH : Float := 3
-def RIDE_HEAD_CRAWL_STD_KMH : Float := 3
-def RIDE_HEAD_CRAWL_WEIGHT : Float := 0.5
-
 /-- A line-name slot that names no line: the generator's `unknown_rail`
-    fallback and a ride's head. Every reader of a train state's line treats
-    both as "no line". -/
-def isPlaceholderLine (l : String) : Bool := l == "unknown_rail" || l == "unknown_metro" || l == "head"
-
-/-- A ride's head: `driving` or `train` with the head mark in the `lineName`
-    slot. For a train it is the platform wait before the ride, which is part
-    of the ride by his convention (2026-09-27). -/
-def isRideHead (s : State) : Bool :=
-  (s.mode == .driving || s.mode == .train) && s.lineName == some "head"
+    fallback and the unnamed metro. Every reader of a train state's line
+    treats both as "no line". -/
+def isPlaceholderLine (l : String) : Bool := l == "unknown_rail" || l == "unknown_metro"
 
 /-! Rail that is not a modelled metro line rides in `unknown_rail`, and it is not
 the Tube: measured on the narrated rides, fix speeds on Tube lines run
@@ -184,31 +139,7 @@ def mainlinePrior (priors : Mode → ModePrior := modePriors) : ModePrior :=
 def priorOf (priors : Mode → ModePrior) (s : State) : ModePrior :=
   if isMainline s then mainlinePrior priors else priors s.mode
 
-/-- What the head adds to `driving`'s per-minute emission: the log of the crawl
-    mixture over the cruising prior. 0 without a fix. -/
-def rideHeadSpeedAdjust (mode : Mode) (speedKmh : Option Float) : Float :=
-  match speedKmh with
-  | none => 0.0
-  | some v =>
-    let p := modePriors mode
-    let cruise := logNormalPdf v p.speedMean p.speedStd
-    let crawl := logNormalPdf v RIDE_HEAD_CRAWL_MEAN_KMH RIDE_HEAD_CRAWL_STD_KMH
-    Float.log ((1 - RIDE_HEAD_CRAWL_WEIGHT) * Float.exp cruise
-      + RIDE_HEAD_CRAWL_WEIGHT * Float.exp crawl) - cruise
-
--- A crawling minute gains most of the 4 nats it lost; a cruising minute pays
--- the mixture's halving; no fix, nothing.
-#guard (let a := rideHeadSpeedAdjust .driving (some 1.2); a > 2.8 && a < 3.0)
-#guard Float.abs (rideHeadSpeedAdjust .driving (some 40) - Float.log 0.5) < 1e-6
-#guard rideHeadSpeedAdjust .driving none == 0.0
--- A train's head at a standstill on the platform: most of the 50 ± 30 prior's
--- cost at 0 km/h comes back.
-#guard (rideHeadSpeedAdjust .train (some 0)) > 1.5
-#guard isRideHead ⟨.driving, none, some "head"⟩ == true
-#guard isRideHead ⟨.driving, none, none⟩ == false
-#guard isRideHead ⟨.train, none, some "head"⟩ == true
-#guard isRideHead ⟨.train, none, some "Jubilee Line"⟩ == false
-#guard isPlaceholderLine "head" && isPlaceholderLine "unknown_rail" && !isPlaceholderLine "Jubilee Line"
+#guard isPlaceholderLine "unknown_metro" && isPlaceholderLine "unknown_rail" && !isPlaceholderLine "Jubilee Line"
 
 /-- Speed / GPS-null-plane term. -/
 def speedTerm (s : State) (o : Observation) (prior : ModePrior) : Float :=
@@ -246,7 +177,7 @@ def placeTerm (s : State) (o : Observation) (placeCoord : Option (Float × Float
   else 0.0
 
 /-- The base-path emission log-probability, summed in `emissions.ts` order
-    less its first term: the per-minute mode prior (`modePriorLog`) retired
+    less its first term: the per-minute mode prior retired
     with the fitted entry prior (`entryCounts`), which charges a mode once per
     segment where the minute prior grew with a true ride's length. -/
 def emissionLogProb (s : State) (o : Observation) (placeCoord : Option (Float × Float))

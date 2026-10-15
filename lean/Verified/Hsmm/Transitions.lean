@@ -46,28 +46,7 @@ def transitionWeight (src dst : State) : Float :=
 /-- `isHardZero`, base path (no `placeNearLine`): stationary→stationary between
     distinct places is impossible without a moving state between. -/
 def isHardZero (src dst : State) : Bool :=
-  (src.mode == .stationary && dst.mode == .stationary && src.placeId != dst.placeId)
-  -- A ride's head (#366) is followed by its ride and by nothing else, and a
-  -- ride under way does not grow a head.
-  || (Verified.Hsmm.Emissions.isRideHead src
-        && !(dst.mode == src.mode && !Verified.Hsmm.Emissions.isRideHead dst))
-  || (Verified.Hsmm.Emissions.isRideHead dst && src.mode == dst.mode)
-
-private def HEAD : State := ⟨.driving, none, some "head"⟩
-#guard isHardZero HEAD ⟨.driving, none, none⟩ == false
-#guard isHardZero HEAD ⟨.walking, none, none⟩ == true
-#guard isHardZero HEAD ⟨.stationary, some 5, none⟩ == true
-#guard isHardZero ⟨.driving, none, none⟩ HEAD == true
-#guard isHardZero ⟨.walking, none, none⟩ HEAD == false
-#guard isHardZero ⟨.stationary, some 5, none⟩ HEAD == false
--- The train's head: into any line's train and nothing else; no train grows one.
-private def THEAD : State := ⟨.train, none, some "head"⟩
-#guard isHardZero THEAD ⟨.train, none, some "Jubilee Line"⟩ == false
-#guard isHardZero THEAD ⟨.train, none, some "unknown_rail"⟩ == false
-#guard isHardZero THEAD ⟨.driving, none, none⟩ == true
-#guard isHardZero THEAD ⟨.walking, none, none⟩ == true
-#guard isHardZero ⟨.train, none, some "Jubilee Line"⟩ THEAD == true
-#guard isHardZero ⟨.walking, none, none⟩ THEAD == false
+  src.mode == .stationary && dst.mode == .stationary && src.placeId != dst.placeId
 
 /-- Per-`src` cross-weight sum over the state space: total `transitionWeight` of
     the valid (not same, not hard-zero) cross destinations. -/
@@ -171,8 +150,6 @@ private def noneNear : Int → String → Bool := fun _ _ => false
 #guard isHardZeroP noneNear space[3]! space[0]! == true                 -- train@Central → stat@5 (symmetric)
 #guard transitionLogProbP noneNear space defaultSelfLoop space[0]! space[3]! == negInf
 #guard isHardZeroP noneNear space[0]! space[2]! == false                -- stat@5 → walk unaffected
--- …and a head is a placeholder line: no station-graph veto at a place no line serves.
-#guard isHardZeroP noneNear space[0]! THEAD == false
 
 -- Precomputed-weight-sum matches the full recompute (base matrix build).
 #guard transitionLogProbPre allNear defaultSelfLoop (crossWeightSumP allNear space space[0]!) space[0]! space[2]!

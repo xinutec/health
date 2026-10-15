@@ -30,7 +30,7 @@ def scoreLineProximity (lineModeled lineNear : Bool) (roadDistM railDistM : Opti
 /-- `buildLineProximityFactor`'s per-state verdict. Facts resolved by the caller:
     `isCovered` (train-generator window), `gpsPresent`, and — for a named line —
     `lineModeled` / `lineNear` from the route graph. A placeholder line
-    (`unknown_rail`, a ride's head) scores the line-agnostic signals: no railway
+    (`unknown_rail`, `unknown_metro`) scores the line-agnostic signals: no railway
     near the fix at all (`railNear`, any edge of the graph), else road nearer
     than rail. -/
 def lineProximityFactor (s : State) (isCovered gpsPresent : Bool)

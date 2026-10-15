@@ -74,15 +74,10 @@ structure ModelContext where
   continuity : Option Continuity.ContinuityContext
   reacquireRobust : Bool
   segEvidenceOn : Bool
-  /-- Longest ride's head, in minutes; 0 = no head state in the space (#366). -/
-  rideHeadMin : Nat := 0
   /-- No floor under the duration prior: a segment as short as the decoder's
       minute is scored by its mode's fitted duration, not by
       `Duration.minDurationByMode`'s hand-set two minutes. -/
   durationNoFloor : Bool := false
-  /-- How much of the stay–ride gap in the per-minute mode prior a head minute
-      is credited: 1 prices it like a stay, 0 like its ride. -/
-  rideHeadCredit : Float := 1.0
   chainOn : Bool
   stepPref : Array Float
   selfLoop : Float
@@ -156,8 +151,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float))
     (coverage : Std.HashMap Int (List String)) (placeNearLine : Std.HashSet String)
     (continuity : Option Continuity.ContinuityContext)
-    (reacquireRobust segEvidenceOn chainOn : Bool) (rideHeadMin : Nat := 0)
-    (rideHeadCredit : Float := 1.0) : ModelContext :=
+    (reacquireRobust segEvidenceOn chainOn : Bool) : ModelContext :=
   -- A line is a state only where the day's route graph has its track: abroad
   -- a London line had no evidence against it and named a TGV (10-01).
   let lines := KNOWN_LINES.filter (RouteModel.linesInGraph model).contains
@@ -173,7 +167,6 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     ({} : Std.HashMap Int Float)
   { obs
     states := (buildStateSpace (places.map (·.1)) lines
-      ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_STATE, StateSpace.RIDE_HEAD_TRAIN_STATE] else [])
       ++ [(⟨.train, none, some Emissions.UNKNOWN_METRO⟩ : State)]).toArray
     model
     connGraph := RouteModel.toConnGraph model
@@ -181,14 +174,12 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     edgesByLine := RouteModel.buildEdgesByLine model
     placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
     reacquireRobust, segEvidenceOn, chainOn
-    rideHeadMin, rideHeadCredit
     stepPref := SegmentEvidence.stepPrefix obs
     selfLoop := Transitions.defaultSelfLoop
     minuteLines := obs.map (RouteModel.minuteLines model)
     railByMinute :=
       let connGraph := RouteModel.toConnGraph model
       let trainStates := (buildStateSpace (places.map (·.1)) lines
-        ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_TRAIN_STATE] else [])
         ++ [(⟨.train, none, some Emissions.UNKNOWN_METRO⟩ : State)]).filter (·.mode == .train)
       -- Walked minutes (cadence at `INTERCHANGE_CADENCE_SPM` or more) and the
       -- run each belongs to. An INTERCHANGE minute is a walked minute whose run
@@ -361,16 +352,6 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
          | some m => m.getD (StateSpace.stateKey st) 0.0
          | none => RouteModel.routeRailEvidence c.model c.connGraph st o false)
       c.placeCoords c.reacquireRobust c.continuity st o c.priors c.weights
-    -- The ride's head is `driving` with the crawl mixture, priced per minute
-    -- like a stay rather than like a ride (#366): the per-minute mode prior
-    -- is the no-evidence fallback, and a crawling fix IS evidence — charged
-    -- at driving's −3.9 a minute it outweighs the mixture's +2.9 on every
-    -- crawling minute and the head never decodes (measured 2026-09-29: the
-    -- eleven frozen days re-decoded identically with it in the space).
-    + (if Emissions.isRideHead st then
-         Emissions.rideHeadSpeedAdjust st.mode (o.gps.map (·.speedKmh))
-           + c.rideHeadCredit * (Emissions.modePriorLog .stationary - Emissions.modePriorLog st.mode)
-       else 0.0)
     -- With `SegmentEmission` the awake heart rate is scored per segment
     -- (`segEmAt`) and fix presence by its chain, so their minute terms go.
     + segMinuteAt c t st o
@@ -459,14 +440,11 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
   match c.states[s]? with
   | none => negInf
   | some st =>
-    -- A ride's head lasts at most `rideHeadMin` minutes (#366).
-    if Emissions.isRideHead st && d > c.rideHeadMin then negInf
-    else
-      let fit := match c.mainlineFit with
-        | some f => if Emissions.isMainline st then f else c.fits st.mode
-        | none => c.fits st.mode
-      c.weights.duration * Duration.logDurationProb d.toFloat fit
-        (if c.durationNoFloor then MIN_ONE else Duration.minDurationByMode st.mode)
+    let fit := match c.mainlineFit with
+      | some f => if Emissions.isMainline st then f else c.fits st.mode
+      | none => c.fits st.mode
+    c.weights.duration * Duration.logDurationProb d.toFloat fit
+      (if c.durationNoFloor then MIN_ONE else Duration.minDurationByMode st.mode)
 
 /-- The segment-level emission of state `s` over a segment of length `d` with
     window `w` and statistics `st`. Where it scores the displacement, the
@@ -625,20 +603,6 @@ private def approxG (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 -- entryAt: covered + line-valid → the +3 generator boost (train state ⇒ base entry 0).
 #guard entryAt ctxC 0 jubIdx == 3
 #guard entryAt ctxU 0 jubIdx == 0                          -- uncovered → generator silent
-
--- The ride's head (#366): absent at 0, present when asked, crawl-adjusted, capped.
-private def ctxH : ModelContext :=
-  buildContext #[obsTrain] jm places {} {} none false false false 10
-private def headIdx : Nat := (ctxH.states.findIdx? Emissions.isRideHead).getD 0
-private def drvIdx : Nat := (ctxH.states.findIdx? (fun s => s.mode == .driving && !Emissions.isRideHead s)).getD 0
-#guard ctxU.states.any Emissions.isRideHead == false
-#guard (ctxH.states.filter Emissions.isRideHead).size == 2
--- No fix on `obsTrain`, so the head differs from `driving` by the prior swap alone.
-#guard Float.abs (emitAt ctxH 0 headIdx - emitAt ctxH 0 drvIdx
-  - (Emissions.modePriorLog .stationary - Emissions.modePriorLog .driving)) < 1e-9
-#guard durPriorBase ctxH headIdx 10 == durPriorBase ctxH drvIdx 10
-#guard durPriorBase ctxH headIdx 11 == negInf
-#guard durPriorBase ctxH drvIdx 11 != negInf
 
 -- durAt: coverage resolution drives the one-stop-hop relaxation of the sub-floor.
 #guard durAt ctxC jubIdx 1 0 == 0                          -- covered sub-floor hop → relaxed

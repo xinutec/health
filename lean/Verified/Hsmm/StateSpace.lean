@@ -34,17 +34,8 @@ def stateKey (s : State) : String :=
   match s.mode with
   | .stationary => "stationary|" ++ (match s.placeId with | some p => toString p | none => "none")
   | .train => "train|" ++ (match s.lineName with | some l => l | none => "unknown_rail")
-  | .driving => if Verified.Hsmm.Emissions.isRideHead s then "driving|head" else "driving"
   | m => modeName m
 
-/-- The ride's-head state (#366): `driving` with the head mark. Appended to the
-    state space by the context that asks for it, never by `buildStateSpace`. -/
-def RIDE_HEAD_STATE : State := ⟨.driving, none, some "head"⟩
-/-- The train's head (#366): the platform wait before a ride, any line. -/
-def RIDE_HEAD_TRAIN_STATE : State := ⟨.train, none, some "head"⟩
-
-#guard stateKey RIDE_HEAD_STATE == "driving|head"
-#guard stateKey RIDE_HEAD_TRAIN_STATE == "train|head"
 #guard stateKey ⟨.driving, none, none⟩ == "driving"
 
 /-- Minimal focus-place identity needed for enumeration (coords come in via the

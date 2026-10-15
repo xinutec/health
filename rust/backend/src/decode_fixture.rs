@@ -201,13 +201,7 @@ pub fn request(fx: &Value) -> Result<Value> {
         anyhow::ensure!(req.is_object(), "a format-3 fixture with no request");
         req["flags"]["fittedPriors"] = fitted_priors(fx)?;
         req["flags"]["termWeights"] = term_weights()?;
-        for (k, env) in [
-            ("rideHeadMin", "HSMM_RIDE_HEAD_MIN"),
-            ("rideHeadCredit", "HSMM_RIDE_HEAD_CREDIT"),
-            ("unknownBelow", "HSMM_UNKNOWN_BELOW"),
-        ] {
-            req["flags"][k] = arm_knob(env);
-        }
+        req["flags"]["unknownBelow"] = arm_knob("HSMM_UNKNOWN_BELOW");
         if let Ok(v) = std::env::var("HSMM_MAX_D") {
             req["maxD"] = json!(v.parse::<u64>()?);
         }
@@ -369,10 +363,8 @@ pub fn request(fx: &Value) -> Result<Value> {
             "reacquireRobust": flags["reacquireRobustSpeed"],
             "segEvidence": flags["segmentEvidence"],
             "chainContext": flags["chainContext"],
-            // ⚠ ARM KNOBS (#366), harness-only: absent unless the environment
-            // sets them, and production never builds its request here.
-            "rideHeadMin": arm_knob("HSMM_RIDE_HEAD_MIN"),
-            "rideHeadCredit": arm_knob("HSMM_RIDE_HEAD_CREDIT"),
+            // ⚠ ARM KNOB, harness-only: absent unless the environment sets
+            // it, and production never builds its request here.
             "unknownBelow": arm_knob("HSMM_UNKNOWN_BELOW"),
             "fittedPriors": fitted_priors(fx)?,
             "termWeights": term_weights()?,

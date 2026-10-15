@@ -330,18 +330,6 @@ def isMovingMode : Mode → Bool
   | .walking | .cycling | .driving | .train | .plane => true
   | _ => false
 
-/-- The boarding penalty at `(lat, lon)` for the NEAREST modeled line — what a
-    ride's head pays (#366): a platform wait can only be where some line runs,
-    and a head that paid nothing let a ten-minute wait at Home board a
-    one-minute stub (2026-09-29, phantoms 5 → 12). `none` with no lines. -/
-def nearestLineBoarding (edgesByLine : Std.HashMap String (List LineEdge))
-    (lat lon slopMin : Float) : Option Float :=
-  edgesByLine.fold (fun (acc : Option Float) _ lineEdges =>
-    let pen := ChainContext.boardingPenalty (minDistToLineM lat lon lineEdges) slopMin
-    match acc with
-    | none => some pen
-    | some a => some (max a pen)) none
-
 /-- The place-anchored boarding penalty of a pair, when the pair has one: `toS`
     a named train line with edges, `fromS` a place with coordinates. It does not
     depend on the minute, so `buildTransitions` computes it once per pair and
@@ -352,11 +340,7 @@ def chainPlaceBoard (edgesByLine : Std.HashMap String (List LineEdge))
   if toS.mode == .train then
     match toS.lineName with
     | some line =>
-      if Verified.Hsmm.Emissions.isRideHead toS then
-        match fromS.placeId, placeCoords.get? (fromS.placeId.getD 0) with
-        | some _, some (plat, plon) => nearestLineBoarding edgesByLine plat plon 0
-        | _, _ => none
-      else if Verified.Hsmm.Emissions.isPlaceholderLine line then none
+      if Verified.Hsmm.Emissions.isPlaceholderLine line then none
       else match edgesByLine.get? line with
         | none => none
         | some lineEdges =>
@@ -369,14 +353,13 @@ def chainPlaceBoard (edgesByLine : Std.HashMap String (List LineEdge))
 
 /-- What the chain term asks of one minute that does not depend on the pair
     (#1774, 2026-09-30): the stay penalty from the minute's last fix to a place,
-    the fix-anchored boarding penalty for a line, and a ride head's nearest-line
-    boarding — each 0 without a previous fix. `chainMinute` computes them on
+    and the fix-anchored boarding penalty for a line — each 0 without a
+    previous fix. `chainMinute` computes them on
     demand; the transition build tables them once per minute
     (`chainMinuteTabled`) instead of once per pair per minute. -/
 structure ChainMinute where
   stayAt : Int → Float
   boardFixAt : String → Float
-  headFixAt : Float
 
 def chainMinute (edgesByLine : Std.HashMap String (List LineEdge))
     (placeCoords : Std.HashMap Int (Float × Float)) (o : ObsRow) : ChainMinute :=
@@ -390,23 +373,18 @@ def chainMinute (edgesByLine : Std.HashMap String (List LineEdge))
     boardFixAt := fun line => match o.prevGpsFix, edgesByLine.get? line with
       | some fx, some lineEdges =>
         ChainContext.boardingPenalty (minDistToLineM fx.lat fx.lon lineEdges) (slopMinOf fx)
-      | _, _ => 0.0
-    headFixAt := match o.prevGpsFix with
-      | some fx => (nearestLineBoarding edgesByLine fx.lat fx.lon (slopMinOf fx)).getD 0.0
-      | none => 0.0 }
+      | _, _ => 0.0 }
 
 /-- `chainMinute` with its place and line answers computed once, for `places`
     and `lines`; anything else falls through to the on-demand answer. -/
 def chainMinuteTabled (edgesByLine : Std.HashMap String (List LineEdge))
     (placeCoords : Std.HashMap Int (Float × Float)) (places : List Int) (lines : List String)
-    (withHead : Bool) (o : ObsRow) : ChainMinute :=
+    (o : ObsRow) : ChainMinute :=
   let cm := chainMinute edgesByLine placeCoords o
   let stays : Std.HashMap Int Float := places.foldl (fun m pid => m.insert pid (cm.stayAt pid)) {}
   let boards : Std.HashMap String Float := lines.foldl (fun m l => m.insert l (cm.boardFixAt l)) {}
-  let head := if withHead then cm.headFixAt else 0.0
   { stayAt := fun pid => (stays.get? pid).getD (cm.stayAt pid)
-    boardFixAt := fun l => (boards.get? l).getD (cm.boardFixAt l)
-    headFixAt := if withHead then head else cm.headFixAt }
+    boardFixAt := fun l => (boards.get? l).getD (cm.boardFixAt l) }
 
 /-- The fix-dependent half of a minute's chain answers: the fix's distance to
     each line and to each place. They depend on the fix alone, and every minute
@@ -434,10 +412,10 @@ def fixDists (edgesByLine : Std.HashMap String (List LineEdge))
     — a fix `fd` was not built for falls through rather than being trusted. -/
 def chainMinuteTabledD (edgesByLine : Std.HashMap String (List LineEdge))
     (placeCoords : Std.HashMap Int (Float × Float)) (places : List Int) (lines : List String)
-    (withHead : Bool) (fd : Option FixDists) (o : ObsRow) : ChainMinute :=
+    (fd : Option FixDists) (o : ObsRow) : ChainMinute :=
   match o.prevGpsFix, fd with
   | some fx, some d =>
-    if !(d.fx == fx) then chainMinuteTabled edgesByLine placeCoords places lines withHead o else
+    if !(d.fx == fx) then chainMinuteTabled edgesByLine placeCoords places lines o else
     let cm := chainMinute edgesByLine placeCoords o
     let slop := (max 0 (o.ts - fx.ts)).toNat.toFloat / 60
     let stays : Std.HashMap Int Float := places.foldl (fun m pid => m.insert pid
@@ -448,11 +426,9 @@ def chainMinuteTabledD (edgesByLine : Std.HashMap String (List LineEdge))
       (match d.lineD.get? l with
         | some dist => ChainContext.boardingPenalty dist slop
         | none => 0.0)) {}
-    let head := if withHead then cm.headFixAt else 0.0
     { stayAt := fun pid => (stays.get? pid).getD (cm.stayAt pid)
-      boardFixAt := fun l => (boards.get? l).getD (cm.boardFixAt l)
-      headFixAt := if withHead then head else cm.headFixAt }
-  | _, _ => chainMinuteTabled edgesByLine placeCoords places lines withHead o
+      boardFixAt := fun l => (boards.get? l).getD (cm.boardFixAt l) }
+  | _, _ => chainMinuteTabled edgesByLine placeCoords places lines o
 
 -- `chainMinuteTabledD` against `chainMinuteTabled`: one line, one place, a fix
 -- read by three minutes at growing slop, a minute with no fix, and a table
@@ -471,16 +447,14 @@ private def cmSame (a b : ChainMinute) : Bool :=
   a.stayAt 7 == b.stayAt 7 && a.stayAt 8 == b.stayAt 8
     && a.boardFixAt "Victoria Line" == b.boardFixAt "Victoria Line"
     && a.boardFixAt "Jubilee Line" == b.boardFixAt "Jubilee Line"
-    && a.headFixAt == b.headFixAt
 #guard [cmRow 1000 (some cmFix), cmRow 1300 (some cmFix), cmRow 4000 (some cmFix), cmRow 4060 none,
     cmRow 950 (some cmOther)].all fun o =>
-  [true, false].all fun head =>
     let fd := some (fixDists cmEdges cmPlaces [7, 8] ["Victoria Line", "Jubilee Line"] cmFix)
-    cmSame (chainMinuteTabledD cmEdges cmPlaces [7, 8] ["Victoria Line", "Jubilee Line"] head fd o)
-      (chainMinuteTabled cmEdges cmPlaces [7, 8] ["Victoria Line", "Jubilee Line"] head o)
+    cmSame (chainMinuteTabledD cmEdges cmPlaces [7, 8] ["Victoria Line", "Jubilee Line"] fd o)
+      (chainMinuteTabled cmEdges cmPlaces [7, 8] ["Victoria Line", "Jubilee Line"] o)
 -- … and the fixture is not vacuous: the stay and boarding terms are non-zero.
-#guard (chainMinuteTabled cmEdges cmPlaces [7] ["Victoria Line"] false (cmRow 1300 (some cmFix))).stayAt 7 != 0
-  && (chainMinuteTabled cmEdges cmPlaces [7] ["Victoria Line"] false (cmRow 4000 (some cmFix))).boardFixAt "Victoria Line" != 0
+#guard (chainMinuteTabled cmEdges cmPlaces [7] ["Victoria Line"] (cmRow 1300 (some cmFix))).stayAt 7 != 0
+  && (chainMinuteTabled cmEdges cmPlaces [7] ["Victoria Line"] (cmRow 4000 (some cmFix))).boardFixAt "Victoria Line" != 0
 
 /-- The chain term given its minute's `ChainMinute` and the pair's
     place-anchored boarding penalty (`chainPlaceBoard`). -/
@@ -500,13 +474,7 @@ def chainContextWith (edgesByLine : Std.HashMap String (List LineEdge))
       if toS.mode == .train then
         match toS.lineName with
         | some line =>
-          if Verified.Hsmm.Emissions.isRideHead toS then
-            -- The head boards the nearest line (#366).
-            if isTrainCovered then 0.0
-            else match placeBoard with
-              | some pb => pb
-              | none => cm.headFixAt
-          else if Verified.Hsmm.Emissions.isPlaceholderLine line then 0.0
+          if Verified.Hsmm.Emissions.isPlaceholderLine line then 0.0
           else match edgesByLine.get? line with
             | none => 0.0
             | some _ =>
