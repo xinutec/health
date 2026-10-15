@@ -25,7 +25,7 @@ const NARRATIVES: &str = concat!(
     "/../../tests/golden/ground-truth"
 );
 
-const FAMILIES: [&str; 10] = [
+const FAMILIES: [&str; 9] = [
     "base",
     "geometric",
     "gap",
@@ -35,7 +35,6 @@ const FAMILIES: [&str; 10] = [
     "entry",
     "chain",
     "duration",
-    "segmentEvidence",
 ];
 /// The steps a coordinate tries, as factors on its current weight.
 const STEPS: [f64; 4] = [0.5, 0.75, 1.33, 2.0];

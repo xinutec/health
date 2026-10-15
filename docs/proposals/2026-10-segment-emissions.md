@@ -791,11 +791,16 @@ carries the segment emission unconditionally, and the plain per-minute base
 remains only as the parity reference the guards pin (a record with no fitted
 mode composes to it). Both production workloads carry the record. The 43
 frozen decodes replay identically.
+**Retired: `SegmentEvidence`.** The duration term added it and the segment
+emission took it back out for every mode, with the same weight over the same
+window, and it is finite (clamped at −6), so it changed no decode. The
+duration term is the prior alone, the `segEvidence` flag and its weight are
+gone, and the module keeps only the window the displacement term reads.
+`USE_SEGMENT_EVIDENCE` is read by nothing. The 43 frozen decodes replay
+identically.
 
-Then, in order: the flags become defaults and the
-old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
-asleep and off-network terms, `LineProximity`'s constants, the duration cap; the
-fix's accuracy in a position model rather than a speed term (the plumbing
-is in; as the speed's noise it is on). The listed place's per-minute
+Left, each a model change measured as an arm: `LineProximity`'s constants,
+the duration cap, and the fix's accuracy in a position model rather than a
+speed term (the plumbing is in; as the speed's noise it is on). The listed place's per-minute
 Gaussian and its floor stay hand-set: folding them into the placeless form
 lost in all four arms (s49place to s51, above).

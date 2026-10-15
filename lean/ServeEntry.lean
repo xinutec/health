@@ -628,7 +628,7 @@ coverage map, continuity, and the C4 flags. Output is the dense quantised
     "places": [{id, name, lat, lon, hourProfile:[num]|null, dwell}],
     "coverage": [[ts, [lines]]],                         // ts → generator-vouched lines
     "continuity": {priorPlaceId, priorPlaceCoord:[lat,lon]|null, hoursSince, priorPosterior}|null,
-    "flags": {reacquireRobust, segEvidence, chainContext} }
+    "flags": {reacquireRobust, chainContext, segEmission, …} }
 
 Output: { T, S, maxD, emit[t][s], entry[t][s], init[s], trans[t][a][b], dur[s][d-1][e] }
 (all quantised ints, `null` = -∞). -/
@@ -899,8 +899,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     { base := tw "base" d.base, geometric := tw "geometric" d.geometric, gap := tw "gap" d.gap
       rail := tw "rail" d.rail, lineProximity := tw "lineProximity" d.lineProximity
       continuity := tw "continuity" d.continuity, entry := tw "entry" d.entry
-      chain := tw "chain" d.chain, duration := tw "duration" d.duration
-      segmentEvidence := tw "segmentEvidence" d.segmentEvidence }
+      chain := tw "chain" d.chain, duration := tw "duration" d.duration }
   let fits := fun (m : Verified.Hsmm.Emissions.Mode) =>
     match row "durationFits" m with
     | some #[a, b] => ({ alpha := a, beta := b, sampleCount := 10 } : Verified.Hsmm.Duration.GammaFit)
@@ -960,7 +959,6 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
-    (← (← flags.getObjVal? "segEvidence").getBool?)
     (← (← flags.getObjVal? "chainContext").getBool?) segEm
   let posRef := Verified.Hsmm.SegmentEmission.refOf obs
   let segPref := Verified.Hsmm.SegmentEmission.withPositions

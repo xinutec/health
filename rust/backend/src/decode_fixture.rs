@@ -361,7 +361,6 @@ pub fn request(fx: &Value) -> Result<Value> {
         "continuity": continuity,
         "flags": {
             "reacquireRobust": flags["reacquireRobustSpeed"],
-            "segEvidence": flags["segmentEvidence"],
             "chainContext": flags["chainContext"],
             // ⚠ ARM KNOB, harness-only: absent unless the environment sets
             // it, and production never builds its request here.

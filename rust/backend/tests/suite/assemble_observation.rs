@@ -30,7 +30,7 @@ fn request(observation: serde_json::Value) -> serde_json::Value {
     with_record(serde_json::json!({
         "observation": observation,
         "edges": [], "places": [], "nodes": null, "continuity": null,
-        "flags": { "reacquireRobust": true, "segEvidence": true, "chainContext": true },
+        "flags": { "reacquireRobust": true, "chainContext": true },
         "maxD": 30,
     }))
 }
@@ -322,7 +322,7 @@ fn ride_request(relations: serde_json::Value) -> serde_json::Value {
         "edges": edges, "nodes": nodes, "places": [], "placeNearLine": [],
         "continuity": null,
         "railStopRelations": relations,
-        "flags": { "reacquireRobust": true, "segEvidence": true, "chainContext": true },
+        "flags": { "reacquireRobust": true, "chainContext": true },
     }))
 }
 

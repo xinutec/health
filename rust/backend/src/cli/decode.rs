@@ -273,7 +273,6 @@ pub(crate) async fn decode_one(
         // the form it belongs to.
         "flags": {
             "reacquireRobust": flag("USE_REACQUIRE_ROBUST_SPEED"),
-            "segEvidence": flag("USE_SEGMENT_EVIDENCE"),
             "chainContext": flag("USE_CHAIN_CONTEXT"),
         },
         "date": date,

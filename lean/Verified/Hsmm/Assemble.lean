@@ -73,7 +73,6 @@ structure ModelContext where
   placeNearLine : Std.HashSet String
   continuity : Option Continuity.ContinuityContext
   reacquireRobust : Bool
-  segEvidenceOn : Bool
   /-- No floor under the duration prior: a segment as short as the decoder's
       minute is scored by its mode's fitted duration, not by
       `Duration.minDurationByMode`'s hand-set two minutes. -/
@@ -154,7 +153,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float))
     (coverage : Std.HashMap Int (List String)) (placeNearLine : Std.HashSet String)
     (continuity : Option Continuity.ContinuityContext)
-    (reacquireRobust segEvidenceOn chainOn : Bool) (segEm : SegmentEmission.Params) : ModelContext :=
+    (reacquireRobust chainOn : Bool) (segEm : SegmentEmission.Params) : ModelContext :=
   -- A line is a state only where the day's route graph has its track: abroad
   -- a London line had no evidence against it and named a TGV (10-01).
   let lines := KNOWN_LINES.filter (RouteModel.linesInGraph model).contains
@@ -176,7 +175,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     modeledLines := RouteModel.linesInGraph model
     edgesByLine := RouteModel.buildEdgesByLine model
     placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
-    reacquireRobust, segEvidenceOn, chainOn
+    reacquireRobust, chainOn
     segEm := SegmentEmission.prepare segEm obs.size
     stepPref := SegmentEvidence.stepPrefix obs
     minuteLines := obs.map (RouteModel.minuteLines model)
@@ -439,8 +438,7 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
       (if c.durationNoFloor then MIN_ONE else Duration.minDurationByMode st.mode)
 
 /-- The segment-level emission of state `s` over a segment of length `d` with
-    window `w` and statistics `st`. Where it scores the displacement, the
-    `SegmentEvidence` term the duration already holds is taken back out. -/
+    window `w` (its net displacement) and statistics `st`. -/
 def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
     (st : SegmentEmission.Stats) : Float :=
   let q := c.segEm
@@ -459,9 +457,6 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
            (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
              + (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO)
       + SegmentEmission.dispPosteriorScore q.p x.mode d w
-      - (if c.segEvidenceOn then
-           c.weights.segmentEvidence * SegmentEvidence.segmentEvidenceOf x.mode d w
-         else SEG_ZERO)
   | none => SEG_ZERO
 
 /-- Per minute, the best line-proximity term over the train states. -/
@@ -482,14 +477,13 @@ def segEmAt (c : ModelContext) (s d e : Nat) : Float :=
     (SegmentEmission.statsAt c.segPref d e)
 
 /-- `durAt` given `durPriorBase c s d`: only the train-hop relaxation and the
-    segment evidence are resolved at `e`. -/
+    segment emission are resolved at `e`. -/
 def durAtFrom (c : ModelContext) (s d e : Nat) (base : Float) : Float :=
   match c.states[s]? with
   | none => negInf
   | some st =>
   let covered := match c.obs[e]? with | some o => coveredAt c o.ts | none => false
-  Assembly.durationLogProbFrom c.obs c.stepPref st d e covered
-    (Duration.minDurationByMode .train) base c.segEvidenceOn c.weights.segmentEvidence
+  Assembly.durationLogProbFrom st d covered (Duration.minDurationByMode .train) base
     + segEmAt c s d e
 
 /-- Whether minute `e` is covered — one per `e`, shared by every state. -/
@@ -503,8 +497,7 @@ def durAtFromW (c : ModelContext) (s d : Nat) (covered : Bool)
   match c.states[s]? with
   | none => negInf
   | some st =>
-  Assembly.durationLogProbFromW st d covered (Duration.minDurationByMode .train) base
-    c.segEvidenceOn w c.weights.segmentEvidence
+  Assembly.durationLogProbFrom st d covered (Duration.minDurationByMode .train) base
     + segEmFrom c s d w sst
 
 theorem durAtFrom_eq_W (c : ModelContext) (s d e : Nat) (base : Float) :
@@ -515,7 +508,7 @@ theorem durAtFrom_eq_W (c : ModelContext) (s d e : Nat) (base : Float) :
   cases c.states[s]? <;> rfl
 
 /-- `duration(s, d, obs[e])` — the mode's duration prior at `d`, the train-hop
-    relaxation and the segment evidence at `e`. DEFINED as the split
+    relaxation and the segment emission at `e`. DEFINED as the split
     (`durPriorBase` then `durAtFrom`) since 2026-09-29, so the hoisted decoder
     and this reference cannot drift. -/
 def durAt (c : ModelContext) (s d e : Nat) : Float :=
@@ -573,10 +566,10 @@ private def places : List (FocusPlaceRef × Float × Float × Option (Array Floa
 -- A record with no fitted mode: every base term stays per minute.
 private def segNone : SegmentEmission.Params := { sigmaW := 8, rho := 0.8, byMode := [] }
 -- Uncovered day, and a day where the generator vouches "Jubilee Line" at ts 1600.
-private def ctxU : ModelContext := buildContext #[obsTrain] jm places {} {} none false false false segNone
+private def ctxU : ModelContext := buildContext #[obsTrain] jm places {} {} none false false segNone
 private def ctxC : ModelContext :=
   buildContext #[obsTrain] jm places (({} : Std.HashMap Int (List String)).insert 1600 ["Jubilee Line"])
-    {} none false false false segNone
+    {} none false false segNone
 private def jubIdx : Nat := (ctxU.states.findIdx? (fun s => s.lineName == some "Jubilee Line")).getD 0
 private def statIdx : Nat := (ctxU.states.findIdx? (fun s => s.placeId == some 5)).getD 0
 private def noneIdx : Nat := (ctxU.states.findIdx? (fun s => s.mode == .stationary && s.placeId == none)).getD 0

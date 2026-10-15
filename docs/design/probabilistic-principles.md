@@ -431,17 +431,19 @@ physically valid candidates produced by the generator. Each
 returns a log-probability; the scorer sums them as the joint
 log-likelihood of a candidate sequence. None is a hard
 constraint — all are calibrated graduated preferences. The
-heart-rate, GPS-presence and speed rows, and `SegmentEvidence`,
-have segment-level forms behind `flags.segEmission` (Rule 7);
-when that ships they retire.
+decoder scores the heart-rate, GPS-presence and speed rows at the
+segment level, from its record's `segEmission` (Rule 7): a segment's
+heart rate, a chain over fix presence and rail adjacency, the speed
+of each pair of fixes and the segment's net displacement. The
+per-minute forms below remain for a fitless mode.
 
 | Layer        | Factor                       | Source                              | Status   |
 |--------------|------------------------------|-------------------------------------|----------|
 | Initial      | Visit-frequency prior        | `focus_places.total_dwell_sec`      | Wired    |
 | Emission     | Per-mode HR Gaussian         | Learned from heuristic labels        | Wired    |
 | Emission     | Per-mode cadence (zero-inflated) | Learned from heuristic labels    | Wired    |
-| Emission     | Per-mode speed Gaussian      | Learned from heuristic labels        | Wired    |
-| Emission     | Per-mode GPS-presence Bernoulli | Hand-tuned uniform 0.85           | Wired    |
+| Emission     | Per-mode speed Gaussian      | Learned from heuristic labels        | Fitless modes |
+| Emission     | Per-mode GPS-presence Bernoulli | Hand-tuned uniform 0.85           | Fitless modes |
 | Emission     | Per-place HR override        | Learned from heuristic labels        | Wired    |
 | Emission     | Sleep state (`inBed`)        | Fitbit `sleep_stages`               | Wired    |
 | Emission     | Asleep-HR override           | Universal asleep distribution        | Wired    |

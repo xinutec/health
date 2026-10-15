@@ -108,7 +108,6 @@ structure TermWeights where
   entry : Float := 1.0
   chain : Float := 1.0
   duration : Float := 1.0
-  segmentEvidence : Float := 1.0
   deriving Inhabited
 
 /-- Every term of `emissionLogProbFullWith` but the base: what a minute pays
