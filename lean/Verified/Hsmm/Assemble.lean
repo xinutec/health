@@ -80,7 +80,6 @@ structure ModelContext where
   durationNoFloor : Bool := false
   chainOn : Bool
   stepPref : Array Float
-  selfLoop : Float
   /-- Per minute, what the line-proximity term asks of the graph
       (`RouteModel.minuteLines`) — computed once per minute, not per state (#1774). -/
   minuteLines : Array RouteModel.MinuteLines := #[]
@@ -114,9 +113,9 @@ structure ModelContext where
   /-- Per minute, the best train state's line-proximity term: `LineProximity`
       ranks a train's lines and says nothing about train against other modes. -/
   lineProxBest : Array Float := #[]
-  /-- Per source state, `log` of the stay states it may move to (harness arm
-      `placeByEntry`): a transition into a stay gives that back, so the place
-      is chosen by the entry prior alone and not also by the even split. -/
+  /-- Per source state, `log` of the stay states it may move to: a transition
+      into a stay gives that back, so the place is chosen by the entry prior
+      alone and not also by the even split. -/
   stayEntryLog : Array Float := #[]
   /-- Per state, the prefix sums over minute pairs `(t, t+1)` of the pair's
       speed score under the state (`pairTables`): entry `i` sums
@@ -143,6 +142,11 @@ Rust.
 Four hours: long enough for a workday stay to be one segment, short enough that
 the duration axis stays affordable at S ≈ 160. -/
 def DEFAULT_MAX_DURATION : Nat := 240
+
+/-- A segment does not continue into itself: the duration prior alone owns a
+    segment's length, so the self-loop holds no mass and the cross mass is all
+    of it. -/
+def NO_SELF_LOOP : Float := negInf
 
 /-- Assemble the resolved context from parsed inputs (mirrors `buildHsmmModel`'s
     map construction). `places` carry coords/profiles/dwell; the visit weight is
@@ -175,7 +179,6 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
     reacquireRobust, segEvidenceOn, chainOn
     stepPref := SegmentEvidence.stepPrefix obs
-    selfLoop := Transitions.defaultSelfLoop
     minuteLines := obs.map (RouteModel.minuteLines model)
     railByMinute :=
       let connGraph := RouteModel.toConnGraph model
@@ -531,8 +534,8 @@ def durAt (c : ModelContext) (s d e : Nat) : Float :=
 theorem durAt_eq_durAtFrom (c : ModelContext) (s d e : Nat) :
     durAt c s d e = durAtFrom c s d e (durPriorBase c s d) := rfl
 
-/-- What a transition into a stay gives back under `placeByEntry` (see
-    `ModelContext.stayEntryLog`); `0` otherwise. -/
+/-- What a transition into a stay gives back (`ModelContext.stayEntryLog`);
+    `0` otherwise. -/
 def stayEntryAt (c : ModelContext) (a : Nat) (dst : State) : Float :=
   if dst.mode == .stationary then c.stayEntryLog.getD a SEG_ZERO else SEG_ZERO
 
@@ -549,7 +552,7 @@ def transAt (c : ModelContext) (a b t : Nat) : Float :=
       | none => negInf
     else 0.0
   let placeNear := fun (pid : Int) (line : String) => c.placeNearLine.contains s!"{pid}|{line}"
-  Assembly.transitionLogProbFull placeNear c.states.toList c.selfLoop src dst c.chainOn
+  Assembly.transitionLogProbFull placeNear c.states.toList NO_SELF_LOOP src dst c.chainOn
     (c.weights.chain * chainVal) c.transWeight
     + stayEntryAt c a dst
 

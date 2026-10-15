@@ -972,7 +972,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     [.stationary, .walking, .cycling, .driving, .train, .plane, .unknown]
   let modeOf := fun (n : String) => modesAll.find? (Verified.Hsmm.StateSpace.modeName · == n)
   -- Per source state, how many states of each mode it may move to (the even
-  -- split's denominator); shared by the fitted matrix and `placeByEntry`.
+  -- split's denominator); shared by the fitted matrix and the stay give-back.
   let placeNear := fun (pid : Int) (line : String) => ctx.placeNearLine.contains s!"{pid}|{line}"
   let statesL := ctx.states.toList
   let counts : Std.HashMap String (List (Verified.Hsmm.Emissions.Mode × Nat)) :=
@@ -1000,17 +1000,10 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let matrix := fun (a b : Verified.Hsmm.Emissions.Mode) =>
         (entries.find? fun (x, y, _) => x == a && y == b).map (·.2.2)
       Verified.Hsmm.Transitions.fittedWeight matrix count
-  -- Two harness arms on the same file: `noSelfMass` drops the self-loop's
-  -- cross mass (the duration prior alone owns a segment's length);
-  -- `placeByEntry` gives a transition into a stay the even split back (the
-  -- entry prior alone chooses the place).
-  let tfKnob := fun (k : String) =>
-    (transFit >>= fun tf => (tf.getObjVal? k >>= (·.getBool?)).toOption).getD false
-  let selfLoop := if tfKnob "noSelfMass" then Verified.Hsmm.FloatScore.negInf else ctx.selfLoop
+  -- A transition into a stay gives the even split back: the entry prior alone
+  -- chooses the place.
   let stayEntryLog : Array Float :=
-    if tfKnob "placeByEntry" then
-      ctx.states.map fun src => Float.log (Verified.FloatConst.natToFloat (count src .stationary))
-    else #[]
+    ctx.states.map fun src => Float.log (Verified.FloatConst.natToFloat (count src .stationary))
   -- `flags.entryCounts` (harness arm): `{alpha, beta}` — the entry prior as
   -- smoothed counts of visits (`Assemble.entryCountsTable`); the places' counts
   -- ride on the request as `visits`.
@@ -1031,7 +1024,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | _, _ => #[]
     | none => #[]
   let durationNoFloor := ((flags.getObjVal? "durationNoFloor") >>= (·.getBool?)).toOption.getD false
-  let ctx := { ctx with priors, fits, mainlineFit, weights, segEm, segPref, placePrior, transWeight, selfLoop, stayEntryLog, durationNoFloor,
+  let ctx := { ctx with priors, fits, mainlineFit, weights, segEm, segPref, placePrior, transWeight, stayEntryLog, durationNoFloor,
                         visitCounts, entryTable }
   let lineProxBest := match segEm with
     | some _ => Verified.Hsmm.Assemble.lineProxBestTable ctx
@@ -1198,7 +1191,7 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   let weighted : Array ((Verified.Hsmm.Emissions.State × Float) × Nat) :=
     (c.states.map fun s => (s, Verified.Hsmm.Transitions.crossWeightSumP placeNear statesL s c.transWeight)).zipIdx
   let baseTransF := fun (src dst : Verified.Hsmm.Emissions.State) (ws : Float) (a : Nat) =>
-    Verified.Hsmm.Transitions.transitionLogProbPre placeNear c.selfLoop ws src dst c.transWeight
+    Verified.Hsmm.Transitions.transitionLogProbPre placeNear Verified.Hsmm.Assemble.NO_SELF_LOOP ws src dst c.transWeight
       + Verified.Hsmm.Assemble.stayEntryAt c a dst
   let mut transBase : Array Nat := Array.replicate (S * S) 0
   for ((src, ws), a) in weighted do

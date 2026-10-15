@@ -775,11 +775,16 @@ replay identically.
 boarding). No record ever set `rideHeadMin`, so the states were never in the
 space; with them go the per-minute mode prior's last reader and the harness's
 two knobs. The 43 frozen decodes replay identically.
+**Retired: the transition switches** (`noSelfMass`, `placeByEntry`, true in
+every record). A segment never continues into itself, so the self-loop holds
+no mass, and a transition into a stay gives the even split back, so the
+entry prior alone chooses the place; the golden transition form is the
+matrix alone. The 43 frozen decodes replay identically.
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,
-asleep and off-network terms, `LineProximity`'s constants, the self-loop mass, the duration cap; the
-listed place's per-minute Gaussian and its floor into the placeless stay's
-form (the same prefix sums, a fitted outlier share for the floor); the
+asleep and off-network terms, `LineProximity`'s constants, the duration cap; the
 fix's accuracy in a position model rather than a speed term (the plumbing
-is in; as the speed's noise it is on).
+is in; as the speed's noise it is on). The listed place's per-minute
+Gaussian and its floor stay hand-set: folding them into the placeless form
+lost in all four arms (s49place to s51, above).

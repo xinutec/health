@@ -12,7 +12,7 @@
 //! over it (`emissionDebug.segments`).
 //!
 //! The FORM is not fitted: which terms are on (`speedWindow`, `dispPosterior`,
-//! `centreAnchor`, `noSelfMass`, …), the outlier range, the pseudo-counts, and
+//! `centreAnchor`, …), the outlier range, the pseudo-counts, and
 //! the parameters no narrated minute reaches (cycling, plane, the inert
 //! beta-binomial) come from `--form <dir>` (the golden fits); every number the
 //! narrated days do reach is replaced.
