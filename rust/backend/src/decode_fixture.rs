@@ -48,9 +48,14 @@ pub fn fixture_names() -> Result<Option<Vec<String>>> {
     Ok(Some(names))
 }
 
-/// One fixture, parsed.
+/// One fixture, parsed: a corpus name, or a path (any name with a `/`) to a
+/// frozen request outside the corpus, such as a history capture.
 pub fn read(name: &str) -> Result<Value> {
-    let path = corpus_dir().join(name);
+    let path = if name.contains('/') {
+        PathBuf::from(name)
+    } else {
+        corpus_dir().join(name)
+    };
     let raw =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     serde_json::from_str(&raw).with_context(|| format!("{name} is not JSON"))
