@@ -1830,7 +1830,12 @@ private def assembleSegmentsResult (j : Json) : Json :=
                   | none => base
                   | some res => base ++
                       [ ("boardStation", optStrJson res.board)
-                      , ("alightStation", optStrJson res.alight) ])))
+                      , ("alightStation", optStrJson res.alight) ]
+                      -- The wait's bound, only when the chain found one.
+                      ++ (match res.boardTs with
+                        | some t => [("boardTs", Lean.toJson t)] | none => [])
+                      ++ (match res.alightTs with
+                        | some t => [("alightTs", Lean.toJson t)] | none => []))))
             match chained with
             | .error e => Json.mkObj [("error", Json.str e)]
             | .ok rows =>

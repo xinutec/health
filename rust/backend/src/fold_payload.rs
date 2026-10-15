@@ -1170,6 +1170,9 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
                 for k in ["boardStation", "alightStation"] {
                     o.insert(k.into(), opt_str(h, k));
                 }
+                for k in ["boardTs", "alightTs"] {
+                    o.insert(k.into(), h.get(k).cloned().unwrap_or(Value::Null));
+                }
             }
         }
     }

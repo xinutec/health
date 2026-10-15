@@ -238,6 +238,8 @@ private def parseHmmSeg (j : Json) : Except String Verified.Geo.PlaceOverride.Hm
     placeId := ← optInt j "placeId"
     boardStation := ← optStr j "boardStation"
     alightStation := ← optStr j "alightStation"
+    boardTs := ← optInt j "boardTs"
+    alightTs := ← optInt j "alightTs"
   }
 
 /-- `[id, displayName|null, latBits|null, lonBits|null]`. -/
@@ -925,28 +927,43 @@ its route as `wayName` (`board → alight · line`) when the decoder's chain nam
 both ends, else its line. ⚠ A measurement seam (`FOLD_DECODER_HEAD`), never served. -/
 def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
     (pts : Array Verified.SpeedFix) : Array Seg :=
-  hmm.map fun h =>
-    let w := pts.filter fun p => decide (p.ts ≥ h.startTs) && decide (p.ts ≤ h.endTs)
+  let build : Int → Int → String → Option String → Option String → Seg :=
+    fun startTs endTs mode wayName place =>
+    let w := pts.filter fun p => decide (p.ts ≥ startTs) && decide (p.ts ≤ endTs)
     let path := (w.toList.zip w.toList.tail).foldl (fun s (a, b) =>
       s + Verified.Hsmm.FloatScore.haversineMeters a.lat a.lon b.lat b.lon) ZERO_F
-    let dur := Float.ofInt (h.endTs - h.startTs)
+    let dur := Float.ofInt (endTs - startTs)
     let n := Verified.FloatConst.natToFloat w.size
     let centre := if w.isEmpty then (none, none)
       else (some (w.foldl (· + ·.lat) ZERO_F / n), some (w.foldl (· + ·.lon) ZERO_F / n))
     { HEAD_SEG with
-      startTs := h.startTs
-      endTs := h.endTs
-      mode := h.mode
+      startTs, endTs, mode, wayName, place
       avgSpeed := if dur > ZERO_F then path / dur * MS_TO_KMH else ZERO_F
       pointCount := w.size
-      wayName := if h.mode != "train" then none
-        else match h.boardStation, h.alightStation, h.lineName with
-          | some b, some a, some l =>
-            some (if l == "unknown_rail" then s!"{b} → {a}" else s!"{b} → {a} · {l}")
-          | some b, some a, none => some s!"{b} → {a}"
-          | _, _, l => l
       centroidLat := centre.1
       centroidLon := centre.2 }
+  (hmm.mapIdx fun i h =>
+    let way := if h.mode != "train" then none
+      else match h.boardStation, h.alightStation, h.lineName with
+        | some b, some a, some l =>
+          some (if l == "unknown_rail" then s!"{b} → {a}" else s!"{b} → {a} · {l}")
+        | some b, some a, none => some s!"{b} → {a}"
+        | _, _, l => l
+    -- A wait the chain found at a CHANGE is a stay at the station, the ride
+    -- its own span: his rows write a change so (06-29, 07-01) and a platform
+    -- wait at the journey's ends inside the walk or the ride, and the
+    -- journey referee composes with a five-minute pause.
+    -- A change: the other ride is adjacent, or across the in-station walk.
+    let trainAt := fun (k : Nat) => (hmm[k]?).any (·.mode == "train")
+    let afterTrain := i > 0 && (trainAt (i - 1)
+      || (i > 1 && (hmm[i - 1]?).any (·.mode == "walking") && trainAt (i - 2)))
+    let beforeTrain := trainAt (i + 1)
+      || ((hmm[i + 1]?).any (·.mode == "walking") && trainAt (i + 2))
+    let rideStart := if afterTrain then h.boardTs.getD h.startTs else h.startTs
+    let rideEnd := if beforeTrain then h.alightTs.getD h.endTs else h.endTs
+    (if rideStart > h.startTs then #[build h.startTs rideStart "stationary" none h.boardStation] else #[])
+      ++ #[build rideStart rideEnd h.mode way none]
+      ++ (if rideEnd < h.endTs then #[build rideEnd h.endTs "stationary" none h.alightStation] else #[])).flatten
 
 /-- The passes whose output differs from what they were handed — computed from
 the trace rather than declared, so it cannot drift from what ran. This is the
@@ -1069,8 +1086,18 @@ def dayResult (j : Json) : Json :=
     -- also rewrites modes and labels; the decoder's places then override.
     let nameStays : Verified.Geo.PassFold.Pass := ("nameStays", fun segs =>
       segs.map fun s => if s.mode == "stationary" then env.nameStay s else s)
+    -- A fixless stretch the decoder labelled by its steps, between two stays
+    -- at one place, is that stay (`absorbDarkMoveAtPlace`). After the
+    -- decoder's places land: a dark stay is named by `hsmmOverride`, not by
+    -- `nameStays`, which needs a centroid.
+    let darkMove : Verified.Geo.PassFold.Pass := ("darkMoveAtPlace", fun segs =>
+      Verified.Geo.SegmentMerge.absorbDarkMoveAtPlace segs env.geoFixes)
+    let tail := chosen.filter (DECODER_TAIL.contains ·.1)
+    let tail := match tail.findIdx? (·.1 == "hsmmOverride") with
+      | some k => tail.insertIdx! (k + 1) darkMove
+      | none => tail.push darkMove
     let chosen := if decoderHead
-      then #[unnamedRail, nameStays] ++ chosen.filter (DECODER_TAIL.contains ·.1)
+      then #[unnamedRail, nameStays] ++ tail
       else chosen
     let chosen := chosen.map fun (n, f) => (n, fun s => DayEntry.Host.timed s!"pass.{n}" fun _ => f s)
     let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs

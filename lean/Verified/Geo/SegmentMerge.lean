@@ -477,6 +477,51 @@ def absorbIntraPlaceWalk (segments : Array Seg) (fixes : Array Fix) : Array Seg 
           | _, _ => seg
       | _, _ => seg
 
+/-! ## `absorbDarkMoveAtPlace` -/
+
+/-- A run of moving segments with no fix at all, between two stays at one
+place, is that stay: the served day calls such a stretch `unknown` and
+`mergeAdjacentStays` bridges it (`isBlackoutGap`); the decoder labels it by
+its steps instead (walking about the office on 2026-07-06, 11:31–11:36Z and
+14:54–15:09Z), and without a fix nothing says the place was left. Each
+segment of the run becomes the stay it sits in, for `mergeAdjacentStays` to
+coalesce. -/
+def absorbDarkMoveAtPlace (segments : Array Seg) (fixes : Array Fix) : Array Seg := Id.run do
+  let mut out := segments
+  let mut i := 0
+  while i < out.size do
+    let seg := out[i]!
+    if effectiveMode seg == "stationary" then
+      i := i + 1
+      continue
+    -- The run of moving segments from `i`.
+    let mut j := i
+    while j < out.size && effectiveMode out[j]! != "stationary" do
+      j := j + 1
+    let absorbed := match out[i - 1]?, out[j]? with
+      | some prev, some next =>
+        i > 0 && effectiveMode prev == "stationary" && samePlace prev next
+          && (samplesInWindow fixes seg.startTs (out[j - 1]!).endTs).isEmpty
+      | _, _ => false
+    if absorbed then
+      let prev := out[i - 1]!
+      let reason := s!"no fix between two stays at {prev.place.getD ""} — the place was not left"
+      for k in [i : j] do
+        let w := out[k]!
+        out := out.set! k { w with
+          refinedMode := some "stationary"
+          place := prev.place
+          placeSource := prev.placeSource
+          city := prev.city
+          wayName := none
+          centroidLat := prev.centroidLat
+          centroidLon := prev.centroidLon
+          refinedReason := some (match w.refinedReason with
+            | some r => if r == "" then reason else s!"{r}; {reason}"
+            | none => reason) }
+    i := j
+  return out
+
 /-! ## `absorbFarFocusPlacePhantom` -/
 
 /-- A stay this close to a focus place's stored centroid genuinely IS it. -/

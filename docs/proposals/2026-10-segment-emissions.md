@@ -138,6 +138,7 @@ place entry normalised over places per hour.
 | s46now: s46sig on 2026-10-15's narratives (the baseline below) | 126 | 311 | 63 | 70 | 6 | 143 |
 | s48nf: s46now with no floor under the duration prior (`durationNoFloor`) | 126 | 311 | 63 | 71 | 7 | 143 |
 | s49place: s48nf with the listed place's spread fitted (σ 15 m, hand-set 150 m) | 122 | 310 | 63 | 70 | 13 | 145 |
+| s49mix: s48nf with the listed place's term a fitted two-scale mixture (σ 5 m; astray σ 60 m, 6%) | 121 | 310 | 63 | 70 | 16 | 144 |
 
 From x2 to s3 the phantoms fall 90 → 21 and every long phantom (hours of
 "train" or "driving" inside a stay) is gone. Of s3's 21, 13 are one- or
@@ -695,6 +696,21 @@ decoder breaks it into phantom trips (phantoms 6 → 12, journeys 126 → 122,
 10-07, 04-29, 06-18, 07-16), though the referee gains two. The term's form —
 no outlier share, a hard floor — is what fails, not its number: fitted, it
 needs the outlier share the speed pairs have.
+
+**Refuted: the listed place's term as a fitted two-scale mixture** (s49mix;
+`fits/arm-placemix-2026-10-15.patch` in the golden repository). Near σ 5 m,
+astray σ 60 m at 6%, by EM on the same stays, replacing the hand-set spread
+and floor. Phantoms 7 → 16, journeys 126 → 121. The fit and the term see
+different populations: the fit takes the narrated stays whose place NAME is a
+listed one (Home, Work; 1412 minutes), the decoder applies the result to every
+listed place, including the auto-made clusters a campus visit sits 100 m from
+(06-18 and 06-24 at University College Hospital, 103–110 m from the nearest
+listed "Stay", speed 0: −7.6 a minute under the mixture, −0.25 under the
+hand-set term). Twice refuted on the number, the form is the finding: the
+listed place's spread is per place (a house and a campus differ by an order of
+magnitude), and comes from the place's own cluster, not from one σ over the
+named stays. The decoder's short stops wait on it: see the roadmap's
+"stays gap, row by row".
 
 Then, in order: the flags become defaults and the
 old paths retire — `SegmentEvidence`, the per-minute heart-rate, presence,

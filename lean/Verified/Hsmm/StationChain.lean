@@ -810,6 +810,11 @@ structure ResolvedStations where
   /-- `some l` when the chain re-lines the leg: the best pair on `l` beats the
       best on the decoded line by `MARGIN_NATS`. `none` keeps the decoded line. -/
   line : Option String := none
+  /-- The ride's own start (end) when the chain found a wait at the board
+      (alight) station (`waitBound`): the leg before it is the wait, a stay at
+      the station. `none` when the ride fills its leg. -/
+  boardTs : Option Int := none
+  alightTs : Option Int := none
   deriving Inhabited, Repr, BEq
 
 private def NEG_INF : Float := -1.0 / 0.0
@@ -1054,7 +1059,10 @@ private def emitLegOn (leg : ChainLeg) (through : Array Float) : Option (Nat × 
       (match through[bestP]? with | some tb => tb - alt ≥ MARGIN_NATS | none => false)
     let board := if clears bestAlt.1 && sidePlausible best.board then best.board.node.stationName else none
     let alight := if clears bestAlt.2 && sidePlausible best.alight then best.alight.node.stationName else none
-    if board.isNone && alight.isNone then none else some (leg.segIndex, { board, alight })
+    let boardTs := if board.isSome && best.board.effTs > leg.startTs then some best.board.effTs else none
+    let alightTs := if alight.isSome && best.alight.effTs < leg.endTs then some best.alight.effTs else none
+    if board.isNone && alight.isNone then none
+    else some (leg.segIndex, { board, alight, boardTs, alightTs })
 
 /-- Emit for one leg: first its LINE, then its stations on that line.
 
@@ -1318,14 +1326,15 @@ private def cleanObs : Array ObsRow := #[
   ob 6 (some 0.03787970106354472), ob 7 (some 0.045455641276253664),
   ob 8 (some 0.053031581488962615), ob 9 (some 0.06060752170167155),
   ob 10 (some 0.06493663039464809), ob 11 (some 0.06493663039464809)]
-#guard run #[tseg 2 11] cleanObs == #[(0, ⟨some "Alpha", some "Delta", none⟩)]
+-- The last two fixes stand at Delta: the ride ends a minute before its leg.
+#guard run #[tseg 2 11] cleanObs == #[(0, ⟨some "Alpha", some "Delta", none, none, some (T0 + 540)⟩)]
 
 -- Re-lining (#238). A leg decoded on a line with no track, offered the real one:
 -- the chain places it Alpha → Delta on Test Line and says so.
 private def ghost (a b : Nat) : ChainSeg :=
   ⟨"train", some "Ghost Line", T0 + (a : Int) * 60, T0 + (b : Int) * 60⟩
 #guard resolveStationChain testGraph #[ghost 2 11] cleanObs none ["Test Line"]
-  == #[(0, ⟨some "Alpha", some "Delta", some "Test Line"⟩)]
+  == #[(0, ⟨some "Alpha", some "Delta", some "Test Line", none, some (T0 + 540)⟩)]
 -- Offering a leg its own line changes nothing.
 #guard resolveStationChain testGraph #[tseg 2 11] cleanObs none ["Test Line"]
   == run #[tseg 2 11] cleanObs
@@ -1341,7 +1350,7 @@ private def ghost (a b : Nat) : ChainSeg :=
 --    picks Bravo.
 private def durationObs : Array ObsRow :=
   #[ob 0 (some 0), ob 1 (some 0)] ++ dark 2 5 ++ #[ob 6 (some 0.032468315197324044)]
-#guard run #[tseg 2 5] durationObs == #[(0, ⟨some "Alpha", some "Bravo", none⟩)]
+#guard run #[tseg 2 5] durationObs == #[(0, ⟨some "Alpha", some "Bravo", none, none, none⟩)]
 
 -- 3. Terminal dwell DISQUALIFIES. The fixes sit on Delta from minute 4 to the
 --    leg's end at 13 — the ride passed it mid-leg and stopped, which a real
@@ -1351,7 +1360,7 @@ private def dwellObs : Array ObsRow :=
   #[ob 0 (some 0), ob 1 (some 0),
     ob 2 (some 0.021645543464882695), ob 3 (some 0.04329108692976539)]
   ++ ((List.range 10).map (fun k => ob (4 + k) (some 0.06493663039464809))).toArray
-#guard run #[tseg 2 13] dwellObs == #[(0, ⟨some "Alpha", none, none⟩)]
+#guard run #[tseg 2 13] dwellObs == #[(0, ⟨some "Alpha", none, none, none, none⟩)]
 
 -- 4. No evidence at all: no in-leg fix, no anchor either side, no bookend. The
 --    leg has no admissible pair, so it is absent from the result entirely —
@@ -1366,7 +1375,7 @@ private def chainObs : Array ObsRow :=
   ++ #[ob 9 (some 0.04329108692976539), ob 10 (some 0.05411385866220674)]
   ++ dark 11 16 ++ #[ob 17 (some 0.08658217385953078)]
 #guard run #[tseg 2 8, tseg 11 17] chainObs
-  == #[(0, ⟨some "Alpha", some "Charlie", none⟩), (1, ⟨some "Charlie", some "Echo", none⟩)]
+  == #[(0, ⟨some "Alpha", some "Charlie", none, none, none⟩), (1, ⟨some "Charlie", some "Echo", none, none, none⟩)]
 
 -- 6. The same two legs, 13 minutes apart instead of 3: past CHAIN_GAP_MAX_S, so
 --    they are SEPARATE chains and no handover term crosses the gap. Leg 1's
@@ -1377,7 +1386,7 @@ private def splitObs : Array ObsRow :=
   ++ #[ob 20 (some 0.05411385866220674)] ++ dark 21 26
   ++ #[ob 27 (some 0.08658217385953078)]
 #guard run #[tseg 2 8, tseg 21 27] splitObs
-  == #[(0, ⟨some "Alpha", some "Charlie", none⟩), (1, ⟨none, some "Echo", none⟩)]
+  == #[(0, ⟨some "Alpha", some "Charlie", none, none, none⟩), (1, ⟨none, some "Echo", none, none, none⟩)]
 
 -- 7. Three ways to be out of scope, each on its own so no case can pass by
 --    satisfying a different guard than the one it names. All run the CLEAN

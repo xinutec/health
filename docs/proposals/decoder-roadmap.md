@@ -414,6 +414,35 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    right against 188 of 199 on the days that move; what is left is a stay
    the headed day does not have (a short stop inside a walk, a wait at a
    station), on eleven days one each, 07-16 two.
+   **The stays gap, row by row** (`TRUTH_DEBUG=1` on the gate shards, headed
+   against served; five Baker Street changes regress under both and are not
+   the gap). Eleven narrated stay rows regress under the head alone: the two
+   changes he writes as a stay (06-29, 07-01: the chain's wait sits inside
+   the next ride); four short stops the decoder does not draw or starts late
+   (Lidl 05-12 by five minutes, Currys 06-24 and Fnac 10-05 not at all, the
+   UCH tail on 07-16 left nine minutes early, two rows); three venue names
+   that flip with the stay's window (Starbucks/Sainsbury's Local 05-18,
+   Paul/Currency Exchange 10-08, London St Pancras/St Pancras International
+   09-30); and 07-06's Work, whose row midpoint lands in a thirteen-minute
+   lit walk (120 m from the office, over `absorbIntraPlaceWalk`'s twelve).
+   Two closed from the head's side: a fixless stretch the decoder labelled
+   by its steps between two stays at one place is that stay
+   (`absorbDarkMoveAtPlace`, after `hsmmOverride` names the dark stay;
+   05-12's and 07-06's Work are whole again, no graded row moved), and the
+   chain's wait at a change (`boardTs`/`alightTs` on the decode, the
+   ride's own start or end) is a stay at the station in the head: 175 of
+   190. Carved at every ride's end as well it reaches 177 of 193 and loses
+   seven journeys — a platform wait at the origin, which his rows fold into
+   the walk or the ride, outlasts the referee's five-minute pause. The short
+   stops are the decoder's: scored with its own path (`path_debug`), the
+   stop as a stay loses by 12–22 nats, at Fnac on three duration priors
+   against one and the entry, at Currys and Lidl on the minute emissions,
+   where the hand-set stationary cadence (99% step-free) charges browsing
+   steps −8.5 a minute; s45stay's fitted cadence recovers three a minute but
+   dissolved short walks into listed stays, whose per-minute place term is
+   floored at −3, and the fitted replacement for that term needs a spread
+   per place (s49place, s49mix). That is the order: a per-place spread, the
+   mixture, then the cadence, each measured.
    **What a re-decode would change today: nothing graded.** The served day
    fed the live decode (s43c) or the next (the chain's wait, a stay's fitted
    spread) in place of each fixture's stored one (`FOLD_DECODE_FROM`): every

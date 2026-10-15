@@ -36,6 +36,9 @@ structure HmmSeg where
   /-- A train's stations, as the decoder's chain resolved them. -/
   boardStation : Option String := none
   alightStation : Option String := none
+  /-- The ride's own start (end) past a wait the chain found at the station. -/
+  boardTs : Option Int := none
+  alightTs : Option Int := none
   deriving Inhabited
 
 /-- Should the HSMM's `train @ line` override the pipeline's movement label?
@@ -123,8 +126,8 @@ they are now corroborated rather than self-certified. -/
 #guard decideHsmmTrainOverride 25 0.4 (some 0.4) == false
 
 private def trainHmm : List HmmSeg := [
-  ⟨0, 100, "train", some "Victoria", none, none, none⟩, ⟨100, 300, "train", some "Northern", none, none, none⟩,
-  ⟨300, 400, "train", some "unknown_rail", none, none, none⟩, ⟨400, 500, "walking", none, none, none, none⟩]
+  ⟨0, 100, "train", some "Victoria", none, none, none, none, none⟩, ⟨100, 300, "train", some "Northern", none, none, none, none, none⟩,
+  ⟨300, 400, "train", some "unknown_rail", none, none, none, none, none⟩, ⟨400, 500, "walking", none, none, none, none, none, none⟩]
 private def approxP (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 #guard match findDominantTrainLineName 0 600 trainHmm with
   | some (l, f) => l == "Northern" && approxP f 0.3333333333333333
@@ -135,8 +138,8 @@ private def approxP (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 #guard findDominantTrainLineName 1000 2000 trainHmm == none
 
 private def placeHmm : List HmmSeg := [
-  ⟨0, 100, "stationary", none, some 7, none, none⟩, ⟨100, 400, "stationary", none, some 9, none, none⟩,
-  ⟨400, 500, "stationary", none, none, none, none⟩, ⟨500, 600, "walking", none, some 3, none, none⟩]
+  ⟨0, 100, "stationary", none, some 7, none, none, none, none⟩, ⟨100, 400, "stationary", none, some 9, none, none, none, none⟩,
+  ⟨400, 500, "stationary", none, none, none, none, none, none⟩, ⟨500, 600, "walking", none, some 3, none, none, none, none⟩]
 #guard findDominantStationaryPlaceId 0 600 placeHmm == some 9
 #guard findDominantStationaryPlaceId 0 150 placeHmm == some 7
 #guard findDominantStationaryPlaceId 1000 2000 placeHmm == none
@@ -278,127 +281,127 @@ private def PLACES : List (Int × PlaceLookup) := [
 
 -- H1: a stay the HSMM attributes to place 9 — overridden to its display name.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := none, wayName := none, refinedReason := none, centroidLat := (some 51.5405), centroidLon := (some (-0.1425)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000600, "stationary", none, (some 9), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "stationary", none, (some 9), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Home"), none, none, none)]
 
 -- H1's record: the place's own name, under its rule, at its position.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := none, wayName := none, refinedReason := none, centroidLat := (some 51.5405), centroidLon := (some (-0.1425)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000600, "stationary", none, (some 9), none, none⟩] PLACES).map (·.placeSource) ==
+    #[⟨1751000000, 1751000600, "stationary", none, (some 9), none, none, none, none⟩] PLACES).map (·.placeSource) ==
   #[some ⟨"Home", "home", some (51.5405, -0.1425)⟩]
 
 -- H2: two candidate places; the one with the most overlap SECONDS wins, not the first. The centroid sits at the WINNER, so the doorstep gate is not what decides.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := none, wayName := none, refinedReason := none, centroidLat := (some 51.5405), centroidLon := (some (-0.1425)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000100, "stationary", none, (some 7), none, none⟩, ⟨1751000100, 1751000600, "stationary", none, (some 9), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000100, "stationary", none, (some 7), none, none, none, none⟩, ⟨1751000100, 1751000600, "stationary", none, (some 9), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Home"), none, none, none)]
 
 -- H3: the same pair over a shorter window, where the ORDER of the winner flips — 7 now holds more of it.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000150, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := none, wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000100, "stationary", none, (some 7), none, none⟩, ⟨1751000100, 1751000600, "stationary", none, (some 9), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000100, "stationary", none, (some 7), none, none, none, none⟩, ⟨1751000100, 1751000600, "stationary", none, (some 9), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Work"), none, none, none)]
 
 -- H4: the dominant place is the generic bucket marker `Stay`. It names a cluster KIND, not a venue, so it must not overwrite anything — the pipeline's own place stands.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Clinic C"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000600, "stationary", none, (some 11), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "stationary", none, (some 11), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Clinic C"), none, none, none)]
 
 -- H5: the dominant place has no display name — nothing to override with.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Somewhere"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000600, "stationary", none, (some 13), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "stationary", none, (some 13), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Somewhere"), none, none, none)]
 
 -- H6: the HSMM agrees with the pipeline — an override that changes nothing.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Work"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000600, "stationary", none, (some 7), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "stationary", none, (some 7), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Work"), none, none, none)]
 
 -- H7: #244 doorstep gate: the HSMM's place sits ~3.2 km from the stay's own GPS centroid. That is a teleport, not a refinement — the decoder filled a GPS-dark interior with a prior and won on overlap. Refused.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Work"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000600, "stationary", none, (some 15), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "stationary", none, (some 15), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Work"), none, none, none)]
 
 -- H8: the SAME far place, but the stay has no centroid at all. A truly GPS-dark stay legitimately anchors via the prior, so the gate is skipped and the override lands.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Work"), wayName := none, refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000600, "stationary", none, (some 15), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "stationary", none, (some 15), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Far Clinic"), none, none, none)]
 
 -- H9: the place id the HSMM names is not in the lookup — no override.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Work"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000600, "stationary", none, (some 99), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "stationary", none, (some 99), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Work"), none, none, none)]
 
 -- H10: an off-network HSMM stay (no place id) and a walking one — neither is a candidate.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Work"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000300, "stationary", none, none, none, none⟩, ⟨1751000300, 1751000600, "walking", none, (some 9), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000300, "stationary", none, none, none, none, none, none⟩, ⟨1751000300, 1751000600, "walking", none, (some 9), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Work"), none, none, none)]
 
 -- H11: a DRIVING leg the HSMM calls a train on a known line, at ride speed and off any road corridor. Promoted: mode AND refinedMode both become train, the reason is rewritten, the line becomes the wayName — and `vehicleKind` is CLEARED, because the day-state flattening ranks it above refinedMode and would otherwise render this train as a bus (#365).
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "driving", refinedMode := none, avgSpeed := 25.0, place := none, wayName := none, refinedReason := (some "cadence says vehicle"), centroidLat := none, centroidLon := none, vehicleKind := (some "bus"), roadCorridorFraction := (some 0.1) }]
-    #[⟨1751000000, 1751000600, "train", (some "Victoria"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "train", (some "Victoria"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("train", (some "train"), none, (some "Victoria"), (some "hsmm route evidence — Victoria"), none)]
 
 -- H12: the 2026-05-25 taxi: the HSMM credits a line the vehicle merely drove past, but the trace hugs roads throughout. Line support 0.25 loses to road-following 0.8 — refused, and this is a WEIGHING, not a veto.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "driving", refinedMode := none, avgSpeed := 25.0, place := none, wayName := none, refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := (some 0.8) }]
-    #[⟨1751000000, 1751000150, "train", (some "Circle"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000150, "train", (some "Circle"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("driving", none, none, none, none, none)]
 
 -- H13: walking pace under the 8 km/h split — movement to a tube entrance, not a ride.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "walking", refinedMode := none, avgSpeed := 5.0, place := none, wayName := none, refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := (some 0.1) }]
-    #[⟨1751000000, 1751000600, "train", (some "Victoria"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "train", (some "Victoria"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("walking", none, none, none, none, none)]
 
 -- H14: no GPS samples at all (an underground gap the HSMM reconstructed). The trace cannot contradict, so the HSMM stands.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "driving", refinedMode := none, avgSpeed := 25.0, place := none, wayName := none, refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000300, "train", (some "Victoria"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000300, "train", (some "Victoria"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("train", (some "train"), none, (some "Victoria"), (some "hsmm route evidence — Victoria"), none)]
 
 -- H15: `unknown_rail` is not a line name — no candidate, no override.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "driving", refinedMode := none, avgSpeed := 25.0, place := none, wayName := none, refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := (some 0.1) }]
-    #[⟨1751000000, 1751000600, "train", (some "unknown_rail"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "train", (some "unknown_rail"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("driving", none, none, none, none, none)]
 
 -- H16: two lines; the one holding more overlap SECONDS wins and becomes the wayName.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "driving", refinedMode := none, avgSpeed := 25.0, place := none, wayName := none, refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := (some 0.1) }]
-    #[⟨1751000000, 1751000100, "train", (some "Victoria"), none, none, none⟩, ⟨1751000100, 1751000500, "train", (some "Northern"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000100, "train", (some "Victoria"), none, none, none, none, none⟩, ⟨1751000100, 1751000500, "train", (some "Northern"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("train", (some "train"), none, (some "Northern"), (some "hsmm route evidence — Northern"), none)]
 
 -- H16a: BRACKETING the private overlap fraction through the export. Northern holds 400 s of a 600 s segment, so the fraction is 0.666…; a road-corridor share of 0.66 loses to it and the override fires. With H16b just above, the fraction the caller never returns is pinned to an interval — the bus-matcher technique of reading a private value out of production code by bisecting its caller's threshold.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "driving", refinedMode := none, avgSpeed := 25.0, place := none, wayName := none, refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := (some 0.66) }]
-    #[⟨1751000000, 1751000100, "train", (some "Victoria"), none, none, none⟩, ⟨1751000100, 1751000500, "train", (some "Northern"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000100, "train", (some "Victoria"), none, none, none, none, none⟩, ⟨1751000100, 1751000500, "train", (some "Northern"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("train", (some "train"), none, (some "Northern"), (some "hsmm route evidence — Northern"), none)]
 
 -- H16b: the same segment against 0.67, which beats the fraction — refused. So 0.66 < overlapFraction ≤ 0.67, without any test-only export.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "driving", refinedMode := none, avgSpeed := 25.0, place := none, wayName := none, refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := (some 0.67) }]
-    #[⟨1751000000, 1751000100, "train", (some "Victoria"), none, none, none⟩, ⟨1751000100, 1751000500, "train", (some "Northern"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000100, "train", (some "Victoria"), none, none, none, none, none⟩, ⟨1751000100, 1751000500, "train", (some "Northern"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("driving", none, none, none, none, none)]
 
 -- H7a: the HSMM place sits ~1.2 km from the stay centroid — inside the 1500 m doorstep bar, outside a 1000 m one. With H7 at 3.2 km above, the bar is straddled.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Work"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000600, "stationary", none, (some 17), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "stationary", none, (some 17), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Mid Clinic"), none, none, none)]
 
 -- H2a: two places holding EXACTLY equal overlap (300 s each of a 600 s window). The argmax keeps the FIRST — mirroring the JS Map insertion order — so place 7 wins. Under a last-wins tie-break place 9 would win and then FAIL the doorstep gate 1.7 km away, so the tie-break is observable through the output rather than only through the winner.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Somewhere"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000300, "stationary", none, (some 7), none, none⟩, ⟨1751000300, 1751000600, "stationary", none, (some 9), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000300, "stationary", none, (some 7), none, none, none, none⟩, ⟨1751000300, 1751000600, "stationary", none, (some 9), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Work"), none, none, none)]
 
 -- H13a: 7 km/h — under the 8 km/h walk/ride split but over a 6 km/h one. With H13 (5 km/h) and the exact-8 decide case, the split is bracketed on both sides.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "walking", refinedMode := none, avgSpeed := 7.0, place := none, wayName := none, refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := (some 0.1) }]
-    #[⟨1751000000, 1751000600, "train", (some "Victoria"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "train", (some "Victoria"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("walking", none, none, none, none, none)]
 
 -- H17: a leg the pipeline ALREADY calls a train is left alone — the pipeline's line attribution is finer-grained than per-line route-graph evidence, so train-vs-train is deliberately skipped.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "train", refinedMode := none, avgSpeed := 25.0, place := none, wayName := (some "Piccadilly"), refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := (some 0.1) }]
-    #[⟨1751000000, 1751000600, "train", (some "Victoria"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "train", (some "Victoria"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("train", none, none, (some "Piccadilly"), none, none)]
 
 -- H18: `refinedMode` decides which arm runs, not `mode`: a leg classified `driving` but refined to `stationary` takes the PLACE arm.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "driving", refinedMode := (some "stationary"), avgSpeed := 0.0, place := (some "Work"), wayName := none, refinedReason := none, centroidLat := (some 51.5405), centroidLon := (some (-0.1425)), vehicleKind := none, roadCorridorFraction := none }]
-    #[⟨1751000000, 1751000600, "stationary", none, (some 9), none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000600, "stationary", none, (some 9), none, none, none, none⟩] PLACES).map projSeg ==
   #[("driving", (some "stationary"), (some "Home"), none, none, none)]
 
 -- H19: several segments in one call — each decided independently, order preserved, count unchanged.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000300, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := none, wayName := none, refinedReason := none, centroidLat := (some 51.5405), centroidLon := (some (-0.1425)), vehicleKind := none, roadCorridorFraction := none }, { startTs := 1751000300, endTs := 1751000600, mode := "driving", refinedMode := none, avgSpeed := 25.0, place := none, wayName := none, refinedReason := none, centroidLat := none, centroidLon := none, vehicleKind := none, roadCorridorFraction := (some 0.1) }]
-    #[⟨1751000000, 1751000300, "stationary", none, (some 9), none, none⟩, ⟨1751000300, 1751000600, "train", (some "Northern"), none, none, none⟩] PLACES).map projSeg ==
+    #[⟨1751000000, 1751000300, "stationary", none, (some 9), none, none, none, none⟩, ⟨1751000300, 1751000600, "train", (some "Northern"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Home"), none, none, none), ("train", (some "train"), none, (some "Northern"), (some "hsmm route evidence — Northern"), none)]
 
 /-! ### `decideHsmmTrainOverride` — exported, so called for real. -/
