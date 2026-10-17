@@ -207,10 +207,19 @@ pub async fn warm_recent(st: &AppState) {
             .await
             .ok()
             .flatten();
-        for back in [0_i64, 1] {
-            let Ok(date) = timezone::local_date_at(now - back * 86_400, tz.as_deref()) else {
+        // Yesterday is a calendar day back, not 86 400 seconds: across a clock
+        // change a local day is 23 or 25 hours.
+        let Ok(today) = timezone::local_date_at(now, tz.as_deref()) else {
+            continue;
+        };
+        let Ok(today) = chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d") else {
+            continue;
+        };
+        for back in [0_u64, 1] {
+            let Some(day) = today.checked_sub_days(chrono::Days::new(back)) else {
                 continue;
             };
+            let date = day.format("%Y-%m-%d").to_string();
             let t0 = std::time::Instant::now();
             let _slot = fold_slot().await;
             match compute(st, &user, &date, None).await {
