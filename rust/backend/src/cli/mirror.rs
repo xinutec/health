@@ -191,12 +191,9 @@ pub(crate) async fn mirror_fetch(
         //
         // ⚠ WHETHER IT EARNS ITS ~6 s IS NOT YET KNOWN — the tally below is what
         // settles it. If the nightlies print retries that never win, drop this.
-        let mut outcome = backend::overpass::fetch_attempt(
-            client,
-            &query,
-            backend::overpass::MIRROR_TIMEOUT_MS,
-        )
-        .await;
+        let mut outcome =
+            backend::overpass::fetch_attempt(client, &query, backend::overpass::MIRROR_TIMEOUT_MS)
+                .await;
         // ⚠ ONLY IF SOMETHING ANSWERED — see `Outcome::may_retry`. `wait_for_slot`
         // cannot gate this: it returns 0 when `/api/status` is itself
         // unreachable, which is exactly the banned case.
