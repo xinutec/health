@@ -107,6 +107,9 @@ const POST_TS: &[&str] = &[
     // run serving out of memory. The TGV's alight, a walk read as a drive and
     // a café not yet in OSM are known-wrong.
     "2026-10-08.md",
+    // A lunch out, named for the shop next door and split by a walk with no
+    // steps; the lunch row is known-wrong.
+    "2026-10-15.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
