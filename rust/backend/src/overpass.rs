@@ -20,8 +20,11 @@ use std::time::Duration;
 // dev-lint: allow-pii the contact address the mirrors ask for
 pub const USER_AGENT: &str = "health.xinutec.org (pippijn@xinutec.org)";
 
-/// ⚠ ORDER MATTERS: `overpass-api.de` first, `kumi.systems` second — the order
-/// the replaced TypeScript used, and the faster one.
+/// ⚠ OURS FIRST: the `overpass` namespace serves an England extract to the
+/// cluster. `overpass-api.de` is the fallback, and the only one: in
+/// 2026-10 `kumi.systems`, `overpass.private.coffee` and `maps.mail.ru` all
+/// failed. Off the cluster (a Mac dry run) ours does not resolve, and every
+/// query falls through to it.
 ///
 /// ⚠ EVERY MIRROR'S FAILURE IS CARRIED, NOT JUST THE LAST. Keeping only the
 /// final error makes a two-endpoint outage read as a one-endpoint one, because
@@ -31,29 +34,10 @@ pub const USER_AGENT: &str = "health.xinutec.org (pippijn@xinutec.org)";
 /// answers 200 with zero elements outside Switzerland, which is
 /// indistinguishable from "no routes here" and would silently empty the mirror
 /// for a London user.
-const OVERPASS_URLS: [&str; 2] = [
+pub const OVERPASS_URLS: [&str; 2] = [
+    "http://overpass.overpass.svc.cluster.local/api/interpreter",
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
 ];
-
-/// Which mirrors attempt number `attempt` may use. Attempt 0 is the first try.
-///
-/// ⚠ A RETRY GOES TO THE PRIMARY ALONE. `kumi.systems` connects and then returns
-/// zero bytes until the cap, so a second full-mirror pass costs
-/// `FALLBACK_TIMEOUT_MS` per tile to buy nothing; primary-only keeps a retry
-/// affordable against the job's deadline.
-///
-/// ⚠ IT IS NOT REMOVED FROM ATTEMPT 0. Never having answered here is a reason
-/// not to pay for it twice, not proof it cannot answer — and dropping it leaves
-/// one endpoint with nothing behind it (`overpass.osm.ch` cannot be that; see
-/// [`OVERPASS_URLS`]).
-pub fn attempt_urls(attempt: usize) -> &'static [&'static str] {
-    if attempt == 0 {
-        &OVERPASS_URLS
-    } else {
-        &OVERPASS_URLS[..1]
-    }
-}
 
 /// The request path's budget. The offline mirrors pass their own, larger one.
 pub const REQUEST_TIMEOUT_MS: u64 = 20_000;
@@ -64,21 +48,12 @@ pub const REQUEST_TIMEOUT_MS: u64 = 20_000;
 /// before it streams.
 pub const MIRROR_TIMEOUT_MS: u64 = 90_000;
 
-/// What a mirror gets AFTER the first one has already failed.
-///
-/// ⚠ A FALLBACK IS ONLY WORTH A SHORT WAIT. The tile has already spent its
-/// budget on the primary, so a fallback that cannot answer promptly is not
-/// helping — it is delaying the next tile. `kumi.systems` connects and then
-/// never answers, so at the full budget it cost ~90 s per refused tile.
-///
-/// ⚠ NOT APPLIED TO THE FIRST MIRROR. Overpass's slot queuing means a
-/// legitimate primary request can sit silent well past this, and cutting it
-/// would trade a real answer for a fast failure.
-pub const FALLBACK_TIMEOUT_MS: u64 = 15_000;
-
-/// `overpass-api.de`'s status endpoint. Cheap, and the one they publish so a
-/// client does not have to guess.
-const STATUS_URL: &str = "https://overpass-api.de/api/status";
+/// Each mirror's status endpoint, in [`OVERPASS_URLS`]' order: the slots worth
+/// waiting for are those of the first server that answers.
+const STATUS_URLS: [&str; 2] = [
+    "http://overpass.overpass.svc.cluster.local/api/status",
+    "https://overpass-api.de/api/status",
+];
 
 /// What `/api/status` says about THIS client's compute slots.
 ///
@@ -159,15 +134,22 @@ pub fn parse_status(body: &str) -> Option<Slots> {
 /// wait, so waiting that long and proceeding is the whole protocol; asking
 /// repeatedly while we wait would be the same discourtesy in miniature.
 pub async fn wait_for_slot(client: &reqwest::Client, cap_s: u64) -> u64 {
-    let res = client
-        .get(STATUS_URL)
-        .header("User-Agent", USER_AGENT)
-        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
-        .send()
-        .await;
-    let Ok(r) = res else { return 0 };
-    let Ok(body) = r.text().await else { return 0 };
-    let Some(s) = parse_status(&body) else {
+    let mut slots = None;
+    for url in STATUS_URLS {
+        let res = client
+            .get(url)
+            .header("User-Agent", USER_AGENT)
+            .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
+            .send()
+            .await;
+        let Ok(r) = res else { continue };
+        let Ok(body) = r.text().await else { continue };
+        slots = parse_status(&body);
+        if slots.is_some() {
+            break;
+        }
+    }
+    let Some(s) = slots else {
         return 0;
     };
     if s.available > 0 {
@@ -221,36 +203,21 @@ impl Outcome {
     }
 }
 
-/// POST one query to each mirror this attempt may use, in turn, until one
-/// answers. `attempt` is 0 for a tile's first try; see [`attempt_urls`] for why
-/// a later one is narrower.
+/// POST one query to each mirror, in turn, until one answers.
 ///
 /// ⚠ THIS DOES NOT TOUCH THE BREAKER. The caller owns the breaker state because
 /// the breaker is Lean's, and threading it through here would mean holding Lean
 /// state in a `static`. The caller's loop is where `recordFailure` and
 /// `recordSuccess` belong.
-pub async fn fetch_attempt(
-    client: &reqwest::Client,
-    query: &str,
-    timeout_ms: u64,
-    attempt: usize,
-) -> Outcome {
+pub async fn fetch_attempt(client: &reqwest::Client, query: &str, timeout_ms: u64) -> Outcome {
     let mut errors: Vec<String> = Vec::new();
     let mut answered = false;
-    for (i, url) in attempt_urls(attempt).iter().enumerate() {
-        // The first mirror gets the caller's budget; anything after it gets the
-        // fallback's, which is what stops a hung mirror costing a minute and a
-        // half per tile.
-        let budget = if i == 0 {
-            timeout_ms
-        } else {
-            timeout_ms.min(FALLBACK_TIMEOUT_MS)
-        };
+    for url in &OVERPASS_URLS {
         let res = client
             .post(*url)
             .header("Content-Type", "text/plain")
             .header("User-Agent", USER_AGENT)
-            .timeout(Duration::from_millis(budget))
+            .timeout(Duration::from_millis(timeout_ms))
             .body(query.to_string())
             .send()
             .await;

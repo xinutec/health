@@ -36,31 +36,15 @@ fn a_non_array_elements_is_an_error_not_an_empty_mirror() {
     assert!(elements("").is_err());
 }
 
-// --- which mirrors a retry may use (#1153) ---------------------------------
+// --- which mirrors a query tries -----------------------------------------
 
-use backend::overpass::attempt_urls;
-
-#[test]
-fn the_first_attempt_tries_every_mirror() {
-    let urls = attempt_urls(0);
-    assert_eq!(urls.len(), 2);
-    assert!(urls[0].contains("overpass-api.de"));
-    assert!(urls[1].contains("kumi.systems"));
-}
+use backend::overpass::OVERPASS_URLS;
 
 #[test]
-fn a_retry_skips_the_mirror_that_has_never_answered() {
-    // ⚠ NOT a preference — `kumi.systems` has produced zero successful tiles in
-    // every measurement taken of it (2026-09-12 from isis: connects in 0.15 s,
-    // never answers; re-probed 2026-09-14: TCP connect in 0.02 s, then 25 s and
-    // zero bytes). What it reliably does is spend FALLBACK_TIMEOUT_MS. Paying
-    // that a second time for a tile buys nothing, and the retry exists to be
-    // cheap enough that the nightly can afford it.
-    for attempt in 1..4 {
-        let urls = attempt_urls(attempt);
-        assert_eq!(urls.len(), 1, "attempt {attempt}");
-        assert!(urls[0].contains("overpass-api.de"));
-    }
+fn ours_is_asked_first_and_the_public_instance_after() {
+    assert_eq!(OVERPASS_URLS.len(), 2);
+    assert!(OVERPASS_URLS[0].contains("overpass.overpass.svc.cluster.local"));
+    assert!(OVERPASS_URLS[1].contains("overpass-api.de"));
 }
 
 // --- a ban must not be retried (#1153) ------------------------------------

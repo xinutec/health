@@ -58,7 +58,6 @@ async fn main() -> Result<()> {
         &client,
         &query,
         backend::overpass::MIRROR_TIMEOUT_MS,
-        0,
     )
     .await
     {

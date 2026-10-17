@@ -195,7 +195,6 @@ pub(crate) async fn mirror_fetch(
             client,
             &query,
             backend::overpass::MIRROR_TIMEOUT_MS,
-            0,
         )
         .await;
         // ⚠ ONLY IF SOMETHING ANSWERED — see `Outcome::may_retry`. `wait_for_slot`
@@ -210,7 +209,6 @@ pub(crate) async fn mirror_fetch(
                 client,
                 &query,
                 backend::overpass::MIRROR_TIMEOUT_MS,
-                1,
             )
             .await;
             if matches!(again, backend::overpass::Outcome::Ok(_)) {

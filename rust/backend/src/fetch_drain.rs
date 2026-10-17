@@ -292,7 +292,7 @@ pub async fn drain_osm(
 
             overpass::wait_for_slot(client, SLOT_WAIT_CAP_S).await;
             let outcome =
-                overpass::fetch_attempt(client, &query, overpass::MIRROR_TIMEOUT_MS, 0).await;
+                overpass::fetch_attempt(client, &query, overpass::MIRROR_TIMEOUT_MS).await;
             let body = match outcome {
                 overpass::Outcome::Ok(b) => b,
                 overpass::Outcome::Permanent { status } => {
