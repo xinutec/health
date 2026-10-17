@@ -1048,10 +1048,10 @@ async fn overpass_elements(
 ) -> Result<Vec<serde_json::Value>> {
     use backend::overpass::{Outcome, fetch_attempt, wait_for_slot};
     wait_for_slot(client, super::mirror::SLOT_WAIT_CAP_S).await;
-    let mut outcome = fetch_attempt(client, query, RELATION_TIMEOUT_MS).await;
+    let mut outcome = fetch_attempt(client, query, RELATION_TIMEOUT_MS, 0).await;
     if outcome.may_retry() {
         wait_for_slot(client, super::mirror::SLOT_WAIT_CAP_S).await;
-        let again = fetch_attempt(client, query, RELATION_TIMEOUT_MS).await;
+        let again = fetch_attempt(client, query, RELATION_TIMEOUT_MS, 1).await;
         outcome = match (outcome, again) {
             (
                 Outcome::AllFailed {
