@@ -1086,6 +1086,17 @@ def dayResult (j : Json) : Json :=
     -- also rewrites modes and labels; the decoder's places then override.
     let nameStays : Verified.Geo.PassFold.Pass := ("nameStays", fun segs =>
       segs.map fun s => if s.mode == "stationary" then env.nameStay s else s)
+    -- A walk or a drive takes its roads and city from the enrichment stage's
+    -- moving branch, run over its own fixes, and nothing else of it: that
+    -- branch also refines the mode, and under the head the decoder's stands.
+    let nameMoves : Verified.Geo.PassFold.Pass := ("nameMoves", fun segs =>
+      segs.map fun s =>
+        if s.mode != "walking" && s.mode != "driving" then s else
+        let pts := (env.points.filter fun p => p.ts ≥ s.startTs && p.ts ≤ s.endTs).map fun p =>
+          ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt)
+        match Verified.Geo.Enrich.enrichMovingSegment enrichReads.ways enrichReads.geocode s pts with
+        | some e => { s with wayName := e.wayName, city := e.city }
+        | none => s)
     -- A fixless stretch the decoder labelled by its steps, between two stays
     -- at one place, is that stay (`absorbDarkMoveAtPlace`). After the
     -- decoder's places land: a dark stay is named by `hsmmOverride`, not by
@@ -1097,7 +1108,7 @@ def dayResult (j : Json) : Json :=
       | some k => tail.insertIdx! (k + 1) darkMove
       | none => tail.push darkMove
     let chosen := if decoderHead
-      then #[unnamedRail, nameStays] ++ tail
+      then #[unnamedRail, nameStays, nameMoves] ++ tail
       else chosen
     let chosen := chosen.map fun (n, f) => (n, fun s => DayEntry.Host.timed s!"pass.{n}" fun _ => f s)
     let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs
