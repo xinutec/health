@@ -205,6 +205,9 @@ def wayNameCovers (truthWay : String) (liveWay : Option String) : Bool :=
   | none => false
   | some lw => (lw.splitOn ",").any (fun part => norm part == norm truthWay)
 
+/-- What separates a truth place's alternative names. -/
+def PLACE_ALTERNATIVES : String := " / "
+
 /-- Does the live state match the truth cell?
 
 ⚠ DELIBERATELY ASYMMETRIC: the truth cell asserts only what it NAMES, so extra
@@ -214,7 +217,11 @@ a truth of "train A → B" without a `· Line` is satisfied by any line. But eve
 assertion the truth DOES make must hold. The trailing `(qualifier)` is ignored:
 "Hospital W (hospital)" and "Hospital W" are the same place, and a wrong
 qualifier on a right place is a separate, weaker signal. A null truth (unparsed
-cell) or an absent live state never matches. -/
+cell) or an absent live state never matches.
+
+A truth place may name one place under several names, ` / ` between them
+("London St Pancras / St Pancras International": the map gives the station
+both); the live place matches any one. -/
 def truthMatches : Option Truth → Option Live → Bool
   | none, _ => false
   | _, none => false
@@ -240,7 +247,7 @@ def truthMatches : Option Truth → Option Live → Bool
     -- A truth-asserted place must match; a truth-asserted way must be carried
     -- by the live label; a truth asserting neither is a mode-only claim.
     match t.place with
-    | some tp => return normOpt (some tp) == normOpt l.place
+    | some tp => return (tp.splitOn PLACE_ALTERNATIVES).any fun alt => normOpt (some alt) == normOpt l.place
     | none =>
       match t.wayName with
       | some tw => return wayNameCovers tw l.wayName
@@ -425,6 +432,13 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
     (parsePipelineState (some (st 0 9 "stationary" (pl := some "Cafe Delta (cafe)"))))
 #guard !truthMatches (some (tw .stationary (pl := some "Cafe Delta")))
     (parsePipelineState (some (st 0 9 "stationary" (pl := some "Cafe Epsilon"))))
+-- One place under several names: any one of them matches, and nothing else does.
+#guard truthMatches (some (tw .stationary (pl := some "Station Alpha / Alpha International")))
+    (parsePipelineState (some (st 0 9 "stationary" (pl := some "Alpha International"))))
+#guard truthMatches (some (tw .stationary (pl := some "Station Alpha / Alpha International")))
+    (parsePipelineState (some (st 0 9 "stationary" (pl := some "Station Alpha"))))
+#guard !truthMatches (some (tw .stationary (pl := some "Station Alpha / Alpha International")))
+    (parsePipelineState (some (st 0 9 "stationary" (pl := some "Alpha Cross"))))
 -- sleeping and stationary are one class.
 #guard truthMatches (some (tw .sleeping (pl := some "Home"))) (parsePipelineState (some (st 0 9 "stationary" (pl := some "Home"))))
 #guard truthMatches (some (tw .stationary (pl := some "Home"))) (parsePipelineState (some (st 0 9 "sleeping" (pl := some "Home"))))
