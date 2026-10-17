@@ -2978,57 +2978,31 @@ pub fn extract_routes(mode: &str, body: &str) -> Result<Vec<ExtractedRoute>> {
         .collect()
 }
 
-/// May this run write, and if not, why not.
-#[derive(Debug, Clone)]
-pub struct RebuildVerdict {
-    pub may_write: bool,
-    /// Bus only: whether the run is authoritative for the whole bbox.
-    pub full_rebuild: bool,
-    pub refusal: Option<String>,
-}
-
-/// ⚠ COVERAGE IS CHECKED FIRST, ON BOTH ARMS (#1134, decided 2026-08-29). A run
-/// that refreshed less than half its tiles is refused whatever the arm's own
-/// rule says — bus's reports "every tile failed" for an 18/18 outage and says
-/// NOTHING for 2/18, and rail's passes any run that found one relation. Neither
-/// reads the fraction of the AREA refreshed. The arms' own rules still run
-/// underneath, answering their narrower questions.
+/// Is too much of a route mirror's area stale? `None` when it is fresh enough;
+/// otherwise the sentence the run fails with (`Verified.Geo.OsmMirrorRefresh`).
 ///
-/// Refusing is cheap because it cannot lose data: both caches carry a
-/// `tile_key`, so a partial run replaces only the tiles that answered. What a
-/// low-coverage run costs is a cache that is mostly stale while its summary line
-/// reads like success — and a failed CronJob is named by `fleet_health.py`
-/// within the hour, where a quiet success is named by nothing.
-pub fn may_rebuild(
-    mode: &str,
-    found: usize,
-    tile_failures: usize,
-    tiles_total: usize,
+/// `stale_tiles` of `tiles_total` planned tiles have not answered in
+/// `stale_days` days; `existing` is the cache's row count.
+pub fn mirror_staleness(
     existing: i64,
-) -> Result<RebuildVerdict> {
+    stale_tiles: usize,
+    tiles_total: usize,
+    stale_days: i64,
+) -> Result<Option<String>> {
     let v: serde_json::Value = call_json(&serde_json::json!({
-        "op": "mayRebuild",
-        "mode": mode,
-        "found": found,
-        "tileFailures": tile_failures,
-        "tilesTotal": tiles_total,
+        "op": "mirrorStaleness",
         "existing": existing,
+        "staleTiles": stale_tiles,
+        "tilesTotal": tiles_total,
+        "staleDays": stale_days,
     }))?;
-    let val = v.get("value").context("mayRebuild returned no value")?;
-    Ok(RebuildVerdict {
-        may_write: val
-            .get("mayWrite")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(false),
-        full_rebuild: val
-            .get("fullRebuild")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(false),
-        refusal: val
-            .get("refusal")
-            .and_then(|x| x.as_str())
-            .map(str::to_string),
-    })
+    let val = v
+        .get("value")
+        .context("mirrorStaleness returned no value")?;
+    Ok(val
+        .get("refusal")
+        .and_then(|x| x.as_str())
+        .map(str::to_string))
 }
 
 /// The circuit breaker's state, opaque to Rust — Lean owns its shape.

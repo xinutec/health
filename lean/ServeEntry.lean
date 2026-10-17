@@ -3167,7 +3167,7 @@ def dispatch (j : Json) : Json :=
   -- The backend's decision table (`Verified.Sync`, `Verified.Session`, …),
   -- keyed on `op`. One process serves both tables so the host has one pipe to
   -- keep alive. ⚠ The payload rides under `req`, not merged into this object:
-  -- some ops carry a `mode` of their own (`mayRebuild`'s is `bus`/`rail`), and
+  -- some ops carry a `mode` of their own (`overpassQuery`'s is `bus`/`rail`), and
   -- merging would have the routing key overwrite it.
   | .ok "backend" =>
     match j.getObjVal? "req" with

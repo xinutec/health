@@ -1369,17 +1369,9 @@ pub(crate) async fn refresh_presence_log(pool: &sqlx::MySqlPool, lookback: i64) 
 
 /// Ported from `refresh-rail-stops.ts` (#982).
 ///
-/// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED — rail now carries the
-/// `tile_key` bus has had all along, added 2026-08-25 once the port's parity was
-/// established. Before it, this DELETEd the whole table and rewrote what it
-/// found, so a run at 10-of-18 coverage dropped every relation living only in
-/// the 8 tiles that failed. The measured shape is why it was invisible: 441
-/// relations found against 268 cached, so the count went UP and the summary read
-/// like a healthy refresh that found more data (#1134, #1153).
-///
-/// ⚠ THE REFUSAL RULE IS UNCHANGED and is still the rail one — zero relations
-/// with any failure. It no longer has to carry the partial case, because tile
-/// ownership does.
+/// Fetches only the DUE tiles (`due_tiles`) and replaces each one that answered;
+/// every other tile keeps what it had. The run fails when most of the area has
+/// gone stale (`Verified.Geo.OsmMirrorRefresh`).
 // dev-lint: allow-sqlx the retirement is its own decision, taken before the mirrors answer
 pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
@@ -1393,82 +1385,38 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
         return Ok(());
     };
 
-    // ⚠ BEFORE THE FETCH AND BEFORE THE COVERAGE REFUSAL, deliberately. Retiring a
-    // key the plan can no longer emit needs the PLAN and nothing else: such a key
-    // can never be refreshed by any future run, whatever tonight's coverage turns
-    // out to be. Measured 2026-09-12, this is not theoretical — it sat inside the
-    // merge, the run came back at 8/18 tiles (44%), `may_rebuild` refused BELOW
-    // the 50%% floor and bailed, and the retirement never executed. It cannot
-    // wait behind a successful refresh, because the nights it is most needed are
-    // the nights there isn't one (#1153).
+    // ⚠ BEFORE THE FETCH, deliberately. Retiring a key the plan can no longer
+    // emit needs the PLAN and nothing else: such a key can never be refreshed by
+    // any future run, whatever the mirrors say tonight, so it cannot wait behind
+    // a successful refresh.
     //
-    // Its own transaction, because it is its own decision — nothing here depends
-    // on what the mirrors are about to say.
+    // Its own transaction, because it is its own decision.
     if !dry_run {
         retire_unplannable(&pool, &plan, "rail").await?;
     }
 
+    let due = due_tiles(&pool, "rail", &plan).await?;
+    eprintln!(
+        "rail: {} of {} tiles due (not answered in {REFRESH_DAYS} days)",
+        due.len(),
+        plan.tiles.len()
+    );
     let client = reqwest::Client::new();
-    let h = mirror_fetch(&client, "rail", &plan.tiles).await?;
-    // ⚠ `existing` MUST be the real row count. It was a literal `0` here, and
-    // `coverageRefusal` returns `none` when `existing == 0` — deliberately, so
-    // an all-failed FIRST run against a cold cache still proceeds. Passing 0
-    // unconditionally made this arm permanently look like that first run, so
-    // #1134's coverage floor could never fire on it: measured 2026-09-06,
-    // rail-stops merged at 8/18 tiles (44%, under the 50% floor) and the
-    // CronJob reported success. Bus has always counted its rows; the two now
-    // agree.
-    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rail_stops_cache")
-        .fetch_one(&pool)
-        .await
-        .context("counting rail_stops_cache")?;
-    let verdict = backend::lean::may_rebuild(
-        "rail",
-        h.routes.len(),
-        h.failures,
-        plan.tiles.len(),
-        existing,
-    )?;
+    let h = mirror_fetch(&client, "rail", &due).await?;
     eprintln!(
         "refresh-rail-stops: {} relations, {}",
         h.routes.len(),
-        mirror_coverage_line(h.succeeded.len(), plan.tiles.len())
+        mirror_coverage_line(h.succeeded.len(), due.len())
     );
-    if !verdict.may_write {
-        pool.close().await;
-        // ⚠ SAY LEAN'S SENTENCE, not a guessed one. Hardcoding "all N tiles
-        // failed" covers only one refusal; since #1134 it can also refuse for
-        // COVERAGE, where that wording is untrue and sends the reader after an
-        // outage that
-        // did not happen. The bus arm already did this; the two now agree.
-        anyhow::bail!(
-            "{} — leaving rail_stops_cache untouched",
-            verdict
-                .refusal
-                .unwrap_or_else(|| format!("all {} tiles failed", plan.tiles.len()))
-        );
-    }
 
-    // ⚠ THE DRY RUN STOPS HERE, AFTER the refusal and BEFORE the transaction — so
-    // it exercises the fetch, the extraction and the decision, which is
-    // everything a real run decides. Placing it earlier would make it a test of
-    // the argument parser.
+    // ⚠ THE DRY RUN STOPS HERE, BEFORE the transaction — so it exercises the
+    // selection, the fetch and the extraction, which is everything a real run
+    // decides before it writes.
     if dry_run {
-        let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rail_stops_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(-1);
         eprintln!(
-            "DRY RUN — rail_stops_cache holds {existing} relation(s); this run would {} with {} relation(s)",
-            if verdict.full_rebuild {
-                "rebuild it in full".to_string()
-            } else {
-                format!(
-                    "replace {} of {} tiles",
-                    h.succeeded.len(),
-                    plan.tiles.len()
-                )
-            },
+            "DRY RUN — this run would replace {} of {} due tiles with {} relation(s)",
+            h.succeeded.len(),
+            due.len(),
             h.routes.len()
         );
         pool.close().await;
@@ -1478,34 +1426,24 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
     let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rail_stops_cache")
         .fetch_one(&pool)
         .await
-        .unwrap_or(-1);
+        .context("counting rail_stops_cache")?;
     let mut tx = pool
         .begin()
         .await
-        .context("opening the rebuild transaction")?;
-    if verdict.full_rebuild {
-        // A complete run is authoritative for the whole bbox: anything absent is
-        // absent from OSM. This is also what retires the `tile_key IS NULL` rows
-        // written before the column existed.
-        sqlx::query("DELETE FROM rail_stops_cache")
+        .context("opening the merge transaction")?;
+    // A run is authoritative ONLY for the tiles that answered. Every other tile
+    // keeps what it had, so the mirror cannot shrink because Overpass 502'd
+    // somewhere.
+    for key in &h.succeeded {
+        sqlx::query("DELETE FROM rail_stops_cache WHERE tile_key = ?")
+            .bind(key)
             .execute(&mut *tx)
             .await
-            .context("clearing rail_stops_cache")?;
-    } else {
-        // A partial run is authoritative ONLY for the tiles that answered. Every
-        // other tile keeps what it had, so the mirror cannot shrink because
-        // Overpass 502'd somewhere.
-        for key in &h.succeeded {
-            sqlx::query("DELETE FROM rail_stops_cache WHERE tile_key = ?")
-                .bind(key)
-                .execute(&mut *tx)
-                .await
-                .with_context(|| format!("clearing tile {key}"))?;
-        }
+            .with_context(|| format!("clearing tile {key}"))?;
     }
     for (tile, r) in h.routes.values() {
-        // ⚠ UPSERT, not a plain insert: a relation can survive the delete above
-        // under a FAILED tile's key and still be re-fetched from one that
+        // ⚠ UPSERT, not a plain insert: a relation crossing tiles can be held
+        // under a tile not fetched tonight and still come back from one that
         // answered.
         sqlx::query(
             "INSERT INTO rail_stops_cache (osm_relation_id, route_type, line_ref, line_name, stops_json, tile_key) \
@@ -1524,25 +1462,27 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
         .await
         .with_context(|| format!("writing relation {}", r.osm_relation_id))?;
     }
-    tx.commit().await.context("committing the rebuild")?;
+    mark_refreshed(&mut tx, "rail", &h.succeeded).await?;
+    tx.commit().await.context("committing the merge")?;
     let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rail_stops_cache")
         .fetch_one(&pool)
         .await
         .unwrap_or(existing);
-    if verdict.full_rebuild {
-        eprintln!(
-            "rail_stops_cache rebuilt in full: {} relations",
-            h.routes.len()
-        );
-    } else {
-        eprintln!(
-            "rail_stops_cache merged: {}/{} tiles replaced, {} kept their existing rows — {existing} -> {after} relations",
-            h.succeeded.len(),
-            plan.tiles.len(),
-            h.failures
-        );
-    }
+    eprintln!(
+        "rail_stops_cache merged: {}/{} due tiles replaced, {} kept their existing rows — {existing} -> {after} relations",
+        h.succeeded.len(),
+        due.len(),
+        h.failures
+    );
+
+    // Asked AFTER the write: what answered is stored either way, and this
+    // decides only whether the run fails.
+    let stale = stale_tiles(&pool, "rail", &plan).await?;
     pool.close().await;
+    if let Some(why) = backend::lean::mirror_staleness(after, stale, plan.tiles.len(), STALE_DAYS)?
+    {
+        anyhow::bail!("{why}");
+    }
     Ok(())
 }
 
@@ -1647,9 +1587,8 @@ pub(crate) async fn retire_unplannable(
 
 /// Ported from `refresh-bus-routes.ts` (#982).
 ///
-/// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED. That is what makes it
-/// lossless, and it is why the refusal can be as narrow as "every tile failed".
-/// It is also why a 2-of-18 run exits 0 — see #1134.
+/// The rail arm's shape: only the due tiles, each replaced if it answered, and a
+/// failure when most of the area has gone stale.
 // dev-lint: allow-sqlx the retirement is its own decision, taken before the mirrors answer
 pub(crate) async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
@@ -1663,92 +1602,60 @@ pub(crate) async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
         return Ok(());
     };
 
-    // ⚠ BEFORE THE FETCH AND BEFORE THE COVERAGE REFUSAL, deliberately. Retiring a
-    // key the plan can no longer emit needs the PLAN and nothing else: such a key
-    // can never be refreshed by any future run, whatever tonight's coverage turns
-    // out to be. Measured 2026-09-12, this is not theoretical — it sat inside the
-    // merge, the run came back at 8/18 tiles (44%), `may_rebuild` refused BELOW
-    // the 50%% floor and bailed, and the retirement never executed. It cannot
-    // wait behind a successful refresh, because the nights it is most needed are
-    // the nights there isn't one (#1153).
+    // ⚠ BEFORE THE FETCH, deliberately. Retiring a key the plan can no longer
+    // emit needs the PLAN and nothing else: such a key can never be refreshed by
+    // any future run, whatever the mirrors say tonight, so it cannot wait behind
+    // a successful refresh.
     //
-    // Its own transaction, because it is its own decision — nothing here depends
-    // on what the mirrors are about to say.
+    // Its own transaction, because it is its own decision.
     if !dry_run {
         retire_unplannable(&pool, &plan, "bus").await?;
     }
 
+    let due = due_tiles(&pool, "bus", &plan).await?;
+    eprintln!(
+        "bus: {} of {} tiles due (not answered in {REFRESH_DAYS} days)",
+        due.len(),
+        plan.tiles.len()
+    );
     let client = reqwest::Client::new();
-    let h = mirror_fetch(&client, "bus", &plan.tiles).await?;
-
-    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bus_route_cache")
-        .fetch_one(&pool)
-        .await
-        .context("counting bus_route_cache")?;
-    let verdict = backend::lean::may_rebuild(
-        "bus",
-        h.routes.len(),
-        h.failures,
-        plan.tiles.len(),
-        existing,
-    )?;
+    let h = mirror_fetch(&client, "bus", &due).await?;
     eprintln!(
         "refresh-bus-routes: {} routes, {}",
         h.routes.len(),
-        mirror_coverage_line(h.succeeded.len(), plan.tiles.len())
+        mirror_coverage_line(h.succeeded.len(), due.len())
     );
-    if !verdict.may_write {
-        pool.close().await;
-        anyhow::bail!(
-            "{} — leaving bus_route_cache untouched",
-            verdict.refusal.unwrap_or_else(|| "refused".into())
-        );
-    }
 
-    // ⚠ Same placement as the rail arm: after the refusal, before the write.
+    // ⚠ Same placement as the rail arm: before the write.
     if dry_run {
         eprintln!(
-            "DRY RUN — bus_route_cache holds {existing} route(s); this run would {} with {} route(s)",
-            if verdict.full_rebuild {
-                "rebuild it in full".to_string()
-            } else {
-                format!(
-                    "replace {} of {} tiles",
-                    h.succeeded.len(),
-                    plan.tiles.len()
-                )
-            },
+            "DRY RUN — this run would replace {} of {} due tiles with {} route(s)",
+            h.succeeded.len(),
+            due.len(),
             h.routes.len()
         );
         pool.close().await;
         return Ok(());
     }
 
+    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bus_route_cache")
+        .fetch_one(&pool)
+        .await
+        .context("counting bus_route_cache")?;
     let mut tx = pool
         .begin()
         .await
-        .context("opening the rebuild transaction")?;
-    if verdict.full_rebuild {
-        // A complete run is authoritative for the whole bbox: anything absent is
-        // absent from OSM. This also retires rows written before `tile_key`
-        // existed.
-        sqlx::query("DELETE FROM bus_route_cache")
+        .context("opening the merge transaction")?;
+    for key in &h.succeeded {
+        sqlx::query("DELETE FROM bus_route_cache WHERE tile_key = ?")
+            .bind(key)
             .execute(&mut *tx)
             .await
-            .context("clearing bus_route_cache")?;
-    } else {
-        for key in &h.succeeded {
-            sqlx::query("DELETE FROM bus_route_cache WHERE tile_key = ?")
-                .bind(key)
-                .execute(&mut *tx)
-                .await
-                .with_context(|| format!("clearing tile {key}"))?;
-        }
+            .with_context(|| format!("clearing tile {key}"))?;
     }
     for (tile, r) in h.routes.values() {
-        // ⚠ UPSERT, not a plain insert: a route can survive the delete above
-        // under a FAILED tile's key and still be re-fetched from one that
-        // answered.
+        // ⚠ UPSERT, not a plain insert: a route crossing tiles can be held under
+        // a tile not fetched tonight and still come back from one that answered.
         sqlx::query(
             "INSERT INTO bus_route_cache (osm_relation_id, route_ref, route_name, stops_json, tile_key) \
              VALUES (?, ?, ?, ?, ?) \
@@ -1764,22 +1671,25 @@ pub(crate) async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
         .await
         .with_context(|| format!("writing route {}", r.osm_relation_id))?;
     }
-    tx.commit().await.context("committing the rebuild")?;
+    mark_refreshed(&mut tx, "bus", &h.succeeded).await?;
+    tx.commit().await.context("committing the merge")?;
 
     let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bus_route_cache")
         .fetch_one(&pool)
         .await
         .unwrap_or(existing);
-    if verdict.full_rebuild {
-        eprintln!("bus_route_cache rebuilt in full: {} routes", h.routes.len());
-    } else {
-        eprintln!(
-            "bus_route_cache merged: {}/{} tiles replaced, {} kept their existing rows — {existing} -> {after} routes",
-            h.succeeded.len(),
-            plan.tiles.len(),
-            h.failures
-        );
-    }
+    eprintln!(
+        "bus_route_cache merged: {}/{} due tiles replaced, {} kept their existing rows — {existing} -> {after} routes",
+        h.succeeded.len(),
+        due.len(),
+        h.failures
+    );
+
+    let stale = stale_tiles(&pool, "bus", &plan).await?;
     pool.close().await;
+    if let Some(why) = backend::lean::mirror_staleness(after, stale, plan.tiles.len(), STALE_DAYS)?
+    {
+        anyhow::bail!("{why}");
+    }
     Ok(())
 }

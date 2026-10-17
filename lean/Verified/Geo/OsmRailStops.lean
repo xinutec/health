@@ -103,26 +103,6 @@ def extractRailStopRelations (rels : Array RawRelation) (nodes : Array (Nat × R
       , stops := stops }
   return out
 
-/-- Does a run have enough evidence to replace the cache?
-
-⚠ THIS RULE ONLY HAS TO CARRY THE ALL-FAILED CASE NOW. It trips when zero
-relations came back with any failure, which is why the 2026-08-24 outage made
-the rail job exit 1 while the bus job reported success.
-
-⚠ IT SAYS NOTHING ABOUT A PARTIAL RUN, and until 2026-08-25 that was a defect:
-`rail_stops_cache` had no `tile_key`, so the whole table was rebuilt each run
-and 10 of production's 18 tiles succeeding meant the other 8 tiles' relations
-were DELETED and not rewritten. Measured that day at 441 relations found against
-268 cached — the count went UP, so the loss was invisible.
-
-The writer now owns rows per tile, as the bus arm always has, so a partial run
-replaces only what it refreshed and this rule no longer needs to catch it. The
-port kept the defect until its parity against the TypeScript was established,
-and changed the shape afterwards — that order is what made the diff usable as an
-instrument. -/
-def mayRebuild (relationCount tileFailures : Nat) : Bool :=
-  relationCount > 0 || tileFailures == 0
-
 /-! ## Guards -/
 
 private def N (id : Nat) (name : Option String) : Nat × ResolvedNode :=
@@ -164,13 +144,5 @@ private def R (route : Option String) (ref name : Option String) : RawRelation :
 -- The query names all four types and the bbox in Overpass's lat,lon,lat,lon order.
 #guard buildRailStopsOverpassQuery "51.5" "-0.2" "51.6" "-0.1"
         == "[out:json][timeout:180];relation[route~\"^(subway|train|light_rail|tram)$\"](51.5,-0.2,51.6,-0.1);out body;node(r);out body;"
-
--- ⚠ THE REBUILD GUARD. Zero relations with failures is a broken run, not an
--- empty region — and the table is rebuilt transactionally, so getting this
--- backwards wipes a working mirror and exits 0.
-#guard mayRebuild 0 0 == true
-#guard mayRebuild 0 3 == false
-#guard mayRebuild 12 3 == true
-#guard mayRebuild 12 0 == true
 
 end Verified.Geo.OsmRailStops

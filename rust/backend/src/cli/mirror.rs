@@ -121,12 +121,107 @@ pub(crate) const SLOT_WAIT_CAP_S: u64 = 120;
 ///
 /// ⚠ NOT CAUTION FOR ITS OWN SAKE. A key missing from tonight's plan is either a
 /// bbox that moved for good or one that will move back when focus-place mining
-/// restores a region, and those look identical in the table. A PLANNED tile is
-/// attempted nightly; with the mirrors currently answering about 10 of 18, the
-/// chance a planned tile goes thirty nights without one successful refresh is
-/// roughly `0.44^30` — about one in `10^11`. Thirty days of silence is evidence
-/// of orphaning, not of bad luck.
+/// restores a region, and those look identical in the table. A planned tile is
+/// attempted every night it is due, and it stays due until it answers, so
+/// thirty days of silence is evidence of orphaning, not of bad luck.
 pub(crate) const ORPHAN_RETIRE_DAYS: i64 = 30;
+
+/// How old a tile's last answer must be before a run fetches it again.
+///
+/// Stations and routes change a few times a year, so a week-old tile is
+/// almost always current; a run fetches about a seventh of the area, and a
+/// tile that is refused is due again the next night.
+pub(crate) const REFRESH_DAYS: i64 = 7;
+
+/// How old a tile's last answer must be to count as stale — two missed
+/// refreshes, which is what `Verified.Geo.OsmMirrorRefresh` judges the area on.
+pub(crate) const STALE_DAYS: i64 = 14;
+
+/// How long ago each tile last answered, in seconds, by key; absent if it never
+/// has.
+///
+/// ⚠ AGED IN SQL against `NOW()`, the clock that wrote `refreshed_at` (the seed
+/// copied `computed_at`, written by `CURRENT_TIMESTAMP`), so the database's time
+/// zone cancels out.
+async fn tile_ages(
+    pool: &sqlx::MySqlPool,
+    mode: &str,
+) -> Result<std::collections::BTreeMap<String, i64>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT tile_key, TIMESTAMPDIFF(SECOND, refreshed_at, NOW()) \
+         FROM osm_mirror_tile WHERE mode = ?",
+    )
+    .bind(mode)
+    .fetch_all(pool)
+    .await
+    .with_context(|| format!("reading the {mode} mirror's tile ages"))?;
+    Ok(rows.into_iter().collect())
+}
+
+const DAY_S: i64 = 86_400;
+
+/// The planned tiles a run should fetch: those that never answered, then
+/// those last answered more than [`REFRESH_DAYS`] ago, oldest first.
+pub(crate) async fn due_tiles(
+    pool: &sqlx::MySqlPool,
+    mode: &str,
+    plan: &backend::lean::MirrorPlan,
+) -> Result<Vec<backend::lean::MirrorTile>> {
+    let ages = tile_ages(pool, mode).await?;
+    let mut due: Vec<(i64, backend::lean::MirrorTile)> = plan
+        .tiles
+        .iter()
+        .map(|t| {
+            let age = ages
+                .get(&backend::lean::tile_key(t))
+                .copied()
+                .unwrap_or(i64::MAX);
+            (age, t.clone())
+        })
+        .filter(|(age, _)| *age >= REFRESH_DAYS * DAY_S)
+        .collect();
+    // Oldest first; a tile that never answered is the most overdue.
+    due.sort_by_key(|(age, _)| std::cmp::Reverse(*age));
+    Ok(due.into_iter().map(|(_, t)| t).collect())
+}
+
+/// How many planned tiles have not answered in [`STALE_DAYS`] days.
+pub(crate) async fn stale_tiles(
+    pool: &sqlx::MySqlPool,
+    mode: &str,
+    plan: &backend::lean::MirrorPlan,
+) -> Result<usize> {
+    let ages = tile_ages(pool, mode).await?;
+    Ok(plan
+        .tiles
+        .iter()
+        .filter(|t| {
+            ages.get(&backend::lean::tile_key(t))
+                .is_none_or(|age| *age >= STALE_DAYS * DAY_S)
+        })
+        .count())
+}
+
+/// Record that these tiles answered, in the transaction that stores their rows.
+pub(crate) async fn mark_refreshed(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    mode: &str,
+    keys: &[String],
+) -> Result<()> {
+    for key in keys {
+        sqlx::query(
+            "INSERT INTO osm_mirror_tile (mode, tile_key, refreshed_at) \
+             VALUES (?, ?, NOW()) \
+             ON DUPLICATE KEY UPDATE refreshed_at = VALUES(refreshed_at)",
+        )
+        .bind(mode)
+        .bind(key)
+        .execute(&mut **tx)
+        .await
+        .with_context(|| format!("recording tile {key} as refreshed"))?;
+    }
+    Ok(())
+}
 
 /// Fetch every tile and extract what Lean keeps.
 ///

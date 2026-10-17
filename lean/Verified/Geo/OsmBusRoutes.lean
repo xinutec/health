@@ -27,45 +27,11 @@ oversights until you check them. They are not:
    different, and a port that "tidied" them into one would be changing
    behaviour while claiming to share code.
 
-## ⚠ NEITHER ARM'S REFUSAL IS RIGHT, AND #1134 OWNS THE DECISION
+## Whether a run failed
 
-Do not read the two rules as one being the good version. They fail in opposite
-directions and both failures are live:
-
-* **Bus is LOSSLESS but QUIET.** `rebuildRefusal` refuses only when every tile
-  failed, which it can afford because the writer records which tile each row came
-  from and replaces only the tiles that ANSWERED. Nothing is lost — but the
-  2026-08-24 05:30 run refreshed **2 of 18 tiles and exited 0**, and its summary
-  read `994 -> 994 routes`, which is exactly what a healthy run prints when OSM
-  did not change. That is #1134.
-
-* **Rail is LOUD.** Its guard trips whenever zero relations come back with any
-  failure, so one outage makes the rail job exit 1 while the bus job looks fine
-  — ⚠ the odd one out is the QUIET one, not the healthy one. Rail carries a
-  `tile_key`, so it no longer DELETEs the whole table and shrinks the mirror
-  when most tiles fail; only the reporting question remains.
-
-⚠ A COUNT-BASED FLOOR CANNOT FIX EITHER, and that is measured rather than
-supposed (2026-08-14, #255): a run fetching 796 of 995 routes but losing the
-handful the rider actually uses passed the floor, while a run dropping 300
-untouched peripheral routes failed it. The number was uncorrelated with the harm.
-Coverage — what FRACTION OF THE AREA was refreshed — is the quantity that is not.
-
-## What this port does about it
-
-Both rules are ported FAITHFULLY, defects included, because the port's whole
-safety argument is that its output can be diffed against the TypeScript arm's —
-which is how every defect this week was found. Changing the rule during the port
-would remove the instrument.
-
-What the port adds is the COVERAGE NUMBER in the summary line — reporting, not
-behaviour. #1134 prefers exiting non-zero below a coverage fraction; that is a
-one-line change to `rebuildRefusal` and `mayRebuild`, each with guards already
-around it, instead of a change to two CLI scripts.
-
-⚠ Rail's missing `tile_key` WAS the other half of this and is now done (schema,
-2026-08-25) — after parity was established, not during. Both arms are lossless;
-what #1134 still owns is whether a low-coverage run should exit 0.
+Neither arm decides it alone: a run writes the tiles that answered, and whether
+too much of the area has gone stale is `Verified.Geo.OsmMirrorRefresh`'s rule,
+the same for both.
 -/
 
 namespace Verified.Geo.OsmBusRoutes
@@ -136,24 +102,6 @@ def unionByFirstTile (perTile : Array (String × Array BusRoute)) : Array (Strin
           out := out.push (key, r)
     return out
 
-/-- Why this run must not touch the cache, or `none` to proceed.
-
-⚠ EVERY tile must have failed AND the cache must hold something. A first run
-against an empty cache proceeds even if everything failed — there is nothing to
-protect — and a run where one tile answered proceeds because the writer will
-replace only that tile. -/
-def rebuildRefusal (existing tileFailures tilesTotal : Nat) : Option String :=
-  if tilesTotal > 0 && tileFailures ≥ tilesTotal && existing > 0 then
-    some s!"Every tile failed ({tileFailures}/{tilesTotal}) and the cache holds {existing} route(s)"
-  else none
-
-/-- Is this run authoritative for the WHOLE bbox?
-
-A complete run may DELETE everything, which is also what retires rows written
-before the `tile_key` column existed. A partial run may delete only the keys it
-answered for. -/
-def isFullRebuild (tileFailures : Nat) : Bool := tileFailures == 0
-
 /-! ## Guards -/
 
 private def N (id : Nat) (name : Option String) : Nat × ResolvedNode :=
@@ -188,29 +136,6 @@ private def B : BusRoute := { routeRef := "38", routeName := some "from B", osmR
 #guard (unionByFirstTile #[("t1", #[A]), ("t2", #[B])]).size == 1
 #guard (unionByFirstTile #[("t1", #[A]), ("t2", #[B])])[0]! == ("t1", A)
 #guard (unionByFirstTile #[("t2", #[B]), ("t1", #[A])])[0]! == ("t2", B)
-
--- ⚠ THE REFUSAL. All three conditions are load-bearing and each has its own
--- guard, because a threshold here was measured on production and found to be
--- uncorrelated with the harm it was meant to prevent (#255).
--- ⚠ 18 IS PRODUCTION'S TILE COUNT, measured 2026-08-25 against the real
--- `focus_places`: 65 recent places, 4 metropolitan regions, home region 51
--- places, an 18-tile bbox. Guards written against an invented number read as
--- production and are not.
-#guard (rebuildRefusal 995 18 18).isSome          -- every tile failed, cache full
-#guard (rebuildRefusal 995 17 18).isNone          -- one answered: replace just it
-#guard (rebuildRefusal 0 18 18).isNone            -- nothing to protect
-#guard (rebuildRefusal 995 0 18).isNone           -- a clean run
-#guard (rebuildRefusal 995 0 0).isNone            -- no tiles at all
--- ⚠ THE 2026-08-24 05:30 RUN, EXACTLY: 2 of 18 tiles answered against a cache of
--- 994, and this returns "proceed". That is #1134, pinned as behaviour rather
--- than described in a comment — the run exited 0 and printed `994 -> 994`.
-#guard (rebuildRefusal 994 16 18).isNone
--- ⚠ A COUNT IS NOT A CONDITION HERE: 796 of 995 routes fetched is not a refusal,
--- however alarming the drop looks, because tile ownership already made it safe.
-#guard (rebuildRefusal 995 1 18).isNone
-
-#guard isFullRebuild 0 == true
-#guard isFullRebuild 1 == false
 
 #guard buildBusRouteOverpassQuery "51.5" "-0.2" "51.6" "-0.1"
         == "[out:json][timeout:180];relation[route=bus](51.5,-0.2,51.6,-0.1);out body;node(r);out body;"

@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 94] = [
+    let migrations: [&str; 97] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -764,6 +764,24 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // indexed separately that was a 130 ms row scan on the pod every fold
         // (#1921, 2026-10-06); together they serve it from the index alone.
         r#"ALTER TABLE osm_lines ADD INDEX IF NOT EXISTS idx_osm_lines_type_name (feature_type, name)"#,
+        // When each tile of a route mirror last answered (`cli::mirror`): a
+        // refresh fetches only the tiles that are due. Its own table because a
+        // tile can answer and own no rows — a relation crossing several tiles
+        // is stored under one of them.
+        r#"CREATE TABLE IF NOT EXISTS osm_mirror_tile (
+    mode VARCHAR(8) NOT NULL,
+    tile_key VARCHAR(32) NOT NULL,
+    refreshed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (mode, tile_key)
+  )"#,
+        // Seeded from the rows already held, so the first incremental run does
+        // not re-fetch tiles that are fresh.
+        r#"INSERT IGNORE INTO osm_mirror_tile (mode, tile_key, refreshed_at)
+     SELECT 'rail', tile_key, MAX(computed_at) FROM rail_stops_cache
+     WHERE tile_key IS NOT NULL GROUP BY tile_key"#,
+        r#"INSERT IGNORE INTO osm_mirror_tile (mode, tile_key, refreshed_at)
+     SELECT 'bus', tile_key, MAX(computed_at) FROM bus_route_cache
+     WHERE tile_key IS NOT NULL GROUP BY tile_key"#,
     ];
 
     sqlx::query(
