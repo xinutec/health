@@ -72,11 +72,29 @@ inside a walk; what makes this one a ride is structure the model does not
 carry: it starts where the change at Baker Street ends, on a line that calls at
 both ends, at the line's run time between them. No per-minute term separates
 it (the cadence forms, a ride-end penalty, a boarding credit at served stops:
-all refuted, `decoder-roadmap.md` and the segment-emissions log). So S2's
-second form below — the train state carrying its board station, so the alight
-transition can score the path between them — is the one this needs, with the
-hop's duration from the line's run time between the pair, not the long-ride
-Gamma.
+all refuted, `decoder-roadmap.md` and the segment-emissions log). The same −12 by term
+(`path_debug`'s `segParts`, 2026-10-18), hop minus walk: the fix pairs inside
+the segments +19.2, minute emissions +6.0, the entry credit +3.0; against them
+the pair across each new boundary −15.5 (two at −7.7), the short segments' net
+displacement −8.6, duration priors −6.6, the extra segments' heart-rate and
+fix-share levels −5.6, transitions −3.7. The largest is one pooled model: the
+boundary span is an exponential fitted on every narrated boundary (mean 2.1
+km/h, 14% outliers to 300 km/h), and it differs by the modes either side —
+walk ↔ stay 214 spans, mean 1.8 km/h, none over 20; train ↔ walk 111, mean
+18.2, 34% over 20 (the ride pulling away). A ride's boundary pays the outlier
+price.
+
+So the hop is not one missing structure but every per-segment model fitted
+on typical segments, each charging a two-minute dark ride a little. In order
+of size, each a fitted model and each measured alone: (1) the boundary span
+per mode pair — a transition term over time (the per-pair rows the chain
+context already uses), the vehicle side a mixture of the slow span and the
+vehicle's moving speed; about +4.6 on 07-02; (2) a ride's displacement and
+duration from the pair its ends imply (the line's run time between the
+stations nearest the bracketing fixes), not one lognormal and one Gamma for
+every ride — this is S2's second form, without the board station in the
+state; (3) only then the per-segment heart-rate level, whose Occam is right
+for most splits.
 
 ## Where the decoder stands
 
