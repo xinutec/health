@@ -229,6 +229,25 @@ def bracketPlaceForSleep (winStart winEnd : Int) (before : List Verified.Geo.Day
     | _, _ => none
   | _, _ => none
 
+/-- The windows with every window that overlaps one with more minutes asleep
+dropped (a tie keeps the earlier). The source can mark more than one session a
+date as the main sleep: a nap beside the night, two writers' versions of one
+night, a provisional session never revised. Disjoint windows are all sleep and
+all stay. -/
+def distinctSleepWindows (raw : List RawSleepWindow) : List RawSleepWindow :=
+  let overlaps := fun (a b : RawSleepWindow) => a.startTs < b.endTs && b.startTs < a.endTs
+  let beats := fun (b w : RawSleepWindow) =>
+    b.minutesAsleep > w.minutesAsleep || (b.minutesAsleep == w.minutesAsleep && b.startTs < w.startTs)
+  raw.filter fun w => !(raw.any fun b => overlaps b w && beats b w)
+
+#guard (distinctSleepWindows
+    [{ startTs := 0, endTs := 100, tz := none, minutesAsleep := 90 },
+     { startTs := 50, endTs := 120, tz := none, minutesAsleep := 60 },
+     { startTs := 200, endTs := 260, tz := none, minutesAsleep := 50 }]).map (·.startTs) == [0, 200]
+#guard (distinctSleepWindows
+    [{ startTs := 50, endTs := 120, tz := none, minutesAsleep := 60 },
+     { startTs := 0, endTs := 100, tz := none, minutesAsleep := 60 }]).map (·.startTs) == [0]
+
 /-- `enrichSleepWindows` — the raw windows, each given the place its onset side
 points at. A one-line map in the TS, and the decision it wraps is
 `derivePlaceForSleep`.
@@ -302,7 +321,7 @@ states, so producing them from anything but the continued list would draw a day
 the timeline does not describe. -/
 def dayChain (e : Env) :
     Array DayState × Array Verified.Geo.EpisodeGeometry.Episode :=
-  let windows := enrichSleepWindows e.sleep (sleepCandidates e)
+  let windows := enrichSleepWindows (distinctSleepWindows e.sleep) (sleepCandidates e)
     (fun ws we => bracketPlaceForSleep ws we e.prevEveningFixes e.points e.stayPlaces)
   let states := (segmentsToDayStates (e.segments.map stateSeg).toList windows).toArray
   -- ⚠ THE EMPTY-DAY ARM, and it is tested on `states` rather than on

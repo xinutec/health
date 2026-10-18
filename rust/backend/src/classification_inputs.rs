@@ -674,11 +674,16 @@ pub const CLASSIFIER_VERSION: i32 = 10;
 /// The main-sleep windows bracketing this day: today's morning sleep and the
 /// night beginning this evening.
 ///
-/// ⚠ TWO ROWS BY TWO DATES, NOT A RANGE. A sleep row is filed under the date it
-/// ENDS on, so the night that starts tonight is stored under tomorrow — which
-/// is why the TS issues two point queries rather than a `BETWEEN`, and why the
-/// order of the result is morning-then-evening rather than anything the
-/// database chose. Both are optional; a day with neither yields `[]`.
+/// ⚠ TWO DATES, NOT A RANGE. A sleep row is filed under the date it ENDS on, so
+/// the night that starts tonight is stored under tomorrow — which is why this
+/// issues two point queries rather than a `BETWEEN`, and why the order of the
+/// result is morning-then-evening rather than anything the database chose.
+/// Either may be empty; a day with neither yields `[]`.
+///
+/// ⚠ **EVERY main-sleep row of a date, not one.** The source can mark a nap
+/// beside the night as main too, and a one-row read then keeps whichever the
+/// database returns first: the nap, with the night served as awake. Which of
+/// overlapping windows stands is `DayChain.distinctSleepWindows`.
 ///
 /// ⚠ `start_time` / `end_time` are WALL CLOCK, not UTC (#340, and
 /// `docs/design/timezone.md`). `tz` rides alongside and MAY BE NULL.
@@ -717,36 +722,37 @@ pub async fn sleep_windows(
 ) -> Result<Value> {
     let mut out: Vec<Value> = Vec::new();
     for d in [date.to_string(), next_date_string(date)?] {
-        let row = sqlx::query(
+        let rows = sqlx::query(
             "SELECT start_time, end_time, tz, minutes_asleep FROM sleep \
-             WHERE user_id = ? AND date = ? AND is_main_sleep = 1",
+             WHERE user_id = ? AND date = ? AND is_main_sleep = 1 ORDER BY start_time",
         )
         .bind(user_id)
         .bind(&d)
-        .fetch_optional(pool)
+        .fetch_all(pool)
         .await
         .with_context(|| format!("reading sleep for {d}"))?;
-        let Some(row) = row else { continue };
-        let row_tz: Option<String> = row.try_get("tz").context("sleep.tz")?;
-        // The zone used for CONVERSION. `tz` below stays the row's own value so
-        // the served window still says where the reading came from.
-        let tz = row_tz.clone().or_else(|| home_tz.map(str::to_string));
-        out.push(json!({
-            "startTs": wall_clock_ts(&row, "start_time", tz.as_deref())?,
-            "endTs": wall_clock_ts(&row, "end_time", tz.as_deref())?,
-            "tz": row_tz,
-            // ⚠ NULL becomes 0, matching the TS `?? 0`. Not a mask: the field
-            // is a reported duration, and "we do not know how long" is not a
-            // reason to drop a window whose BOUNDS are known.
-            //
-            // ⚠ `as i64`, like every other integer column here. Without it this
-            // serialises as `553.0` where the TypeScript writes `553` — the
-            // SAME number and a different byte string, which is exactly what
-            // the JSON-diff parity check compares. Caught by that diff, not by
-            // reading: `minutes_asleep` is an INT and both arms agree on its
-            // value, so nothing but the rendering was ever wrong.
-            "minutesAsleep": num_opt(&row, "minutes_asleep")?.unwrap_or(0.0) as i64,
-        }));
+        for row in rows {
+            let row_tz: Option<String> = row.try_get("tz").context("sleep.tz")?;
+            // The zone used for CONVERSION. `tz` below stays the row's own value so
+            // the served window still says where the reading came from.
+            let tz = row_tz.clone().or_else(|| home_tz.map(str::to_string));
+            out.push(json!({
+                "startTs": wall_clock_ts(&row, "start_time", tz.as_deref())?,
+                "endTs": wall_clock_ts(&row, "end_time", tz.as_deref())?,
+                "tz": row_tz,
+                // ⚠ NULL becomes 0, matching the TS `?? 0`. Not a mask: the field
+                // is a reported duration, and "we do not know how long" is not a
+                // reason to drop a window whose BOUNDS are known.
+                //
+                // ⚠ `as i64`, like every other integer column here. Without it this
+                // serialises as `553.0` where the TypeScript writes `553` — the
+                // SAME number and a different byte string, which is exactly what
+                // the JSON-diff parity check compares. Caught by that diff, not by
+                // reading: `minutes_asleep` is an INT and both arms agree on its
+                // value, so nothing but the rendering was ever wrong.
+                "minutesAsleep": num_opt(&row, "minutes_asleep")?.unwrap_or(0.0) as i64,
+            }));
+        }
     }
     Ok(Value::Array(out))
 }

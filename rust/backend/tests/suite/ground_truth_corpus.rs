@@ -110,6 +110,9 @@ const POST_TS: &[&str] = &[
     // A lunch out, named for the shop next door and split by a walk with no
     // steps; the lunch row is known-wrong.
     "2026-10-15.md",
+    // By tube to a hospital and the night there; the night before is served
+    // only since the loader reads every main sleep of a date.
+    "2026-10-17.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
