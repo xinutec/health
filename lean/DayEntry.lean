@@ -921,6 +921,79 @@ def ZERO_F : Float := 0
 /-- `Seg`'s defaults, built once: its Float defaults are literals. -/
 def HEAD_SEG : Seg := { startTs := 0, endTs := 0, mode := "" }
 
+private def isVehicle (mode : String) : Bool :=
+  mode == "train" || mode == "driving" || mode == "bus" || mode == "cycling"
+private def isAfoot (mode : String) : Bool := mode == "walking" || mode == "stationary"
+
+/-- A boundary between a vehicle and a walk or a stay, at fix resolution inside
+the decoder's minute grid: of the fix-pair speeds within
+`DECODER_BOUNDARY_SLACK_S` of it (and the pair across each edge), the split with
+the least squared deviation on either side, kept when the vehicle's side is the
+faster; else the minute stands. `vehicleFirst`: the vehicle is the earlier
+segment. -/
+def refineBoundary (pts : Array Verified.SpeedFix) (b : Int) (vehicleFirst : Bool) : Int := Id.run do
+  -- The fixes within the slack, and the one either side of it: the pair across
+  -- the slack's edge can be where the speeds part.
+  let lo := (pts.findIdx? fun p => decide (p.ts ≥ b - DECODER_BOUNDARY_SLACK_S)).getD pts.size
+  let hi := (pts.findIdx? fun p => decide (p.ts > b + DECODER_BOUNDARY_SLACK_S)).getD pts.size
+  let w := pts.extract (lo - 1) (hi + 1)
+  -- `v[k]` is the pair `(w[k], w[k+1])`'s speed.
+  let v : Array Float := (Array.range (w.size - 1)).filterMap fun k =>
+    match w[k]?, w[k + 1]? with
+    | some a, some c =>
+      if c.ts > a.ts then
+        some (Verified.Hsmm.FloatScore.haversineMeters a.lat a.lon c.lat c.lon
+          / Float.ofInt (c.ts - a.ts) * MS_TO_KMH)
+      else none
+    | _, _ => none
+  if v.size < 2 || v.size + 1 != w.size then return b
+  let stats := fun (xs : Array Float) =>
+    let n := Verified.FloatConst.natToFloat xs.size
+    let m := xs.foldl (· + ·) ZERO_F / n
+    (m, xs.foldl (fun a x => a + (x - m) * (x - m)) ZERO_F)
+  let mut best : Option (Float × Int) := none
+  for k in [1:v.size] do
+    let (ml, sl) := stats (v.extract 0 k)
+    let (mr, sr) := stats (v.extract k v.size)
+    let faster := if vehicleFirst then ml > mr else mr > ml
+    if faster && (best.all fun (s, _) => sl + sr < s) then
+      best := some (sl + sr, (w[k]?).map (·.ts) |>.getD b)
+  return (best.map (·.2)).getD b
+
+-- A train pulling in at 48 km/h, then a walk at 5: the boundary moves to the
+-- fix where the speeds part (the decoder's minute put it 30 s early).
+private def rbFix (ts : Int) (lat : Float) : Verified.SpeedFix := ⟨ts, lat, -0.1, 0⟩
+private def rbPts : Array Verified.SpeedFix :=
+  #[rbFix 940 51.5, rbFix 955 51.5020, rbFix 970 51.5040, rbFix 985 51.5060,
+    rbFix 1000 51.5080, rbFix 1015 51.5081, rbFix 1030 51.5082, rbFix 1045 51.5083]
+#guard refineBoundary rbPts 970 true == 1000
+#guard refineBoundary rbPts 970 false == 970
+#guard refineBoundary #[] 970 true == 970
+
+/-- The decoder's segments with each vehicle ↔ walk-or-stay boundary at fix
+resolution (`refineBoundary`). The head's segments AND every pass that reads
+the decode take these, so no two readers disagree about where a ride ended. -/
+def refineDecoderBoundaries (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
+    (pts : Array Verified.SpeedFix) : Array Verified.Geo.PlaceOverride.HmmSeg :=
+  hmm.mapIdx fun i h =>
+    let startTs := match hmm[i - 1]? with
+      | some p =>
+        if i > 0 && p.endTs == h.startTs && isVehicle p.mode && isAfoot h.mode then
+          refineBoundary pts h.startTs true
+        else if i > 0 && p.endTs == h.startTs && isAfoot p.mode && isVehicle h.mode then
+          refineBoundary pts h.startTs false
+        else h.startTs
+      | none => h.startTs
+    let endTs := match hmm[i + 1]? with
+      | some n =>
+        if n.startTs == h.endTs && isVehicle h.mode && isAfoot n.mode then
+          refineBoundary pts h.endTs true
+        else if n.startTs == h.endTs && isAfoot h.mode && isVehicle n.mode then
+          refineBoundary pts h.endTs false
+        else h.endTs
+      | none => h.endTs
+    if startTs < endTs then { h with startTs, endTs } else h
+
 /-- The decoder's segments as the fold's input, measured from the fixes inside
 each: mean speed over the path, the fixes' centroid and count. A train keeps
 its route as `wayName` (`board → alight · line`) when the decoder's chain named
@@ -959,8 +1032,8 @@ def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
       || (i > 1 && (hmm[i - 1]?).any (·.mode == "walking") && trainAt (i - 2)))
     let beforeTrain := trainAt (i + 1)
       || ((hmm[i + 1]?).any (·.mode == "walking") && trainAt (i + 2))
-    let rideStart := if afterTrain then h.boardTs.getD h.startTs else h.startTs
-    let rideEnd := if beforeTrain then h.alightTs.getD h.endTs else h.endTs
+    let rideStart := if afterTrain then max h.startTs (h.boardTs.getD h.startTs) else h.startTs
+    let rideEnd := if beforeTrain then min h.endTs (h.alightTs.getD h.endTs) else h.endTs
     (if rideStart > h.startTs then #[build h.startTs rideStart "stationary" none h.boardStation] else #[])
       ++ #[build rideStart rideEnd h.mode way none]
       ++ (if rideEnd < h.endTs then #[build rideEnd h.endTs "stationary" none h.alightStation] else #[])).flatten
@@ -996,6 +1069,8 @@ def dayResult (j : Json) : Json :=
     -- fold, the segmentation stages and passes stand down, and only
     -- `DECODER_TAIL` runs. The flip, measured; never served or blessed.
     let decoderHead ← optBool envJson "decoderHead" false
+    let env := if decoderHead
+      then { env with hmmDecode := refineDecoderBoundaries env.hmmDecode env.points } else env
     let headSegs := decoderSegs env.hmmDecode env.points
     -- The watch's last sync: the step stream is complete only up to it.
     let stepsThrough ← optInt envJson "stepsThrough"
