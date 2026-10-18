@@ -135,6 +135,8 @@ struct Day {
     stay_scatter: Vec<(f64, f64)>,
     /// The one-minute span across each boundary between adjacent runs, km/h.
     boundary: Vec<f64>,
+    /// The same spans with the modes either side.
+    boundary_by: Vec<(&'static str, &'static str, f64)>,
 }
 
 fn main() -> Result<()> {
@@ -335,6 +337,7 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
             day.changes.push((spans[i - 1].0, mode));
             if let Some(v) = by_ts.get(&(s - 60)).and_then(|r| r["pairKmh"].as_f64()) {
                 day.boundary.push(v);
+                day.boundary_by.push((spans[i - 1].0, mode, v));
             }
         }
     }
@@ -678,6 +681,30 @@ fn write_fit(
                 .unwrap_or(f64::from(CENTRE_SIGMA_MAX_M));
             se["centreSigmaM"] = json!(sigma);
             log.push(format!("stay scatter: σ {sigma} m ({} minutes)", pts.len()));
+        }
+    }
+    // The span across a boundary by the modes either side (measurement only).
+    {
+        let mut by: BTreeMap<(String, String), Vec<f64>> = BTreeMap::new();
+        for d in &used {
+            for (a, b, v) in &d.boundary_by {
+                let key = if a < b {
+                    (a.to_string(), b.to_string())
+                } else {
+                    (b.to_string(), a.to_string())
+                };
+                by.entry(key).or_default().push(*v);
+            }
+        }
+        for ((a, b), mut vs) in by {
+            vs.sort_by(f64::total_cmp);
+            let n = vs.len();
+            let mean = vs.iter().sum::<f64>() / n as f64;
+            let fast = vs.iter().filter(|v| **v > 20.0).count();
+            log.push(format!(
+                "boundary {a}–{b}: {n} spans, mean {mean:.1} km/h, median {:.1}, over 20 km/h {fast}",
+                vs[n / 2]
+            ));
         }
     }
     // The span across a boundary: exponential, its mean the narrated

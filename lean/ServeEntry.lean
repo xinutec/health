@@ -1606,6 +1606,9 @@ private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Arra
         -- emissions; the rest is the train-hop relaxation and `SegmentEvidence`.
         ("durPrior", fl (Verified.Hsmm.Assemble.durPriorBase c seg.state seg.dur)),
         ("segEm", fl (Verified.Hsmm.Assemble.segEmAt c seg.state seg.dur last)),
+        ("segParts", Json.mkObj ((Verified.Hsmm.Assemble.segEmParts c seg.state seg.dur
+          (Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref seg.dur last)
+          (Verified.Hsmm.SegmentEmission.statsAt c.segPref seg.dur last)).map fun (k, v) => (k, fl v))),
         ("total", fl sum)])
       start := start + seg.dur
       prev := some seg.state

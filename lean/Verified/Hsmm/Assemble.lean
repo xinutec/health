@@ -459,6 +459,29 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
       + SegmentEmission.dispPosteriorScore q.p x.mode d w
   | none => SEG_ZERO
 
+/-- `segEmFrom`'s terms one by one, for the path debugger: the heart-rate and
+    fix-presence model, the placeless stay's centre, the fix pairs inside the
+    segment, the pair across its end, and the net displacement. Their sum is
+    `segEmFrom` (guarded below on a real context). -/
+def segEmParts (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
+    (st : SegmentEmission.Stats) : List (String × Float) :=
+  let q := c.segEm
+  match c.states[s]? with
+  | some x =>
+    [("hrFix", SegmentEmission.scorePrepared q x.mode st),
+     ("centre", match q.p.unlistedCentre with
+       | some h =>
+         if x.mode == .stationary && x.placeId.isNone then
+           SegmentEmission.centreScore st h c.placePrior true
+         else SEG_ZERO
+       | none => SEG_ZERO),
+     ("pairs", if st.hi == 0 then SEG_ZERO else
+       let pr := (c.pairPref[s]?).getD #[]
+       (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO),
+     ("pairBoundary", if st.hi == 0 then SEG_ZERO else (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO),
+     ("disp", SegmentEmission.dispPosteriorScore q.p x.mode d w)]
+  | none => []
+
 /-- Per minute, the best line-proximity term over the train states. -/
 def lineProxBestTable (c : ModelContext) : Array Float :=
   (Array.range c.obs.size).map fun t =>
