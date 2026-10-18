@@ -1613,10 +1613,42 @@ private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Arra
       start := start + seg.dur
       prev := some seg.state
     return (out, total)
+  -- What sharing the levels would give back (docs/proposals/2026-10-shared-levels.md,
+  -- stage 1): for a state that resumes after one segment of at most ten
+  -- minutes, its heart-rate/fix-share term and duration prior scored once over
+  -- both parts against twice, one part each.
+  let shares (p : Array Nat) : Array Json := Id.run do
+    let segs := (Verified.Hsmm.ofPath p.toList).toArray
+    let starts := segs.foldl (fun (acc : Array Nat × Nat) sg => (acc.1.push acc.2, acc.2 + sg.dur)) (#[], 0) |>.1
+    let mut out : Array Json := #[]
+    for i in [0:segs.size] do
+      match segs[i]?, segs[i + 1]?, segs[i + 2]?, starts[i]?, starts[i + 2]?, c.states[(segs[i]?).map (·.state) |>.getD 0]? with
+      | some a, some mid, some b, some sa, some sb, some st =>
+        if a.state == b.state && mid.dur ≤ 10 then
+          let stA := Verified.Hsmm.SegmentEmission.statsAt c.segPref a.dur (sa + a.dur - 1)
+          let stB := Verified.Hsmm.SegmentEmission.statsAt c.segPref b.dur (sb + b.dur - 1)
+          let both : Verified.Hsmm.SegmentEmission.Stats :=
+            { n := stA.n + stB.n, hrN := stA.hrN + stB.hrN, hrSum := stA.hrSum + stB.hrSum
+              hrSq := stA.hrSq + stB.hrSq, fixN := stA.fixN + stB.fixN
+              bedN := stA.bedN + stB.bedN, bedSum := stA.bedSum + stB.bedSum, bedSq := stA.bedSq + stB.bedSq
+              lo := stA.lo, hi := stB.hi }
+          let sc := fun (x : Verified.Hsmm.SegmentEmission.Stats) =>
+            Verified.Hsmm.SegmentEmission.scorePrepared c.segEm st.mode x
+          let apart := sc stA + sc stB + Verified.Hsmm.Assemble.durPriorBase c a.state a.dur
+            + Verified.Hsmm.Assemble.durPriorBase c b.state b.dur
+          let pooled := sc both + Verified.Hsmm.Assemble.durPriorBase c a.state (a.dur + b.dur)
+          out := out.push (Json.mkObj [
+            ("state", Json.str (Verified.Hsmm.StateSpace.stateKey st)),
+            ("startTs", Lean.toJson (match c.obs[sa]? with | some o => o.ts | none => 0)),
+            ("gap", Lean.toJson mid.dur),
+            ("apart", fl apart), ("pooled", fl pooled), ("gain", fl (pooled - apart))])
+      | _, _, _, _, _, _ => pure ()
+    return out
   let (dRows, dTot) := rows path
   let (aRows, aTot) := rows altPath
   Json.mkObj [("decoded", Json.arr dRows), ("decodedTotal", fl dTot),
               ("alt", Json.arr aRows), ("altTotal", fl aTot),
+              ("decodedShares", Json.arr (shares path)), ("altShares", Json.arr (shares altPath)),
               ("error", match bad with | some e => Json.str e | none => Json.null)]
 
 private def assembleSegmentsResult (j : Json) : Json :=

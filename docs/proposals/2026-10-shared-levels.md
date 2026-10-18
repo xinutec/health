@@ -78,7 +78,10 @@ it O(T · maxJ · (inner decode of maxJ minutes)): roughly maxJ times today's
 cost for the journey part. That's too slow as is. Tractable with the inner decode
 shared across windows ending at the same minute (a forward pass over legs that
 restarts at each journey start), which brings it to O(T · maxJ · L) for L leg
-states (≈ 15). Stays stay as they are, one state per place. This is the
+states (≈ 15). A stay episode gets an inside too — still, and moving
+within the place — with the place and the levels shared: sharing the levels
+alone does not change what a stay charges for a stepped minute, so the indoor
+class needs the second sub-state, its position held to the place. This is the
 principled form and the largest rewrite: the trellis, its proofs and the
 packed tables change.
 
@@ -114,6 +117,23 @@ referee 143) and the flip check:
    become the inner model's leg boundaries, so a change is a transition inside
    a journey at a station both lines serve: S2 of `2026-10-station-states.md`,
    now with a place to live.
+
+## Stage 1, measured (2026-10-18)
+
+`path_debug` reports, for every state that resumes after a segment of ten
+minutes or less, its heart-rate/fix-share term and duration prior scored once
+over both parts against once per part (`decodedShares` / `altShares`). On the
+narrated hops, the narrated reading's deficit against what sharing gives back:
+
+| day | narrated reading behind by | the walk resuming | the two rides of the journey |
+|---|---|---|---|
+| 05-18 | 5.8 | +13.0 | +6.5 |
+| 07-02 | 12.0 | +5.2 | +6.9 |
+
+05-18's narrated reading wins on the shared walk alone; 07-02 ties with the walk
+and the rides shared and wins with the boundary span by mode pair
+(`arm-boundaryclass-2026-10-18.patch`, +4.6). The prize is there. So is the
+risk: the same pooling makes any resumed state cheaper.
 
 ## Risks
 
