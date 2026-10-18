@@ -907,7 +907,7 @@ places, a station's name on the stay beside a ride, and a walk between two
 stays at one place absorbed (`finalMerge`: steps about the office are not a
 trip). `decoderHead` runs these alone. -/
 def DECODER_TAIL : Array String :=
-  #["walkDwell", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
+  #["stayArrivalClaim", "walkDwell", "staySteplessDeparture", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
     "biomEnrich", "hsmmOverride", "finalMerge", "interchangeStayLabel", "boardingStayLabel",
     "railSnapFinal", "vehicleIdentity"]
 
