@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-status: design; nothing built
+status: design; stage 1 measured; the recommendation moved to interruptions inside a segment (B, exact)
 references:
   - decoder-roadmap.md
   - 2026-10-station-states.md
@@ -134,6 +134,38 @@ narrated hops, the narrated reading's deficit against what sharing gives back:
 and the rides shared and wins with the boundary span by mode pair
 (`arm-boundaryclass-2026-10-18.patch`, +4.6). The prize is there. So is the
 risk: the same pooling makes any resumed state cheaper.
+
+## Stage 1, read again: what each structure can collect (2026-10-18)
+
+Stage 1 pooled the resumed state's duration as well as its levels. A journey
+of legs (A) does not do that: the walk before a hop and the walk after it are
+two legs with two durations. Its share of the measured gain is the levels
+alone — about +4 on 05-18 (5.8 needed) and +5 on 07-02 (12 needed); most of
+05-18's +13 is the change walk escaping the two-minute duration floor. A
+interruption INSIDE a segment collects all of it: the walk keeps one duration
+and one level, and the ride inside it pays only its own minutes and a fitted
+interruption rate.
+
+So the recommendation moves to B, made exact rather than a pass after the
+decoder: **a segment may contain interruptions.** A walk's minutes are walking
+or a short ride; a stay's are still or moving within the place. The segment's
+score over `[s, e]` is a two-state pass over its own minutes — the segment's
+mode against the interruption, a fitted switching rate between them, the
+segment's heart-rate and fix-share level shared by both — and it is
+computed for every start in one sweep forward, O(T · maxD) per class, the same
+order as the segment tables today. Nothing in the trellis changes: only what a
+segment's cell holds. The output carves an interruption out as its own leg
+where it is a ride (a hop, with its stations from the chain) and folds it in
+where it is moving within a stay (his rule: walking inside a building is the
+stay). A's journey state stays the place for the stations' structure later
+(S2).
+
+Stages, each against the held-out baseline (125/309/63/68/4, referee 143) and
+the flip check (36 lost, 16 gained): (1) the stay's interruption (moving
+within: walking-pace minutes held to the place) — the larger class of the
+flip's losses; (2) the walk's interruption (a ride between stations its line
+connects); (3) the fitted rates from the narrated rows (indoor movement inside
+stays, hops inside walks).
 
 ## Risks
 
