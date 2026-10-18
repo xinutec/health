@@ -340,8 +340,8 @@ export interface RestHrDay {
 
 export interface HrvDay {
   date: string;
-  daily_rmssd: number;
-  deep_rmssd: number;
+  daily_rmssd: number | string | null;
+  deep_rmssd: number | string | null;
 }
 
 export interface BreathingDay {

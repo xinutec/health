@@ -5,6 +5,12 @@ import type { ChartConfiguration } from "chart.js";
 import type { HrvDay } from "../../services/health.service";
 import { chartColors, gridColor, tickColor, formatDay } from "../../chart-theme";
 
+// An RMSSD of 0 ms is no reading: a gap, not a point on the axis.
+const rmssd = (v: number | string | null): number | null => {
+  const n = v == null ? Number.NaN : Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
 @Component({
   selector: "app-hrv-chart",
   standalone: true,
@@ -54,14 +60,13 @@ export class HrvChartComponent {
   constructor() {
     effect(() => {
       const data = this.hrv();
-      if (data.length === 0) {
+      const dailyVals = data.map((d) => rmssd(d.daily_rmssd));
+      const deepVals = data.map((d) => rmssd(d.deep_rmssd));
+      const allVals = [...dailyVals, ...deepVals].filter((v): v is number => v != null);
+      if (allVals.length === 0) {
         this.chartData.set({ labels: [], datasets: [] });
         return;
       }
-
-      const dailyVals = data.map((d) => d.daily_rmssd);
-      const deepVals = data.map((d) => d.deep_rmssd);
-      const allVals = [...dailyVals, ...deepVals];
 
       let lo = Math.floor(Math.min(...allVals) - HrvChartComponent.PAD);
       let hi = Math.ceil(Math.max(...allVals) + HrvChartComponent.PAD);

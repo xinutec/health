@@ -214,10 +214,14 @@ pub async fn sync_hrv_daily(
             .with_context(|| format!("fetching {pointer}"))?
         {
             let e = by_day.entry(d.date).or_default();
+            // ⚠ An RMSSD of 0 ms is no reading — successive beats always differ —
+            // and the source does send one. The day is still written, so the
+            // upsert clears a zero stored before this rule.
+            let v = (d.value > 0.0).then_some(d.value);
             if is_deep {
-                e.deep = Some(d.value);
+                e.deep = v;
             } else {
-                e.daily = Some(d.value);
+                e.daily = v;
             }
         }
     }
