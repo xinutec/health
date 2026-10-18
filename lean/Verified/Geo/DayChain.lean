@@ -194,7 +194,14 @@ private def snapWithin (radiusM lat lon : Float)
     | some (_, bd) => if decide (d < bd) then some (n, d) else acc) none).map (·.1)
 
 /-- The place a sleep window is BRACKETED by: the last known position before it
-and the first after it, when both name the same place.
+and the last inside it (else the first after it), when both name the same place.
+`fixes` are every position the day knows — the evening before, its own, the
+next morning — so a night that ends tomorrow is bracketed by tomorrow's fixes.
+
+⚠ **A FIX DURING THE SLEEP OUTRANKS ONE AFTER IT.** It is where he was while
+asleep; the first fix after waking can already be down the road. 08-21: a fix 2 m
+from Home at 08:27 inside the window, the first after it 224 m off at 08:57 — the
+bracket fell silent and the ordinary rule served the night at Work.
 
 ⚠ **THIS IS THE CASE A GAP BOUND CANNOT EXPRESS.** A phone that goes quiet at
 home and reports again from home next morning leaves no dwell inside the window
@@ -209,8 +216,7 @@ after it, served as eight hours at Work 11.3 km away. Neither edge clears the
 
 ⚠ **DISAGREEMENT MEANS SILENCE, NOT A GUESS.** If the two sides name different
 places — he went somewhere — this yields `none` and the ordinary rule decides. -/
-def bracketPlaceForSleep (winStart winEnd : Int) (before : List Verified.Geo.DayState.StayFix)
-    (after : Array Verified.Geo.EpisodeGeometry.Fix)
+def bracketPlaceForSleep (winStart winEnd : Int) (fixes : List Verified.Geo.DayState.StayFix)
     (places : List Verified.Geo.DayState.StayKnownPlace) : Option (String × (Float × Float)) :=
   -- ⚠ A GENERIC LABEL IS NOT A NAME. `sleepCandidates` re-resolves
   -- `GENERIC_STAY_LABEL` through `Env.sleepPlace` into a real lodging name, and
@@ -220,8 +226,11 @@ def bracketPlaceForSleep (winStart winEnd : Int) (before : List Verified.Geo.Day
   -- name them properly, which is the conservative half of the trade.
   let named := places.filter fun p =>
     p.displayName.isSome && p.displayName != some GENERIC_STAY_LABEL
-  match (before.filter (·.ts ≤ winStart)).getLast?,
-        (after.toList.filter (fun p => p.ts ≥ winEnd)).head? with
+  let sorted := fixes.toArray.qsort (fun a b => a.ts < b.ts) |>.toList
+  let inside := sorted.filter fun p => winStart ≤ p.ts && p.ts ≤ winEnd
+  let before := (sorted.filter (·.ts ≤ winStart)).getLast?.orElse fun _ => inside.head?
+  let after := inside.getLast?.orElse fun _ => (sorted.filter (·.ts ≥ winEnd)).head?
+  match before, after with
   | some b, some a =>
     match snapWithin BRACKET_RADIUS_M b.lat b.lon named,
           snapWithin BRACKET_RADIUS_M a.lat a.lon named with
@@ -322,7 +331,9 @@ the timeline does not describe. -/
 def dayChain (e : Env) :
     Array DayState × Array Verified.Geo.EpisodeGeometry.Episode :=
   let windows := enrichSleepWindows (distinctSleepWindows e.sleep) (sleepCandidates e)
-    (fun ws we => bracketPlaceForSleep ws we e.prevEveningFixes e.points e.stayPlaces)
+    (fun ws we => bracketPlaceForSleep ws we
+      (e.prevEveningFixes ++ e.points.toList.map (fun p => { ts := p.ts, lat := p.lat, lon := p.lon })
+        ++ e.morningFixes) e.stayPlaces)
   let states := (segmentsToDayStates (e.segments.map stateSeg).toList windows).toArray
   -- ⚠ THE EMPTY-DAY ARM, and it is tested on `states` rather than on
   -- `e.segments`: a day with no segments can still have SLEEP windows, and that
@@ -374,10 +385,23 @@ private def emptyEnv : Env :=
 -- Not bracketed: the day stays genuinely unknown rather than being invented.
 #guard (dayChain { emptyEnv with bracketPlace := none }).1 == #[]
 -- A bracketed night names the known place AND stands at its centre.
-#guard bracketPlaceForSleep 1000 2000 [{ ts := 900, lat := 51.5001, lon := -0.1 }]
-  #[{ ts := 2100, lat := 51.5, lon := -0.1001, speedKmh := 0 }]
+#guard bracketPlaceForSleep 1000 2000
+  [{ ts := 900, lat := 51.5001, lon := -0.1 }, { ts := 2100, lat := 51.5, lon := -0.1001 }]
   [{ centroidLat := 51.5, centroidLon := -0.1, displayName := some "Home" }]
   == some ("Home", (51.5, -0.1))
+-- 08-21's shape: the first fix after waking is 300 m off, one during the sleep
+-- is at Home — Home.
+#guard bracketPlaceForSleep 1000 2000
+  [{ ts := 900, lat := 51.5001, lon := -0.1 }, { ts := 1900, lat := 51.5, lon := -0.1001 },
+   { ts := 2600, lat := 51.5027, lon := -0.1 }]
+  [{ centroidLat := 51.5, centroidLon := -0.1, displayName := some "Home" }]
+  == some ("Home", (51.5, -0.1))
+-- Disagreement is still silence: asleep away from the evening's place.
+#guard bracketPlaceForSleep 1000 2000
+  [{ ts := 900, lat := 51.5001, lon := -0.1 }, { ts := 1900, lat := 51.6, lon := -0.1 }]
+  [{ centroidLat := 51.5, centroidLon := -0.1, displayName := some "Home" },
+   { centroidLat := 51.6, centroidLon := -0.1, displayName := some "Work" }]
+  == none
 
 -- An empty day draws no episodes either way.
 #guard (dayChain { emptyEnv with bracketPlace := some "St Elsewhere" }).2 == #[]
