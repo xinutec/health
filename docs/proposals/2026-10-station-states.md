@@ -50,6 +50,34 @@ a fix at stay speed, behind an arm knob. Scoreboard, 43 days:
   the person stood at names the ride's end. That is evidence for the anchor
   half of S3, not for S1 as a decode change.
 
+## What the short hop costs (2026-10-18)
+
+Where the decoder still loses stations and journeys, measured on the 196
+narrated train sides: 158 have a chain leg and the gates emit 150 of them, all
+right (`2026-10-posterior-confidence.md`); 20 are rides on lines outside the
+route model (`unknown_rail`: the Netherlands, the Eurostar, Paris, the Basque
+coast); 8 are short hops decoded as a walk — Baker Street → Euston Square
+after a change (05-18, 07-02) and Euston Square → King's Cross (07-07 drawn a
+minute short; the history sweep finds that hop walked on 11 more days). The
+same hops are the three physically impossible legs left under the flip
+(05-18, 06-16, 07-02).
+
+Why the decoder walks them, on 07-02's two-minute hop to Euston Square
+(`path_debug`): the hop's own minutes favour the ride by 5.9 nats (no steps,
+38 km/h, the train stopped at Great Portland Street), but walk + hop + walk
+costs against one walk 6.5 of duration priors, 10.5 of segment-level emissions
+(each segment draws its own heart-rate level and fix share) and 3.8 of
+transitions: −12 net. That is the right Occam for almost every two-minute blip
+inside a walk; what makes this one a ride is structure the model does not
+carry: it starts where the change at Baker Street ends, on a line that calls at
+both ends, at the line's run time between them. No per-minute term separates
+it (the cadence forms, a ride-end penalty, a boarding credit at served stops:
+all refuted, `decoder-roadmap.md` and the segment-emissions log). So S2's
+second form below — the train state carrying its board station, so the alight
+transition can score the path between them — is the one this needs, with the
+hop's duration from the line's run time between the pair, not the long-ride
+Gamma.
+
 ## Where the decoder stands
 
 Both graded by the served day's own referee (`journeyshape`: shape and
