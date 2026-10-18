@@ -96,6 +96,19 @@ every ride — this is S2's second form, without the board station in the
 state; (3) only then the per-segment heart-rate level, whose Occam is right
 for most splits.
 
+Measured the same day: (1) built and held out (golden fits
+arm-boundaryclass-2026-10-18.patch) is neutral — 125/309/63/67/4, referee 143
+against 125/309/63/68/4, 143 — and gains no hop; (2) is smaller than it looked:
+the fitted ride duration is nearly exponential (shape 1.09), a two-minute ride
+already costs what a twenty-minute one does, and the hop's displacement is 3.4
+worse than a typical ride's. On 07-02 the hop's evidence is about +25 against
+about −37 for two extra segments; (1) and (2) together recover about 8. The rest
+is the per-segment levels and durations of the walk either side, scored as two
+independent walks. The walk that resumes after a two-minute ride is the same
+walk: a level shared across the journey (the heart-rate and fix-share levels
+drawn once per journey, not per segment) is the model the hop needs, and it is
+a change to the segment emission, not to the station chain.
+
 ## Where the decoder stands
 
 Both graded by the served day's own referee (`journeyshape`: shape and
