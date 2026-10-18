@@ -473,6 +473,12 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    posterior clears a bar (`2026-10-posterior-confidence.md`), the served day
    takes its segments for that window; the cascade keeps the rest. Extended
    from train journeys to stays, it is #1947.
+   Measured 2026-10-18 on the flip's rows (36 lost, 16 gained): the decoder's
+   segment confidence does not tell them apart — 33 of the lost and 14 of the
+   gained sit above 0.95 — so at every bar it keeps more of its losses than of
+   its gains (0.98: 25 against 9; 0.995: 16 against 5). Window authority by
+   posterior narrows the flip's deficit and never turns it; the decoder has to
+   get better (`2026-10-shared-levels.md`).
 5. **The flip.** When the decoder reconstructs at least what the served day
    does, its segments are the served day; the cascade's journey passes retire
    one at a time (Phase 5), each with a version bump and a re-decode.
