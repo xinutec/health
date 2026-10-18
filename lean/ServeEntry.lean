@@ -1693,7 +1693,11 @@ private def assembleSegmentsResult (j : Json) : Json :=
               if (j.getObjVal? "chainDebug" >>= (·.getBool?)).toOption == some true then
                 let marg := Verified.Hsmm.StationChain.chainMarginals g chainSegs c.obs rels
                   Verified.Hsmm.Assemble.KNOWN_LINES
-                let dbg := Json.arr (marg.map fun (leg, through) =>
+                -- The same legs in the same order, each pair's posterior under the chain.
+                let post := Verified.Hsmm.StationChain.chainPosteriors g chainSegs c.obs rels
+                  Verified.Hsmm.Assemble.KNOWN_LINES
+                let dbg := Json.arr (marg.zipIdx.map fun ((leg, through), li) =>
+                  let pp := ((post[li]?).map (·.2)).getD #[]
                   Json.mkObj [
                     ("segIndex", Lean.toJson leg.segIndex),
                     ("decodedLine", Json.str leg.decodedLine),
@@ -1708,6 +1712,7 @@ private def assembleSegmentsResult (j : Json) : Json :=
                         ("alight", optStrJson p.alight.node.stationName),
                         ("legScore", Lean.toJson p.legScore),
                         ("through", Lean.toJson ((through[k]?).getD 0)),
+                        ("posterior", Lean.toJson ((pp[k]?).getD 0)),
                         ("pathM", match Verified.Hsmm.StationChain.linePathMeters g p.line
                             p.board.node p.alight.node with
                           | some m => Lean.toJson m | none => Json.null),

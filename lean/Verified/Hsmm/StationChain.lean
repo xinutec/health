@@ -1100,13 +1100,11 @@ private def emitLeg (leg : ChainLeg) (through : Array Float) : Option (Nat × Re
     | some (i, r) => some (i, { r with line := some candidate })
     | none => on leg.decodedLine
 
-/-- Every resolvable leg with its max-marginals — the best chain total passing
-    through each pair — in segment order. `resolveStationChain` emits from this;
-    the debug arm of `assemblesegments` prints it, so a wrong line or a silent
-    station can be read off the pairs the chain actually weighed (#238). -/
-def chainMarginals (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
+/-- The day's resolvable legs as chains: consecutive legs, broken by a leg with
+    no valid pair or a gap past `CHAIN_GAP_MAX_S`. -/
+private def chainsOf (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
     (railStopRelations : Option (Array RailStopRelation))
-    (altLines : List String := []) : Array (ChainLeg × Array Float) :=
+    (altLines : List String := []) : Array (Array ChainLeg) :=
   if obs.isEmpty then #[] else
   -- Later duplicates win, as `Map.set` does.
   let idxByTs : Std.HashMap Int Nat :=
@@ -1134,14 +1132,23 @@ def chainMarginals (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
           | _, _ => skip) (#[], 0)).1
   -- A leg with no valid pair stays unresolved AND breaks the chain: its
   -- neighbours must not hand over across an opaque ride.
-  let chains : Array (Array ChainLeg) :=
-    let st := legs.foldl (fun (st : Array (Array ChainLeg) × Array ChainLeg) leg =>
+  let st := legs.foldl (fun (st : Array (Array ChainLeg) × Array ChainLeg) leg =>
       let breaks := leg.pairs.isEmpty || (match st.2.back? with
         | none => false
         | some prev => leg.startTs - prev.endTs > CHAIN_GAP_MAX_S)
       let st := if breaks && !st.2.isEmpty then (st.1.push st.2, #[]) else st
       if leg.pairs.isEmpty then st else (st.1, st.2.push leg)) (#[], #[])
-    if st.2.isEmpty then st.1 else st.1.push st.2
+  if st.2.isEmpty then st.1 else st.1.push st.2
+
+/-- Every resolvable leg with its max-marginals — the best chain total passing
+    through each pair — in segment order. `resolveStationChain` emits from this;
+    the debug arm of `assemblesegments` prints it, so a wrong line or a silent
+    station can be read off the pairs the chain actually weighed (#238). -/
+def chainMarginals (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
+    (railStopRelations : Option (Array RailStopRelation))
+    (altLines : List String := []) : Array (ChainLeg × Array Float) :=
+  if obs.isEmpty then #[] else
+  let chains := chainsOf g segs obs railStopRelations altLines
   chains.foldl (fun out chain =>
     let fwd := forwardPass chain
     let bwd := backwardPass chain
@@ -1156,6 +1163,67 @@ def chainMarginals (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
         let b := (bwd[i.val]?.bind (·[p.val]?)).getD 0
         acc.push (f + b - leg.pairs[p].legScore)) #[]
       out.push (leg, through)) out) #[]
+
+/-- `log Σ exp` over `xs`; `NEG_INF` when empty or all `NEG_INF`. -/
+private def lse (xs : List Float) : Float :=
+  let m := xs.foldl (fun a x => if x > a then x else a) NEG_INF
+  if m == NEG_INF then NEG_INF
+  else m + Float.log (xs.foldl (fun a x => a + Float.exp (x - m)) 0)
+
+/-- `forwardPass` with log-sum-exp for max: per pair, the log of the summed
+    weight of every chain prefix ending in it. -/
+private def forwardSum (chain : Array ChainLeg) : Array (Array Float) :=
+  chain.foldl (fun acc leg =>
+    let row := match acc.back?, chain[acc.size - 1]? with
+      | some prevRow, some prevLeg =>
+        let gapMin := mins leg.startTs prevLeg.endTs
+        leg.pairs.map (fun p =>
+          p.legScore + lse ((List.range prevRow.size).filterMap fun q =>
+            match prevRow[q]?, prevLeg.pairs[q]? with
+            | some r, some pp => some (r + chainPenalty pp.alight.node p.board.node gapMin)
+            | _, _ => none))
+      | _, _ => leg.pairs.map (fun p => p.legScore)
+    acc.push row) #[]
+
+/-- `backwardPass` with log-sum-exp for max. -/
+private def backwardSum (chain : Array ChainLeg) : Array (Array Float) :=
+  let rev := (List.finRange chain.size).foldl (fun acc (k : Fin chain.size) =>
+    let i := chain.size - 1 - k.val
+    have hi : chain.size - 1 - k.val < chain.size := by omega
+    let leg := chain[chain.size - 1 - k.val]
+    let row := match acc.back?, chain[i + 1]? with
+      | some nextRow, some nextLeg =>
+        let gapMin := mins nextLeg.startTs leg.endTs
+        leg.pairs.map (fun p =>
+          p.legScore + lse ((List.range nextRow.size).filterMap fun q =>
+            match nextRow[q]?, nextLeg.pairs[q]? with
+            | some r, some np => some (r + chainPenalty p.alight.node np.board.node gapMin)
+            | _, _ => none))
+      | _, _ => leg.pairs.map (fun p => p.legScore)
+    acc.push row) #[]
+  rev.reverse
+
+/-- Each leg's pairs with their posterior probability under the chain — the
+    chain's scores read as log-weights, summed over every chain through the pair
+    and normalised over the chain (roadmap step 3: a station is emitted on its
+    posterior, not on a margin between scores). An instrument: nothing emits
+    from it yet. Same legs and chains as `chainMarginals`. -/
+def chainPosteriors (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
+    (railStopRelations : Option (Array RailStopRelation))
+    (altLines : List String := []) : Array (ChainLeg × Array Float) :=
+  if obs.isEmpty then #[] else
+  let chains := chainsOf g segs obs railStopRelations altLines
+  chains.foldl (fun out chain =>
+    let fwd := forwardSum chain
+    let bwd := backwardSum chain
+    let logZ := lse ((fwd.back?.getD #[]).toList)
+    (List.finRange chain.size).foldl (fun out (i : Fin chain.size) =>
+      let leg := chain[i]
+      let post := (List.finRange leg.pairs.size).foldl (fun acc (p : Fin leg.pairs.size) =>
+        let f := (fwd[i.val]?.bind (·[p.val]?)).getD NEG_INF
+        let b := (bwd[i.val]?.bind (·[p.val]?)).getD NEG_INF
+        acc.push (Float.exp (f + b - leg.pairs[p].legScore - logZ))) #[]
+      out.push (leg, post)) out) #[]
 
 /--
 Resolve stations for every named-line train leg in `segs`.

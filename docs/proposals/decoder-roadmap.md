@@ -166,6 +166,10 @@ corpus floors before it ships.
    everything in reach, where the anchor needs the nearer one to be
    likelier. The terms and the gates change together, the gates becoming
    posterior probabilities (step 3). Designed in `2026-10-station-states.md`.
+   Measured 2026-10-18: the gates themselves emit no wrong station on a
+   narrated leg (150 of 150), and the chain's posterior at any level does
+   no better (`2026-10-posterior-confidence.md`); what moves stations is the
+   rides' structure — where they start and end, and whether a change is one.
 3. **Parameters are fitted.** Forward–backward EM over every captured day,
    judged on the narrated days held out. The same marginals are the
    calibrated confidence Phase 4 needs. Designed first as confidence, with

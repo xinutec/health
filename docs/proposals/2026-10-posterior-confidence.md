@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-status: phase A built (instrument); phase B measured and refuted at two cuts and at a 720-minute cap
+status: phase A built (instrument); phase B measured and refuted at two cuts and at a 720-minute cap; phase C's premise measured and refuted (the gates make no wrong emission)
 references:
   - decoder-roadmap.md
   - 2026-10-station-states.md
@@ -57,6 +57,21 @@ with phase B 112/287/57/51/25. What the arms keep
 is the prize (lines +5, stations +6); what is missing is the risk named
 below — a model of what a dark minute says about each mode, so that the
 confident phantoms stop being confident.
+
+## What phase C's premise measured (2026-10-18)
+
+`StationChain.chainPosteriors` (the chain's forward–backward with
+log-sum-exp; each pair's posterior, printed beside its max-marginal under
+`chainDebug`) on the 158 narrated train sides that have a chain leg, the
+shipped record: the posterior is calibrated (0.95 and above right 0.99 of the
+time, 0.8–0.9 right 0.94), but no level beats the gates. Today's
+`MARGIN_NATS` and `ABS_ANCHOR_FLOOR` emit 150 sides, all right; a posterior
+of 0.5 or more emits 156 with 6 wrong, 0.8 emits 144 with 2 wrong, 0.9 emits
+126 with 1 wrong. The stations the scoreboard misses are legs with no chain
+(unnamed lines, rides not decoded), and the cadence arms that lost stations
+moved the rides' boundaries and so the pairs' ranking, which a gate cannot
+repair. Phase C as "the gates become posteriors" gains nothing measured;
+what it was meant to unblock is the rides' structure, not their gates.
 
 ## What `unknown` is doing
 
