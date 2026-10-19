@@ -213,14 +213,16 @@ displacement); net +6.9. A spell over the four minutes at the fitted rates
 costs 6.5 and gives the 12 back: the stay wins by about 1.5. The margin is the
 price of a spell, not the evidence.
 
-What the narrated stays hold (45 days, the fixtures' steps; runs of minutes at
-60 steps or more inside stay rows of ten minutes or longer): run lengths 1:
-181, 2: 41, 3: 17, 4: 14, 5–7: 13, 8 or more: 30 — hospitals and hotels (HMC
-Westeinde 04-29, the Parkhotel, Home on 06-24). A geometric spell at 36% gives
-one run in a thousand of length 8; one in ten is observed, so the long runs
-are priced out of the stay and a walk takes them. A stay ends still before a
-vehicle in 8 of 9, before a walk in 95 of 126 (the minutes to the door are the
-stay's, his rule).
+What the narrated stays hold (45 days, the fixtures' steps, each narrative
+read in its own zone; runs of minutes at 60 steps or more inside stay rows of
+ten minutes or longer): run lengths 1: 177, 2: 37, 3: 10, 4: 3, none longer —
+one geometric, 0.225 to continue (at 30 steps or more: 1: 485, 2: 146, 3: 49,
+4: 16, 5: 10, 6–7: 5). A first reading of the same data the same morning
+found runs of eight and more at hospitals and hotels; those were the days
+abroad read in London time, and are withdrawn. A stepped run of four minutes
+or more is not inside a narrated stay. A stay ends still before a vehicle in
+8 of 9, before a walk in 92 of 126 (the minutes to the door are the stay's,
+his rule).
 
 Walks to a vehicle (narrated): median 10 min, quartiles 8–15, 1 of 64 at three
 minutes or less; from a vehicle to a stay median 10; between two vehicles (a
@@ -331,10 +333,15 @@ alight was the rail-run labeller's Vavin, which the served day corrects with
 those two passes). Left: the underpass labels (09-14, 09-15: a passage the
 fixes do not see), 06-18's board station, and the classes below.
 
-1. **Movement inside a visit** (3): the stay's inside with a run-length law
-   that holds the measured tail and the stay's ending; its own failure mode
-   (a short walk that returns is a spell) is measured above, so the journey's
-   single level (stage 2) may have to come first.
+1. **Movement inside a visit** (3): stepped spells inside narrated stays are
+   short and geometric (above), so a run-length law separates nothing — the
+   stay-move arm already had the right shape and still absorbed the short
+   walks that return. 07-06's Work holds a fixless 15-minute stepped stretch
+   the decoder reads as a walk (`darkMoveAtPlace`'s case, unabsorbed) and a
+   real ten-minute excursion 100 m out and back, which the narrative counts
+   as the stay; 07-16's UCH is two buildings. What separates a walk out from
+   a spell is what follows it: the journey's single level (stage 2) and the
+   stay's ending, not the spell itself.
 2. **The journey state** as designed, levels shared, `maxJ` 240; gate adds
    `decodeprof` on 09-30 within 2× today's decode. Then S2 inside it.
 3. **Platform waits** (2) are S1's state; **hops** (2) are S2's.
