@@ -212,6 +212,30 @@ alone under the journey state. Candidates: the stations within reach of the
 day's fixes, as S2's. Cost: the wait legs are as many as S2's; the pair
 table is the new part.
 
+### S1 inside the journey state, first slice (2026-10-19 evening)
+
+Built as above: a `wait` base state (stationary, `lineName` the marker,
+never in the outer trellis), a leg per station within reach of the day's
+fixes, the pair rule (`Journey.Tables.pairOk`: a wait at σ continues only
+into a ride boarding at σ), the fold leaving a decoded wait alone
+(`foldRideWaits`), the marker dropped after it; the wait's duration from
+`durationFits.wait` (the arm's records carry Gamma(4, 0.8): the narrated waits'
+4, 5, 5 and 9 minutes by moments — the fitter's number next). Measured under
+the journey record against the S2 slice (125/313/61/66/6, rows 26/20):
+**125/311/60/62/4, rows 31 lost, 17 gained.** Both narrated waits are found —
+07-01's four minutes at Euston Square (11:32–11:36, the row healed) and
+09-06's five at Stanmore (19:21–19:26 against the narrated 19:18–19:23, the
+row's midpoint still in the walk before). Seven rows go to waits the
+narratives do not have (06-15, 06-22 ×2, 06-28, 07-14 ×2, 07-16): a wait of
+two or three minutes before a ride, which the convention folds into the
+walk, and which a Gamma with mean 5 and the two-minute floor prices as
+cheaply as the walk's minutes. And 07-01's ride comes out Victoria from
+Euston, the S2 tie again, now with the wait at Euston rather than at Euston
+Square. Kept behind the record's wait fit; off without it. Next: the wait's
+duration fitted on the narrated waits (four of them: the fitter must say so),
+and a wait's existence price — the narratives' rule that a wait under three
+minutes is the walk's.
+
 ## Phases, each measured on the scoreboard, the journey referee above and the corpus floors
 
 - **S1: platform states, transitions, journey reader.** Gate: journeys up (the

@@ -913,6 +913,13 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     match arr.toList.filterMap (fun v => (v.getNum?).toOption.map (·.toFloat)) with
     | [a, b] => some { alpha := a, beta := b, sampleCount := 10 }
     | _ => none
+  -- The platform wait's duration (`durationFits.wait`), the journey's wait legs.
+  let waitFit : Option Verified.Hsmm.Duration.GammaFit := do
+    let f ← fitted
+    let arr ← ((f.getObjVal? "durationFits") >>= (·.getObjVal? "wait") >>= (·.getArr?)).toOption
+    match arr.toList.filterMap (fun v => (v.getNum?).toOption.map (·.toFloat)) with
+    | [a, b] => some { alpha := a, beta := b, sampleCount := 10 }
+    | _ => none
   -- Segment-level emissions, the decoder record's `segEmission`: `{sigmaW,
   -- rho, modes: {mode: [hrMean, hrTau, fixA, fixB]}, …}`. Required: the
   -- decoder has no form without it.
@@ -973,6 +980,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
            obsChain, asleep, unlistedCentre, journey }
   let some segEm := segEm?
     | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
+  -- The wait leg exists only with a fitted wait duration.
+  let segEm := { segEm with journey := segEm.journey.map fun jp => { jp with wait := waitFit.isSome } }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
@@ -1041,7 +1050,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | _, _ => #[]
     | none => #[]
   let durationNoFloor := ((flags.getObjVal? "durationNoFloor") >>= (·.getBool?)).toOption.getD false
-  let ctx := { ctx with priors, fits, mainlineFit, weights, segPref, placePrior, transWeight, stayEntryLog, durationNoFloor,
+  let ctx := { ctx with priors, fits, mainlineFit, waitFit, weights, segPref, placePrior, transWeight, stayEntryLog, durationNoFloor,
                         visitCounts, entryTable }
   let lineProxBest := Verified.Hsmm.Assemble.lineProxBestTable ctx
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx
@@ -1163,7 +1172,7 @@ private def packDeltaRef (qE qR : Int64) (h : Nat) : Nat × Option Int :=
     train ⇒ 4; the placeless stay ⇒ 8. -/
 private def durClassKey (s : Verified.Hsmm.Emissions.State) : Nat :=
   match s.mode with
-  | .stationary => if s.placeId.isNone then 8 else 0
+  | .stationary => if s.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then 10 else if s.placeId.isNone then 8 else 0
   | .walking => 1 | .cycling => 2 | .driving => 3
   | .plane => 5 | .unknown => 6
   | .train => match s.lineName with
@@ -1486,6 +1495,11 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
               if !Verified.Hsmm.StationChain.nodeOnLine g line n then continue
               if !servedOn line n then continue
               if fixes.any (fun f => nearFix f n) then out := out.push (l, li, some n)
+          | .stationary, some _ =>
+            -- The wait: a leg per station within reach of the fixes.
+            for n in g.nodes do
+              if n.stationName.isNone then continue
+              if fixes.any (fun f => nearFix f n) then out := out.push (l, li, some n)
           | _, _ => pure ()
         return out
     let L := legList.size
@@ -1575,6 +1589,22 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         for d0 in [0:maxJ] do
           out := out.set! (slot * maxJ + d0) (Verified.Hsmm.Assemble.durPriorBase c reps[cls]! (d0 + 1))
       return out
+    -- The pair rule beside the base matrix: a wait at σ continues only into a
+    -- ride boarding at σ; nothing else is ruled out here.
+    let isWaitLeg := fun (l : Nat) => (c.states[l]!).lineName == some Verified.Hsmm.Assemble.WAIT_MARK
+    let pairOk : Array Bool := Id.run do
+      let mut out := Array.replicate (L * L) true
+      for (ea, ai) in legList.zipIdx do
+        let (la, _, sa) := ea
+        if !isWaitLeg la then continue
+        for (eb, bi) in legList.zipIdx do
+          let (lb, _, sb) := eb
+          let ok := match (c.states[lb]!).mode, sa, sb with
+            | .train, some x, some y => x.id == y.id
+            | .train, _, _ => false
+            | _, _, _ => true
+          if !ok then out := out.set! (ai * L + bi) false
+      return out
     let legName : Array String := legList.map fun (l, _, st?) =>
       let base := Verified.Hsmm.StateSpace.stateKey c.states[l]!
       match st? with
@@ -1585,7 +1615,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         legSlot := legOuter.map (fun l => (slotOfCls durClass[l]!).getD 0)
         nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
         first := legOuter.map (prior true jp.firstLeg), last := legOuter.map (prior false jp.lastLeg)
-        firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, durBaseF }
+        firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, durBaseF, pairOk }
     let inner := Verified.Hsmm.Journey.best tb
     let tb := { tb with cell := inner }
     let (durDelta, durBaseJ, bad) : Array Nat × Array Nat × Option Int := Id.run do
@@ -2087,7 +2117,8 @@ private def assembleSegmentsResult (j : Json) : Json :=
             Json.mkObj [("error", Json.str
               s!"path has {sts.size} states but the observation tensor has {c.obs.size} rows")]
           | some segs0 =>
-            let segs := Verified.HsmmSegments.foldRideWaits segs0
+            let segs := (Verified.HsmmSegments.foldRideWaits segs0).map fun s =>
+              if s.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then { s with lineName := none } else s
             -- ⚠ THE STATION CHAIN RUNS HERE, and that is the point. `stationchain`
             -- exists as its own mode and takes `obs` — the 1440-row observation
             -- tensor — so calling it from the shell would put back on the wire

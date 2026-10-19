@@ -95,6 +95,8 @@ structure ModelContext where
   /-- The mainline's duration (`unknown_rail`), when fitted apart from the
       named lines': a TGV and a Tube hop are not one length distribution. -/
   mainlineFit : Option GammaFit := none
+  /-- The platform wait's duration, the journey's wait legs (`WAIT_MARK`). -/
+  waitFit : Option GammaFit := none
   /-- Per-family weights (`EmissionFull.TermWeights`), all `1` when shipped. -/
   weights : EmissionFull.TermWeights := {}
   /-- `SegmentEmission`'s terms (heart rate per segment, fix presence as a
@@ -127,6 +129,10 @@ structure ModelContext where
   /-- Per local hour, `log P(place | a stay begins)` for each place and for a
       place not on the list (`entryCountsTable`); empty without the arm. -/
   entryTable : Array (Std.HashMap Int Float × Float) := #[]
+
+/-- The journey's wait state: stationary, no place, this in `lineName`. A leg
+    of the journey state only; the outer trellis never holds it. -/
+def WAIT_MARK : String := "wait"
 
 /-- The longest segment the HSMM will consider, in minutes.
 
@@ -174,7 +180,8 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
       -- state wears; `Journey` fills its cell.
       -- Two of them, so a journey longer than the bound decodes as two back
       -- to back (the trellis never continues a state into itself).
-      ++ (if segEm.journey.isSome then [(⟨.unknown, none, none⟩ : State), (⟨.unknown, none, some "second"⟩ : State)] else [])).toArray
+      ++ (if segEm.journey.isSome then [(⟨.unknown, none, none⟩ : State), (⟨.unknown, none, some "second"⟩ : State)] else [])
+      ++ (if segEm.journey.any (·.wait) then [(⟨.stationary, none, some WAIT_MARK⟩ : State)] else [])).toArray
     model
     connGraph := RouteModel.toConnGraph model
     modeledLines := RouteModel.linesInGraph model
@@ -444,6 +451,7 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
     let fit := match c.mainlineFit with
       | some f => if Emissions.isMainline st then f else c.fits st.mode
       | none => c.fits st.mode
+    let fit := if st.lineName == some WAIT_MARK then c.waitFit.getD fit else fit
     c.weights.duration * Duration.logDurationProb d.toFloat fit
       (if c.durationNoFloor then MIN_ONE else Duration.minDurationByMode st.mode)
 
@@ -542,8 +550,9 @@ def durAtFromW (c : ModelContext) (s d : Nat) (covered : Bool)
 /-- The journey state's index, when the context has one. -/
 def journeyIdx (c : ModelContext) : Option Nat := c.states.findIdx? (·.mode == .unknown)
 
-/-- A state that is a journey's leg: every moving state. -/
-def isLegState (st : State) : Bool := st.mode != .stationary && st.mode != .unknown
+/-- A state that is a journey's leg: every moving state, and the wait. -/
+def isLegState (st : State) : Bool :=
+  (st.mode != .stationary && st.mode != .unknown) || st.lineName == some WAIT_MARK
 
 /-- The leg states' indices. -/
 def legIdxs (c : ModelContext) : Array Nat :=

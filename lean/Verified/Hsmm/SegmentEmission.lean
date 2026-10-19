@@ -90,6 +90,9 @@ structure JourneyParams where
   /-- `log P(a journey continues into another)`: a journey longer than `maxJ`
       decodes as two back to back at this price; `−∞` forbids it. -/
   continueLog : Float := Verified.FloatConst.negInf
+  /-- The platform wait as a leg (S1): on when the record fits a wait
+      duration (`durationFits.wait`). -/
+  wait : Bool := false
   deriving Inhabited
 
 structure Params where

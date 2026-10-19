@@ -33,6 +33,8 @@ def modeName : Mode → String
 def stateKey (s : State) : String :=
   match s.mode with
   | .stationary => "stationary|" ++ (match s.placeId with | some p => toString p | none => "none")
+      -- The journey's wait state carries a marker in `lineName`; a stay never does.
+      ++ (match s.lineName with | some l => "|" ++ l | none => "")
   | .train => "train|" ++ (match s.lineName with | some l => l | none => "unknown_rail")
   | m => modeName m
 

@@ -72,6 +72,9 @@ structure Tables where
   /-- `durBaseF[slot * maxJ + (d - 1)]`: the slot's generic duration prior,
       which a paired leg replaces. -/
   durBaseF : FloatArray
+  /-- `pairOk[a * L + b]`: leg `b` may follow leg `a` — the rule beside the base
+      matrix (a wait at σ continues only into a ride boarding at σ). -/
+  pairOk : Array Bool
   /-- `best`'s table once computed (`cell[(d - 1) * T + e]`), for the path
       debugger; empty until then. -/
   cell : FloatArray := FloatArray.empty
@@ -158,6 +161,7 @@ def sweep (tb : Tables) (s0 w : Nat) : FloatArray × Array Nat := Id.run do
         let mut best := negInf
         for a in [0:L] do
           if a == l then continue
+          if !tb.pairOk[a * L + l]! then continue
           let va := v.get! (i * L + a)
           if va == negInf then continue
           let cand := va + tb.trans.get! (((e + 1) * B + tb.baseOf[a]!) * B + bl)
@@ -176,6 +180,7 @@ def argFrom (tb : Tables) (v : FloatArray) (s0 k l : Nat) : Nat := Id.run do
   let mut arg := 0
   for a in [0:L] do
     if a == l then continue
+    if !tb.pairOk[a * L + l]! then continue
     let va := v.get! (k * L + a)
     if va == negInf then continue
     let cand := va + tb.trans.get! (((e + 1) * B + tb.baseOf[a]!) * B + bl)
@@ -307,7 +312,8 @@ private def one : Tables :=
     first := #[-1], last := #[-2], firstCtx := FloatArray.mk #[0, 0, 0]
     reachStarts := #[#[]], reachMask := Array.replicate 3 true
     expectedMin := FloatArray.mk (Array.replicate 3 negInf)
-    durBaseF := FloatArray.mk (Array.replicate 3 0) }
+    durBaseF := FloatArray.mk (Array.replicate 3 0)
+    pairOk := #[true] }
 #guard (best one).get! (2 * 3 + 2) == 0
 #guard legsOf one 0 2 == #[4, 4, 4]
 #guard expand one #[9, 9, 9] == #[4, 4, 4]
@@ -325,7 +331,8 @@ private def paired : Tables :=
     reachStarts := #[#[], #[1]]
     reachMask := #[true, true, true, false, true, false]
     expectedMin := FloatArray.mk #[negInf, negInf, negInf, negInf, negInf, 2]
-    durBaseF := FloatArray.mk #[-5, -5, -5] }
+    durBaseF := FloatArray.mk #[-5, -5, -5]
+    pairOk := Array.replicate 4 true }
 #guard (legsOf paired 0 2) == #[4, 4, 4]
 #guard Float.abs ((best paired).get! (1 * 3 + 2) - (-1 + 2 - 2 + 5 + pairLogPdf 2 2)) < 1e-9
 

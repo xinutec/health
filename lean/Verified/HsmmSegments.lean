@@ -146,7 +146,13 @@ def foldRideWaits (segs : Array Segment) : Array Segment := Id.run do
       | some p, some n => p.mode == "train" && n.mode == "train" && p.lineName == n.lineName
           && p.lineName == some "unknown_rail"
       | _, _ => false
-    if s.mode == "stationary" && s.endTs - s.startTs < RIDE_WAIT_MAX_S && sameRide then
+    -- A wait the decoder decoded as one (the journey state's wait leg,
+    -- marked in `lineName`) stands; the fold is for waits it could not.
+    let decodedWait := s.mode == "stationary" && s.lineName == some "wait"
+    if decodedWait then
+      out := out.push s
+      i := i + 1
+    else if s.mode == "stationary" && s.endTs - s.startTs < RIDE_WAIT_MAX_S && sameRide then
       match next with
       | some n =>
         out := out.modify (out.size - 1) ({ · with endTs := n.endTs })
