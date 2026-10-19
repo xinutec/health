@@ -177,3 +177,162 @@ stays, hops inside walks).
 - **Phantoms.** A cheaper interruption makes phantom hops cheaper too; 06-16's
   St John's Wood "hop" inside a moving Met train appeared under the boundary
   arm. Stage 3's station rule is what stops it, so stage 2 alone may not ship.
+
+## The stay's inside, measured (2026-10-18; on the flip rows 2026-10-19)
+
+Built as `stayMove` (`fits/arm-staymove-2026-10-18.patch`): a stay's minutes
+still or moving within the place, a two-state pass per segment; fitted, 3.3% of
+still minutes start a spell and 36% of moving minutes continue one; a moving
+minute's steps are scored as a walk's; place, position and levels stay the
+stay's. Held out 125/307/63/69/4, referee 137 against 125/309/63/68/4, 143:
+gains 05-22's drive and 06-12's phantom train, loses the walks out of a stay
+(05-20's four minutes to the taxi, 09-30's to St Pancras). With the moving
+minute's fix held to the segment's running centre (2-D Gaussian, 35 m, from
+the narrated stepped stay minutes: median 19 m out, q90 74): unchanged. The
+lost walks are 30 m out of the door, which position cannot tell from 30 m
+inside (`arm-staymove-footprint-2026-10-18.patch`).
+
+On the flip rows, each arm's own decodes heading the fold (`FOLD_DECODER_HEAD`
+on the scoreboard's dump; the baseline's decodes are the control, not the
+stored record): baseline lost 35, gained 16; stay-move lost 45, gained 15.
+It heals two of its target class (07-06's Work stay, 07-16's hop) and loses
+eleven: every short walk that ends near where it began is a stay's spell —
+05-20's four minutes to the taxi, 10-08's three on to Paul, 06-24's 49 m from
+Currys to Lidl (the two shops become one stay), 10-07's eighteen up and down
+the beach, 04-29's walk in Den Haag — and 09-30's walk to the platform, a gain,
+goes back. The footprint form: 42 lost, 15 gained. The other arms of the same
+day on the same instrument: walk displacement per step 39/17, the stays-only
+lognormal cadence 55/15, both 56/17 — each neutral or near it on the held-out
+scoreboard, which grades legs and cannot see a boundary moving three minutes;
+the narrated rows can.
+
+Why the walk out is thin (05-20 22:12–22:16Z, `path_debug`, base): the four
+stepped minutes favour the walk by 12 (−25.4 against −37.3 as the stay's);
+the walk's own structure costs 5 (duration prior −2.8, its level and
+displacement); net +6.9. A spell over the four minutes at the fitted rates
+costs 6.5 and gives the 12 back: the stay wins by about 1.5. The margin is the
+price of a spell, not the evidence.
+
+What the narrated stays hold (45 days, the fixtures' steps; runs of minutes at
+60 steps or more inside stay rows of ten minutes or longer): run lengths 1:
+181, 2: 41, 3: 17, 4: 14, 5–7: 13, 8 or more: 30 — hospitals and hotels (HMC
+Westeinde 04-29, the Parkhotel, Home on 06-24). A geometric spell at 36% gives
+one run in a thousand of length 8; one in ten is observed, so the long runs
+are priced out of the stay and a walk takes them. A stay ends still before a
+vehicle in 8 of 9, before a walk in 95 of 126 (the minutes to the door are the
+stay's, his rule).
+
+Walks to a vehicle (narrated): median 10 min, quartiles 8–15, 1 of 64 at three
+minutes or less; from a vehicle to a stay median 10; between two vehicles (a
+change) median 5.5 (n 10); stay to stay 13.5. The walk out of a stay is not a
+short leg, so a duration fitted per leg kind would not buy 05-20.
+
+## The flip's largest class was a label, not a boundary (2026-10-19)
+
+Every lost row printed beside the head's state at its midpoint and the signal
+at its edges (`/tmp/sas/rowaudit.py`, kept with the instruments): 16 of the 34
+are walks whose head window matches the served one to the minute — 09-14
+08:44–08:51 identically — with another road in the label. The served label
+comes from the enrichment stage's five-sample way pick over the SPLIT stage's
+window (42 fixes from 08:42, through the station exit: "Euston Underpass");
+the head's `nameMoves` ran the same pick over the decoder's 35 fixes from
+08:44 ("Euston Road"). The "walks overrunning stays" reading of this class
+(2026-10-18) was from one day and wrong; the stepped minutes it cited are
+outside the building by the second minute (09-15 16:36: 39–58 m, 16:37:
+74–100 m).
+
+Done: a walk under the head is labelled by the roads it was on longest
+(`Enrich.roadsByTime`: the nearest named highway at every fix, weighted by the
+seconds to the next, composed by `composeWayName`, the matcher's rule), and
+carries every road as `roads`; the truth check holds a "walking on X" row when
+X is in the label or among the leg's roads (its own rule, "extra attribution
+on the live side is not a contradiction", applied to all the attribution the
+leg has). Flip rows, baseline decodes: 35 lost → 23, 15 gained both times
+(the earlier "16" counted the gate's echo of an exemption that held again).
+Of the 56 narrated walk rows whose midpoint is a headed walk, 39 have the road
+in the label, 45 among the roads; those left name a road the decoder's fix set
+never reaches (the underpass before the walk's first fix, 09-14 and 09-15; a
+close the five-sample pick landed in, Hannah Close, Eversley Avenue) — the
+served label's lottery, to re-audit from each row's own fixes.
+
+The rest of the 34: stations on `unknown_rail` 4 (Eurostar, Métro 4 ×2,
+06-18's board station); platform waits folded into a neighbour 2 (07-01 Euston
+Square, 09-06 Stanmore); hops 2 (07-07, 07-16); movement inside a visit 3
+(07-06 Work's two walks, 07-16 UCH's two buildings); a bus; 05-25's slow drive
+start; 09-30's stop inside the Paris walk; 10-08's Paul by name; 09-15
+15:43–15:50's window, which the signal contradicts (he left the office at
+16:35 local, not 16:43); two rows on days abroad not yet mapped.
+
+## The journey layer, designed and costed (2026-10-19)
+
+**Shape.** The outer trellis holds the stays (one state per place, one
+unnamed) and one journey state. A journey segment's cell is the best leg path
+over its window — an inner decode over the leg states L (walking, cycling,
+driving, plane, each line in the day's graph, `unknown_rail`: 16 on a London
+day; S2's `train L from σ` later) — plus the journey's own terms, charged once:
+the heart-rate and fix-presence level over the whole window (`scorePrepared`,
+O(1) from the prefix sums), a journey duration prior (narrated journeys:
+median 24.5 min, q90 56, 159 of 162 within 240), the first-leg and last-leg
+priors (first leg a walk 139 of 162, a train 18 — the platform stay before it
+—, a drive 2; last leg a walk 142). Stay ↔ journey replaces stay ↔ movement:
+a stay's cross mass has one destination, and the place choice stays with
+`stayEntry`. A leg keeps every term it has today except the level: per-minute
+emissions, the pairs inside and the pair across its end, displacement, its
+mode's duration prior; leg → leg is a fitted matrix (narrated pairs: train →
+walk 81, walk → train 75, train → train 9, walk → drive 3).
+
+**The inner pass is the existing specification on a sub-problem.** For a
+start `s0`, the best leg path over `[s0, e]` is `Spec.bestEnd` of the problem
+with `T' = maxJ`, `S' = L`, `init` the first-leg prior, `trans` the leg
+matrix, `dur` the leg's duration and level-free segment terms. One forward
+sweep from `s0` yields the value for every end before `s0 + maxJ`; the table
+`IN[s0][e]` (T × maxJ) becomes the journey class's per-end delta (`durDelta`),
+−∞ beyond `maxJ`. The packed trellis and its proofs are untouched: the journey
+is a state whose duration cell holds a number, as a stay's holds its segment
+emission. A decoded journey's legs come from re-running its window's sweep
+with back-pointers, once per decoded journey. The sweep is unproved as code;
+its specification is `bestEnd`, so the proof, when wanted, is the existing one
+restated.
+
+**Cost, against today's** (`verified_cli decodeprof`, 09-30: T 1440, S 123,
+maxD 1440; build 17.7 s — durations 7.2, emissions and entry 9.8 —, decode
+12.4 s over 2.55 × 10⁸ cells, 49 ns a cell). The sweeps cost T · L · maxJ²/2
+cells: 3.7 × 10⁸ at maxJ 180 (about 18 s a day; 155 of 162 narrated journeys
+fit), 6.6 × 10⁸ at 240 (32 s; 159 fit). A journey longer than `maxJ` decodes
+as two, journey → journey at a fitted rate. The outer trellis is 17 states
+narrower. Memory: the leg tables are leg class × maxJ × T (six classes,
+1.6 × 10⁶ floats) and `IN` is T × maxJ; nothing of the outer's T × maxD × S
+order is added, which is what the travel-day limit (#1949) watches.
+
+**What it collects, by the numbers already measured.** The levels: +4 on
+05-18 (5.8 needed), +5 on 07-02 (12 needed); one level instead of two for a
+walk out and a drive (+2.8 against 05-20's 1.5 margin). The change: a walk
+between two rides, or a 0-minute change, is a leg transition at its fitted
+rate, not a movement → movement step from the uniform split. The home for S2:
+a leg `train L from σ` whose alight transition scores the pair's path, which
+the flat trellis cannot carry (`2026-10-station-states.md`). What it does not
+collect: durations (the walk out is 10 min; a hop's length is its station
+pair's), the displacement and boundary-pair pricing of short legs (the
+boundary class, +4.6, is its own arm), and the stay's inside.
+
+## Order (2026-10-19)
+
+By the flip's loss classes after the label fix (23 lost, 15 gained), largest
+first; every arm is judged on the flip rows under its own decodes
+(`flipcheck.sh <tag> <dump>`, a minute) as well as the scoreboard, which
+cannot see a boundary move:
+
+1. **The 11 label rows** naming a road the row's own fixes never reach:
+   re-audit each from its fixes (the road is the pipeline's wording, not his),
+   re-key the floors.
+2. **Stations on `unknown_rail`** (4 rows, and 20 sides in the posterior
+   count): the cascade's rail-run labelling the head already takes
+   (`railUnnamed`) names the Eurostar and Métro 4 on the served day; what it
+   lacks under the head is the question.
+3. **Movement inside a visit** (3): the stay's inside with a run-length law
+   that holds the measured tail and the stay's ending; its own failure mode
+   (a short walk that returns is a spell) is measured above, so the journey's
+   single level (stage 4) may have to come first.
+4. **The journey state** as designed, levels shared, `maxJ` 240; gate adds
+   `decodeprof` on 09-30 within 2× today's decode. Then S2 inside it.
+5. **Platform waits** (2) are S1's state; **hops** (2) are S2's.

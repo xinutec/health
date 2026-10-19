@@ -2962,6 +2962,9 @@ private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DaySt
          , placeAt := ← match j.getObjVal? "placeAt" with
              | .ok (.arr #[la, lo]) => do return some (← jFloat la, ← jFloat lo)
              | _ => pure none
+         , roads := ← match j.getObjVal? "roads" with
+             | .ok (.arr xs) => xs.mapM (·.getStr?)
+             | _ => pure #[]
          , asleep := ← optB "asleep", tz := ← optS "tz"
          , minutesAsleep := ← jOptInt j "minutesAsleep"
          , inferred := ← optB "inferred" }

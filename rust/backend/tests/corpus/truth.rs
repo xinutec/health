@@ -161,13 +161,10 @@ const BASELINE: &str = concat!(
 /// row to whatever the pipeline drew would make this corpus self-referential,
 /// which is the one property that makes it worth having.
 ///
-/// What remains is `@11:13Z`: mode and bounds right, way NAME wrong. That is
-/// #445, and it is a naming question rather than a truth question.
-const KNOWN_UNHELD: [(&str, i64, &str); 1] = [(
-    "2026-06-16",
-    1_781_608_380,
-    "right mode and bounds, wrong way name (#445)",
-)];
+/// What remained was `@11:13Z`: mode and bounds right, way NAME wrong — a
+/// naming question rather than a truth question. It holds since the check
+/// reads every road a leg was on (`roads`), not only the three in its label.
+const KNOWN_UNHELD: [(&str, i64, &str); 0] = [];
 
 /// A day's rows, resolved to unix seconds, ready for `truthcheck`.
 struct Resolved {

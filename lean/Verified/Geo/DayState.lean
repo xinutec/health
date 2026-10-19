@@ -77,6 +77,9 @@ structure DayState where
   re-derived by the client (#339); see `cityForState`. -/
   city : Option String := none
   wayName : Option String := none
+  /-- Every road a moving leg was on (`Seg.roads`); `wayName` has room for
+      three. Not part of `sameState`. -/
+  roads : Array String := #[]
   /-- Asleep while the underlying state is not `sleeping` (in transit). Omitted
       when the mode IS `sleeping` — it would be redundant. -/
   asleep : Option Bool := none
@@ -112,6 +115,9 @@ structure Seg where
   /-- `SegmentMerge.Seg.placeSource`, carried to the state (#325). -/
   placeSource : Option Verified.PlaceSource := none
   wayName : Option String := none
+  /-- The roads of a moving leg, longest first (`SegmentMerge.Seg.walkWayUm`'s
+  names); `wayName` is the label composed from the first three. -/
+  roads : Array String := #[]
   displayTz : Option String := none
   /-- The metro area the leg sits in, where both its ends agree on one
   (`Enrich.commonCity`). Absent on a leg that CROSSES cities. -/
@@ -170,6 +176,7 @@ private def makeStateFromSegment (seg : Seg) (startTs endTs : Int) (mode : Mode)
     placeSource := seg.servedSource.map (·.rule),
     placeAt := seg.servedSource.bind (·.askedAt),
     wayName := seg.wayName,
+    roads := seg.roads,
     asleep := if asleep && mode != "sleeping" then some true else none,
     tz := seg.displayTz,
     minutesAsleep := none,

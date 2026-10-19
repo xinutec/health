@@ -136,6 +136,10 @@ fresh compute; habitual endpoints now share one cell forever. The cost is a city
 boundary crossing a cell, which the both-endpoints-must-agree rule absorbs. -/
 def cityGrid (n : Float) : Float := Float.floor (n * 1000 + 0.5) / 1000
 
+/-- How many fixes of one leg `roadsByTime` asks the ways at, at most: every
+fix of a walk at a fix a second for four minutes, or a minute for four hours. -/
+def ROAD_SAMPLES_MAX : Nat := 240
+
 /-- A Kalman fix as this reads it: the leg's own points, in time order. -/
 abbrev Pt := Verified.GeoFix
 
@@ -223,6 +227,40 @@ def enrichMovingSegment
                                   | none => seg.city
     roadCorridorFraction := roadCorridorFraction.orElse fun _ => seg.roadCorridorFraction }
 
+
+/-- A leg's roads by TIME: at every k-th fix the nearest named highway, each
+weighted by the seconds to the next sampled fix (the last by the seconds to
+`endTs`), summed per name — `composeWayName`'s input, the label the matcher
+writes. The five-sample pick names whichever one road its samples fell on, so
+the same walk is labelled by its fix set: 2026-09-14 08:44, "Euston Underpass"
+over the split stage's 42 fixes and "Euston Road" over the decoder's 35. -/
+def roadsByTime (waysLookup : Float → Float → Array NearbyWay) (pts : Array Pt) (endTs : Int) :
+    Array (String × Float) :=
+  let n := pts.size
+  let k := max 1 ((n + ROAD_SAMPLES_MAX - 1) / ROAD_SAMPLES_MAX)
+  let sampled : Array Pt := (Array.range ((n + k - 1) / k)).filterMap fun j => pts[j * k]?
+  sampled.zipIdx.foldl (init := (#[] : Array (String × Float))) fun out pj =>
+    let p : Pt := pj.1
+    let nextTs : Int := match sampled[pj.2 + 1]? with | some q => q.ts | none => endTs
+    let w := Float.ofInt (nextTs - p.ts)
+    match (if w > 0 then nearestRoad (waysLookup p.lat p.lon) else none) with
+    | none => out
+    | some r =>
+      let name := r.name.getD ""
+      match out.findIdx? (·.1 == name) with
+      | some ix => out.modify ix fun c => (c.1, c.2 + w)
+      | none => out.push (name, w)
+where
+  /-- A way without a distance ranks behind every way with one. -/
+  FAR_M : Float := 1e9
+  /-- The nearest named highway among `ways`. -/
+  nearestRoad (ways : Array NearbyWay) : Option NearbyWay :=
+    ways.foldl (init := none) fun (best : Option NearbyWay) (way : NearbyWay) =>
+      if way.type != "highway" || way.name.isNone then best else
+      match best with
+      | none => some way
+      | some b => if way.distanceM.getD FAR_M < b.distanceM.getD FAR_M then some way else best
+
 /-! ## Parity with Node/V8 (values from `lean/experiments/enrich-refs.mts`) -/
 
 section EnrichGuards
@@ -266,6 +304,21 @@ private def arnhem : Option Address := some (addr N (some "Arnhem") N N N)
 #guard sampleIdxs 10 5 == #[0, 2, 4, 6, 9]
 #guard sampleIdxs 3 3 == #[0, 1, 2]
 #guard sampleIdxs 1 1 == #[0]
+
+-- `roadsByTime`: the nearest named highway per fix, weighted by the time to
+-- the next fix; the last fix carries the time to the leg's end.
+private def roadA : NearbyWay := { type := "highway", subtype := "residential", name := some "A Road", distanceM := some 5 }
+private def roadB : NearbyWay := { type := "highway", subtype := "footway", name := some "B Road", distanceM := some 3 }
+private def rail : NearbyWay := { type := "railway", subtype := "rail", name := some "Main Line", distanceM := some 1 }
+private def waysAt (_lat lon : Float) : Array NearbyWay :=
+  if lon < 0.5 then #[rail, roadA] else #[rail, roadB, roadA]
+private def fixAt (ts : Int) (lon : Float) : Pt := { ts, lat := 51.5, lon }
+#guard roadsByTime waysAt #[fixAt 0 0.1, fixAt 60 0.1, fixAt 120 0.9, fixAt 180 0.9] 300
+  == #[("A Road", 120), ("B Road", 180)]
+#guard Verified.Geo.SegmentMerge.composeWayName
+  (roadsByTime waysAt #[fixAt 0 0.1, fixAt 60 0.1, fixAt 120 0.9, fixAt 180 0.9] 300)
+  == some "B Road, A Road"
+#guard roadsByTime waysAt #[] 300 == #[]
 
 end EnrichGuards
 

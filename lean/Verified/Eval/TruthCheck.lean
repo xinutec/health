@@ -66,6 +66,8 @@ structure Live where
   mode : String
   place : Option String := none
   wayName : Option String := none
+  /-- Every road the leg was on; the label names the three longest. -/
+  roads : Array String := #[]
   placeQualifier : Option String := none
   trainFrom : Option String := none
   trainTo : Option String := none
@@ -79,6 +81,7 @@ structure StateWindow where
   mode : String
   place : Option String := none
   wayName : Option String := none
+  roads : Array String := #[]
   deriving BEq, Repr, Inhabited
 
 /-! ## String helpers -/
@@ -180,7 +183,7 @@ def parsePipelineState : Option StateWindow → Option Live
       let (body, qual) := splitTrailingParen p.trimAscii.toString
       some { mode := m, place := some body, placeQualifier := qual }
     | none =>
-      some { mode := m, wayName := st.wayName.map (·.trimAscii.toString) }
+      some { mode := m, wayName := st.wayName.map (·.trimAscii.toString), roads := st.roads }
 
 /-! ## The comparator -/
 
@@ -244,13 +247,14 @@ def truthMatches : Option Truth → Option Live → Bool
       | some tw => if !wayNameCovers tw l.wayName then return false
       | none => pure ()
       return true
-    -- A truth-asserted place must match; a truth-asserted way must be carried
-    -- by the live label; a truth asserting neither is a mode-only claim.
+    -- A truth-asserted place must match; a truth-asserted way must be a road
+    -- the leg was on — in the label, or among the roads the label had no room
+    -- for; a truth asserting neither is a mode-only claim.
     match t.place with
     | some tp => return (tp.splitOn PLACE_ALTERNATIVES).any fun alt => normOpt (some alt) == normOpt l.place
     | none =>
       match t.wayName with
-      | some tw => return wayNameCovers tw l.wayName
+      | some tw => return wayNameCovers tw l.wayName || l.roads.any (fun r => norm r == norm tw)
       | none => return true
 where
   /-- The live side's mode is a raw string; fold `sleeping` the same way. -/
@@ -355,8 +359,8 @@ private def tw (m : Mode) (way : Option String := none) (pl : Option String := n
     trainFrom := f, trainTo := t, lineName := l }
 
 private def st (s e : Int) (m : String) (pl : Option String := none)
-    (way : Option String := none) : StateWindow :=
-  { startTs := s, endTs := e, mode := m, place := pl, wayName := way }
+    (way : Option String := none) (roads : Array String := #[]) : StateWindow :=
+  { startTs := s, endTs := e, mode := m, place := pl, wayName := way, roads }
 
 -- splitTransitRoute: the arrow needs whitespace on BOTH sides.
 #guard splitTransitRoute "Alpha → Beta" == some ("Alpha", "Beta", none)
@@ -427,6 +431,10 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
     (parsePipelineState (some (st 0 9 "walking" (way := some "Alpha Road, Beta Street"))))
 #guard !truthMatches (some (tw .walking (way := some "Gamma Lane")))
     (parsePipelineState (some (st 0 9 "walking" (way := some "Alpha Road, Beta Street"))))
+-- A road the leg was on but the label had no room for holds the row.
+#guard truthMatches (some (tw .walking (way := some "Gamma Lane")))
+    (parsePipelineState (some (st 0 9 "walking" (way := some "Alpha Road, Beta Street")
+      (roads := #["Alpha Road", "Beta Street", "Gamma Lane"]))))
 -- The qualifier is ignored on BOTH sides — right place, wrong amenity still matches.
 #guard truthMatches (some (tw .stationary (pl := some "Cafe Delta") (q := some "restaurant")))
     (parsePipelineState (some (st 0 9 "stationary" (pl := some "Cafe Delta (cafe)"))))

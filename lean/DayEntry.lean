@@ -846,6 +846,7 @@ private def segJson (s : Seg) : Json :=
     -- replay's INPUT is unchanged by its presence.
     ("walkWayUm", Json.arr (s.walkWayUm.map fun (n, um) =>
       Json.arr #[Json.str n, Lean.toJson um])),
+    ("roads", Json.arr (s.roads.map Json.str)),
     ("biometrics", match s.biometrics with | none => Json.null | some b => biomJson b)]
 
 /-- One `DayState` on the wire.
@@ -866,6 +867,7 @@ def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
       | some (lat, lon) => Json.arr #[Lean.toJson lat, Lean.toJson lon]
       | none => Json.null),
     ("wayName", jOptS s.wayName),
+    ("roads", Json.arr (s.roads.map Json.str)),
     ("asleep", match s.asleep with | none => Json.null | some b => Json.bool b),
     ("tz", jOptS s.tz), ("minutesAsleep", jOptI s.minutesAsleep),
     ("inferred", match s.inferred with | none => Json.null | some b => Json.bool b)]
@@ -1169,9 +1171,21 @@ def dayResult (j : Json) : Json :=
         if s.mode != "walking" && s.mode != "driving" then s else
         let pts := (env.points.filter fun p => p.ts ≥ s.startTs && p.ts ≤ s.endTs).map fun p =>
           ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt)
-        match Verified.Geo.Enrich.enrichMovingSegment enrichReads.ways enrichReads.geocode s pts with
-        | some e => { s with wayName := e.wayName, city := e.city }
-        | none => s)
+        let named := match Verified.Geo.Enrich.enrichMovingSegment enrichReads.ways enrichReads.geocode s pts with
+          | some e => { s with wayName := e.wayName, city := e.city }
+          | none => s
+        if s.mode != "walking" then named else
+        -- A walk is labelled by the roads it was on longest (`roadsByTime`),
+        -- as the matcher labels one; the five-sample pick names whichever
+        -- road its samples fell on, and the decoder's walk has a different
+        -- fix set from the split stage's, so the same walk got another road.
+        let roads := Verified.Geo.Enrich.roadsByTime enrichReads.ways pts s.endTs
+        -- Every road goes on the segment, so a reader has the whole
+        -- attribution, not the three the label has room for.
+        let named := { named with roads := roads.map (·.1) }
+        match Verified.Geo.SegmentMerge.composeWayName roads with
+        | some n => { named with wayName := some n }
+        | none => named)
     -- A fixless stretch the decoder labelled by its steps, between two stays
     -- at one place, is that stay (`absorbDarkMoveAtPlace`). After the
     -- decoder's places land: a dark stay is named by `hsmmOverride`, not by

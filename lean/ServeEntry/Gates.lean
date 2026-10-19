@@ -615,7 +615,8 @@ private def parseState (j : Json) : Except String StateWindow := do
     endTs := ← (← j.getObjVal? "endTs").getInt?
     mode := ← (← j.getObjVal? "mode").getStr?
     place := optStr j "place"
-    wayName := optStr j "wayName" }
+    wayName := optStr j "wayName"
+    roads := ← (← optArr j "roads").mapM (·.getStr?) }
 
 def truthCheckResult (j : Json) : Json :=
   let parsed : Except String Json := do

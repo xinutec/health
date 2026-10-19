@@ -171,6 +171,10 @@ structure Seg where
   diagnostic filtered the same way could not show a route riding the wrong way
   on a leg that kept its cascade name. -/
   walkWayUm : Array (String × Nat) := #[]
+  /-- Every road a moving leg was on, longest first (`Enrich.roadsByTime`);
+  `wayName` is the label composed from the first three. Empty where nothing
+  wrote it. -/
+  roads : Array String := #[]
   deriving Inhabited, BEq, Repr
 
 /-- A GPS fix, as these passes see it. -/
