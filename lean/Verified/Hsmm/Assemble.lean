@@ -169,7 +169,10 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     ({} : Std.HashMap Int Float)
   { obs
     states := (buildStateSpace (places.map (·.1)) lines
-      ++ [(⟨.train, none, some Emissions.UNKNOWN_METRO⟩ : State)]).toArray
+      ++ [(⟨.train, none, some Emissions.UNKNOWN_METRO⟩ : State)]
+      -- The journey state (`segEm.journey`): mode `unknown`, which no other
+      -- state wears; `Journey` fills its cell.
+      ++ (if segEm.journey.isSome then [(⟨.unknown, none, none⟩ : State)] else [])).toArray
     model
     connGraph := RouteModel.toConnGraph model
     modeledLines := RouteModel.linesInGraph model
@@ -337,6 +340,8 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
   -- are built over exactly `obs.size × states.size`, so it is never asked.
   match c.obs[t]?, c.states[s]? with
   | some o, some st =>
+    -- A journey's minutes are scored by its legs (`Journey`).
+    if st.mode == .unknown then SEG_ZERO else
     let minute := c.minuteLines.getD t (RouteModel.minuteLines c.model o)
     let railEv := if st.mode != .train then 0.0
       else match c.railByMinute[t]? with
@@ -407,6 +412,7 @@ def entryAt (c : ModelContext) (t s : Nat) : Float :=
   match c.obs[t]?, c.states[s]? with
   | none, _ | _, none => negInf
   | some o, some st =>
+  if st.mode == .unknown then SEG_ZERO else
   let covered := coveredAt c o.ts
   let lineValid := match st.lineName with
     | some l => (TrainCandidates.linesAt c.coverage o.ts).contains l
@@ -431,6 +437,8 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
   match c.states[s]? with
   | none => negInf
   | some st =>
+    -- A journey's length is its legs' lengths, each priced by its own prior.
+    if st.mode == .unknown then SEG_ZERO else
     let fit := match c.mainlineFit with
       | some f => if Emissions.isMainline st then f else c.fits st.mode
       | none => c.fits st.mode
@@ -440,11 +448,16 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
 /-- The segment-level emission of state `s` over a segment of length `d` with
     window `w` (its net displacement) and statistics `st`. -/
 def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
-    (st : SegmentEmission.Stats) : Float :=
+    (st : SegmentEmission.Stats) (level : Bool := true) : Float :=
   let q := c.segEm
   match c.states[s]? with
   | some x =>
-    SegmentEmission.scorePrepared q x.mode st
+    -- The journey state carries the heart-rate level alone (its `unknown`
+    -- table); a leg under it (`level := false`) keeps its mode's sleep and
+    -- fix-presence terms and the rest, without the level.
+    if x.mode == .unknown then (SegmentEmission.scorePreparedParts q x.mode st).2 else
+    (if level then SegmentEmission.scorePrepared q x.mode st
+     else SegmentEmission.sleepScore q.p st + (SegmentEmission.scorePreparedParts q x.mode st).1)
       + (match q.p.unlistedCentre with
          | some h =>
            if x.mode == .stationary && x.placeId.isNone then
@@ -516,12 +529,23 @@ def coveredAtE (c : ModelContext) (e : Nat) : Bool :=
 /-- `durAtFrom` with what depends only on `(d, e)` — the coverage and the
     segment's window — resolved by the caller once for every state (#1774). -/
 def durAtFromW (c : ModelContext) (s d : Nat) (covered : Bool)
-    (w : Option SegmentEvidence.Window) (sst : SegmentEmission.Stats) (base : Float) : Float :=
+    (w : Option SegmentEvidence.Window) (sst : SegmentEmission.Stats) (base : Float)
+    (level : Bool := true) : Float :=
   match c.states[s]? with
   | none => negInf
   | some st =>
   Assembly.durationLogProbFrom st d covered (Duration.minDurationByMode .train) base
-    + segEmFrom c s d w sst
+    + segEmFrom c s d w sst level
+
+/-- The journey state's index, when the context has one. -/
+def journeyIdx (c : ModelContext) : Option Nat := c.states.findIdx? (·.mode == .unknown)
+
+/-- A state that is a journey's leg: every moving state. -/
+def isLegState (st : State) : Bool := st.mode != .stationary && st.mode != .unknown
+
+/-- The leg states' indices. -/
+def legIdxs (c : ModelContext) : Array Nat :=
+  (c.states.zipIdx.filter fun (st, _) => isLegState st).map (·.2)
 
 theorem durAtFrom_eq_W (c : ModelContext) (s d e : Nat) (base : Float) :
     durAtFrom c s d e base

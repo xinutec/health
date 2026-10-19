@@ -73,6 +73,17 @@ structure SleepParams where
   rho : Float
   deriving Inhabited
 
+/-- The journey state's parameters (`Params.journey`). -/
+structure JourneyParams where
+  /-- The longest journey the inner pass considers, in minutes; a longer one
+      decodes as two with a stay between. -/
+  maxJ : Nat
+  /-- `log P(mode)` of a journey's first leg, per leg mode. -/
+  firstLeg : List (Mode × Float)
+  /-- `log P(mode)` of a journey's last leg, per leg mode. -/
+  lastLeg : List (Mode × Float)
+  deriving Inhabited
+
 structure Params where
   sigmaW : Float
   rho : Float
@@ -109,6 +120,13 @@ structure Params where
       per-minute off-network term, which charged a per-segment fact on every
       lit minute and so grew with the stay's length. -/
   unlistedCentre : Option Float := none
+  /-- The journey state (`Assemble` adds one when this is set): a journey is
+      one segment of the outer trellis whose cell is the best leg path over
+      its window (`Journey`), with the heart-rate and fix-presence level drawn
+      once per journey (`byMode`'s `unknown` entry) and its duration from the
+      `unknown` duration fit. `firstLeg`/`lastLeg`: `log P(mode)` of a
+      journey's first and last leg, narrated. -/
+  journey : Option JourneyParams := none
   deriving Inhabited
 
 /-- Prefix sums over the day's minutes: awake heart-rate count, sum and sum of
@@ -430,10 +448,12 @@ def prepare (p : Params) (N : Nat) : Prepared :=
 
 private def idx (x : Float) : Nat := (x + HALF).toUInt64.toNat
 
-def scorePrepared (q : Prepared) (mode : Mode) (st : Stats) : Float :=
-  sleepScore q.p st
-    + match q.tables.find? (·.mode == mode) with
-  | none => ZERO
+/-- `scorePrepared`'s two mode-table terms apart: the fix-presence term and
+    the heart-rate level. A journey's legs keep the first (a ride is dark, a
+    walk lit — the leg's own fact) and the journey draws the second once. -/
+def scorePreparedParts (q : Prepared) (mode : Mode) (st : Stats) : Float × Float :=
+  match q.tables.find? (·.mode == mode) with
+  | none => (ZERO, ZERO)
   | some t =>
     let n := idx st.n
     let k := idx st.fixN
@@ -447,7 +467,11 @@ def scorePrepared (q : Prepared) (mode : Mode) (st : Stats) : Float :=
       let s2 := q.p.sigmaW * q.p.sigmaW
       q.withinConst.getD hn ZERO - w * ssw / (TWO * s2)
         - HALF * t.logTwoPiV.getD hn ZERO - (mean - t.m.hrMean) * (mean - t.m.hrMean) * t.invTwoV.getD hn ZERO
-    fix + hr
+    (fix, hr)
+
+def scorePrepared (q : Prepared) (mode : Mode) (st : Stats) : Float :=
+  let (fix, hr) := scorePreparedParts q mode st
+  sleepScore q.p st + fix + hr
 
 -- A dark five-hour stretch is a stay's, not a ride's; a lit one a walk's.
 private def pTest : Params :=

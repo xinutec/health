@@ -317,6 +317,52 @@ collect: durations (the walk out is 10 min; a hop's length is its station
 pair's), the displacement and boundary-pair pricing of short legs (the
 boundary class, +4.6, is its own arm), and the stay's inside.
 
+## The journey state, built and measured (2026-10-19)
+
+Built as designed, behind the record (`segEmission.journey`: `maxJ` 240,
+narrated first- and last-leg shares; the journey's heart-rate level as the
+`unknown` mode's table, fitted on narrated journeys: mean 98.5, 9.9 between);
+`Verified/Hsmm/Journey.lean` is the inner sweep, `ServeEntry` builds the leg
+tables and the journey class's cell, `Journey.expand` writes the decoded
+journey's legs back into the path. Eight runs, each held out (base
+125/309/63/68/4, referee 143) and on the flip rows (base 17 lost, 18 gained):
+
+1. Shared level, legs without any level term: 120/300/60/64/8, rows 38/17.
+2. Legs keep their fix-presence term (a ride is dark, a walk lit — the leg's
+   fact; `scorePreparedParts`), journey duration prior dropped (its legs'
+   lengths are priced already): unchanged. The cause was elsewhere.
+3. No shared level at all (control): 117/298/60/62/9, rows 41/17 — so not
+   the level either. The path debugger, taught the journey's cell, priced a
+   12-minute walk journey on 10-08 at −644: the legs' emission PREFIX SUMS
+   carried −∞ from the first minute a leg cannot emit (a walk at the TGV's
+   300 km/h) over every later minute of the day — every walk after the TGV
+   on 10-08 and after the Eurostar on 09-30 vanished, 09-14 was untouched.
+4. Floored (−10⁴ a minute), still no shared level: 122/309/60/62/5, rows
+   23/18; 10-08 decodes as the baseline does. Lines and stations down: a leg
+   inside a journey carried no entry prior (the train generator's vouching).
+5. Shared level on: 125/310/60/64/4, rows 21/19 — heals 07-16's two-minute
+   hop and 10-08's stop, loses 06-16's change and 10-08's walk to Paul.
+6. Legs with their entry prior: lines 63, stations 66, legMode 312 — and 20
+   phantoms: alternating one-minute Met/Victoria legs at King's Cross. A leg
+   under a shared level pays no level, which in the flat model was a
+   segment's existence price, and a covered train's floor is relaxed.
+7. The first leg's fix-anchored boarding context: unchanged (covered minutes
+   carry no boarding term in either model).
+8. The covered floor withheld inside legs: **125/311/63/70/5, referee 142;
+   rows 21 lost, 19 gained.** Against the baseline: legs +2, stations +2, one
+   phantom more (06-16's Met "hop" inside the Jubilee change, the risk named
+   above), referee −1; rows −3 net (07-16's hop and 10-08's stop healed;
+   06-16's change, 07-06's two morning rows and 10-08's walk to Paul lost).
+   Decode 48 s against 30 s on 09-14.
+
+Parity, not a gain: the shared level's own prize on the hops is real (07-16),
+and its cost is that a leg has no existence price, which the leg floors now
+carry instead. Kept behind the record key as the home for S2 (`train L from
+σ` as leg states, the change at a shared station), not shipped. A journey
+longer than `maxJ` (10-08's 293-minute TGV) decodes as two with a stay
+between — the bound needs lifting or a journey → journey continuation before
+any default.
+
 ## Order (2026-10-19)
 
 By the flip's loss classes after the label fix, largest first; every arm is

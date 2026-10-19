@@ -929,7 +929,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | _ => none
     let uMaxKmh := ((f.getObjVal? "uMaxKmh").toOption.bind num).getD
       Verified.Hsmm.SegmentEmission.DEFAULT_U_MAX_KMH
-    let byMode := all.filterMap fun m => do
+    -- `unknown` is the journey's level (`Params.journey`), absent otherwise.
+    let byMode := (all ++ [Verified.Hsmm.Emissions.Mode.unknown]).filterMap fun m => do
       let arr ← ((modes.getObjVal? (Verified.Hsmm.StateSpace.modeName m)) >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
       | [a, b, c, d] => some (m, ({ hrMean := a, hrTau := b, fixA := c, fixB := d } :
@@ -952,8 +953,17 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         >>= (·.getArr?)).toOption
       let mat := rows.filterMap fun r => (r.getArr?).toOption.map fun xs => xs.filterMap num
       if mat.size == 3 && mat.all (·.size == 3) then some (m, mat) else none
+    -- `journey: {maxJ, firstLeg: {mode: p}, lastLeg: {mode: p}}`, the journey state's arm.
+    let journey : Option Verified.Hsmm.SegmentEmission.JourneyParams := do
+      let jj ← (f.getObjVal? "journey").toOption.filter (!·.isNull)
+      let maxJ ← (jj.getObjVal? "maxJ" >>= (·.getNat?)).toOption
+      let legs := fun (k : String) => all.filterMap fun m => do
+        let v ← ((jj.getObjVal? k) >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m))).toOption
+        let pr ← num v
+        if pr > 0 then pure (m, Float.log pr) else none
+      pure { maxJ, firstLeg := legs "firstLeg", lastLeg := legs "lastLeg" }
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
-           obsChain, asleep, unlistedCentre }
+           obsChain, asleep, unlistedCentre, journey }
   let some segEm := segEm?
     | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
@@ -1158,6 +1168,12 @@ private def durClassKey (s : Verified.Hsmm.Emissions.State) : Nat :=
 /-- Reference `segEnd` for the duration baseline (matches TS `REF_E`). -/
 private def assembleRefE : Nat := 720
 
+/-- The floor under one minute's emission in the journey's leg prefix sums:
+    a leg over 240 such minutes stays inside the packed envelope. -/
+private def journeyEmitFloor : Float := -10000
+/-- A Float zero for the journey builders' loops (a literal there is a GMP call). -/
+private def journeyZero : Float := 0
+
 /-- Phase one of the model build: the emission and entry tensors, `T·S` each.
     The three phases are separate functions so `decodeprof` can time them one at
     a time (#1774); `buildPData` composes them and nothing else calls them. -/
@@ -1175,8 +1191,13 @@ private def buildEmitEntry (c : Verified.Hsmm.Assemble.ModelContext) (T S : Nat)
 /-- Phase two: the transition base, the override index and the flat override
     rows — `(transBase, transIdx, transFlat, nRows)`. -/
 private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Nat) :
-    Except String (Array Nat × Array Nat × Array Nat × Nat) := do
+    Except String (Array Nat × Array Nat × Array Nat × Nat × Option (FloatArray × FloatArray)) := do
   let quant := Verified.Hsmm.Quantize.quantize
+  -- Under the journey state the outer trellis holds stays and the journey: a
+  -- leg state is unreachable there, a stay and the journey exchange at no
+  -- cost (the place is the entry prior's, the legs are the journey's cell).
+  let jOn := (Verified.Hsmm.Assemble.journeyIdx c).isSome
+  let isLeg := Verified.Hsmm.Assemble.isLegState
   -- Transitions: the base matrix is time-constant; only chain-context makes a
   -- transition vary with t, and only for structurally chain-eligible pairs
   -- (stay into a place, leave a place into a move, board a named line). Build the
@@ -1191,15 +1212,22 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   let baseTransF := fun (src dst : Verified.Hsmm.Emissions.State) (ws : Float) (a : Nat) =>
     Verified.Hsmm.Transitions.transitionLogProbPre placeNear Verified.Hsmm.Assemble.NO_SELF_LOOP ws src dst c.transWeight
       + Verified.Hsmm.Assemble.stayEntryAt c a dst
+  let outerTransF := fun (src dst : Verified.Hsmm.Emissions.State) (ws : Float) (a b : Nat) =>
+    if !jOn then baseTransF src dst ws a
+    else if isLeg src || isLeg dst then Verified.FloatConst.negInf
+    else if src.mode == .unknown || dst.mode == .unknown then
+      (if a == b then Verified.FloatConst.negInf else journeyZero)
+    else baseTransF src dst ws a
   let mut transBase : Array Nat := Array.replicate (S * S) 0
   for ((src, ws), a) in weighted do
     for ((dst, _), b) in weighted do
-      transBase := transBase.set! (a * S + b) (← encScore pOB (quant (baseTransF src dst ws a)))
+      transBase := transBase.set! (a * S + b) (← encScore pOB (quant (outerTransF src dst ws a b)))
   -- Override rows for chain-eligible, non-hard-zero pairs (superset of the pairs
   -- whose chain term can be non-zero — hard-zeros keep their −∞, chain not added).
   let chainEligible := fun (src dst : Verified.Hsmm.Emissions.State) =>
     (dst.mode == .stationary && dst.placeId != none)
-    || (src.mode == .stationary && src.placeId != none && Verified.Hsmm.RouteModel.isMovingMode dst.mode)
+    || (src.mode == .stationary && src.placeId != none
+        && (Verified.Hsmm.RouteModel.isMovingMode dst.mode || dst.mode == .unknown))
     || (dst.mode == .train && (match dst.lineName with
         | some l => !Verified.Hsmm.Emissions.isPlaceholderLine l | none => false))
   -- What the chain term asks of each minute regardless of the pair — a fix's
@@ -1235,8 +1263,11 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
     if c.chainOn then
       for ((src, ws), a) in weighted do
         for ((dst, _), b) in weighted do
-          if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
-            let base := baseTransF src dst ws a
+          if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst
+              && !(jOn && (isLeg src || isLeg dst)) then
+            -- A journey arrives at and leaves a place with the place's own
+            -- context, as a walk does.
+            let base := outerTransF src dst ws a b
             -- The place-anchored boarding penalty once per pair; each minute adds
             -- only what depends on it (`chainContext` is this composition, #1774).
             let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
@@ -1254,12 +1285,44 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   let mut transIdx : Array Nat := Array.replicate (S * S) nRows  -- sentinel = nRows ⇒ use base
   for ((a, b), i) in ovPairs.zipIdx do
     transIdx := transIdx.set! (a * S + b) i
-  return (transBase, transIdx, transFlat, nRows)
+  -- The legs' transitions for the journey's inner pass, per minute: the
+  -- fitted base and, for a chain-eligible pair, the chain context.
+  let legTrans : Option (FloatArray × FloatArray) := if !jOn then none else some (Id.run do
+    let legs := Verified.Hsmm.Assemble.legIdxs c
+    let L := legs.size
+    -- A journey's first leg boards as a walk would: the fix-anchored term.
+    let walkSt : Verified.Hsmm.Emissions.State := ⟨.walking, none, none⟩
+    let mut firstCtx := FloatArray.mk (Array.replicate (L * T) journeyZero)
+    if c.chainOn then
+      for (b, bi) in legs.zipIdx do
+        let dst := c.states[b]!
+        if dst.mode == .train then
+          for ((cm, covered), t) in minutes.zipIdx do
+            firstCtx := firstCtx.set! (bi * T + t)
+              (Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine walkSt dst covered none cm)
+    let mut out := FloatArray.mk (Array.replicate (T * L * L) Verified.FloatConst.negInf)
+    for (a, ai) in legs.zipIdx do
+      for (b, bi) in legs.zipIdx do
+        if a == b then continue
+        let ((src, ws), _) := weighted[a]!
+        let ((dst, _), _) := weighted[b]!
+        let base := baseTransF src dst ws a
+        if c.chainOn && chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
+          let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
+          for ((cm, covered), t) in minutes.zipIdx do
+            out := out.set! ((t * L + ai) * L + bi)
+              (base + Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine src dst covered pb cm)
+        else
+          for t in [0:T] do
+            out := out.set! ((t * L + ai) * L + bi) base
+    return (out, firstCtx))
+  return (transBase, transIdx, transFlat, nRows, legTrans)
 
 /-- Phase three: the duration base and the per-class deltas —
     `(durClass, durBase, durDelta)`. -/
-private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD halfOB : Nat) :
-    Except String (Array Nat × Array Nat × Array Nat) := do
+private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD halfOB : Nat)
+    (legTrans : Option (FloatArray × FloatArray) := none) :
+    Except String (Array Nat × Array Nat × Array Nat × Option Verified.Hsmm.Journey.Tables) := do
   let quant := Verified.Hsmm.Quantize.quantize
   -- Duration: EXACT class partition by (mode, isNamedTrain).
   let keys : Array Nat := c.states.foldl (fun acc s =>
@@ -1274,12 +1337,22 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   let qiOf := fun (x : Float) => Float.toInt64 x   -- dur is finite
   -- Coverage depends on `e` alone, so once per `e` for every class and `d`.
   let covered : Array Bool := (Array.range T).map (Verified.Hsmm.Assemble.coveredAtE c)
+  -- The journey state's arm: its class, the legs' classes (slots of the
+  -- level-free table) and the journey bound.
+  let jIdx := Verified.Hsmm.Assemble.journeyIdx c
+  let jCls := jIdx.map fun i => durClass[i]!
+  let maxJ := match c.segEm.p.journey with | some jp => min jp.maxJ maxD | none => 0
+  let legs := if jIdx.isSome then Verified.Hsmm.Assemble.legIdxs c else #[]
+  let legSlots : Array Nat := legs.foldl (fun acc l => let k := durClass[l]!; if acc.contains k then acc else acc.push k) #[]
+  let slotOfCls := fun (cls : Nat) => legSlots.findIdx? (· == cls)
+  let legDur0 := FloatArray.mk (Array.replicate (legSlots.size * maxJ * T) Verified.FloatConst.negInf)
   -- A pure loop: in `Except` each of the ~2.4M cells paid for the monad, which
   -- was half the phase (#1774). An out-of-range delta is recorded and thrown
   -- after the loop instead.
-  let (durDelta, bad) : Array Nat × Option Int := Id.run do
+  let (durDelta, bad, legDur) : Array Nat × Option Int × FloatArray := Id.run do
     let mut durDelta : Array Nat := Array.replicate (nC * maxD * T) halfOB
     let mut bad : Option Int := none
+    let mut legDur := legDur0
     for d0 in [0:maxD] do
       -- The gamma prior once per (class, d) (`durAt_eq_durAtFrom`), and the
       -- reference cell each delta is taken against.
@@ -1294,14 +1367,88 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         let sst := Verified.Hsmm.SegmentEmission.statsAt c.segPref (d0 + 1) e
         let cov := covered[e]!
         for cls in [0:nC] do
+          -- The journey's cell waits for the inner pass (below).
+          if jCls == some cls then continue
           let qE := match quant (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) cov w sst bases[cls]!) with
             | some v => qiOf v | none => 0
           let (packed, over) := packDelta qE qRefs[cls]! halfOB
           if over.isSome then bad := over
           durDelta := durDelta.set! ((cls * maxD + d0) * T + e) packed
-    return (durDelta, bad)
+          -- A leg under a journey: the same cell without the level, and
+          -- without the covered train's relaxed floor — a leg pays no level,
+          -- so the floor is what stops a ride splitting into one-minute legs.
+          if d0 < maxJ then
+            if let some slot := slotOfCls cls then
+              legDur := legDur.set! ((slot * maxJ + d0) * T + e)
+                (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) false w sst bases[cls]! false)
+    return (durDelta, bad, legDur)
   if let some delta := bad then throw s!"dur delta {delta} exceeds halfOB {halfOB}"
-  return (durClass, durBase, durDelta)
+  -- The journey state: its cell is the inner pass over the legs plus its own
+  -- level and duration; beyond `maxJ` it is impossible.
+  match jIdx, jCls, legTrans with
+  | some jI, some jc, some (trans, firstCtx) =>
+    let L := legs.size
+    let emitPre : FloatArray := Id.run do
+      let mut out := FloatArray.mk (Array.replicate (L * (T + 1)) journeyZero)
+      -- A minute a leg cannot emit is −∞ per cell in the outer trellis; in a
+      -- prefix sum it would poison every later minute, so it is floored
+      -- here: still far beyond any leg that spans it.
+      for (l, li) in legs.zipIdx do
+        let mut acc := journeyZero
+        for t in [0:T] do
+          let v := Verified.Hsmm.Assemble.emitAt c t l
+          acc := acc + (if v < journeyEmitFloor then journeyEmitFloor else v)
+          out := out.set! (li * (T + 1) + t + 1) acc
+      return out
+    -- The first leg's prior is spread over the states of its mode (which line),
+    -- as the fitted transition weight is; the last leg's is the leg's own.
+    let entryF : FloatArray := Id.run do
+      let mut out := FloatArray.mk (Array.replicate (L * T) journeyZero)
+      for (l, li) in legs.zipIdx do
+        for t in [0:T] do
+          out := out.set! (li * T + t) (Verified.Hsmm.Assemble.entryAt c t l)
+      return out
+    let prior := fun (spread : Bool) (xs : List (Verified.Hsmm.Emissions.Mode × Float)) (l : Nat) =>
+      let st := c.states[l]!
+      match xs.find? (·.1 == st.mode) with
+      | some (_, lp) =>
+        if !spread then lp else
+        let n := legs.foldl (fun k l2 => if c.states[l2]!.mode == st.mode then k + 1 else k) 0
+        lp - Float.log (Verified.FloatConst.natToFloat (max n 1))
+      | none => Verified.FloatConst.negInf
+    let jp := c.segEm.p.journey.get!
+    let tb : Verified.Hsmm.Journey.Tables :=
+      { T, maxJ, journey := jI, legs, legSlot := legs.map (fun l => (slotOfCls durClass[l]!).getD 0)
+        nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
+        first := legs.map (prior true jp.firstLeg), last := legs.map (prior false jp.lastLeg), firstCtx }
+    let inner := Verified.Hsmm.Journey.best tb
+    let tb := { tb with cell := inner }
+    let (durDelta, durBaseJ, bad) : Array Nat × Array Nat × Option Int := Id.run do
+      let mut durDelta := durDelta
+      let mut durBaseJ := durBase
+      let mut bad : Option Int := none
+      for d0 in [0:maxD] do
+        if d0 ≥ maxJ then
+          durBaseJ := durBaseJ.set! (jI * maxD + d0) 0
+          continue
+        let base := Verified.Hsmm.Assemble.durPriorBase c jI (d0 + 1)
+        let qRef := match quant (Verified.Hsmm.Assemble.durAtFrom c jI (d0 + 1) assembleRefE base) with
+          | some v => qiOf v | none => 0
+        for e in [0:T] do
+          let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
+          let sst := Verified.Hsmm.SegmentEmission.statsAt c.segPref (d0 + 1) e
+          let legsPart := inner.get! (d0 * T + e)
+          let full := Verified.Hsmm.Assemble.durAtFromW c jI (d0 + 1) covered[e]! w sst base + legsPart
+          match quant full with
+          | none => durDelta := durDelta.set! ((jc * maxD + d0) * T + e) 0
+          | some v =>
+            let (packed, over) := packDelta (qiOf v) qRef halfOB
+            if over.isSome then bad := over
+            durDelta := durDelta.set! ((jc * maxD + d0) * T + e) packed
+      return (durDelta, durBaseJ, bad)
+    if let some delta := bad then throw s!"journey dur delta {delta} exceeds halfOB {halfOB}"
+    return (durClass, durBaseJ, durDelta, some tb)
+  | _, _, _ => return (durClass, durBase, durDelta, none)
 
 /-- Build the packed `PData` directly from the assembled model — the in-process
     twin of `quantizeModel` + `parseModel`, so `verified_cli` goes raw-inputs →
@@ -1309,18 +1456,19 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     (`nTB = T`); durations use the `(mode, isNamedTrain)` class factorisation
     (`durBase` at `REF_E` + `durDelta` per class), the compact form the decoder
     reads. Scores are finite here (log-probabilities), so no -∞ path arises. -/
-private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : Except String PData := do
+private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) :
+    Except String (PData × Option Verified.Hsmm.Journey.Tables) := do
   let T := c.obs.size
   let S := c.states.size
   if T > pTMax then throw s!"T={T} exceeds the verified envelope (T ≤ 2048)"
   let halfOB := pOB / 2
   let (emit, entry) ← buildEmitEntry c T S
-  let (transBase, transIdx, transFlat, nRows) ← buildTransitions c T S
-  let (durClass, durBase, durDelta) ← buildDurations c T S maxD halfOB
-  return {
+  let (transBase, transIdx, transFlat, nRows, legTrans) ← buildTransitions c T S
+  let (durClass, durBase, durDelta, journey) ← buildDurations c T S maxD halfOB legTrans
+  return ({
     T, S, maxD, halfOB, emit, entry, init := #[]
     transBase, nTB := 1, transIdx, transFlat, nRows
-    durBase, durClass, durDelta, hasOv := #[], durOv := {} }
+    durBase, durClass, durDelta, hasOv := #[], durOv := {} }, journey)
 
 /-- Assemble the model from parsed inputs, build `PData`, and DECODE it with
     `pDecodeFast` — the full raw-inputs → path serve path, no marshalled payload. -/
@@ -1330,7 +1478,7 @@ private def assembleDecodeResult (j : Json) : Json :=
   | .ok (c, maxD) =>
     match buildPData c maxD with
     | .error e => Json.mkObj [("error", Json.str e)]
-    | .ok pd =>
+    | .ok (pd, _) =>
       match pDecodeFast pd ckptStride with
       | none => Json.mkObj [("degenerate", Json.bool true)]
       | some r => Json.mkObj [
@@ -1422,14 +1570,14 @@ private def decodeProfMain (input : String) : IO UInt32 := do
       -- Sizes, so the phase values are demanded and not merely thunked.
       let phaseCells : Nat :=
         (match ee with | .ok (e, _) => e.size | .error _ => 0)
-        + (match tr with | .ok (_, _, f, _) => f.size | .error _ => 0)
-        + (match du with | .ok (_, _, d) => d.size | .error _ => 0)
+        + (match tr with | .ok (_, _, f, _, _) => f.size | .error _ => 0)
+        + (match du with | .ok (_, _, d, _) => d.size | .error _ => 0)
       let t0 ← IO.monoMsNow
       let built ← IO.lazyPure fun _ => buildPData c maxD
       let t1 ← IO.monoMsNow
       match built with
       | .error e => IO.eprintln s!"error: {e}"; return 1
-      | .ok pd =>
+      | .ok (pd, _) =>
         let mut times : Array Nat := #[]
         let mut bests : Array String := #[]
         for _ in [0:runs] do
@@ -1563,7 +1711,7 @@ segment with the model's own cells (`initAt`/`transAt`, `entryAt`, `emitAt`,
 decode did not place: which term paid for leaving it out. A written-over run
 may exceed `maxD`; `durAt` still prices it, the trellis never would. -/
 private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Array Nat)
-    (dj : Json) : Json :=
+    (dj : Json) (journey : Option Verified.Hsmm.Journey.Tables := none) : Json :=
   let fl (v : Float) : Json := if v == Verified.Hsmm.FloatScore.negInf then Json.null else Lean.toJson v
   let alts : Array Json := ((dj.getObjVal? "alt") >>= (·.getArr?)).toOption.getD #[]
   let (altPath, bad) : Array Nat × Option String := Id.run do
@@ -1592,7 +1740,13 @@ private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Arra
       let entry := Verified.Hsmm.Assemble.entryAt c start seg.state
       let emit := (List.range seg.dur).foldl
         (fun acc i => acc + Verified.Hsmm.Assemble.emitAt c (start + i) seg.state) PATH_ZERO
-      let dur := Verified.Hsmm.Assemble.durAt c seg.state seg.dur last
+      -- A journey's cell is the inner pass's, not `durAt`'s.
+      let dur := match journey with
+        | some tb =>
+          if seg.state == tb.journey then
+            (if seg.dur ≤ tb.maxJ then tb.cell.get! ((seg.dur - 1) * tb.T + last) else Verified.FloatConst.negInf)
+          else Verified.Hsmm.Assemble.durAt c seg.state seg.dur last
+        | none => Verified.Hsmm.Assemble.durAt c seg.state seg.dur last
       let sum := trans + entry + emit + dur
       total := total + sum
       out := out.push (Json.mkObj [
@@ -1657,17 +1811,21 @@ private def assembleSegmentsResult (j : Json) : Json :=
   | .ok (c, maxD) =>
     match buildPData c maxD with
     | .error e => Json.mkObj [("error", Json.str e)]
-    | .ok pd =>
+    | .ok (pd, journey) =>
       match pDecodeFast pd ckptStride with
       | none => Json.mkObj [("degenerate", Json.bool true)]
       | some r =>
         if let .ok dj := j.getObjVal? "emissionDebug" then emissionDebugJson c r.path dj else
-        if let .ok dj := j.getObjVal? "pathDebug" then pathDebugJson c r.path dj else
+        if let .ok dj := j.getObjVal? "pathDebug" then pathDebugJson c r.path dj journey else
+        -- Under the journey state, each journey segment becomes its legs.
+        let path := match journey with
+          | some tb => Verified.Hsmm.Journey.expand tb r.path
+          | none => r.path
         -- Index → the state the model actually holds. An out-of-range index is
         -- an ERROR, not a skipped minute: it would shorten the path and shift
         -- every later segment boundary.
         let states : Except String (Array Verified.HsmmSegments.State) :=
-          r.path.foldlM (fun acc i => do
+          path.foldlM (fun acc i => do
             match c.states[i]? with
             | none => throw s!"decoded state index {i} is outside the {c.states.size}-state space"
             | some s => pure (acc.push

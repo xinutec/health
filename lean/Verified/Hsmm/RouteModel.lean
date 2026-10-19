@@ -467,7 +467,8 @@ def chainContextWith (edgesByLine : Std.HashMap String (List LineEdge))
     | none => 0.0
   else
     let leaveTerm :=
-      if fromS.mode == .stationary && isMovingMode toS.mode then
+      -- A journey (mode `unknown`) leaves a place as a moving state does.
+      if fromS.mode == .stationary && (isMovingMode toS.mode || toS.mode == .unknown) then
         match fromS.placeId with | some pid => cm.stayAt pid | none => 0.0
       else 0.0
     let boardTerm :=
