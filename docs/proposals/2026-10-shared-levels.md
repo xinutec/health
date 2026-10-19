@@ -317,22 +317,24 @@ boundary class, +4.6, is its own arm), and the stay's inside.
 
 ## Order (2026-10-19)
 
-By the flip's loss classes after the label fix (23 lost, 15 gained), largest
-first; every arm is judged on the flip rows under its own decodes
-(`flipcheck.sh <tag> <dump>`, a minute) as well as the scoreboard, which
-cannot see a boundary move:
+By the flip's loss classes after the label fix, largest first; every arm is
+judged on the flip rows under its own decodes (`flipcheck.sh <tag> <dump>`, a
+minute) as well as the scoreboard, which cannot see a boundary move. Done the
+same day, 23/15 → 17 lost, 18 gained: served walks carry `roads` too (and the roads of the matcher's route where it is the one drawn); three
+walk rows re-audited to the road their own fixes show (07-16 Hannah Close,
+09-14 Eversley Avenue and Hastings Street — the served pick's road lay outside
+the row's fixes); the Eurostar and Métro 4 rows name their stations under both
+map names, the comparator dropping the live station's "(qualifier)"; 09-15's
+office end (16:35, not 16:43) and 10-03's dinner walk (ends 16:44) from the
+signal — 09-15's walk row leaves the served floors, the served day holding the office to 16:43; `alightAfterHold` and `alightAtLastFix` in `DECODER_TAIL` (10-01's
+alight was the rail-run labeller's Vavin, which the served day corrects with
+those two passes). Left: the underpass labels (09-14, 09-15: a passage the
+fixes do not see), 06-18's board station, and the classes below.
 
-1. **The 11 label rows** naming a road the row's own fixes never reach:
-   re-audit each from its fixes (the road is the pipeline's wording, not his),
-   re-key the floors.
-2. **Stations on `unknown_rail`** (4 rows, and 20 sides in the posterior
-   count): the cascade's rail-run labelling the head already takes
-   (`railUnnamed`) names the Eurostar and Métro 4 on the served day; what it
-   lacks under the head is the question.
-3. **Movement inside a visit** (3): the stay's inside with a run-length law
+1. **Movement inside a visit** (3): the stay's inside with a run-length law
    that holds the measured tail and the stay's ending; its own failure mode
    (a short walk that returns is a spell) is measured above, so the journey's
-   single level (stage 4) may have to come first.
-4. **The journey state** as designed, levels shared, `maxJ` 240; gate adds
+   single level (stage 2) may have to come first.
+2. **The journey state** as designed, levels shared, `maxJ` 240; gate adds
    `decodeprof` on 09-30 within 2× today's decode. Then S2 inside it.
-5. **Platform waits** (2) are S1's state; **hops** (2) are S2's.
+3. **Platform waits** (2) are S1's state; **hops** (2) are S2's.

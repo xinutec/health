@@ -232,9 +232,12 @@ def truthMatches : Option Truth → Option Live → Bool
     if canonicalMode t.mode != canonicalMode' l.mode then return false
     if t.mode == .train || t.mode == .bus then
       -- A station may be named under several names, ` / ` between them, like
-      -- a place: the live end matches any one.
+      -- a place: the live end matches any one. The narrative parser drops a
+      -- station's trailing "(qualifier)"; the live label keeps its own
+      -- ("Gare du Nord (Métro)"), so it is dropped here before comparing.
       let stationIs := fun (truthName live : String) =>
-        (truthName.splitOn PLACE_ALTERNATIVES).any fun alt => norm alt == norm live
+        let liveBody := (splitTrailingParen live.trimAscii.toString).1
+        (truthName.splitOn PLACE_ALTERNATIVES).any fun alt => norm alt == norm liveBody
       match t.trainFrom, t.trainTo with
       | some tf, some tt =>
         match l.trainFrom, l.trainTo with
@@ -460,10 +463,11 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta · Red"))))
 #guard truthMatches (some (tw .train (f := some "Alpha") (t := some "Beta") (l := some "Red")))
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta · Red"))))
--- A station under two names: the live end matches either.
-#guard truthMatches (some (tw .train (f := some "Alpha Central / Alpha") (t := some "Beta / Beta (Metro)")))
+-- A station under two names: the live end matches either; the live end's own
+-- "(qualifier)" does not count against it.
+#guard truthMatches (some (tw .train (f := some "Alpha Central / Alpha") (t := some "Beta")))
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta (Metro) · Red"))))
-#guard !truthMatches (some (tw .train (f := some "Alpha Central / Alpha") (t := some "Beta")))
+#guard !truthMatches (some (tw .train (f := some "Alpha Central / Alpha") (t := some "Gamma")))
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta (Metro) · Red"))))
 #guard !truthMatches (some (tw .train (f := some "Alpha") (t := some "Beta") (l := some "Blue")))
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta · Red"))))

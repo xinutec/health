@@ -911,7 +911,7 @@ trip). `decoderHead` runs these alone. -/
 def DECODER_TAIL : Array String :=
   #["stayArrivalClaim", "walkDwell", "staySteplessDeparture", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
     "biomEnrich", "hsmmOverride", "finalMerge", "interchangeStayLabel", "boardingStayLabel",
-    "railSnapFinal", "vehicleIdentity"]
+    "alightAfterHold", "alightAtLastFix", "railSnapFinal", "vehicleIdentity"]
 
 def MS_TO_KMH : Float := 3.6
 

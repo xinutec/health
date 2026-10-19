@@ -399,7 +399,7 @@
 		"journeysExpected": 2,
 		"journeysMatched": 2,
 		"legModeScorable": 6,
-		"legModeMatching": 5,
+		"legModeMatching": 6,
 		"legLineScorable": 2,
 		"legLineMatching": 2,
 		"stationsAsserted": 2,

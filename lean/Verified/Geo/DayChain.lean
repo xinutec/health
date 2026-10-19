@@ -119,7 +119,11 @@ series: each drops fields the consumer does not read, none invents one. -/
 def stateSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.DayState.Seg :=
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, refinedMode := s.refinedMode
     vehicleKind := s.vehicleKind, place := s.place, placeSource := s.placeSource, wayName := s.wayName
-    roads := s.roads, displayTz := s.displayTz, city := s.city }
+    -- The roads under the fixes, and — where the matcher's route is the one
+    -- drawn — the roads of that route: a walk through a park reaches its road
+    -- by the route, not by a fix's nearest way.
+    roads := (s.roads ++ (if s.walkMatchedPath.isSome then s.walkWayUm.map (·.1) else #[])).toList.eraseDups.toArray
+    displayTz := s.displayTz, city := s.city }
 
 /-- The drawn paths, `Option (Array PathPt)` on the shared segment record and
 `Array SPt` here — absent and empty mean the same thing to the renderer.
