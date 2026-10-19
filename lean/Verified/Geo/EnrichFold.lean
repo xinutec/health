@@ -130,9 +130,14 @@ def enrichFold (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
     if seg.mode == "stationary" then
       nameStay reads biom places points (if i == 0 then none else segs[i - 1]?) seg
     else
-      (Verified.Geo.Enrich.enrichMovingSegment reads.ways reads.geocode seg
-        (segPoints.map fun p =>
-          ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt))).getD seg
+      let pts := segPoints.map fun p =>
+        ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt)
+      let named := (Verified.Geo.Enrich.enrichMovingSegment reads.ways reads.geocode seg pts).getD seg
+      -- A walk carries every road it was on (`roadsByTime`); its label stays
+      -- the five-sample pick's, so the served day reads as before.
+      if seg.mode == "walking" then
+        { named with roads := (Verified.Geo.Enrich.roadsByTime reads.ways pts seg.endTs).map (·.1) }
+      else named
 
 /-! ## Guards
 

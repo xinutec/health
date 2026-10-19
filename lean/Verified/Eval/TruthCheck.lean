@@ -231,10 +231,14 @@ def truthMatches : Option Truth → Option Live → Bool
   | some t, some l => Id.run do
     if canonicalMode t.mode != canonicalMode' l.mode then return false
     if t.mode == .train || t.mode == .bus then
+      -- A station may be named under several names, ` / ` between them, like
+      -- a place: the live end matches any one.
+      let stationIs := fun (truthName live : String) =>
+        (truthName.splitOn PLACE_ALTERNATIVES).any fun alt => norm alt == norm live
       match t.trainFrom, t.trainTo with
       | some tf, some tt =>
         match l.trainFrom, l.trainTo with
-        | some lf, some lt => if norm tf != norm lf || norm tt != norm lt then return false
+        | some lf, some lt => if !stationIs tf lf || !stationIs tt lt then return false
         | _, _ => return false
       | _, _ => pure ()
       -- Line only discriminates when BOTH sides name one — a missing line is a
@@ -456,6 +460,11 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta · Red"))))
 #guard truthMatches (some (tw .train (f := some "Alpha") (t := some "Beta") (l := some "Red")))
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta · Red"))))
+-- A station under two names: the live end matches either.
+#guard truthMatches (some (tw .train (f := some "Alpha Central / Alpha") (t := some "Beta / Beta (Metro)")))
+    (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta (Metro) · Red"))))
+#guard !truthMatches (some (tw .train (f := some "Alpha Central / Alpha") (t := some "Beta")))
+    (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta (Metro) · Red"))))
 #guard !truthMatches (some (tw .train (f := some "Alpha") (t := some "Beta") (l := some "Blue")))
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta · Red"))))
 -- A truth naming stations against a live BARE LINE has nothing to compare: fail.
