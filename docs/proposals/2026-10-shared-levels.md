@@ -363,6 +363,33 @@ longer than `maxJ` (10-08's 293-minute TGV) decodes as two with a stay
 between — the bound needs lifting or a journey → journey continuation before
 any default.
 
+### S2 inside the journey state, first slice (2026-10-19 afternoon)
+
+Built: a leg per named line and board station within 400 m of any fix of
+the day (`Journey.Tables.reachStarts`), sharing its line's tables, allowed to
+begin only at a minute the fixes put within reach of its station, its length
+priced by the along-line path from the board station to the line's station
+the fixes put the ride's end at (`expectedMin`, the chain's `lineSssp`), in
+place of the line's generic duration prior. Two runs, same gates:
+
+- Stations by the line's track: **125/313/62/66/5, referee 142; rows 23
+  lost, 20 gained.** All three Baker Street hops decode (05-18, 07-02, 07-16:
+  the three impossible legs of the flip), 10-08's stop too; 06-29 and 07-02's
+  neighbouring rows go, lines −1, stations −2. 07-16's Euston Square → King's
+  Cross ride comes out Victoria Line.
+- Stations by the line's served calls (the relations), ride time in the
+  chain's fitted form with the calls between the pair: 125/313/61/66/6, rows
+  26/20 — no better; the Victoria stays, since Euston (which it serves) is
+  within 400 m of the same fixes as Euston Square.
+
+So the structure carries the hops and the line choice inside a leg is now
+the gap: the board and alight stations are a hard 400 m gate with no density,
+where the chain anchors each side by distance (`slopZPenalty`, σ 200 m). The
+next slice puts those anchors on the leg's ends — the board at its first
+minute, the alight at its last — as densities in the comparison form, so a
+nearer station beats a farther one and the Met's Euston Square beats the
+Victoria's Euston by the fixes. Decode 69 s a day on 07-16 against 30.
+
 ### S2 inside the journey state, costed before building
 
 A `train L from σ` leg per line and candidate board station: the candidates
