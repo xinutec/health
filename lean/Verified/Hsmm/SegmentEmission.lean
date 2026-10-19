@@ -147,6 +147,14 @@ structure Prefix where
   posWX : Array Float := #[ZERO]
   posWY : Array Float := #[ZERO]
   posWRR : Array Float := #[ZERO]
+  /-- The awake runs — maximal stretches of minutes not in bed — as
+      `[runStart, runEnd)` minute indices, and per minute the run holding it
+      (for a minute in bed, the run after). A sleep resets the awake
+      heart-rate level: a segment's level term is one per run it spans
+      (`Stats.runs`), not one over them all. -/
+  runStart : Array Nat := #[]
+  runEnd : Array Nat := #[]
+  runOf : Array Nat := #[]
   deriving Inhabited
 
 private def METRES_PER_DEGREE : Float := 111320
@@ -201,7 +209,24 @@ def prefixOf (obs : Array ObsRow) : Prefix := Id.run do
            fixN := p.fixN.push (p.fixN.back?.getD 0 + (if o.gps.isSome then ONE else ZERO)),
            bedN := p.bedN.push (p.bedN.back?.getD 0 + bn), bedSum := p.bedSum.push (p.bedSum.back?.getD 0 + bs),
            bedSq := p.bedSq.push (p.bedSq.back?.getD 0 + bq) }
-  return p
+  -- The awake runs.
+  let mut runStart : Array Nat := #[]
+  let mut runEnd : Array Nat := #[]
+  let mut runOf : Array Nat := #[]
+  let mut open_ := false
+  for (o, t) in obs.zipIdx do
+    if o.inBed then
+      if open_ then
+        runEnd := runEnd.push t
+        open_ := false
+      runOf := runOf.push runStart.size
+    else
+      if !open_ then
+        runStart := runStart.push t
+        open_ := true
+      runOf := runOf.push (runStart.size - 1)
+  if open_ then runEnd := runEnd.push obs.size
+  return { p with runStart, runEnd, runOf }
 
 /-- A segment's sufficient statistics. -/
 structure Stats where
@@ -229,6 +254,10 @@ structure Stats where
       (the pair tables). -/
   lo : Nat := 0
   hi : Nat := 0
+  /-- The awake heart-rate count, sum and sum of squares of each awake run
+      the segment spans, when it spans more than one (`Prefix.runStart`);
+      empty otherwise, and the level is one over the segment. -/
+  runs : Array (Float × Float × Float) := #[]
 
 /-- A prefix array's share of the minute before `[lo, hi)` and the minute
     after it; a minute off the day adds nothing. -/
@@ -251,7 +280,23 @@ def statsAt (p : Prefix) (d e : Nat) : Stats :=
    get p.posW hi - get p.posW lo, get p.posWX hi - get p.posWX lo,
    get p.posWY hi - get p.posWY lo, get p.posWRR hi - get p.posWRR lo,
    -- Minute `lo - 1` and minute `hi`, each `0` when dark or off the day.
-   outside p.posW lo hi, outside p.posWX lo hi, outside p.posWY lo hi, lo, hi⟩
+   outside p.posW lo hi, outside p.posWX lo hi, outside p.posWY lo hi, lo, hi,
+   awakeRuns p lo hi⟩
+where
+  /-- The awake runs `[lo, hi)` spans, each's heart-rate statistics, when
+      there are two or more. -/
+  awakeRuns (p : Prefix) (lo hi : Nat) : Array (Float × Float × Float) := Id.run do
+    if p.runStart.isEmpty then return #[]
+    let get := fun (a : Array Float) (i : Nat) => a[i]?.getD ZERO
+    let mut k := p.runOf[lo]?.getD p.runStart.size
+    let mut pieces : Array (Float × Float × Float) := #[]
+    while k < p.runStart.size && p.runStart[k]! < hi do
+      let a := max lo p.runStart[k]!
+      let b := min hi (p.runEnd[k]?.getD hi)
+      if b > a then
+        pieces := pieces.push (get p.hrN b - get p.hrN a, get p.hrSum b - get p.hrSum a, get p.hrSq b - get p.hrSq a)
+      k := k + 1
+    return if pieces.size ≥ 2 then pieces else #[]
 
 private def TWO_PI : Float := 6.283185307179586
 
@@ -459,14 +504,18 @@ def scorePreparedParts (q : Prepared) (mode : Mode) (st : Stats) : Float × Floa
     let k := idx st.fixN
     let fix := if q.p.obsChain.any (·.1 == mode) then ZERO
       else t.lgA.getD k ZERO + t.lgB.getD (n - k) ZERO - t.lgAB.getD n ZERO - t.lbAB
-    let hn := idx st.hrN
-    let hr := if hn == 0 then ZERO else
-      let mean := st.hrSum / st.hrN
-      let ssw := max ZERO (st.hrSq - st.hrN * mean * mean)
+    let level := fun (hrN hrSum hrSq : Float) =>
+      let hn := idx hrN
+      if hn == 0 then ZERO else
+      let mean := hrSum / hrN
+      let ssw := max ZERO (hrSq - hrN * mean * mean)
       let w := (1 - q.p.rho) / (1 + q.p.rho)
       let s2 := q.p.sigmaW * q.p.sigmaW
       q.withinConst.getD hn ZERO - w * ssw / (TWO * s2)
         - HALF * t.logTwoPiV.getD hn ZERO - (mean - t.m.hrMean) * (mean - t.m.hrMean) * t.invTwoV.getD hn ZERO
+    -- One level per awake run the segment spans: a sleep resets it.
+    let hr := if st.runs.isEmpty then level st.hrN st.hrSum st.hrSq
+      else st.runs.foldl (fun acc (n, sm, sq) => acc + level n sm sq) ZERO
     (fix, hr)
 
 def scorePrepared (q : Prepared) (mode : Mode) (st : Stats) : Float :=
@@ -482,9 +531,9 @@ private def pTest : Params :=
 #guard dispScore pTest .stationary 109 (some ⟨50, 0, 0⟩) > dispScore pTest .train 109 (some ⟨50, 0, 0⟩) + 10
 #guard dispScore pTest .train 20 (some ⟨8000, 0, 0⟩) > dispScore pTest .stationary 20 (some ⟨8000, 0, 0⟩) + 3
 #guard dispScore pTest .walking 20 (some ⟨8000, 0, 0⟩) == 0
-#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩ + 10
-#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩ - 1
-#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩ == 0
+#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩ + 10
+#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩ - 1
+#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩ == 0
 -- An 84-minute café at 30 m scatter, 150 m place radius, 300 m from the
 -- nearest of three listed places at a 300 m bandwidth: a few nats of scatter
 -- and one Occam factor, not 168.
@@ -507,7 +556,7 @@ private def stop5 : Stats :=
     anchorW := 2 / 22500, anchorWX := 0, anchorWY := 0 }
 #guard centreScore stop5 300 threePlaces true > -3
 -- The tables agree with the closed form.
-private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0⟩
+private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩
 #guard Float.abs (scorePrepared (prepare pTest 400) .train stT - score pTest .train stT) < 1e-6
 #guard Float.abs (scorePrepared (prepare pTest 400) .stationary stT - score pTest .stationary stT) < 1e-6
 

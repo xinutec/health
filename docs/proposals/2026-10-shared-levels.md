@@ -454,7 +454,9 @@ fixes do not see), 06-18's board station, and the classes below.
    a spell is what follows it: the journey's single level (stage 2) and the
    stay's ending, not the spell itself.
 2. **The journey state**: built, at parity (above), behind its key. **S2
-   inside it** — `train L from σ` as leg states, the change at a station both
-   lines serve — is the step that gives it a reason to ship; the hops (07-07,
-   07-16) and the `unknown_rail` stations are its rows.
+   inside it**: the first slice is built (board-station legs, the ride time
+   of the pair) and decodes the three Baker Street hops; its end anchors are
+   refuted; what it lacks for the stations is still open, and the journey
+   debugger is the instrument. 07-07's Euston Square → King's Cross hop and
+   the `unknown_rail` stations are its remaining rows.
 3. **Platform waits** (2) are S1's state.
