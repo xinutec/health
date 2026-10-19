@@ -1563,8 +1563,13 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         for d0 in [0:maxJ] do
           out := out.set! (slot * maxJ + d0) (Verified.Hsmm.Assemble.durPriorBase c reps[cls]! (d0 + 1))
       return out
+    let legName : Array String := legList.map fun (l, _, st?) =>
+      let base := Verified.Hsmm.StateSpace.stateKey c.states[l]!
+      match st? with
+      | some n => base ++ "@" ++ (n.stationName.getD n.id)
+      | none => base
     let tb : Verified.Hsmm.Journey.Tables :=
-      { T, maxJ, journey := jI, legs := legOuter, baseOf, nBase := legs.size
+      { T, maxJ, journey := jI, legs := legOuter, legName, baseOf, nBase := legs.size
         legSlot := legOuter.map (fun l => (slotOfCls durClass[l]!).getD 0)
         nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
         first := legOuter.map (prior true jp.firstLeg), last := legOuter.map (prior false jp.lastLeg)
@@ -1955,6 +1960,60 @@ private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Arra
               ("decodedShares", Json.arr (shares path)), ("altShares", Json.arr (shares altPath)),
               ("error", match bad with | some e => Json.str e | none => Json.null)]
 
+/-- `"journeyDebug": {"alt": [{startTs, endTs, leg}]}` under the journey state:
+every decoded journey's legs with their terms, and — for the journey the
+alternative's segments tile exactly — the forced legs scored the same way.
+`leg` is a leg's name (`train|Metropolitan Line`, or with `@Station` for a
+board-station leg). What `path_debug` cannot see inside a journey. -/
+private def journeyDebugJson (c : Verified.Hsmm.Assemble.ModelContext)
+    (tb : Verified.Hsmm.Journey.Tables) (path : Array Nat) (dj : Json) : Json :=
+  let fl (v : Float) : Json := if v == Verified.FloatConst.negInf then Json.null else Lean.toJson v
+  let tsOf : Nat → Int := fun t => match c.obs[t]? with | some o => o.ts | none => 0
+  let legJson := fun (s0 : Nat) (ls : Array Verified.Hsmm.Journey.LegScore) (total : Float) =>
+    Json.mkObj [
+      ("startTs", Lean.toJson (tsOf s0)),
+      ("total", fl total),
+      ("legs", Json.arr (ls.map fun x => Json.mkObj [
+        ("leg", Json.str (tb.legName.getD x.leg "?")),
+        ("startTs", Lean.toJson (tsOf x.start)),
+        ("endTs", Lean.toJson (tsOf (x.start + x.d - 1) + 60)),
+        ("d", Lean.toJson x.d), ("prev", fl x.prev), ("emit", fl x.emit), ("entry", fl x.entry),
+        ("cell", fl x.cell), ("expectedMin", fl x.expectedMin),
+        ("total", fl (x.prev + x.emit + x.entry + x.cell))]))]
+  -- The alternative: segments by leg name, each over `[startTs, endTs)`.
+  let alts : Array Json := ((dj.getObjVal? "alt") >>= (·.getArr?)).toOption.getD #[]
+  let altLegs : Array (Nat × Nat × Nat) := alts.filterMap fun a => do
+    let s0 := (a.getObjValAs? Int "startTs").toOption.getD 0
+    let s1 := (a.getObjValAs? Int "endTs").toOption.getD 0
+    let name := (a.getObjValAs? String "leg").toOption.getD ""
+    let l ← tb.legName.findIdx? (· == name)
+    let t0 ← c.obs.findIdx? (·.ts == s0)
+    let t1 := c.obs.foldl (fun acc o => if o.ts < s1 then acc + 1 else acc) 0
+    if t1 ≤ t0 then none else some (l, t0, t1 - t0)
+  let (out, _) := Id.run do
+    let mut out : Array Json := #[]
+    let mut i := 0
+    while i < path.size do
+      if path[i]! == tb.journey then
+        let mut j := i
+        while j + 1 < path.size && path[j + 1]! == tb.journey do j := j + 1
+        let decoded := Verified.Hsmm.Journey.legsPath tb i j
+        let (ds, dt) := Verified.Hsmm.Journey.scoreLegs tb i decoded
+        let forced : Option Json :=
+          let inside := altLegs.filter fun (_, t0, d) => t0 ≥ i && t0 + d - 1 ≤ j
+          if inside.isEmpty then none else
+          let span := inside.foldl (fun acc (_, _, d) => acc + d) 0
+          if span != j + 1 - i then some (Json.mkObj [("error", Json.str s!"the alternative covers {span} of the journey's {j + 1 - i} minutes")]) else
+          let (fs, ft) := Verified.Hsmm.Journey.scoreLegs tb i (inside.map fun (l, _, d) => (l, d))
+          some (legJson i fs ft)
+        out := out.push (Json.mkObj [("decoded", legJson i ds dt), ("alt", forced.getD Json.null)])
+        i := j + 1
+      else
+        i := i + 1
+    return (out, ())
+  Json.mkObj [("journeys", Json.arr out),
+    ("legNames", Json.arr (tb.legName.map Json.str))]
+
 private def assembleSegmentsResult (j : Json) : Json :=
   match parseAssemble j with
   | .error e => Json.mkObj [("error", Json.str e)]
@@ -1982,6 +2041,10 @@ private def assembleSegmentsResult (j : Json) : Json :=
       | some r =>
         if let .ok dj := j.getObjVal? "emissionDebug" then emissionDebugJson c r.path dj else
         if let .ok dj := j.getObjVal? "pathDebug" then pathDebugJson c r.path dj journey else
+        if let .ok dj := j.getObjVal? "journeyDebug" then
+          (match journey with
+           | some tb => journeyDebugJson c tb r.path dj
+           | none => Json.mkObj [("error", Json.str "journeyDebug needs the journey state (segEmission.journey)")]) else
         -- Under the journey state, each journey segment becomes its legs.
         let path := match journey with
           | some tb => Verified.Hsmm.Journey.expand tb r.path

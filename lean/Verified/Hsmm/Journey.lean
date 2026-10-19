@@ -33,6 +33,9 @@ structure Tables where
   journey : Nat
   /-- Per leg, the outer state it is written back as. -/
   legs : Array Nat
+  /-- Per leg, its name for the debugger: the base state's key, `@station`
+      for a board-station leg. -/
+  legName : Array String := #[]
   /-- Per leg, its position among the base legs (itself for a base leg). -/
   baseOf : Array Nat
   nBase : Nat
@@ -198,9 +201,9 @@ def best (tb : Tables) : FloatArray := Id.run do
       out := out.set! (i * T + (s0 + i)) b
   return out
 
-/-- The decoded journey over `[s0, e]` as a state per minute: the outer indices
-    of its legs. -/
-def legsOf (tb : Tables) (s0 e : Nat) : Array Nat := Id.run do
+/-- The decoded journey over `[s0, e]` as its legs, first to last: `(leg,
+    length)`. -/
+def legsPath (tb : Tables) (s0 e : Nat) : Array (Nat × Nat) := Id.run do
   let L := tb.legs.size
   let w := e + 1 - s0
   let (v, bpD) := sweep tb s0 w
@@ -212,18 +215,68 @@ def legsOf (tb : Tables) (s0 e : Nat) : Array Nat := Id.run do
     if x > b then
       b := x
       l := c
-  let mut out := Array.replicate w 0
+  let mut out : Array (Nat × Nat) := #[]
   let mut guard := 0
   while guard < w do
     guard := guard + 1
     let d := bpD[i * L + l]!
-    for k in [i + 1 - d:i + 1] do
-      out := out.set! k tb.legs[l]!
+    out := out.push (l, d)
     if d ≥ i + 1 then break
     let prev := argFrom tb v s0 (i - d) l
     i := i - d
     l := prev
+  return out.reverse
+
+/-- The decoded journey over `[s0, e]` as a state per minute: the outer indices
+    of its legs. -/
+def legsOf (tb : Tables) (s0 e : Nat) : Array Nat := Id.run do
+  let mut out := Array.replicate (e + 1 - s0) 0
+  let mut k := 0
+  for (l, d) in legsPath tb s0 e do
+    for _ in [0:d] do
+      if k < out.size then out := out.set! k tb.legs[l]!
+      k := k + 1
   return out
+
+/-- One leg's terms along a given leg path. -/
+structure LegScore where
+  leg : Nat
+  start : Nat
+  d : Nat
+  /-- The first-leg prior with its context, or the transition from the leg before. -/
+  prev : Float
+  emit : Float
+  entry : Float
+  cell : Float
+  expectedMin : Float
+  deriving Repr
+
+/-- The legs of a path from `s0`, each with its terms, and the total with the
+    last-leg prior: the debugger's view of a journey, decoded or forced. -/
+def scoreLegs (tb : Tables) (s0 : Nat) (legs : Array (Nat × Nat)) : Array LegScore × Float := Id.run do
+  let B := tb.nBase
+  let T := tb.T
+  let mut out : Array LegScore := #[]
+  let mut total := HALF - HALF
+  let mut start := s0
+  let mut prevLeg : Option Nat := none
+  for (l, d) in legs do
+    let e := start + d - 1
+    let prev := match prevLeg with
+      | none => tb.first[l]! + tb.firstCtx.get! (l * T + s0)
+      | some a => if a == l then negInf else tb.trans.get! ((start * B + tb.baseOf[a]!) * B + tb.baseOf[l]!)
+    let b := tb.baseOf[l]!
+    let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
+    let entry := tb.entry.get! (b * T + start)
+    let cell := legCell tb l d e
+    out := out.push { leg := l, start, d, prev, emit, entry, cell, expectedMin := tb.expectedMin.get! (l * T + e) }
+    total := total + prev + emit + entry + cell
+    start := e + 1
+    prevLeg := some l
+  match prevLeg with
+  | some l => total := total + tb.last[l]!
+  | none => pure ()
+  return (out, total)
 
 /-- The outer path with every journey segment replaced by its legs. -/
 def expand (tb : Tables) (path : Array Nat) : Array Nat := Id.run do

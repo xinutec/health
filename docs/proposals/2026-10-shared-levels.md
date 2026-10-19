@@ -402,7 +402,15 @@ boarded is the per-minute rail evidence's, which an underground ride between
 Euston Square and King's Cross cannot settle for either side. The instrument
 for the next step is a journey debugger: the legs of a decoded journey with
 their cell, emission, entry and transition terms against a forced alternative,
-which `path_debug` cannot see inside a journey.
+which `path_debug` cannot see inside a journey. Built the same afternoon
+(`"journeyDebug": {"alt": [{startTs, endTs, leg}]}` on an `assemblesegments`
+request; a leg is named `train|Metropolitan Line@Euston Square`). It shows
+07-16's 08:12 ride as `Victoria Line@Warren Street`: Warren Street is within
+400 m of UCLH's fixes as Euston Square is, and its ride to King's Cross
+expects 4.07 minutes for the 4 observed, where the Met's one stop expects
+2.7 — the pair's ride time decides, and the fixes underground say nothing.
+A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
+the chain's post-hoc pick on the served day, with the same fixes.
 
 ### S2 inside the journey state, costed before building
 
