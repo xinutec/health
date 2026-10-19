@@ -1589,8 +1589,9 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         for d0 in [0:maxJ] do
           out := out.set! (slot * maxJ + d0) (Verified.Hsmm.Assemble.durPriorBase c reps[cls]! (d0 + 1))
       return out
-    -- The pair rule beside the base matrix: a wait at σ continues only into a
-    -- ride boarding at σ; nothing else is ruled out here.
+    -- The pair rule beside the base matrix: a wait at σ is followed by a ride
+    -- boarding at σ and by nothing else (a pause inside a walk is the walk's);
+    -- other legs pair freely. The wait never ends a journey (`last` below).
     let isWaitLeg := fun (l : Nat) => (c.states[l]!).lineName == some Verified.Hsmm.Assemble.WAIT_MARK
     let pairOk : Array Bool := Id.run do
       let mut out := Array.replicate (L * L) true
@@ -1601,8 +1602,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           let (lb, _, sb) := eb
           let ok := match (c.states[lb]!).mode, sa, sb with
             | .train, some x, some y => x.id == y.id
-            | .train, _, _ => false
-            | _, _, _ => true
+            | _, _, _ => false
           if !ok then out := out.set! (ai * L + bi) false
       return out
     let legName : Array String := legList.map fun (l, _, st?) =>
@@ -1614,7 +1614,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       { T, maxJ, journey := jI, legs := legOuter, legName, baseOf, nBase := legs.size
         legSlot := legOuter.map (fun l => (slotOfCls durClass[l]!).getD 0)
         nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
-        first := legOuter.map (prior true jp.firstLeg), last := legOuter.map (prior false jp.lastLeg)
+        first := legOuter.map (prior true jp.firstLeg)
+        last := legOuter.map fun l => if isWaitLeg l then Verified.FloatConst.negInf else prior false jp.lastLeg l
         firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, durBaseF, pairOk }
     let inner := Verified.Hsmm.Journey.best tb
     let tb := { tb with cell := inner }

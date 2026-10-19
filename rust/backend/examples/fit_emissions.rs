@@ -53,6 +53,9 @@ struct Args {
 const MIN_N: usize = 30;
 /// Fewer runs than this and a mode keeps the form's duration fit.
 const MIN_RUNS: usize = 5;
+/// The narrated platform waits are few (a stationary row with no place between
+/// two moving rows); this many fit the wait's duration, with the count logged.
+const MIN_WAITS: usize = 3;
 /// A run's heart rate enters the between-run spread from this many minutes.
 const MIN_RUN_HR: usize = 5;
 /// The duration fit's variance floor (`Duration.fitDurationDistribution`'s).
@@ -137,6 +140,9 @@ struct Day {
     boundary: Vec<f64>,
     /// The same spans with the modes either side.
     boundary_by: Vec<(&'static str, &'static str, f64)>,
+    /// Each narrated platform wait's length, minutes: a stationary row with no
+    /// place between two moving rows (`durationFits.wait`).
+    waits: Vec<f64>,
 }
 
 fn main() -> Result<()> {
@@ -234,6 +240,9 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
     struct Row {
         mode: Option<&'static str>,
         sleeping: bool,
+        /// The row names a place (a stay); a stationary row without one
+        /// between two moving rows is a platform wait.
+        place: bool,
         s: i64,
         e: i64,
     }
@@ -262,6 +271,7 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
                 Some(Row {
                     mode: decoder_mode(tm),
                     sleeping: tm == "sleeping",
+                    place: !row["truth"]["place"].is_null(),
                     s,
                     e,
                 })
@@ -269,6 +279,24 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
             _ => None,
         });
     }
+    // The platform waits: a stationary row with no place, a moving row either side.
+    let moving = |r: &Option<Row>| -> bool {
+        matches!(r, Some(r) if r.mode.is_some_and(|m| m != "stationary") && !r.sleeping)
+    };
+    let waits: Vec<f64> = (1..rows.len().saturating_sub(1))
+        .filter_map(|i| match &rows[i] {
+            Some(r)
+                if r.mode == Some("stationary")
+                    && !r.sleeping
+                    && !r.place
+                    && moving(&rows[i - 1])
+                    && moving(&rows[i + 1]) =>
+            {
+                Some((r.e - r.s) as f64 / 60.0)
+            }
+            _ => None,
+        })
+        .collect();
     // Runs: consecutive confirmed rows of one mode, a minute apart at most.
     let mut spans: Vec<(&'static str, i64, i64)> = Vec::new();
     let mut joinable = false;
@@ -322,7 +350,10 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
             .collect()
     };
 
-    let mut day = Day::default();
+    let mut day = Day {
+        waits,
+        ..Default::default()
+    };
     for (i, &(mode, s, e)) in spans.iter().enumerate() {
         let window = windows
             .get(i)
@@ -977,8 +1008,17 @@ fn write_fit(
         "mainline",
         lengths(trains.iter().copied().filter(|r| mainline_run(r)).collect()),
     ));
+    groups.push((
+        "wait",
+        used.iter().flat_map(|d| d.waits.iter().copied()).collect(),
+    ));
     for (m, ls) in groups {
-        if ls.len() >= MIN_RUNS && (sp["durationFits"][m].is_array() || m == "mainline") {
+        let enough = if m == "wait" {
+            ls.len() >= MIN_WAITS
+        } else {
+            ls.len() >= MIN_RUNS
+        };
+        if enough && (sp["durationFits"][m].is_array() || m == "mainline" || m == "wait") {
             let n = ls.len() as f64;
             let mean = ls.iter().sum::<f64>() / n;
             let var =

@@ -236,6 +236,36 @@ duration fitted on the narrated waits (four of them: the fitter must say so),
 and a wait's existence price — the narratives' rule that a wait under three
 minutes is the walk's.
 
+### The fitter's wait, and the pair rule (2026-10-19, late)
+
+The fitter finds the narrated waits itself (a stationary row with no place
+between two moving rows, `fit_emissions`'s `waits`) and fits their duration
+when there are three or more: nine of them, mean 9.3 minutes, sd 4.9,
+Gamma(3.56, 0.38) by moments. Under it: **126/313/61/65/6, rows 29 lost, 17
+gained** (the arm's Gamma(4, 0.8): 125/311/60/62/4, 31/17). The mean-9 Gamma
+prices a three-minute wait within a nat of a nine-minute one, so the
+over-produced short waits stay, and the rows they cost show two things:
+
+- the pair rule let a wait be followed by anything but a stationless ride,
+  and let a wait end a journey — so a stepless pause inside a walk decodes
+  as `walk, wait` (09-15 15:40–15:43Z, 07-16 08:20–08:22Z, 07-01 11:32–11:36Z
+  before a two-minute Victoria ride, 07-14 08:23–08:26Z eating the Met hop's
+  first three minutes);
+- the served cascade folds a placeless stationary beside a stay into the
+  stay, with the walk between them: 07-14's UCLH runs to 08:26Z and 09-15's
+  Work to 15:43Z in `states`, where `segsEnriched` has the walk. A wait the
+  decoder puts inside a walk costs the whole walk row, not three minutes.
+
+The rule as the design states it: a wait at σ is followed by a ride boarding
+at σ and by nothing else, and never ends a journey (`pairOk`, `last`):
+**126/313/61/65/6, rows 28 lost, 18 gained** — 09-15's and 07-16's walks
+whole again; against the S2 slice the wait still costs 07-14's hop (the
+wait takes its first three minutes, the two left ride Victoria), 07-15
+(a six-minute fixless `driving` after the stay, where the slice kept the
+stay), 05-22's taxi (cut at 19:41Z, a walk after it) and 07-01's walk to
+Euston Square, where the wait is the narrated one (11:32–11:36Z, its row
+healed) and the cascade folds it and the walk before it into UCLH.
+
 ## Phases, each measured on the scoreboard, the journey referee above and the corpus floors
 
 - **S1: platform states, transitions, journey reader.** Gate: journeys up (the
