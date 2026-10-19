@@ -71,6 +71,11 @@ structure SleepParams where
   hrTau : Float
   sigmaW : Float
   rho : Float
+  /-- The spread of a night's lag-1 heart-rate differences. Set, the night's
+      level DRIFTS: the term is the night mean's prior and the differences'
+      likelihood, and a night is not cheaper split. Zero: one constant level
+      per segment, the form before. -/
+  diffSd : Float := ZERO
   deriving Inhabited
 
 /-- The journey state's parameters (`Params.journey`). -/
@@ -155,6 +160,10 @@ structure Prefix where
   runStart : Array Nat := #[]
   runEnd : Array Nat := #[]
   runOf : Array Nat := #[]
+  /-- The asleep minutes' squared lag-1 heart-rate differences and their
+      count, cumulative over the pair ending at each minute. -/
+  bedDiffSq : Array Float := #[ZERO]
+  bedDiffN : Array Float := #[ZERO]
   deriving Inhabited
 
 private def METRES_PER_DEGREE : Float := 111320
@@ -199,11 +208,18 @@ def refOf (obs : Array ObsRow) : Float × Float :=
 
 def prefixOf (obs : Array ObsRow) : Prefix := Id.run do
   let mut p : Prefix := { hrN := #[ZERO], hrSum := #[ZERO], hrSq := #[ZERO], fixN := #[ZERO] }
+  let mut prevBed : Option Float := none
   for o in obs do
     let (n, s, q, bn, bs, bq) := match o.hr with
       | some h => if o.inBed then (ZERO, ZERO, ZERO, ONE, h, h * h) else (ONE, h, h * h, ZERO, ZERO, ZERO)
       | none => (ZERO, ZERO, ZERO, ZERO, ZERO, ZERO)
+    let (dq, dn) := match o.hr, prevBed with
+      | some h, some hp => if o.inBed then ((h - hp) * (h - hp), ONE) else (ZERO, ZERO)
+      | _, _ => (ZERO, ZERO)
+    prevBed := match o.hr with | some h => if o.inBed then some h else none | none => none
     p := { p with
+           bedDiffSq := p.bedDiffSq.push (p.bedDiffSq.back?.getD 0 + dq),
+           bedDiffN := p.bedDiffN.push (p.bedDiffN.back?.getD 0 + dn),
            hrN := p.hrN.push (p.hrN.back?.getD 0 + n), hrSum := p.hrSum.push (p.hrSum.back?.getD 0 + s),
            hrSq := p.hrSq.push (p.hrSq.back?.getD 0 + q),
            fixN := p.fixN.push (p.fixN.back?.getD 0 + (if o.gps.isSome then ONE else ZERO)),
@@ -258,6 +274,10 @@ structure Stats where
       the segment spans, when it spans more than one (`Prefix.runStart`);
       empty otherwise, and the level is one over the segment. -/
   runs : Array (Float × Float × Float) := #[]
+  /-- The asleep minutes' squared lag-1 differences and their count, over
+      the pairs inside the segment. -/
+  bedDiffSq : Float := ZERO
+  bedDiffN : Float := ZERO
 
 /-- A prefix array's share of the minute before `[lo, hi)` and the minute
     after it; a minute off the day adds nothing. -/
@@ -281,7 +301,10 @@ def statsAt (p : Prefix) (d e : Nat) : Stats :=
    get p.posWY hi - get p.posWY lo, get p.posWRR hi - get p.posWRR lo,
    -- Minute `lo - 1` and minute `hi`, each `0` when dark or off the day.
    outside p.posW lo hi, outside p.posWX lo hi, outside p.posWY lo hi, lo, hi,
-   awakeRuns p lo hi⟩
+   awakeRuns p lo hi,
+   -- The pairs ending inside the segment: the prefix at `hi` less the one
+   -- at `lo + 1`.
+   get p.bedDiffSq hi - get p.bedDiffSq (lo + 1), get p.bedDiffN hi - get p.bedDiffN (lo + 1)⟩
 where
   /-- The awake runs `[lo, hi)` spans, each's heart-rate statistics, when
       there are two or more. -/
@@ -371,7 +394,17 @@ def centreScore (st : Stats) (h : Float) (places : Array (Float × Float))
     (`Params.asleep`); `0` without it. -/
 def sleepScore (p : Params) (st : Stats) : Float :=
   match p.asleep with
-  | some sp => hrMarginal sp.sigmaW sp.rho sp.hrMean sp.hrTau st.bedN st.bedSum st.bedSq
+  | some sp =>
+    if sp.diffSd > ZERO then
+      -- A drifting level: the night mean's prior, and each lag-1 difference
+      -- a draw of spread `diffSd`; nothing charges the drift itself.
+      if st.bedN < ONE then ZERO else
+      let mean := st.bedSum / st.bedN
+      let v := sp.hrTau * sp.hrTau
+      let between := -HALF * Float.log (TWO_PI * v) - (mean - sp.hrMean) * (mean - sp.hrMean) / (TWO * v)
+      let d2 := sp.diffSd * sp.diffSd
+      between + st.bedDiffN * (-HALF * Float.log (TWO_PI * d2)) - st.bedDiffSq / (TWO * d2)
+    else hrMarginal sp.sigmaW sp.rho sp.hrMean sp.hrTau st.bedN st.bedSum st.bedSq
   | none => ZERO
 
 /-- The segment's fix-presence sequence log-probability under one mode. -/
@@ -531,9 +564,9 @@ private def pTest : Params :=
 #guard dispScore pTest .stationary 109 (some ⟨50, 0, 0⟩) > dispScore pTest .train 109 (some ⟨50, 0, 0⟩) + 10
 #guard dispScore pTest .train 20 (some ⟨8000, 0, 0⟩) > dispScore pTest .stationary 20 (some ⟨8000, 0, 0⟩) + 3
 #guard dispScore pTest .walking 20 (some ⟨8000, 0, 0⟩) == 0
-#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩ + 10
-#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩ - 1
-#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩ == 0
+#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ + 10
+#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ - 1
+#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ == 0
 -- An 84-minute café at 30 m scatter, 150 m place radius, 300 m from the
 -- nearest of three listed places at a 300 m bandwidth: a few nats of scatter
 -- and one Occam factor, not 168.
@@ -556,7 +589,7 @@ private def stop5 : Stats :=
     anchorW := 2 / 22500, anchorWX := 0, anchorWY := 0 }
 #guard centreScore stop5 300 threePlaces true > -3
 -- The tables agree with the closed form.
-private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[]⟩
+private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩
 #guard Float.abs (scorePrepared (prepare pTest 400) .train stT - score pTest .train stT) < 1e-6
 #guard Float.abs (scorePrepared (prepare pTest 400) .stationary stT - score pTest .stationary stT) < 1e-6
 

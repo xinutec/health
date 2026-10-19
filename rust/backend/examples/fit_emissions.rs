@@ -795,9 +795,32 @@ fn write_fit(
     let nights: Vec<Vec<Option<f64>>> =
         used.iter().flat_map(|d| d.nights.iter().cloned()).collect();
     if let Some((mu, tau, sw, rho)) = hr_effect(&nights) {
-        se["asleep"] = json!([round4(mu), round4(tau), round4(sw), round4(rho)]);
+        // The night's level drifts: the fifth number is the spread of the
+        // lag-1 differences between consecutive in-bed minutes, the draw each
+        // difference is under `SleepParams.diffSd`.
+        let (mut dsq, mut dn) = (0.0f64, 0usize);
+        for night in &nights {
+            for w in night.windows(2) {
+                if let (Some(a), Some(b)) = (w[0], w[1]) {
+                    dsq += (b - a) * (b - a);
+                    dn += 1;
+                }
+            }
+        }
+        let diff_sd = if dn > 0 {
+            (dsq / dn as f64).sqrt()
+        } else {
+            0.0
+        };
+        se["asleep"] = json!([
+            round4(mu),
+            round4(tau),
+            round4(sw),
+            round4(rho),
+            round4(diff_sd)
+        ]);
         log.push(format!(
-            "asleep: {mu:.1} bpm, τ {tau:.2}, σw {sw:.2}, ρ {rho:.3} ({} nights)",
+            "asleep: {mu:.1} bpm, τ {tau:.2}, σw {sw:.2}, ρ {rho:.3}, lag-1 spread {diff_sd:.3} over {dn} pairs ({} nights)",
             nights.len()
         ));
     }

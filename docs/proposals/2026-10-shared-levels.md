@@ -282,8 +282,14 @@ within-night sd 5.1 bpm (σ 4.4), last quarter against first quarter median
 +3.2 bpm, q10 −9.4, q90 +7. So the form, not the numbers: a sleep level that
 drifts (a random walk, its step fitted on narrated nights), whose statistic
 is the sum of squared lag-1 differences — prefix-summable like the rest.
-Through the fitter, not a parameter change; the next model step on the
-stays' side.
+Built the same hour: `SleepParams.diffSd` (the fifth number of the record's
+`asleep`), the night mean's prior plus each lag-1 difference as a draw of
+that spread (`Stats.bedDiffSq`, prefix-summed); the spread measured on the
+57 narrated nights, 3.495 bpm (11,939 pairs). Today's decode: one stay
+00:00–13:37, no plane. Held out 125/310/63/68/4, referee 143, rows 17/18 —
+unchanged, as a night inside a narrated sleep row is already one segment;
+what it buys is the history's phantom rides inside nights (06-11, 06-20) and
+today's. The number comes from the fitter from here on.
 
 ## The journey layer, designed and costed (2026-10-19)
 

@@ -947,6 +947,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let arr ← ((f.getObjVal? "asleep") >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
       | [hrMean, hrTau, sigmaW, rho] => some { hrMean, hrTau, sigmaW, rho }
+      | [hrMean, hrTau, sigmaW, rho, diffSd] => some { hrMean, hrTau, sigmaW, rho, diffSd }
       | _ => none
     let obsChain := all.filterMap fun m => do
       let rows ← (((f.getObjVal? "obsChain") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)))
