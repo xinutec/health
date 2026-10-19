@@ -265,6 +265,26 @@ start; 09-30's stop inside the Paris walk; 10-08's Paul by name; 09-15
 15:43–15:50's window, which the signal contradicts (he left the office at
 16:35 local, not 16:43); two rows on days abroad not yet mapped.
 
+## The night's level (2026-10-19, from the day's own decode)
+
+The decoder's reading of 2026-10-19 held a one-minute plane at 06:00, in
+bed. The path debugger: one stay 00:00–13:37 pays −451 for its level terms,
+two stays with their own levels −372, and a one-minute plane at the duration
+hard floor (−10, with a −5 transition) is the cheapest separator the model
+allows between two stays at the same place — the 06-11/06-20 "phantom train
+Home → Home" class of the history sweep. The term that splits is the ASLEEP
+level, one constant per night (`sleepScore`), where the night drifts. Done
+the same afternoon: the AWAKE level is one per awake run a segment spans
+(`Stats.runs`; a sleep resets it) — held out 125/310/63/68/4, rows unchanged,
+and not this case. Narrated nights (24, the fixtures' heart rate): lag-1
+autocorrelation about the night's mean 0.735 (the record's ρ 0.67),
+within-night sd 5.1 bpm (σ 4.4), last quarter against first quarter median
++3.2 bpm, q10 −9.4, q90 +7. So the form, not the numbers: a sleep level that
+drifts (a random walk, its step fitted on narrated nights), whose statistic
+is the sum of squared lag-1 differences — prefix-summable like the rest.
+Through the fitter, not a parameter change; the next model step on the
+stays' side.
+
 ## The journey layer, designed and costed (2026-10-19)
 
 **Shape.** The outer trellis holds the stays (one state per place, one
