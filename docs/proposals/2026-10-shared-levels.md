@@ -363,6 +363,22 @@ longer than `maxJ` (10-08's 293-minute TGV) decodes as two with a stay
 between — the bound needs lifting or a journey → journey continuation before
 any default.
 
+### S2 inside the journey state, costed before building
+
+A `train L from σ` leg per line and candidate board station: the candidates
+the station-states design measured are stations within reach of the day's
+fixes (19 on a mean day, 56 on 09-30, 85 on 10-08), each on one or two lines,
+so L grows from 16 to about 40 on a commute day and 100 on a travel day. The
+sweep's duration loop is linear in L and its hoisted transition quadratic:
+3.7 × 10⁸ cells become 1–2 × 10⁹ on a London day and 4 × 10⁹ abroad — minutes
+a day. Two bounds bring it back: a station-carrying leg may begin only at a
+minute its station is within reach of the fixes (its `first` and its
+transition rows are −∞ elsewhere, so most `(t, leg)` cells are skipped before
+the duration loop), and `train L from σ` may follow only a walk, a platform
+wait, or a `train L' from σ'` whose line calls at σ — the leg matrix becomes
+sparse (tens of pairs a minute, not L²). With both, the inner pass stays near
+today's 6.6 × 10⁸. `decodeprof` on 09-30 and 10-08 is the gate.
+
 ## Order (2026-10-19)
 
 By the flip's loss classes after the label fix, largest first; every arm is
