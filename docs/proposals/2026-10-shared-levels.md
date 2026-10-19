@@ -382,13 +382,27 @@ place of the line's generic duration prior. Two runs, same gates:
   26/20 — no better; the Victoria stays, since Euston (which it serves) is
   within 400 m of the same fixes as Euston Square.
 
-So the structure carries the hops and the line choice inside a leg is now
-the gap: the board and alight stations are a hard 400 m gate with no density,
-where the chain anchors each side by distance (`slopZPenalty`, σ 200 m). The
-next slice puts those anchors on the leg's ends — the board at its first
-minute, the alight at its last — as densities in the comparison form, so a
-nearer station beats a farther one and the Met's Euston Square beats the
-Victoria's Euston by the fixes. Decode 69 s a day on 07-16 against 30.
+So the structure carries the hops and the line choice inside a leg is the
+gap: the board and alight stations are a hard 400 m gate with no density.
+Decode 69 s a day on 07-16 against 30.
+
+The chain's anchors on the leg's ends, tried the same afternoon, refuted
+twice: as absolute terms (the chain's clamped `−z²/2`, σ 200 m widened by the
+fix's age; a base leg anchored to its line's nearest served station, the
+clamp beyond reach) 118/311/57/55/5, rows 48 lost, 20 gained — a train paying
+for ends the fixes did not see, against every other state, the RideEnds
+refutation again; relative to the best station of any line at that minute
+(the comparison form, a train never paying against a walk) 120/311/57/58/6,
+rows 46/20 — still worse, and the Victoria stays. The ride's end fixes are
+where he walked to, not where he alighted, and the line whose station is
+nearest to them is not the line he rode; the chain's anchors work only
+inside the line the decoder already chose, with the pace and the walk between.
+Reverted. What a board-station leg contributes is its ride time; which line
+boarded is the per-minute rail evidence's, which an underground ride between
+Euston Square and King's Cross cannot settle for either side. The instrument
+for the next step is a journey debugger: the legs of a decoded journey with
+their cell, emission, entry and transition terms against a forced alternative,
+which `path_debug` cannot see inside a journey.
 
 ### S2 inside the journey state, costed before building
 
