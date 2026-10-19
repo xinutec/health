@@ -53,8 +53,9 @@ struct Args {
 const MIN_N: usize = 30;
 /// Fewer runs than this and a mode keeps the form's duration fit.
 const MIN_RUNS: usize = 5;
-/// The narrated platform waits are few (a stationary row with no place between
-/// two moving rows); this many fit the wait's duration, with the count logged.
+/// The narrated platform waits are few (a stationary row with no place after a
+/// walk and before a ride); this many fit the wait's duration, with the count
+/// logged.
 const MIN_WAITS: usize = 3;
 /// A run's heart rate enters the between-run spread from this many minutes.
 const MIN_RUN_HR: usize = 5;
@@ -141,7 +142,8 @@ struct Day {
     /// The same spans with the modes either side.
     boundary_by: Vec<(&'static str, &'static str, f64)>,
     /// Each narrated platform wait's length, minutes: a stationary row with no
-    /// place between two moving rows (`durationFits.wait`).
+    /// place after a walk and before a ride (`durationFits.wait`). A pause
+    /// between two walks is the placeless stay's, not the platform's.
     waits: Vec<f64>,
 }
 
@@ -241,8 +243,11 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
         mode: Option<&'static str>,
         sleeping: bool,
         /// The row names a place (a stay); a stationary row without one
-        /// between two moving rows is a platform wait.
+        /// after a walk and before a ride is a platform wait.
         place: bool,
+        /// A ride: the row's own mode is train or bus (the decoder's `driving`
+        /// covers a bus; a wait is for a timetable, not a cab).
+        ride: bool,
         s: i64,
         e: i64,
     }
@@ -272,6 +277,7 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
                     mode: decoder_mode(tm),
                     sleeping: tm == "sleeping",
                     place: !row["truth"]["place"].is_null(),
+                    ride: matches!(tm, "train" | "bus"),
                     s,
                     e,
                 })
@@ -279,18 +285,17 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
             _ => None,
         });
     }
-    // The platform waits: a stationary row with no place, a moving row either side.
-    let moving = |r: &Option<Row>| -> bool {
-        matches!(r, Some(r) if r.mode.is_some_and(|m| m != "stationary") && !r.sleeping)
-    };
+    // The platform waits: a stationary row with no place after a walk, before a ride.
+    let walk = |r: &Option<Row>| -> bool { matches!(r, Some(r) if r.mode == Some("walking")) };
+    let ride = |r: &Option<Row>| -> bool { matches!(r, Some(r) if r.ride) };
     let waits: Vec<f64> = (1..rows.len().saturating_sub(1))
         .filter_map(|i| match &rows[i] {
             Some(r)
                 if r.mode == Some("stationary")
                     && !r.sleeping
                     && !r.place
-                    && moving(&rows[i - 1])
-                    && moving(&rows[i + 1]) =>
+                    && walk(&rows[i - 1])
+                    && ride(&rows[i + 1]) =>
             {
                 Some((r.e - r.s) as f64 / 60.0)
             }
@@ -1023,8 +1028,19 @@ fn write_fit(
             let mean = ls.iter().sum::<f64>() / n;
             let var =
                 (ls.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / n).max(DUR_VAR_FLOOR);
-            sp["durationFits"][m] =
-                json!([round4(mean * mean / var), (mean / var * 1e5).round() / 1e5]);
+            // The wait carries its floor: the shortest narrated wait, whole
+            // minutes. The narrator folds a shorter pause into the walk, which a
+            // Gamma by moments from a handful of rows cannot say by itself.
+            sp["durationFits"][m] = if m == "wait" {
+                let floor = ls.iter().copied().fold(f64::INFINITY, f64::min).floor();
+                json!([
+                    round4(mean * mean / var),
+                    (mean / var * 1e5).round() / 1e5,
+                    floor
+                ])
+            } else {
+                json!([round4(mean * mean / var), (mean / var * 1e5).round() / 1e5])
+            };
             log.push(format!(
                 "duration {m}: {} runs, mean {mean:.1} min, sd {:.1}",
                 ls.len(),

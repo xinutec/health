@@ -266,6 +266,107 @@ stay), 05-22's taxi (cut at 19:41Z, a walk after it) and 07-01's walk to
 Euston Square, where the wait is the narrated one (11:32–11:36Z, its row
 healed) and the cascade folds it and the walk before it into UCLH.
 
+Three corrections to that reading, the same evening:
+
+- **The records moved.** The wait arm's records are a fresh fitter run on the
+  day's corpus (every fitted number shifted a little: `durationFits`,
+  `speedStop`, `modePriors`, `disp`), so the S2 slice is not its control.
+  The control is the same records with the wait fit removed, which switches
+  the wait leg off: **125/313/61/66/7, rows 27 lost, 19 gained.** Against it
+  the wait leg is +1 journey, −1 station, −1 phantom, and on the rows: 07-01's
+  wait row healed, 07-01's walk before it lost to the cascade (above), 07-14's
+  two rows lost. 07-15's `driving` and 05-22's cut taxi are the records, not
+  the wait.
+- **King's Cross is not on the Met, to the leg list.** The journey debugger
+  prices 07-14's one-ride alternative (`train|Metropolitan Line@Euston Square`
+  08:23–08:28Z) with no expected ride time: the alight is the nearest station
+  on the line within 400 m of the fix after the ride, and `nodeOnLine` asks
+  whether one of the station NODE's own edges carries the line — King's
+  Cross's six nodes sit on Victoria, Piccadilly and untagged edges, while the
+  Met's track runs through its 200 m footprint, which is what the along-line
+  search seeds. `stationOnLine` (an edge carrying the line with an end inside
+  the footprint, `nodeOnLine` or) replaces it for the leg list and the
+  alights. With it the pair expects 2.76 minutes (the Victoria's Euston → KX
+  2.42–2.69), and the decoded shape becomes `wait@Euston 08:23–08:26,
+  Victoria@Euston 08:26–08:28`; the narrated shape (the walk to 08:26, a
+  two-minute ride) prices 3.5 nats worse on either line: three stepless
+  minutes cost the walk 5.7 nats each in emission and 9 in its cell, the wait
+  pays 10.6 in its cell and 2.3 to exist.
+- **The fitter's wait population is not the term's.** Its rule (a stationary
+  row with no place between two moving rows) finds nine rows, of which three
+  precede a ride — 07-01's 4 minutes and 09-06's 5 at a station, 09-06's 14
+  before a bus; the six others are pauses between two walks (06-16 7, 09-06 5,
+  10-02 7 and 18, 10-07 16, 10-08 8 minutes), the placeless stay's rows, not
+  the platform's. The platform wait's duration is to be fitted on the rows
+  before a ride, and its floor is the shortest of them (4 minutes), carried as
+  the fit's third number: the narrator folds a shorter pause into the walk,
+  and a Gamma by moments from three rows cannot say so by itself (at 3 and at
+  5 minutes it prices within a tenth of a nat).
+
+### The footprint test, measured (2026-10-19, late): the waits are real
+
+`stationOnLine` for the leg list and the alights, the wait arm's records:
+**122/314/62/65/8, rows 31 lost, 17 gained** (the wait arm 126/313/61/65/6,
+28/18). The Baker Street splits heal — 06-29 08:25Z, 07-06 10:24Z, 07-07
+15:48Z and 16:17Z are one ride again, as narrated — and 07-14's hop now
+decodes `wait@Euston 08:23–08:26, Victoria@Euston 08:26–08:28` (the Met's
+Euston Square ties it at 2.76 against 2.42 expected minutes). What it costs
+is seven rows and four journeys, all one shape: a wait of five to eight
+minutes at the end of the walk to the station, on days whose narratives
+have none —
+
+| day | decoded wait (UTC) | the signal in it | narrated |
+|---|---|---|---|
+| 09-15 | 08:18–08:26 | 0–6 steps a minute, HR 71–77, fixes at 0–6 km/h, then 60 km/h at 08:27 | walk 08:05–08:15, ride from 08:16 |
+| 06-17 | 16:10–16:18 | 0–16 steps, HR 89–94 | walk 15:57–16:18 |
+| 06-18 | 07:31–07:38 | 0 steps, HR 103 → 96 | walk 07:18–07:38 |
+| 09-06 | 12:19–12:24 | 0–8 steps (one minute 25), HR 83–93 | walk 12:06–12:21, ride from 12:22 |
+| 06-15 | 13:35–13:39 | 0 steps, HR 89–98 | walk 13:22–13:32, ride from 13:32 |
+
+He stood on the platform; the narrator (me) wrote the walk up to the train,
+or the ride from the station's door. These windows are measured ones, mine
+to correct from the signal — the decoder is not the evidence, the steps and
+the heart rate are. The journey referee is what turns the wait into a loss:
+`JOURNEY_PAUSE_MAX_S` is five minutes on both sides (`Journeys.lean` rule 3,
+`DecoderScore.decoderJourneys`), so a decoded wait of five or more splits the
+decoder's journey where the narrative, without a wait row, has one — the
+rule's own comment says a platform wait does not split a journey, and the
+five minutes were the TypeScript's guess; the narrated waits are 4, 5 and 14
+minutes, the decoded ones 5 to 8.
+
+Three ways out, to decide before the corpus moves:
+
+- **A, the referee.** A placeless stay before a ride is a pause whatever its
+  length (the narrated wait's shape: a stationary row with no place, after a
+  walk, before a train or bus); any other stay of five minutes or more ends
+  the journey as now. The truth side changes only where such rows exist
+  (09-06's fourteen minutes before the bus); the decoder side stops losing a
+  journey to a wait it found. The served day names a decoded wait after its
+  station (`boardingStayLabel`), so the decoder side must read a
+  station-named stay as placeless for this rule — the referee has no station
+  list; the fold's `wait` marker, kept on the segment, would say it.
+- **B, the narratives.** Wait rows from the signal on the five days; the
+  referee unchanged. Both sides then split at every wait of five minutes or
+  more, and "the walk to the station" becomes a journey of its own — the
+  letter of rule 3 against its intent.
+- **C, the fold.** `foldRideWaits` folds a decoded wait into the ride again,
+  as before S1; the wait row (07-01, 09-06) is lost and the decoder's own
+  finding is thrown away at the fold.
+
+A with the wait rows added as well (the narratives should carry what the
+signal shows; B's rows under A's rule split nothing) is the recommendation;
+it is a measurement-rule change, so his call.
+
+With the fitter's population corrected (three waits before a ride: 4, 5, 14
+minutes; Gamma(2.91, 0.38) by moments, floor 4) and the floor in the decoder:
+**121/314/62/66/9, rows 29 lost, 18 gained.** 07-14's three-minute wait is
+impossible and its two rows hold again (the narrated shape); 09-06's 12:06Z
+journey holds; 07-01's four-minute wait at the floor is lost to the walk and
+its walk row returns. The four journeys above stay lost under the referee's
+rule. The arms, all on the fresh records: wait off 125/313/61/66/7 (27/19);
+wait 126/313/61/65/6 (28/18); footprint test 122/314/62/65/8 (31/17);
+footprint test with the fitted floor 121/314/62/66/9 (29/18).
+
 ## Phases, each measured on the scoreboard, the journey referee above and the corpus floors
 
 - **S1: platform states, transitions, journey reader.** Gate: journeys up (the

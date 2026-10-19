@@ -537,6 +537,18 @@ def nodeOnLine (g : ChainGraph) (line : String) (n : ChainNode) : Bool :=
     | some e => e.lineMemberships.contains line
     | none => false
 
+/-- Does the line's track reach the station's footprint — an edge carrying the
+    line with an end within `STATION_FOOTPRINT_M`, as `stationFootprintNodes`
+    seeds the along-line search? King's Cross's six nodes sit on Victoria,
+    Piccadilly and untagged edges while the Met's track runs through its
+    footprint, so `nodeOnLine` says no and the search says yes. -/
+def stationOnLine (g : ChainGraph) (line : String) (n : ChainNode) : Bool :=
+  nodeOnLine g line n
+    || (edgesNearIdx g.model n.lat n.lon STATION_FOOTPRINT_M).any fun i =>
+      let e := g.model.edges[i]
+      let near (p? : Option _) := p?.any fun p => haversineMeters n.lat n.lon p.lat p.lon ≤ STATION_FOOTPRINT_M
+      e.lineMemberships.contains line && (near e.geometry.head? || near e.geometry.getLast?)
+
 /-- A name→candidate map that remembers INSERTION order, mirroring the JS `Map`
     the TS builds. Updating an existing name must NOT move it, which is exactly
     what `Map.set` does and what `{ st with best := … }` does here. -/

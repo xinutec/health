@@ -97,6 +97,9 @@ structure ModelContext where
   mainlineFit : Option GammaFit := none
   /-- The platform wait's duration, the journey's wait legs (`WAIT_MARK`). -/
   waitFit : Option GammaFit := none
+  /-- The wait's duration floor, minutes: below it the leg is impossible (the
+      narrator folds a shorter pause into the walk). -/
+  waitMin : Float := Duration.minDurationByMode .stationary
   /-- Per-family weights (`EmissionFull.TermWeights`), all `1` when shipped. -/
   weights : EmissionFull.TermWeights := {}
   /-- `SegmentEmission`'s terms (heart rate per segment, fix presence as a
@@ -451,9 +454,10 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
     let fit := match c.mainlineFit with
       | some f => if Emissions.isMainline st then f else c.fits st.mode
       | none => c.fits st.mode
-    let fit := if st.lineName == some WAIT_MARK then c.waitFit.getD fit else fit
+    let isWait := st.lineName == some WAIT_MARK
+    let fit := if isWait then c.waitFit.getD fit else fit
     c.weights.duration * Duration.logDurationProb d.toFloat fit
-      (if c.durationNoFloor then MIN_ONE else Duration.minDurationByMode st.mode)
+      (if c.durationNoFloor then MIN_ONE else if isWait then c.waitMin else Duration.minDurationByMode st.mode)
 
 /-- The segment-level emission of state `s` over a segment of length `d` with
     window `w` (its net displacement) and statistics `st`. -/

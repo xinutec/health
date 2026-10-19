@@ -913,13 +913,17 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     match arr.toList.filterMap (fun v => (v.getNum?).toOption.map (·.toFloat)) with
     | [a, b] => some { alpha := a, beta := b, sampleCount := 10 }
     | _ => none
-  -- The platform wait's duration (`durationFits.wait`), the journey's wait legs.
-  let waitFit : Option Verified.Hsmm.Duration.GammaFit := do
+  -- The platform wait's duration (`durationFits.wait`), the journey's wait legs;
+  -- a third number is its floor in minutes (the shortest narrated wait).
+  let waitFitFloor : Option (Verified.Hsmm.Duration.GammaFit × Option Float) := do
     let f ← fitted
     let arr ← ((f.getObjVal? "durationFits") >>= (·.getObjVal? "wait") >>= (·.getArr?)).toOption
     match arr.toList.filterMap (fun v => (v.getNum?).toOption.map (·.toFloat)) with
-    | [a, b] => some { alpha := a, beta := b, sampleCount := 10 }
+    | [a, b] => some ({ alpha := a, beta := b, sampleCount := 10 }, none)
+    | [a, b, m] => some ({ alpha := a, beta := b, sampleCount := 10 }, some m)
     | _ => none
+  let waitFit := waitFitFloor.map (·.1)
+  let waitMin := (waitFitFloor.bind (·.2)).getD (Verified.Hsmm.Duration.minDurationByMode .stationary)
   -- Segment-level emissions, the decoder record's `segEmission`: `{sigmaW,
   -- rho, modes: {mode: [hrMean, hrTau, fixA, fixB]}, …}`. Required: the
   -- decoder has no form without it.
@@ -1050,7 +1054,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | _, _ => #[]
     | none => #[]
   let durationNoFloor := ((flags.getObjVal? "durationNoFloor") >>= (·.getBool?)).toOption.getD false
-  let ctx := { ctx with priors, fits, mainlineFit, waitFit, weights, segPref, placePrior, transWeight, stayEntryLog, durationNoFloor,
+  let ctx := { ctx with priors, fits, mainlineFit, waitFit, waitMin, weights, segPref, placePrior, transWeight, stayEntryLog, durationNoFloor,
                         visitCounts, entryTable }
   let lineProxBest := Verified.Hsmm.Assemble.lineProxBestTable ctx
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx
@@ -1492,7 +1496,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             if Verified.Hsmm.Emissions.isPlaceholderLine line then continue
             for n in g.nodes do
               if n.stationName.isNone then continue
-              if !Verified.Hsmm.StationChain.nodeOnLine g line n then continue
+              if !Verified.Hsmm.StationChain.stationOnLine g line n then continue
               if !servedOn line n then continue
               if fixes.any (fun f => nearFix f n) then out := out.push (l, li, some n)
           | .stationary, some _ =>
@@ -1534,7 +1538,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
               | none => none
               | some (la, lo) =>
                 let near := (Verified.Hsmm.StationChain.stationsNear g la lo journeyReachM).filter
-                  fun (n, _) => Verified.Hsmm.StationChain.nodeOnLine g line n && servedOn line n
+                  fun (n, _) => Verified.Hsmm.StationChain.stationOnLine g line n && servedOn line n
                 (near.foldl (fun (bestN : Option (Verified.Hsmm.StationChain.ChainNode × Float)) (n, d) =>
                   match bestN with
                   | none => some (n, d)
