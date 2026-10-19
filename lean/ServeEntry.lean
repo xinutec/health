@@ -804,6 +804,9 @@ private def parseObservationInput (v : Json)
     (fun ts => proxMap.getD ts (none, none))
     imputeCadence
 
+/-- A Float zero for the record parser's branches (a literal there is a GMP call). -/
+private def recordZero : Float := 0
+
 private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.ModelContext × Nat) := do
   -- ⚠ `observation` WINS when both are present, and that is not arbitrary: the
   -- raw form is the one that cannot be stale, because it is what the tensor
@@ -961,8 +964,11 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let legs := fun (k : String) => all.filterMap fun m => do
         let v ← ((jj.getObjVal? k) >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m))).toOption
         let pr ← num v
-        if pr > 0 then pure (m, Float.log pr) else none
-      pure { maxJ, firstLeg := legs "firstLeg", lastLeg := legs "lastLeg" }
+        if pr > recordZero then pure (m, Float.log pr) else none
+      let continueLog := match ((jj.getObjVal? "continue").toOption >>= num) with
+        | some pr => if pr > recordZero then Float.log pr else Verified.FloatConst.negInf
+        | none => Verified.FloatConst.negInf
+      pure { maxJ, firstLeg := legs "firstLeg", lastLeg := legs "lastLeg", continueLog }
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
            obsChain, asleep, unlistedCentre, journey }
   let some segEm := segEm?
@@ -1222,6 +1228,9 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   let outerTransF := fun (src dst : Verified.Hsmm.Emissions.State) (ws : Float) (a b : Nat) =>
     if !jOn then baseTransF src dst ws a
     else if isLeg src || isLeg dst then Verified.FloatConst.negInf
+    else if src.mode == .unknown && dst.mode == .unknown then
+      -- Two journeys back to back: one longer than the bound, at its rate.
+      (match c.segEm.p.journey with | some jp => jp.continueLog | none => Verified.FloatConst.negInf)
     else if src.mode == .unknown || dst.mode == .unknown then
       (if a == b then Verified.FloatConst.negInf else journeyZero)
     else baseTransF src dst ws a
@@ -1350,6 +1359,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   -- level-free table) and the journey bound.
   let jIdx := Verified.Hsmm.Assemble.journeyIdx c
   let jCls := jIdx.map fun i => durClass[i]!
+  -- Every journey state (two): the bound applies to each.
+  let jAll : Array Nat := (c.states.zipIdx.filter fun (st, _) => st.mode == .unknown).map (·.2)
   let maxJ := match c.segEm.p.journey with | some jp => min jp.maxJ maxD | none => 0
   let legs := if jIdx.isSome then Verified.Hsmm.Assemble.legIdxs c else #[]
   let legSlots : Array Nat := legs.foldl (fun acc l => let k := durClass[l]!; if acc.contains k then acc else acc.push k) #[]
@@ -1583,7 +1594,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       let mut bad : Option Int := none
       for d0 in [0:maxD] do
         if d0 ≥ maxJ then
-          durBaseJ := durBaseJ.set! (jI * maxD + d0) 0
+          for ji in jAll do
+            durBaseJ := durBaseJ.set! (ji * maxD + d0) 0
           continue
         let base := Verified.Hsmm.Assemble.durPriorBase c jI (d0 + 1)
         let qRef := match quant (Verified.Hsmm.Assemble.durAtFrom c jI (d0 + 1) assembleRefE base) with
@@ -1995,9 +2007,9 @@ private def journeyDebugJson (c : Verified.Hsmm.Assemble.ModelContext)
     let mut out : Array Json := #[]
     let mut i := 0
     while i < path.size do
-      if path[i]! == tb.journey then
+      if (c.states[path[i]!]?.map (·.mode == .unknown)).getD false then
         let mut j := i
-        while j + 1 < path.size && path[j + 1]! == tb.journey do j := j + 1
+        while j + 1 < path.size && path[j + 1]! == path[i]! do j := j + 1
         let decoded := Verified.Hsmm.Journey.legsPath tb i j
         let (ds, dt) := Verified.Hsmm.Journey.scoreLegs tb i decoded
         let forced : Option Json :=
@@ -2047,8 +2059,9 @@ private def assembleSegmentsResult (j : Json) : Json :=
            | some tb => journeyDebugJson c tb r.path dj
            | none => Json.mkObj [("error", Json.str "journeyDebug needs the journey state (segEmission.journey)")]) else
         -- Under the journey state, each journey segment becomes its legs.
+        let isJ := fun (i : Nat) => (c.states[i]?.map (·.mode == .unknown)).getD false
         let path := match journey with
-          | some tb => Verified.Hsmm.Journey.expand tb r.path
+          | some tb => Verified.Hsmm.Journey.expand tb r.path isJ
           | none => r.path
         -- Index → the state the model actually holds. An out-of-range index is
         -- an ERROR, not a skipped minute: it would shorten the path and shift

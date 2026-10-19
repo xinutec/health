@@ -172,7 +172,9 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
       ++ [(⟨.train, none, some Emissions.UNKNOWN_METRO⟩ : State)]
       -- The journey state (`segEm.journey`): mode `unknown`, which no other
       -- state wears; `Journey` fills its cell.
-      ++ (if segEm.journey.isSome then [(⟨.unknown, none, none⟩ : State)] else [])).toArray
+      -- Two of them, so a journey longer than the bound decodes as two back
+      -- to back (the trellis never continues a state into itself).
+      ++ (if segEm.journey.isSome then [(⟨.unknown, none, none⟩ : State), (⟨.unknown, none, some "second"⟩ : State)] else [])).toArray
     model
     connGraph := RouteModel.toConnGraph model
     modeledLines := RouteModel.linesInGraph model

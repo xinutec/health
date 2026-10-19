@@ -87,6 +87,9 @@ structure JourneyParams where
   firstLeg : List (Mode × Float)
   /-- `log P(mode)` of a journey's last leg, per leg mode. -/
   lastLeg : List (Mode × Float)
+  /-- `log P(a journey continues into another)`: a journey longer than `maxJ`
+      decodes as two back to back at this price; `−∞` forbids it. -/
+  continueLog : Float := Verified.FloatConst.negInf
   deriving Inhabited
 
 structure Params where

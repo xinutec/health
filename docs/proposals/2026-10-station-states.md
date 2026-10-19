@@ -189,6 +189,29 @@ The ride between `platform σ` and `platform σ'` has a duration the pair implie
 second-order dependency (two states apart), which a segmental HSMM does not
 see. Phase S2 handles it.
 
+## S1 inside the journey state (designed 2026-10-19, after S2's first slice)
+
+The journey state (`2026-10-shared-levels.md`) carries legs as base states of
+the outer model, and S2's first slice adds a leg per line and board station
+within reach of the fixes, sharing the line's tables and beginning only within
+reach (`Journey.Tables.reachStarts`). A platform wait is the same shape: a leg
+per station within reach, on a base `wait` state — stationary emissions, no
+place — that the outer trellis never holds, its duration from a fitted wait
+prior (narrated waits: 07-01's 4 minutes at Euston Square, 09-06's 5 at
+Stanmore, Arnhem's 9 between trains), beginning only within reach of σ.
+What S2's slice lacks it supplies: a `wait σ` leg may be followed only by a
+`train L from σ` with the SAME σ, and a `train L from σ` by a `wait σ'` only
+where σ' is the ride's alight — so the change at a shared station is a wait
+leg between two rides, and the board station of the ride after it is the
+wait's. Leg pairs therefore need a per-pair rule beside the base matrix (an
+`L × L` table of allowed pairs; the sweep's hoist already skips legs that
+cannot begin at a minute). The decoded wait writes back as a stationary
+segment at the station, which the narratives hold as a row ("stationary, at
+Stanmore, waiting for the tube") and which `foldRideWaits` must then leave
+alone under the journey state. Candidates: the stations within reach of the
+day's fixes, as S2's. Cost: the wait legs are as many as S2's; the pair
+table is the new part.
+
 ## Phases, each measured on the scoreboard, the journey referee above and the corpus floors
 
 - **S1: platform states, transitions, journey reader.** Gate: journeys up (the

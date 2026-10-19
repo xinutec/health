@@ -278,14 +278,15 @@ def scoreLegs (tb : Tables) (s0 : Nat) (legs : Array (Nat × Nat)) : Array LegSc
   | none => pure ()
   return (out, total)
 
-/-- The outer path with every journey segment replaced by its legs. -/
-def expand (tb : Tables) (path : Array Nat) : Array Nat := Id.run do
+/-- The outer path with every journey segment replaced by its legs; `isJ`
+    names the journey states (two, so a long journey can be two in a row). -/
+def expand (tb : Tables) (path : Array Nat) (isJ : Nat → Bool := (· == tb.journey)) : Array Nat := Id.run do
   let mut out := path
   let mut i := 0
   while i < path.size do
-    if path[i]! == tb.journey then
+    if isJ path[i]! then
       let mut j := i
-      while j + 1 < path.size && path[j + 1]! == tb.journey do j := j + 1
+      while j + 1 < path.size && isJ path[j + 1]! && path[j + 1]! == path[i]! do j := j + 1
       let legs := legsOf tb i j
       for k in [0:legs.size] do
         out := out.set! (i + k) legs[k]!
