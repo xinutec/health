@@ -388,6 +388,8 @@ fixes do not see), 06-18's board station, and the classes below.
    as the stay; 07-16's UCH is two buildings. What separates a walk out from
    a spell is what follows it: the journey's single level (stage 2) and the
    stay's ending, not the spell itself.
-2. **The journey state** as designed, levels shared, `maxJ` 240; gate adds
-   `decodeprof` on 09-30 within 2× today's decode. Then S2 inside it.
-3. **Platform waits** (2) are S1's state; **hops** (2) are S2's.
+2. **The journey state**: built, at parity (above), behind its key. **S2
+   inside it** — `train L from σ` as leg states, the change at a station both
+   lines serve — is the step that gives it a reason to ship; the hops (07-07,
+   07-16) and the `unknown_rail` stations are its rows.
+3. **Platform waits** (2) are S1's state.
