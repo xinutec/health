@@ -430,6 +430,85 @@ Two mechanisms, neither the pair term:
   the Jubilee pair's −60 and the Met pair after it). Kept as the right
   reading of a stale track.
 
+### The margin on one set of records (2026-10-20, 19:00)
+
+Both arms on the fresh fitter records (`fit_wf`), the referee without its
+pause, today's narratives:
+
+| arm | scoreboard | flip rows |
+|---|---|---|
+| base decoder | 127/311/63/69/5 | 21 lost / 17 gained |
+| journey state (S2 legs, S1 wait, footprint stations, wait at its station, alight by station and by the first fix away) | 127/314/62/67/6 | 27 / 22 |
+
+Journey against base, same records: +7 gained (05-18's hop, the four platform
+waits 06-15, 06-17, 06-18, 09-15, 07-02's walk, 10-08's walk), −2 gains
+(05-22 19:38Z, 06-23 07:42Z), +6 lost (05-22's Finchley Road wait, 06-16's
+cadence minute, 07-02's fused ride, 07-06 10:33Z, 10-08 14:59Z twice): one
+row behind, three leg modes ahead, a line and two stations behind, a phantom
+more. Against the served day neither arm is net better (−4 and −5), so no
+flip. The base decoder's four new journey losses under the referee: 10-08
+07:18Z (the Hendaye stay swallows the walk to the platform — the head has
+no walk at all), 10-08 12:43Z (the walk to Parcelle ends three minutes
+early), 10-07 10:39Z (a two-minute placed stop the decoder draws inside the
+narrated walk, which the day walks away from), 07-16 07:13Z (below).
+
+The two 10-08 keys and 07-16's are three findings, not one:
+
+- **Hendaye is the fold.** The base decoder's own segments match the
+  narrative row for row (the station stay, the walk to the platform
+  07:13–07:21Z, the platform stay, the TGV); the head's tail runs
+  `finalMerge`, whose intra-place absorption sees two stays named after the
+  station with an eight-minute walk between and demotes the walk. Under the
+  head the decoder's boundaries stand and the tail names; it does not
+  re-draw. `finalMerge` leaves `DECODER_TAIL` (measured below).
+- **The café and the hospital are the narratives.** Of the fifteen placed
+  stays the corpus writes directly before a ride, fourteen are stations —
+  waits and changes, as the rule reads them. The two that are visits had their
+  walk to the train folded into the stay: 10-08's Parcelle (steps in bursts
+  from 15:17 London time, the Métro at 15:26) and 07-16's UCLH (75–114 steps
+  a minute 09:05–09:11, none 09:12–09:15, walking beside King's Cross from
+  09:16 — a visit to 09:14 cannot reach King's Cross by 09:16). Both rows now
+  end where the steps begin and carry the walk, his words on 07-16 kept
+  verbatim beside the signal that re-times them; the two tail rows the head
+  "lost" there were walking all along.
+- **10-07 is the decoder's:** a two-minute placed stop inside a walk (2 and 6
+  steps at 11:06–11:07Z on the beach), which the narrator folds into the walk
+  and the rule reads as a stay the day walks away from. A pause's own
+  duration, fitted on the narrated stops between walks (5, 7, 7, 8, 16, 18
+  minutes), is the term it lacks.
+
+Measured, the base decoder's head on the fresh records: without `finalMerge`
+in the tail and with the two narratives re-windowed, **19 lost / 20 gained**
+(07-16's and 10-08's keys back, one label row lost on 07-07 whose walk out
+of Work now starts five minutes earlier and names other roads); Hendaye still
+folded — by `boardingStayLabels`, which names both stays after the station
+and folds the walk between two waits at one station into the wait. The fold
+is off under the head (`foldInside`): **18 lost / 21 gained, scoreboard
+129/313/63/69/5** — the first net-positive reading of the base decoder
+against the served day under the numberless referee. The served day keeps
+both folds; under the head the tail names and does not re-draw.
+
+Floors moved by the two re-windowed narratives: the frozen scoreboard (07-16
+and 10-08 each gain a journey and a leg), the truth floor (07-16's 08:05Z key
+now carries the walk the served day cannot hold — cut by hand, the narrative
+changed under it; the ride rows re-keyed by the gate's bless), the
+name-confidence ledger (07-16's three "enclosing" rows became one: `COUNTS`
+enclosing 28/29 → 26/27, its witness 29/31 → 27/29), and through that one
+served number, `placeConfidence` 0.9355 → 0.9310 on every stay named by an
+enclosing building, the day gate's blessed timelines (`DAY_BLESS`).
+
+**The journey state on the new tail** (same records, same narratives):
+**129/316/62/67/6, rows 22 lost / 27 gained** — net +5 against the served
+day, the base head +3. Journey against base head: +6 gained (05-18's hop,
+the four platform waits, 07-02's walk, 10-08's walk, 07-16's re-timed walk),
+−2 gains (05-22 19:38Z, 06-23 07:42Z), +4 lost (05-22's Finchley Road wait,
+06-16's cadence minute, 07-02's fused ride, 07-06's hop walked through) and
+07-16 08:12Z in place of 08:10Z; three leg modes ahead, a line and two
+stations behind, a phantom more. The losses that are a whole leg kind on
+their day: 07-06's one-stop hop (both arms) and 06-09's bus (every arm, no
+bus state). The flip is his call by his own rule (several rows, no day losing
+a whole leg kind): the margin is there, the two leg kinds are named.
+
 ### The journey rule without a number (2026-10-20)
 
 On the narrative side, the decoder side and the drawn-timeline shape referee

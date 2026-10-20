@@ -543,10 +543,13 @@ private def boardingNames (e : Env) (segs : Array Seg) : Array (Option (String �
 the train (`TransitPlace.stationsBeforeBoarding`, through a stay or a short
 walk inside the board station) and the chain forward from a stay the station
 building encloses (`TransitPlace.stationsFromEnclosed`, read off `placeKind`)
-— then fold the walks between two waits at the SAME station into one wait when
-the walk never leaves that station's range: moving about inside Gare
-Montparnasse is being at Gare Montparnasse, not a journey. -/
-def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
+— then, with `foldInside`, fold the walks between two waits at the SAME
+station into one wait when the walk never leaves that station's range: moving
+about inside Gare Montparnasse is being at Gare Montparnasse, not a journey.
+Under the decoder head the fold is off: the decoder's walk to the platform
+stands (10-08's 07:13–07:21Z at Hendaye, the journey's first leg to the
+narrative and the referee), and the tail names without re-drawing. -/
+def boardingStayLabels (e : Env) (segs : Array Seg) (foldInside : Bool := true) : Array Seg := Id.run do
   let names := boardingNames e segs
   let mut out := segs
   for i in [0 : out.size] do
@@ -558,6 +561,7 @@ def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
                                refinedReason := some (match s.refinedReason with
                                  | some r => s!"{r}; {why}"
                                  | none => why) }
+  if !foldInside then return out
   let absorbed := out.mapIdx fun i w =>
     if Verified.Geo.SegmentMerge.effectiveMode w != "walking"
         || w.endTs - w.startTs > Verified.Geo.TransitPlace.INTERCHANGE_WALK_MAX_S then w

@@ -910,7 +910,11 @@ stays at one place absorbed (`finalMerge`: steps about the office are not a
 trip). `decoderHead` runs these alone. -/
 def DECODER_TAIL : Array String :=
   #["stayArrivalClaim", "walkDwell", "staySteplessDeparture", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
-    "biomEnrich", "hsmmOverride", "finalMerge", "interchangeStayLabel", "boardingStayLabel",
+    -- No `finalMerge` here: its intra-place absorption re-segments the decoder's
+    -- day (10-08: the walk to the platform between two stays named after
+    -- Hendaye station became the stay), and under the head the decoder's
+    -- boundaries stand; the tail names, it does not re-draw.
+    "biomEnrich", "hsmmOverride", "interchangeStayLabel", "boardingStayLabel",
     "alightAfterHold", "alightAtLastFix", "railSnapFinal", "vehicleIdentity"]
 
 def MS_TO_KMH : Float := 3.6
@@ -1195,6 +1199,13 @@ def dayResult (j : Json) : Json :=
     let darkMove : Verified.Geo.PassFold.Pass := ("darkMoveAtPlace", fun segs =>
       Verified.Geo.SegmentMerge.absorbDarkMoveAtPlace segs env.geoFixes)
     let tail := chosen.filter (DECODER_TAIL.contains ·.1)
+    -- The waits before a train take their station's name, and the walk to the
+    -- platform between two of them stays a walk: the tail names, it does not
+    -- re-draw the decoder's day.
+    let tail := tail.map fun (n, f) =>
+      if n == "boardingStayLabel"
+        then (n, fun segs => Verified.Geo.PassFold.boardingStayLabels env segs false)
+        else (n, f)
     let tail := match tail.findIdx? (·.1 == "hsmmOverride") with
       | some k => tail.insertIdx! (k + 1) darkMove
       | none => tail.push darkMove

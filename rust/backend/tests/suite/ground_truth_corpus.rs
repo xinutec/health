@@ -179,14 +179,15 @@ const TS_DECLARED_TZ: usize = 8;
 /// `groundTruthJourneys` over the same corpus, same source, same day. A stay
 /// the day boards a ride from is its wait, so the waits before rides belong to
 /// their trips; the platform waits on 06-15, 06-17 and 06-18 are rows of their
-/// own, each ride row starting at its boarding.
-const TS_JOURNEYS: usize = 88;
-const TS_LEGS: usize = 237;
+/// own, each ride row starting at its boarding; 07-16's hospital visit ends
+/// where its steps begin and the hop after it is a journey of its own.
+const TS_JOURNEYS: usize = 89;
+const TS_LEGS: usize = 238;
 /// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. The leg total could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
 /// to `stationary`, changes what a leg IS without changing how many there are.
 const TS_LEG_MODES: [(&str, usize); 4] =
-    [("bus", 3), ("driving", 6), ("train", 80), ("walking", 148)];
+    [("bus", 3), ("driving", 6), ("train", 80), ("walking", 149)];
 
 #[test]
 fn the_narrative_corpus_matches_its_blessed_shape() {
