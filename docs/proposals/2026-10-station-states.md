@@ -391,6 +391,20 @@ has nothing to absorb there today. Phantoms under the journey record are 11
 against the base's 5: one-minute rides inside walks (09-15 15:41Z, 07-07
 09:01Z), S2's remaining cost.
 
+The one-minute rides, priced (journey debugger, 09-15 15:41Z): a
+`Metropolitan Line@King's Cross` leg of one minute with an expected ride
+time of 0.8 minutes — the alight is the station nearest the next fix on the
+line, King's Cross has six nodes, and a node of the board station itself
+passed the "not the board station" test by id, so a ride to itself expected
+only the stop overhead and a minute of train paid 0.36 nats of emission
+against the walk's 6. The alight is now another STATION by name; the leg
+then has no pair time and the two-minute duration floor makes a one-minute
+ride impossible. **Phantoms 11 → 7, rows 27/22** (09-15's walk, 07-07's
+UCLH stay and 09-06's Stanmore ride return; 06-12's forecourt journey gain
+is lost). Against the base's 21/17 the journey record now stands at −5 net
+with lines 62 against 63 and stations 67 against 68: S2's alight naming on
+06-16 and 07-02 (the decoded alight one station short) is the next class.
+
 ### The journey rule without a number (2026-10-20)
 
 On the narrative side, the decoder side and the drawn-timeline shape referee
