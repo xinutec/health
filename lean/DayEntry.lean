@@ -1025,9 +1025,10 @@ def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
         | some b, some a, none => some s!"{b} → {a}"
         | _, _, l => l
     -- A wait the chain found at a CHANGE is a stay at the station, the ride
-    -- its own span: his rows write a change so (06-29, 07-01) and a platform
-    -- wait at the journey's ends inside the walk or the ride, and the
-    -- journey referee composes with a five-minute pause.
+    -- its own span: his rows write a change so (06-29, 07-01). A wait the
+    -- decoder found arrives as a `stationary` with its station as
+    -- `boardStation` and is a stay at the station too; the journey referee
+    -- reads a stay before a ride as its wait.
     -- A change: the other ride is adjacent, or across the in-station walk.
     let trainAt := fun (k : Nat) => (hmm[k]?).any (·.mode == "train")
     let afterTrain := i > 0 && (trainAt (i - 1)
@@ -1037,7 +1038,7 @@ def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
     let rideStart := if afterTrain then max h.startTs (h.boardTs.getD h.startTs) else h.startTs
     let rideEnd := if beforeTrain then min h.endTs (h.alightTs.getD h.endTs) else h.endTs
     (if rideStart > h.startTs then #[build h.startTs rideStart "stationary" none h.boardStation] else #[])
-      ++ #[build rideStart rideEnd h.mode way none]
+      ++ #[build rideStart rideEnd h.mode way (if h.mode == "stationary" then h.boardStation else none)]
       ++ (if rideEnd < h.endTs then #[build rideEnd h.endTs "stationary" none h.alightStation] else #[])).flatten
 
 /-- The passes whose output differs from what they were handed — computed from
@@ -1161,8 +1162,9 @@ def dayResult (j : Json) : Json :=
     -- Under the head the stays take the enrichment stage's naming (its
     -- stationary branch, `nameStay`) and nothing else of that stage, which
     -- also rewrites modes and labels; the decoder's places then override.
+    -- A stay that arrived named (a decoded wait, at its station) keeps its name.
     let nameStays : Verified.Geo.PassFold.Pass := ("nameStays", fun segs =>
-      segs.map fun s => if s.mode == "stationary" then env.nameStay s else s)
+      segs.map fun s => if s.mode == "stationary" && s.place.isNone then env.nameStay s else s)
     -- A walk or a drive takes its roads and city from the enrichment stage's
     -- moving branch, run over its own fixes, and nothing else of it: that
     -- branch also refines the mode, and under the head the decoder's stands.

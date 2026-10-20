@@ -358,6 +358,39 @@ minutes hardcoded is one of those rigid numbers"), which the asking should
 not have needed — priors and physics as likelihood terms, never thresholds,
 is the project's design principle (`2026-07-continuity-c4.md`).
 
+### The decoded wait carries its station (the fold's first yield, #1947)
+
+How the head loses a walk row to a wait it found (07-01, 07-14, 09-15): the
+wait leaves the decoder as a placeless `stationary`; under the head the
+stays take the enrichment stage's naming (`nameStays`), which names a
+placeless stay beside UCLH as UCLH; `finalMerge`'s intra-place absorption
+then sees two stays at one place with a short walk between and demotes the
+walk — the served stay runs to the ride. The fix is identity, not a pass
+gate: the wait's leg knows its station (`legStation` beside `legName` in the
+journey tables), the expansion keeps the leg per minute (`expandLegs`), the
+wait segment leaves the assembler with `boardStation` set, the decoder-segment
+bridge (`decoderSegs`) makes it a stay AT that station, and the head's stay
+namer leaves a stay that already has a place alone. A stay named after its
+station is what the served day already draws for a chain-found wait, and
+`absorbIntraPlaceWalk` cannot fold UCLH into Euston Square. Measured on the
+flip rows against the baseline re-made after the day's sweep (`s61base`).
+
+Measured (the journey record `fit_wf_j`, the referee without its pause): the
+base decoder 21 lost / 17 gained; the journey record on the tree before the
+slice 28/22 — its gains hold four of the five new wait rows (06-15, 06-17,
+06-18, 09-15) and 06-12's forecourt journey; with the slice **29/22**. The
+one row it moves is 07-07 08:54Z: the decoder reads the eight stepless
+minutes at UCLH as a wait at Warren Street before a one-minute hop it places
+six minutes early, and the fold's venue name used to cover that; served as a
+stay at Warren Street the row fails, which is the truth of the decode. Where
+a wait is decoded the fold now serves it at its station (09-15: Wembley Park
+08:18–08:26Z, King's Cross 15:46–15:50Z; Work ends at 15:35Z, not 15:43). On
+07-01 and 07-14 no wait is decoded under this record (the four-minute one
+sits on the floor, the three-minute one is impossible), so the absorption
+has nothing to absorb there today. Phantoms under the journey record are 11
+against the base's 5: one-minute rides inside walks (09-15 15:41Z, 07-07
+09:01Z), S2's remaining cost.
+
 ### The journey rule without a number (2026-10-20)
 
 On the narrative side, the decoder side and the drawn-timeline shape referee

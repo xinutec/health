@@ -1616,6 +1616,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       | none => base
     let tb : Verified.Hsmm.Journey.Tables :=
       { T, maxJ, journey := jI, legs := legOuter, legName, baseOf, nBase := legs.size
+        legStation := legList.map fun (_, _, st?) => st?.bind (·.stationName)
         legSlot := legOuter.map (fun l => (slotOfCls durClass[l]!).getD 0)
         nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
         first := legOuter.map (prior true jp.firstLeg)
@@ -2098,6 +2099,10 @@ private def assembleSegmentsResult (j : Json) : Json :=
         let path := match journey with
           | some tb => Verified.Hsmm.Journey.expand tb r.path isJ
           | none => r.path
+        -- The leg each minute inside a journey came from: a wait's station rides on it.
+        let legAt : Array (Option Nat) := match journey with
+          | some tb => Verified.Hsmm.Journey.expandLegs tb r.path isJ
+          | none => #[]
         -- Index → the state the model actually holds. An out-of-range index is
         -- an ERROR, not a skipped minute: it would shorten the path and shift
         -- every later segment boundary.
@@ -2122,7 +2127,19 @@ private def assembleSegmentsResult (j : Json) : Json :=
             Json.mkObj [("error", Json.str
               s!"path has {sts.size} states but the observation tensor has {c.obs.size} rows")]
           | some segs0 =>
-            let segs := (Verified.HsmmSegments.foldRideWaits segs0).map fun s =>
+            let folded := Verified.HsmmSegments.foldRideWaits segs0
+            -- A decoded wait's station, from its leg at its first minute: the
+            -- segment leaves as a stay AT the station, so the fold's stay namer
+            -- cannot name it after the venue beside it and absorb the walk.
+            let obsT0 := (c.obs[0]?.map (·.ts)).getD 0
+            let waitStation : Array (Option String) := folded.map fun s =>
+              if s.lineName != some Verified.Hsmm.Assemble.WAIT_MARK then none else
+              match journey with
+              | none => none
+              | some tb =>
+                let t := ((s.startTs - obsT0) / 60).toNat
+                (legAt[t]?.bind id).bind fun l => tb.legStation[l]?.bind id
+            let segs := folded.map fun s =>
               if s.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then { s with lineName := none } else s
             -- ⚠ THE STATION CHAIN RUNS HERE, and that is the point. `stationchain`
             -- exists as its own mode and takes `obs` — the 1440-row observation
@@ -2250,7 +2267,9 @@ private def assembleSegmentsResult (j : Json) : Json :=
                 -- read the same to a consumer and differ byte for byte in
                 -- `segments_json`, which is what the parity diff compares.
                 Json.mkObj (match byIdx.get? i with
-                  | none => base
+                  | none => base ++ (match waitStation[i]? with
+                      | some (some st) => [("boardStation", Json.str st)]
+                      | _ => [])
                   | some res => base ++
                       [ ("boardStation", optStrJson res.board)
                       , ("alightStation", optStrJson res.alight) ]

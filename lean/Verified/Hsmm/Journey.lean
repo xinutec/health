@@ -36,6 +36,9 @@ structure Tables where
   /-- Per leg, its name for the debugger: the base state's key, `@station`
       for a board-station leg. -/
   legName : Array String := #[]
+  /-- The station a leg boards at (a wait's, a `train L@σ`'s), `none` for a
+      leg without one; a decoded wait leaves the assembler named after it. -/
+  legStation : Array (Option String) := #[]
   /-- Per leg, its position among the base legs (itself for a base leg). -/
   baseOf : Array Nat
   nBase : Nat
@@ -300,6 +303,25 @@ def expand (tb : Tables) (path : Array Nat) (isJ : Nat → Bool := (· == tb.jou
       i := i + 1
   return out
 
+/-- The leg each minute inside a journey came from (`none` outside one), the
+    companion of `expand` for what a leg knows and its base state does not. -/
+def expandLegs (tb : Tables) (path : Array Nat) (isJ : Nat → Bool := (· == tb.journey)) : Array (Option Nat) := Id.run do
+  let mut out : Array (Option Nat) := Array.replicate path.size none
+  let mut i := 0
+  while i < path.size do
+    if isJ path[i]! then
+      let mut j := i
+      while j + 1 < path.size && isJ path[j + 1]! && path[j + 1]! == path[i]! do j := j + 1
+      let mut k := i
+      for (l, n) in legsPath tb i j do
+        for _ in [0:n] do
+          if k ≤ j then out := out.set! k (some l)
+          k := k + 1
+      i := j + 1
+    else
+      i := i + 1
+  return out
+
 -- One leg state, three minutes, emissions 1 a minute, a flat cell of 0: the
 -- journey of three minutes scores first + 3 + last, and its legs are the leg.
 private def one : Tables :=
@@ -316,6 +338,8 @@ private def one : Tables :=
     pairOk := #[true] }
 #guard (best one).get! (2 * 3 + 2) == 0
 #guard legsOf one 0 2 == #[4, 4, 4]
+#guard expandLegs one #[9, 9, 9] == #[some 0, some 0, some 0]
+#guard expandLegs one #[4, 9, 9] (· == 9) == #[none, some 0, some 0]
 #guard expand one #[9, 9, 9] == #[4, 4, 4]
 -- A paired leg on the same base, reachable only at minute 1: a journey over
 -- all three minutes cannot use it; over minutes 1–2 it can, and its cell is
