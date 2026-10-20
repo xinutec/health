@@ -75,6 +75,12 @@ private def int? (j : Json) (k : String) : Option Int :=
   | .ok v => match v.getInt? with | .ok i => some i | .error _ => none
   | .error _ => none
 
+/-- A required boolean field. -/
+private def bool? (j : Json) (k : String) : Option Bool :=
+  match j.getObjVal? k with
+  | .ok v => match v.getBool? with | .ok b => some b | .error _ => none
+  | .error _ => none
+
 private def rateLimitJson : Verified.Sync.RateLimitAction → Json
   | .proceed => Json.mkObj [("kind", Json.str "proceed")]
   | .sleep ms => Json.mkObj [("kind", Json.str "sleep"), ("ms", Json.num (.fromNat ms.toNat))]
@@ -1058,30 +1064,31 @@ def dispatch (j : Json) : Json :=
     Json.mkObj [("value", Json.str (Verified.Login.validateReturnTo (str? j "returnTo")))]
   -- The pending-login cookie's payload.
   | some "encodePending" =>
-    match int? j "expiresAt", str? j "nonce" with
-    | some e, some n =>
-      Json.mkObj [("value", Json.str (Verified.Login.encodePending e n (str? j "returnTo")))]
-    | _, _ => err "encodePending: expiresAt, nonce required"
+    match int? j "expiresAt", str? j "nonce", bool? j "retried" with
+    | some e, some n, some r =>
+      Json.mkObj [("value", Json.str (Verified.Login.encodePending e n r (str? j "returnTo")))]
+    | _, _, _ => err "encodePending: expiresAt, nonce, retried required"
   | some "decodePending" =>
     match str? j "raw" with
     | some raw =>
       match Verified.Login.decodePending raw with
       | none => Json.mkObj [("value", Json.null)]
-      | some (e, n, rt) =>
+      | some (e, n, r, rt) =>
         Json.mkObj
           [ ("value", Json.mkObj
               [ ("expiresAt", Json.num e)
               , ("nonce", Json.str n)
+              , ("retried", Json.bool r)
               , ("returnTo", match rt with | none => Json.null | some r => Json.str r) ]) ]
     | none => err "decodePending: raw required"
   -- ⚠ `state` absent means Nextcloud DROPPED it, which is normal for a
-  -- cookie-less browser and must still complete the login. Present-and-wrong is
-  -- a refusal.
+  -- cookie-less browser: retried once, never accepted. Present-and-wrong is a
+  -- refusal.
   | some "acceptPending" =>
-    match int? j "expiresAt", str? j "nonce", int? j "nowMs" with
-    | some e, some n, some now =>
-      Json.mkObj [("value", Json.bool (Verified.Login.acceptPending e n (str? j "state") now))]
-    | _, _, _ => err "acceptPending: expiresAt, nonce, nowMs required"
+    match int? j "expiresAt", str? j "nonce", bool? j "retried", int? j "nowMs" with
+    | some e, some n, some r, some now =>
+      Json.mkObj [("value", Json.str (Verified.Login.acceptPending e n r (str? j "state") now).name)]
+    | _, _, _, _ => err "acceptPending: expiresAt, nonce, retried, nowMs required"
   | some "pendingTtlMs" =>
     Json.mkObj [("value", Json.num Verified.Login.PENDING_TTL_MS)]
   -- The PhoneTrack filter's start date (#982).

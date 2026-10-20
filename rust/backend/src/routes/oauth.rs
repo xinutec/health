@@ -117,14 +117,20 @@ pub async fn login(State(st): State<AppState>, Query(p): Query<LoginParams>) -> 
             "login without a signing key",
         );
     };
+    start_login(&st, secret, p.return_to.as_deref(), false)
+}
 
+/// Send the browser to Nextcloud's authorize page with a fresh nonce, in the
+/// URL and in the signed pending-login cookie. `retried` marks the one attempt
+/// a lost `state` earns.
+fn start_login(st: &AppState, secret: &str, return_to: Option<&str>, retried: bool) -> Response {
     let nonce = match session::mint_id() {
         Ok(n) => n,
         Err(e) => return oops(&e, "minting a login nonce"),
     };
     let now_ms = chrono::Utc::now().timestamp_millis();
     let (ttl_ms, payload) = match (lean::pending_ttl_ms(), ()) {
-        (Ok(ttl), ()) => match lean::encode_pending(now_ms + ttl, &nonce, p.return_to.as_deref()) {
+        (Ok(ttl), ()) => match lean::encode_pending(now_ms + ttl, &nonce, retried, return_to) {
             Ok(v) => (ttl, v),
             Err(e) => return oops(&e, "encoding the pending login"),
         },
@@ -136,7 +142,7 @@ pub async fn login(State(st): State<AppState>, Query(p): Query<LoginParams>) -> 
     // containing a `&` would otherwise inject a parameter into the authorize
     // request, and the value that carries an attacker's text here is `state`.
     let url = match reqwest::Url::parse_with_params(
-        &format!("{}/index.php/apps/oauth2/authorize", nc_base(&st)),
+        &format!("{}/index.php/apps/oauth2/authorize", nc_base(st)),
         &[
             ("client_id", env_or("NC_CLIENT_ID", "")),
             ("response_type", "code".to_string()),
@@ -181,7 +187,8 @@ pub async fn callback(
         );
     };
 
-    // ⚠ The cookie is the binding, because NC may have dropped `state`.
+    // ⚠ The cookie names the login this browser started; the URL's `state` must
+    // equal its nonce before any code is exchanged.
     let Some(cookie) = jar.get(PENDING_COOKIE) else {
         return sign_in_problem(
             StatusCode::FORBIDDEN,
@@ -209,27 +216,36 @@ pub async fn callback(
         Err(e) => return oops(&e, "decoding the pending login"),
     };
     let now_ms = chrono::Utc::now().timestamp_millis();
-    match lean::accept_pending(
+    let url_state = p.state.as_deref().unwrap_or_default();
+    let proof = match lean::accept_pending(
         pending.expires_at,
         &pending.nonce,
+        pending.retried,
         p.state.as_deref(),
         now_ms,
     ) {
-        Ok(true) => {}
-        Ok(false) => {
-            return sign_in_problem(
-                StatusCode::FORBIDDEN,
-                "Invalid or expired OAuth state. Please try logging in again.",
-            );
+        Ok(lean::Callback::Accept) => StateMatched::check(url_state, &pending.nonce),
+        // The code is not exchanged: without `state` nothing ties it to this
+        // browser. Nextcloud now has a session, so `state` returns.
+        Ok(lean::Callback::Retry) => {
+            tracing::info!("login callback without state — authorizing again");
+            return start_login(&st, secret, pending.return_to.as_deref(), true);
         }
+        Ok(lean::Callback::Refuse) => None,
         Err(e) => return oops(&e, "judging the pending login"),
-    }
+    };
+    let Some(proof) = proof else {
+        return sign_in_problem(
+            StatusCode::FORBIDDEN,
+            "Invalid or expired OAuth state. Please try logging in again.",
+        );
+    };
 
     let Some(code) = p.code.as_deref().filter(|c| !c.is_empty()) else {
         return sign_in_problem(StatusCode::BAD_REQUEST, "Missing authorization code.");
     };
 
-    match finish_nextcloud_login(&st, secret, code, now_ms).await {
+    match finish_nextcloud_login(&st, secret, code, now_ms, proof).await {
         Err(e) => oops(&e, "completing the Nextcloud login"),
         Ok(signed) => {
             let target = lean::validate_return_to(pending.return_to.as_deref())
@@ -257,6 +273,24 @@ pub async fn callback(
     }
 }
 
+/// Proof that a callback's `state` equalled the nonce this server stored for
+/// the sign-in. [`finish_nextcloud_login`] and [`finish_fitbit_link`] take one by
+/// value and only
+/// [`StateMatched::check`] makes one, so no code is redeemed on a path that
+/// skipped the comparison (RFC 6749 §10.12; dev-lint
+/// DL-RUST-OAUTH-EXCHANGE-UNPROVEN checks the shape).
+#[derive(Debug, PartialEq, Eq)]
+pub struct StateMatched(());
+
+impl StateMatched {
+    /// The proof, when `url_state` is present and equals `stored`.
+    pub fn check(url_state: &str, stored: &str) -> Option<Self> {
+        use subtle::ConstantTimeEq;
+        let equal: bool = url_state.as_bytes().ct_eq(stored.as_bytes()).into();
+        (!url_state.is_empty() && equal).then_some(Self(()))
+    }
+}
+
 /// Exchange the code, look up who it is, seat a session. Returns the signed
 /// cookie value.
 async fn finish_nextcloud_login(
@@ -264,6 +298,7 @@ async fn finish_nextcloud_login(
     secret: &str,
     code: &str,
     now_ms: i64,
+    _proof: StateMatched,
 ) -> anyhow::Result<String> {
     #[derive(Deserialize)]
     struct Tokens {
@@ -372,7 +407,7 @@ pub async fn fitbit_auth(
     st.oauth_states.put(
         &state_token,
         chrono::Utc::now().timestamp_millis(),
-        (session.user_id.clone(), verifier),
+        (session.user_id.clone(), verifier, state_token.clone()),
     );
 
     // ⚠ The OAuth routes genuinely need these; `Config::from_env` requires
@@ -420,7 +455,7 @@ pub async fn fitbit_callback(
             "Invalid or expired OAuth state. Please try again from /fitbit/auth.",
         );
     };
-    let Some((state_user, verifier)) = st.oauth_states.take(state_token, now_ms) else {
+    let Some((state_user, verifier, stored)) = st.oauth_states.take(state_token, now_ms) else {
         return sign_in_problem(
             StatusCode::FORBIDDEN,
             "Invalid or expired OAuth state. Please try again from /fitbit/auth.",
@@ -438,7 +473,15 @@ pub async fn fitbit_callback(
         return sign_in_problem(StatusCode::BAD_REQUEST, "Missing authorization code.");
     };
 
-    match finish_fitbit_link(&st, &state_user, &verifier, code).await {
+    // The lookup found the entry by this key; the proof is the comparison
+    // itself, which the exchange cannot be called without.
+    let Some(proof) = StateMatched::check(state_token, &stored) else {
+        return sign_in_problem(
+            StatusCode::FORBIDDEN,
+            "Invalid or expired OAuth state. Please try again from /fitbit/auth.",
+        );
+    };
+    match finish_fitbit_link(&st, &state_user, &verifier, code, proof).await {
         Ok(scopes) => Json(json!({
             "success": true,
             "linkedTo": state_user,
@@ -461,6 +504,7 @@ async fn finish_fitbit_link(
     user_id: &str,
     verifier: &str,
     code: &str,
+    _proof: StateMatched,
 ) -> anyhow::Result<String> {
     #[derive(Deserialize)]
     struct Tokens {

@@ -1262,13 +1262,19 @@ pub fn validate_return_to(return_to: Option<&str>) -> Result<String> {
 }
 
 /// `Verified.Login.encodePending` — the pending-login cookie payload.
-pub fn encode_pending(expires_at: i64, nonce: &str, return_to: Option<&str>) -> Result<String> {
+pub fn encode_pending(
+    expires_at: i64,
+    nonce: &str,
+    retried: bool,
+    return_to: Option<&str>,
+) -> Result<String> {
     #[derive(Deserialize)]
     struct Wire {
         value: String,
     }
-    let mut req =
-        serde_json::json!({ "op": "encodePending", "expiresAt": expires_at, "nonce": nonce });
+    let mut req = serde_json::json!({
+        "op": "encodePending", "expiresAt": expires_at, "nonce": nonce, "retried": retried
+    });
     if let Some(r) = return_to {
         req["returnTo"] = serde_json::json!(r);
     }
@@ -1280,6 +1286,8 @@ pub fn encode_pending(expires_at: i64, nonce: &str, return_to: Option<&str>) -> 
 pub struct Pending {
     pub expires_at: i64,
     pub nonce: String,
+    /// Already sent back once for a missing `state`; a second miss is refused.
+    pub retried: bool,
     pub return_to: Option<String>,
 }
 
@@ -1290,6 +1298,7 @@ pub fn decode_pending(raw: &str) -> Result<Option<Pending>> {
         #[serde(rename = "expiresAt")]
         expires_at: i64,
         nonce: String,
+        retried: bool,
         #[serde(rename = "returnTo")]
         return_to: Option<String>,
     }
@@ -1301,26 +1310,41 @@ pub fn decode_pending(raw: &str) -> Result<Option<Pending>> {
     Ok(w.value.map(|i| Pending {
         expires_at: i.expires_at,
         nonce: i.nonce,
+        retried: i.retried,
         return_to: i.return_to,
     }))
 }
 
-/// `Verified.Login.acceptPending` — may this callback complete the login?
+/// `Verified.Login.Callback` — what a callback may do with its pending login.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Callback {
+    /// `state` matched: exchange the code.
+    Accept,
+    /// `state` was lost: drop the code and authorize again, once.
+    Retry,
+    Refuse,
+}
+
+/// `Verified.Login.acceptPending` — what may this callback do?
 ///
 /// ⚠ `state` is `None` when Nextcloud DROPPED it, which is the normal case for
-/// a browser with no NC session. Sending an empty string is treated the same.
+/// a browser with no NC session. Sending an empty string is treated the same:
+/// retried once, never accepted.
 pub fn accept_pending(
     expires_at: i64,
     nonce: &str,
+    retried: bool,
     state: Option<&str>,
     now_ms: i64,
-) -> Result<bool> {
+) -> Result<Callback> {
     #[derive(Deserialize)]
     struct Wire {
-        value: bool,
+        value: Callback,
     }
     let mut req = serde_json::json!({
-        "op": "acceptPending", "expiresAt": expires_at, "nonce": nonce, "nowMs": now_ms
+        "op": "acceptPending", "expiresAt": expires_at, "nonce": nonce,
+        "retried": retried, "nowMs": now_ms
     });
     if let Some(s) = state {
         req["state"] = serde_json::json!(s);

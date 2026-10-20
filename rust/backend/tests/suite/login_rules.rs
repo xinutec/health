@@ -56,29 +56,69 @@ fn return_to_keeps_internal_paths() {
     }
 }
 
-/// ⚠ NEXTCLOUD DROPS `state` for a browser with no NC session, and the login
-/// must still complete. A server that required `state` could not sign in a
-/// cookie-less browser AT ALL — that is what stranded fleetwatch's WebView.
+/// ⚠ NEXTCLOUD DROPS `state` for a browser with no NC session. That callback is
+/// never trusted (RFC 6749 §10.12): with `state` empty nothing ties its code to
+/// this browser, so anyone's code would sign it in. It is retried ONCE, and the
+/// retry finds Nextcloud signed in, so `state` comes back. Refusing it outright
+/// would strand a cookie-less browser, which is what stranded fleetwatch's
+/// WebView.
 #[test]
-fn a_dropped_state_still_completes_the_login() {
+fn a_dropped_state_is_retried_once_never_trusted() {
+    use lean::Callback::{Accept, Refuse, Retry};
     init();
-    let payload = lean::encode_pending(2000, "the-nonce", Some("/your-day")).expect("encode");
+    let payload =
+        lean::encode_pending(2000, "the-nonce", false, Some("/your-day")).expect("encode");
     let pd = lean::decode_pending(&payload)
         .expect("decode")
         .expect("some");
     assert_eq!(pd.nonce, "the-nonce");
+    assert!(!pd.retried);
     assert_eq!(pd.return_to.as_deref(), Some("/your-day"));
+    let again = lean::encode_pending(2000, "fresh", true, Some("/your-day")).expect("encode");
+    assert!(
+        lean::decode_pending(&again)
+            .expect("decode")
+            .expect("some")
+            .retried
+    );
 
-    // NC returned nothing, or an empty string: the cookie stands alone.
-    assert!(lean::accept_pending(2000, "the-nonce", None, 1000).expect("accept"));
-    assert!(lean::accept_pending(2000, "the-nonce", Some(""), 1000).expect("accept"));
-    // Returned and matching.
-    assert!(lean::accept_pending(2000, "the-nonce", Some("the-nonce"), 1000).expect("accept"));
-    // ⚠ Returned and WRONG is a refusal — the check still bites when NC honours
-    // the parameter.
-    assert!(!lean::accept_pending(2000, "the-nonce", Some("other"), 1000).expect("accept"));
+    // NC returned nothing, or an empty string: retried, never accepted.
+    assert_eq!(
+        lean::accept_pending(2000, "the-nonce", false, None, 1000).expect("judge"),
+        Retry
+    );
+    assert_eq!(
+        lean::accept_pending(2000, "the-nonce", false, Some(""), 1000).expect("judge"),
+        Retry
+    );
+    // A second miss is refused.
+    assert_eq!(
+        lean::accept_pending(2000, "the-nonce", true, None, 1000).expect("judge"),
+        Refuse
+    );
+    assert_eq!(
+        lean::accept_pending(2000, "the-nonce", true, Some(""), 1000).expect("judge"),
+        Refuse
+    );
+    // Returned and matching, on the first try or the retry.
+    assert_eq!(
+        lean::accept_pending(2000, "the-nonce", false, Some("the-nonce"), 1000).expect("judge"),
+        Accept
+    );
+    assert_eq!(
+        lean::accept_pending(2000, "the-nonce", true, Some("the-nonce"), 1000).expect("judge"),
+        Accept
+    );
+    // ⚠ Returned and WRONG is a refusal.
+    assert_eq!(
+        lean::accept_pending(2000, "the-nonce", false, Some("other"), 1000).expect("judge"),
+        Refuse
+    );
     // Expired.
-    assert!(!lean::accept_pending(2000, "the-nonce", Some("the-nonce"), 2001).expect("accept"));
+    assert_eq!(
+        lean::accept_pending(2000, "the-nonce", false, Some("the-nonce"), 2001).expect("judge"),
+        Refuse
+    );
 }
 
 /// ⚠ `returnTo` is encoded LAST so a `|` inside a query string cannot shift the
@@ -87,11 +127,23 @@ fn a_dropped_state_still_completes_the_login() {
 #[test]
 fn a_pipe_in_the_return_path_cannot_shift_the_fields() {
     init();
-    let payload = lean::encode_pending(1234, "n", Some("/x?a=1|2|3")).expect("encode");
+    let payload = lean::encode_pending(1234, "n", false, Some("/x?a=1|2|3")).expect("encode");
     let pd = lean::decode_pending(&payload)
         .expect("decode")
         .expect("some");
     assert_eq!(pd.expires_at, 1234);
     assert_eq!(pd.nonce, "n");
     assert_eq!(pd.return_to.as_deref(), Some("/x?a=1|2|3"));
+}
+
+/// The proof both code exchanges demand is made only by a present `state` equal
+/// to the stored one.
+#[test]
+fn the_proof_is_made_only_by_a_present_matching_state() {
+    use backend::routes::oauth::StateMatched;
+    assert!(StateMatched::check("n0nce", "n0nce").is_some());
+    assert!(StateMatched::check("", "").is_none());
+    assert!(StateMatched::check("", "n0nce").is_none());
+    assert!(StateMatched::check("nonce", "n0nce").is_none());
+    assert!(StateMatched::check("n0nc", "n0nce").is_none());
 }

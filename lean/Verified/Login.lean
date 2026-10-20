@@ -69,17 +69,20 @@ def validateReturnTo (raw : Option String) : String :=
         else if cs.all isSafePathChar then s else "/"
       | _ => "/"
 
-/-- `<expiry ms>|<nonce>|<returnTo>`.
+/-- `<expiry ms>|<nonce>|<retried 0/1>|<returnTo>`.
+
+`retried` says this login was already sent back to Nextcloud once for a missing
+`state`; a second miss is refused.
 
 ⚠ `returnTo` is LAST so a `|` inside a query string cannot shift the fields. A
 format putting it in the middle would let a crafted `return_to` rewrite the
 expiry. -/
-def encodePending (expiresAt : Int) (nonce : String) (returnTo : Option String) : String :=
+def encodePending (expiresAt : Int) (nonce : String) (retried : Bool) (returnTo : Option String) : String :=
   let rt := match returnTo with | none => "" | some r => r
-  toString expiresAt ++ "|" ++ nonce ++ "|" ++ rt
+  toString expiresAt ++ "|" ++ nonce ++ "|" ++ (if retried then "1" else "0") ++ "|" ++ rt
 
 /-- Inverse of [`encodePending`]. `none` when the shape is wrong. -/
-def decodePending (raw : String) : Option (Int × String × Option String) :=
+def decodePending (raw : String) : Option (Int × String × Bool × Option String) :=
   let cs := raw.toList
   match cs.findIdx? (· == '|') with
   | none => none
@@ -93,20 +96,45 @@ def decodePending (raw : String) : Option (Int × String × Option String) :=
       | none => none
       | some expiresAt =>
         let nonce := String.ofList (rest.take j)
-        let returnTo := String.ofList (rest.drop (j + 1))
-        some (expiresAt, nonce, if returnTo.isEmpty then none else some returnTo)
+        let tail := rest.drop (j + 1)
+        let finish (retried : Bool) (rt : List Char) :=
+          let returnTo := String.ofList rt
+          some (expiresAt, nonce, retried, if returnTo.isEmpty then none else some returnTo)
+        match tail with
+        | '0' :: '|' :: rt => finish false rt
+        | '1' :: '|' :: rt => finish true rt
+        | _ => none
 
-/-- May this callback complete the pending login?
+/-- What a callback may do with the pending login it carries. -/
+inductive Callback where
+  /-- `state` matched: exchange the code. -/
+  | accept
+  /-- `state` was lost: drop the code and authorize again, once. -/
+  | retry
+  | refuse
+  deriving DecidableEq, Repr
 
-`state` is what Nextcloud returned: `none` when it was lost through the login
-flow. Present means it MUST match; absent means the cookie stands alone.
+def Callback.name : Callback → String
+  | .accept => "accept"
+  | .retry => "retry"
+  | .refuse => "refuse"
+
+/-- What may this callback do?
+
+`state` is what Nextcloud returned: `none` or empty when it was lost through
+the login flow. Present means it MUST match. ⚠ Lost is never accepted
+(RFC 6749 §10.12): nothing then ties the URL's code to this browser, so anyone's
+code would sign it in. It is retried once — the retry finds Nextcloud signed
+in, so `state` comes back — and a second miss is refused.
 
 ⚠ Expiry is strict — an entry exactly at its deadline is expired. -/
-def acceptPending (expiresAt : Int) (nonce : String) (state : Option String) (now : Int) : Bool :=
-  if expiresAt < now then false
-  else match state with
-    | none => true
-    | some s => if s.isEmpty then true else s == nonce
+def acceptPending (expiresAt : Int) (nonce : String) (retried : Bool) (state : Option String)
+    (now : Int) : Callback :=
+  if expiresAt < now then .refuse
+  else
+    let s := state.getD ""
+    if s.isEmpty then (if retried then .refuse else .retry)
+    else if s == nonce then .accept else .refuse
 
 /-! ## Guards -/
 
@@ -129,20 +157,24 @@ def acceptPending (expiresAt : Int) (nonce : String) (state : Option String) (no
 #guard validateReturnTo (some "") == "/"
 
 -- The codec round-trips, including a `|` inside the return path.
-#guard decodePending (encodePending 1000 "abc" (some "/x")) == some (1000, "abc", some "/x")
-#guard decodePending (encodePending 1000 "abc" none) == some (1000, "abc", none)
-#guard decodePending (encodePending 1000 "abc" (some "/x?a=1|2")) == some (1000, "abc", some "/x?a=1|2")
+#guard decodePending (encodePending 1000 "abc" false (some "/x")) == some (1000, "abc", false, some "/x")
+#guard decodePending (encodePending 1000 "abc" true none) == some (1000, "abc", true, none)
+#guard decodePending (encodePending 1000 "abc" false (some "/x?a=1|2")) == some (1000, "abc", false, some "/x?a=1|2")
 #guard decodePending "not-a-pending" == none
 #guard decodePending "1000|only-one-separator" == none
 
--- Live, and the nonce agrees.
-#guard acceptPending 1000 "n" (some "n") 999 == true
--- ⚠ NC lost the state: the cookie stands alone.
-#guard acceptPending 1000 "n" none 999 == true
-#guard acceptPending 1000 "n" (some "") 999 == true
+-- Live, and the nonce agrees, on the first try or the retry.
+#guard acceptPending 1000 "n" false (some "n") 999 == .accept
+#guard acceptPending 1000 "n" true (some "n") 999 == .accept
+-- ⚠ NC lost the state: retried, never accepted.
+#guard acceptPending 1000 "n" false none 999 == .retry
+#guard acceptPending 1000 "n" false (some "") 999 == .retry
+-- A second miss is refused.
+#guard acceptPending 1000 "n" true none 999 == .refuse
+#guard acceptPending 1000 "n" true (some "") 999 == .refuse
 -- A returned state that DISAGREES is refused.
-#guard acceptPending 1000 "n" (some "other") 999 == false
+#guard acceptPending 1000 "n" false (some "other") 999 == .refuse
 -- Expired.
-#guard acceptPending 1000 "n" (some "n") 1001 == false
+#guard acceptPending 1000 "n" false (some "n") 1001 == .refuse
 
 end Verified.Login
