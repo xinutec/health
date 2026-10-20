@@ -405,6 +405,31 @@ is lost). Against the base's 21/17 the journey record now stands at −5 net
 with lines 62 against 63 and stations 67 against 68: S2's alight naming on
 06-16 and 07-02 (the decoded alight one station short) is the next class.
 
+### The alight one station short, priced (2026-10-20, evening)
+
+Two mechanisms, neither the pair term:
+
+- **06-16 (Met Wembley Park → Baker Street, decoded Jubilee to St John's
+  Wood).** The per-minute line terms are the same for both lines every minute
+  of the corridor; the narrated Met leg to 11:06Z loses 73 nats on one minute,
+  11:05Z, where the watch counted 116 steps inside a train doing 37 km/h —
+  the train cadence term at −69. The decoder ends the ride at 11:05 to dodge
+  that minute, and the Jubilee is the line with a station (St John's Wood)
+  111 m from the fix it ends at. The train-cadence class, refuted twice
+  (`2026-10-segment-emissions.md`); the alight is downstream of it.
+- **07-02 (Met Finchley Road → Baker Street, decoded as one ride and a walk).**
+  The fixes sit at Finchley Road with accuracies of 20–200 m until 08:15:20Z
+  and then jump to Baker Street at 187 km/h at 08:16:47Z: the phone repeating
+  its last position underground. A leg ending at 08:15 alights where it
+  boarded, so the pair has no ride time. The alight is now the station by the
+  first fix beyond the board station's reach within the stale window ("where
+  the fixes resume away from where he got on"), the same minute as before
+  when that minute's fix is already away. Measured: neutral to the row —
+  127/314/62/67/6, rows 27/22 unchanged; the one ride without a station still
+  prices under the split (its 18 minutes on the base duration, −67, against
+  the Jubilee pair's −60 and the Met pair after it). Kept as the right
+  reading of a stale track.
+
 ### The journey rule without a number (2026-10-20)
 
 On the narrative side, the decoder side and the drawn-timeline shape referee

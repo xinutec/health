@@ -1197,6 +1197,8 @@ private def journeyZero : Float := 0
 private def journeyReachM : Float := 400
 /-- How stale a neighbouring fix may be to stand for a dark minute's position. -/
 private def journeyFixStaleS : Int := 360
+/-- The same window in whole minutes, for the alight's search forward. -/
+private def journeyFixStaleMin : Nat := (journeyFixStaleS / 60).toNat
 private def journeyKmPerM : Float := 0.001
 private def journeyMinPerHour : Float := 60
 
@@ -1555,7 +1557,21 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           let dist := Verified.Hsmm.StationChain.ssspMap
             (Verified.Hsmm.StationChain.lineSssp g line (start.toArray.map (fun id => (id, journeyZero))))
           for e in [0:T] do
-            match alights[e]! with
+            -- The alight is where the fixes resume AWAY from the board station,
+            -- within the stale window: a track that sits at the station it
+            -- boarded at is the phone repeating its last position underground
+            -- (07-02: Finchley Road until 08:15:20Z, Baker Street at 08:16:47Z).
+            let mut m := e
+            let mut away := false
+            while m < T && m ≤ e + journeyFixStaleMin do
+              match fixAfter m with
+              | some (la, lo) =>
+                if Verified.Hsmm.FloatScore.haversineMeters la lo σ.lat σ.lon > journeyReachM then away := true
+              | none => pure ()
+              if away then break
+              m := m + 1
+            if !away then continue
+            match alights[m]! with
             | none => pure ()
             | some a =>
               -- The same STATION is no ride: a station is several nodes (King's
