@@ -94,6 +94,11 @@ def isMovementModeStr (m : String) : Bool :=
   | "walking" | "cycling" | "driving" | "bus" | "train" | "plane" => true
   | _ => false
 
+/-- A timetabled ride: the stay before it is a wait, not a visit. -/
+def isRideModeStr (m : String) : Bool :=
+  let c := canonicalModeStr m
+  c == "train" || c == "bus" || c == "plane"
+
 /-! ## The coverage allowance, without floats
 
 The original is `Math.max(COVERAGE_SLACK_FRAC * span, COVERAGE_SLACK_MIN_S)` with
@@ -126,44 +131,55 @@ what the comparison can see. Counting it reads structure out of rounding. ⚠ Th
 is a floor on VISIBILITY, not a tolerance — see the module header. -/
 def SHAPE_MIN_LEG_OVERLAP_S : Int := 60
 
-/-- Merge the drawn state legs into journeys.
+/-- A drawn state as the referee sees it: its window and its mode, never its
+place. -/
+structure Drawn where
+  startTs : Int
+  endTs : Int
+  mode : String
+  deriving BEq, Repr, Inhabited
+
+/-- Merge the drawn state legs into journeys, by `groundTruthJourneys`'s rules.
 
 Consecutive states of the same canonical movement mode join when they touch
-(`start ≤ prevEnd + 1`); non-movement states are skipped entirely, and a gap
-longer than `pauseMaxS` between legs ends the journey.
-
-⚠ SKIPPING a stay is not the same as BREAKING on one: a two-minute stay inside a
-trip leaves the legs either side more than `pauseMaxS`… only if it really is
-that long. The gap test is on the LEGS' times, so a short stay is absorbed and a
-long one splits, without this needing to look at the stay at all. -/
-def statesToJourneys (states : Array (Int × Int × String))
-    (pauseMaxS : Int := JOURNEY_PAUSE_MAX_S) : Array Journey := Id.run do
-  let mut legs : Array Leg := #[]
-  for (startTs, endTs, m) in states do
-    if !isMovementModeStr m then continue
-    let mode := canonicalModeStr m
-    let mut merged := false
-    if let some last := legs.back? then
-      if last.mode == mode && startTs ≤ last.endTs + 1 then
-        legs := legs.pop.push { last with endTs }
-        merged := true
-    if !merged then
-      legs := legs.push { startTs, endTs, mode, line := none, board := none, alight := none }
+(`start ≤ prevEnd + 1`). A stay — or a gap no state covers beyond the rows'
+minute — the day boards a ride from is its wait, a pause however long; a stay
+the day walks or drives away from ends the journey; a sleep ends it. -/
+def statesToJourneys (states : Array Drawn) : Array Journey := Id.run do
   let mut journeys : Array Journey := #[]
   let mut current : Array Leg := #[]
-  for leg in legs do
+  let mut prevEnd : Option Int := none
+  let mut pendingStay := false
+  let mut pendingSleep := false
+  let close (current : Array Leg) (journeys : Array Journey) : Array Journey :=
     match current[0]?, current.back? with
     | some first, some last =>
-      if leg.startTs - last.endTs > pauseMaxS then
-        journeys := journeys.push { startTs := first.startTs, endTs := last.endTs, legs := current }
-        current := #[]
-    | _, _ => pure ()
-    current := current.push leg
-  match current[0]?, current.back? with
-  | some first, some last =>
-    journeys := journeys.push { startTs := first.startTs, endTs := last.endTs, legs := current }
-  | _, _ => pure ()
-  return journeys
+      journeys.push { startTs := first.startTs, endTs := last.endTs, legs := current }
+    | _, _ => journeys
+  for s in states do
+    if let some p := prevEnd then
+      if s.startTs - p > Verified.Eval.Journeys.ROW_MINUTE_S
+          && !(current.back?.any fun l => isRideModeStr l.mode) then
+        pendingStay := true
+    prevEnd := some (max s.endTs (prevEnd.getD s.endTs))
+    if !isMovementModeStr s.mode then
+      pendingStay := true
+      if s.mode == "sleeping" then pendingSleep := true
+      continue
+    if pendingSleep || (pendingStay && !isRideModeStr s.mode) then
+      journeys := close current journeys
+      current := #[]
+    pendingStay := false
+    pendingSleep := false
+    let mode := canonicalModeStr s.mode
+    let mut merged := false
+    if let some last := current.back? then
+      if last.mode == mode && s.startTs ≤ last.endTs + 1 then
+        current := current.pop.push { last with endTs := s.endTs }
+        merged := true
+    if !merged then
+      current := current.push { startTs := s.startTs, endTs := s.endTs, mode, line := none, board := none, alight := none }
+  return close current journeys
 
 /-- The trip's deduped mode shape.
 
@@ -287,7 +303,19 @@ hand so a failure names the rule rather than a day.
 section Witnesses
 
 private def sj (xs : List (Int × Int × String)) : Array Journey :=
-  statesToJourneys xs.toArray
+  statesToJourneys (xs.map fun (s, e, m) => ({ startTs := s, endTs := e, mode := m } : Drawn)).toArray
+
+-- A stay before a ride is its wait (one journey), however long; the day walking
+-- away from a stay makes it a visit (two); a sleep ends it.
+#guard (sj [(0, 100, "walking"), (100, 160, "stationary"), (160, 260, "train")]).size == 1
+#guard (sj [(0, 100, "walking"), (100, 3000, "stationary"), (3000, 3100, "train")]).size == 1
+#guard (sj [(0, 100, "walking"), (100, 160, "stationary"), (160, 260, "walking")]).size == 2
+#guard (sj [(0, 100, "walking"), (100, 160, "stationary"), (160, 260, "walking"), (260, 360, "train")]).size == 2
+#guard (sj [(0, 100, "walking"), (100, 200, "sleeping"), (200, 300, "train")]).size == 2
+-- Time no state covers is a stay nobody drew: it bounds unless a ride follows.
+#guard (sj [(0, 100, "walking"), (1000, 1100, "walking")]).size == 2
+#guard (sj [(0, 100, "walking"), (1000, 1100, "train")]).size == 1
+#guard (sj [(0, 100, "train"), (1000, 1100, "walking")]).size == 1
 
 private def leg (s e : Int) (m : String) : Leg :=
   { startTs := s, endTs := e, mode := m, line := none, board := none, alight := none }
@@ -297,8 +325,9 @@ private def jr (s e : Int) (ls : List Leg) : Journey :=
 
 /-! ### statesToJourneys -/
 
--- Non-movement states are SKIPPED, not journey boundaries in themselves: what
--- splits a journey is the gap between the legs either side.
+-- A non-movement state before a ride is a pause, not a journey boundary: what
+-- splits a journey is a stay the day leaves on foot, a sleep, or uncovered
+-- time.
 #guard (sj [(0, 100, "stationary"), (100, 200, "walking")]).size == 1
 #guard (sj [(0, 100, "stationary"), (0, 100, "sleeping")]).size == 0
 #guard (sj []).size == 0
@@ -312,10 +341,10 @@ private def jr (s e : Int) (ls : List Leg) : Journey :=
 -- `sleeping` folds to `stationary` and so is not a leg; an unknown mode is not
 -- a movement mode either, and is dropped rather than becoming one.
 #guard (sj [(0, 100, "teleporting")]).size == 0
--- A gap LONGER than the pause ends the journey; exactly the pause does not.
-#guard (sj [(0, 100, "walking"), (400, 500, "walking")]).size == 1
-#guard (sj [(0, 100, "walking"), (401, 500, "walking")]).size == 2
-#guard (sj [(0, 100, "walking"), (400, 500, "walking")])[0]!.endTs == 500
+-- Uncovered time beyond the rows' minute is a stay; inside it is rounding.
+#guard (sj [(0, 100, "walking"), (160, 260, "walking")]).size == 1
+#guard (sj [(0, 100, "walking"), (161, 260, "walking")]).size == 2
+#guard (sj [(0, 100, "walking"), (160, 260, "walking")])[0]!.endTs == 260
 #guard (sj [(0, 100, "walking"), (401, 500, "walking")])[0]!.endTs == 100
 -- The journey's bounds are its first leg's start and its last leg's end.
 #guard (sj [(10, 100, "walking"), (100, 250, "train")])[0]!.startTs == 10

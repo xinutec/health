@@ -15,10 +15,10 @@ the client's copy.
 ## The rule is the SERVING rule, not the scorer's
 
 `Verified.Eval.Journeys.groundTruthJourneys` also groups legs into journeys, and
-it is NOT the same rule: it absorbs a stay shorter than `JOURNEY_PAUSE_MAX_S`
-into the journey as a pause. The timeline does not — any non-travelling row
-ends the run, because a visit between two transit legs is the thing the reader
-is looking at.
+it is NOT the same rule: it absorbs a placeless stay (a platform wait) into the
+journey as a pause and ends it only at a stay with a place or a sleep. The
+timeline does not — any non-travelling row ends the run, because a visit
+between two transit legs is the thing the reader is looking at.
 
 Both are right for their own question. The scorer asks "was this one trip?";
 the timeline asks "what should collapse into one row?". So this module shares

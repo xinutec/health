@@ -170,14 +170,17 @@ const POST_TS: &[&str] = &[
 /// 07-02) written as a stay at the station, as his own rows write a change
 /// there (06-29, 07-01) — legs −5 (five walks), rows and journeys unchanged.
 const TS_FILES: usize = 31;
-const TS_ROWS: usize = 412;
-const TS_ENFORCEABLE: usize = 387;
+const TS_ROWS: usize = 415;
+const TS_ENFORCEABLE: usize = 390;
 const TS_UNPARSEABLE: usize = 4;
 /// Narratives whose `Times:` is not London: 04-29 (Amsterdam), 06-24 (UTC), and
 /// 10-02 to 10-07 (Madrid).
 const TS_DECLARED_TZ: usize = 8;
-/// `groundTruthJourneys` over the same corpus, same source, same day.
-const TS_JOURNEYS: usize = 93;
+/// `groundTruthJourneys` over the same corpus, same source, same day. A stay
+/// the day boards a ride from is its wait, so the waits before rides belong to
+/// their trips; the platform waits on 06-15, 06-17 and 06-18 are rows of their
+/// own, each ride row starting at its boarding.
+const TS_JOURNEYS: usize = 88;
 const TS_LEGS: usize = 237;
 /// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. The leg total could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold

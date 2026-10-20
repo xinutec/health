@@ -58,12 +58,15 @@ def isMovementModeStr (m : String) : Bool :=
   c == "walking" || c == "cycling" || c == "driving" || c == "bus"
     || c == "train" || c == "plane"
 
+/-- A timetabled ride: the stay before it is a wait, not a visit. -/
+def isRideModeStr (m : String) : Bool :=
+  let c := canonicalModeStr m
+  c == "train" || c == "bus" || c == "plane"
+
 /-- A vehicle mode for the phantom count — walking is not a ride. -/
 def isVehicleModeStr (m : String) : Bool :=
   m == "train" || m == "bus" || m == "driving" || m == "cycling" || m == "plane"
 
-/-- A stay shorter than this is an in-journey pause; `journey-score.ts`. -/
-def JOURNEY_PAUSE_MAX_S : Int := 5 * 60
 
 /-- Decoded segments to minutes — `t` steps from the RAW `startTs`, not a
 minute-aligned one (`segmentsToMinutes`, `score-decoder-golden.ts:117`). -/
@@ -91,48 +94,58 @@ def statesToMinutes (states : Array (Int × Int × String)) : Array DecoderMinut
       t := t + 60
   return out
 
-/-- Decoder minutes to journeys: movement minutes collapse into legs (same
-canonical mode + same line, contiguous-or-overlapping), and a gap longer than
-the tolerance starts a new journey. A merged leg boards where its first minute
-boards and alights where its LAST minute alights — the TS overwrites `alight`
-unconditionally on every merged minute, including to null. -/
-def decoderJourneys (minutes : Array DecoderMinute)
-    (gapToleranceS : Int := JOURNEY_PAUSE_MAX_S) : Array Journey := Id.run do
+/-- Decoder minutes to journeys, the mirror of `groundTruthJourneys`'s rules:
+movement minutes collapse into legs (same canonical mode + same line,
+contiguous-or-overlapping); a stay — or unobserved time — the day boards a
+ride from is its wait, a pause however long; a stay the day walks or drives
+away from ends the journey; a sleep ends it. A merged leg boards where its first minute boards and alights
+where its LAST minute alights — the TS overwrote `alight` unconditionally on
+every merged minute, including to null. -/
+def decoderJourneys (minutes : Array DecoderMinute) : Array Journey := Id.run do
   let sorted := minutes.qsort (fun a b => a.ts < b.ts)
-  let mut legs : Array Leg := #[]
-  for m in sorted do
-    if !isMovementModeStr m.mode then
-      continue
-    let mode := canonicalModeStr m.mode
-    let line := if mode == "train" || mode == "bus" then m.lineName else none
-    match legs.back? with
-    | some last =>
-      if last.mode == mode && last.line == line && m.ts ≤ last.endTs then
-        legs := legs.set! (legs.size - 1)
-          { last with endTs := m.ts + 60, alight := m.alight }
-      else
-        legs := legs.push { startTs := m.ts, endTs := m.ts + 60, mode, line,
-                            board := m.board, alight := m.alight }
-    | none =>
-      legs := legs.push { startTs := m.ts, endTs := m.ts + 60, mode, line,
-                          board := m.board, alight := m.alight }
   let mut journeys : Array Journey := #[]
   let mut current : Array Leg := #[]
-  for leg in legs do
+  let mut prevTs : Option Int := none
+  let mut pendingStay := false
+  let mut pendingSleep := false
+  let close (current : Array Leg) (journeys : Array Journey) : Array Journey :=
     match current[0]?, current.back? with
     | some first, some last =>
-      if leg.startTs - last.endTs > gapToleranceS then
-        journeys := journeys.push
-          { startTs := first.startTs, endTs := last.endTs, legs := current }
-        current := #[]
-    | _, _ => pure ()
-    current := current.push leg
-  match current[0]?, current.back? with
-  | some first, some last =>
-    journeys := journeys.push
-      { startTs := first.startTs, endTs := last.endTs, legs := current }
-  | _, _ => pure ()
-  return journeys
+      journeys.push { startTs := first.startTs, endTs := last.endTs, legs := current }
+    | _, _ => journeys
+  for m in sorted do
+    -- Unobserved time (no minute at all since the previous one) is a stay
+    -- nobody decoded — after a ride, the platform it alights onto.
+    if let some p := prevTs then
+      if m.ts - p > 60 + Verified.Eval.Journeys.ROW_MINUTE_S
+          && !(current.back?.any fun l => isRideModeStr l.mode) then
+        pendingStay := true
+    prevTs := some m.ts
+    if !isMovementModeStr m.mode then
+      -- Remembered; the next movement minute says what the stay was.
+      pendingStay := true
+      if m.mode == "sleeping" then pendingSleep := true
+      continue
+    -- A sleep, or a stay the day does not ride away from, bounds the journey.
+    if pendingSleep || (pendingStay && !isRideModeStr m.mode) then
+      journeys := close current journeys
+      current := #[]
+    pendingStay := false
+    pendingSleep := false
+    let mode := canonicalModeStr m.mode
+    let line := if mode == "train" || mode == "bus" then m.lineName else none
+    match current.back? with
+    | some last =>
+      if last.mode == mode && last.line == line && m.ts ≤ last.endTs then
+        current := current.set! (current.size - 1)
+          { last with endTs := m.ts + 60, alight := m.alight }
+      else
+        current := current.push { startTs := m.ts, endTs := m.ts + 60, mode, line,
+                                  board := m.board, alight := m.alight }
+    | none =>
+      current := current.push { startTs := m.ts, endTs := m.ts + 60, mode, line,
+                                board := m.board, alight := m.alight }
+  return close current journeys
 
 /-- Insertion-ordered tally bump — mirrors JS `Map` iteration order, which is
 what breaks `argmax` ties in the TS. -/
@@ -333,10 +346,19 @@ private def dm (t : Int) (m : String) (l : Option String := none)
                            dm 60 "train" (some "L") none none])[0]!.legs[0]!.alight) == none
 -- A line change splits the leg but not the journey.
 #guard ((decoderJourneys #[dm 0 "train" (some "L1"), dm 60 "train" (some "L2")])[0]!.legs.size) == 2
--- A gap over the tolerance splits the journey.
+-- Unobserved time (no minute at all) the day walks away from splits the
+-- journey; before a train it is the unobserved wait for it...
 #guard (decoderJourneys #[dm 0 "walking", dm 600 "walking"]).size == 2
--- ... and a gap of exactly the tolerance does NOT (`>` in the TS).
-#guard (decoderJourneys #[dm 0 "walking", dm 360 "walking"]).size == 1
+#guard (decoderJourneys #[dm 0 "walking", dm 600 "train" (some "L")]).size == 1
+#guard (decoderJourneys #[dm 0 "train" (some "L"), dm 600 "walking"]).size == 1
+-- ...a stay before a ride is a pause, however long...
+#guard (decoderJourneys (#[dm 0 "walking"] ++ (Array.range 20).map (fun (i : Nat) => dm (60 + 60 * Int.ofNat i) "stationary")
+                          ++ #[dm 1320 "train" (some "L")])).size == 1
+-- ...a stay the day walks away from ends it, however short (also one walked
+-- away from to a platform: no geometry here); a sleep ends it.
+#guard (decoderJourneys #[dm 0 "walking", dm 60 "stationary", dm 120 "walking"]).size == 2
+#guard (decoderJourneys #[dm 0 "walking", dm 60 "stationary", dm 120 "walking", dm 180 "train" (some "L")]).size == 2
+#guard (decoderJourneys #[dm 0 "walking", dm 60 "sleeping", dm 120 "train"]).size == 2
 -- sleeping folds to stationary and is not movement.
 #guard (decoderJourneys #[dm 0 "sleeping"]).size == 0
 

@@ -430,6 +430,8 @@ def parseJRow (j : Json) : Except String JRow := do
       else match (t.getObjVal? "mode" >>= (·.getStr?)) with
         | .ok ms => (parseMode ms).map fun m =>
             { mode := m,
+              -- The place bounds journeys (a visit); the referee never compares it.
+              place := (t.getObjVal? "place" >>= (·.getStr?)).toOption,
               lineName := (t.getObjVal? "lineName" >>= (·.getStr?)).toOption,
               trainFrom := (t.getObjVal? "from" >>= (·.getStr?)).toOption,
               trainTo := (t.getObjVal? "to" >>= (·.getStr?)).toOption }
@@ -745,10 +747,10 @@ private def parseJourney (j : Json) : Except String Journey := do
            endTs := ← (← j.getObjVal? "endTs").getInt?
            legs := ← (← optArr j "legs").mapM parseLeg }
 
-private def parseState (j : Json) : Except String (Int × Int × String) := do
-  return (← (← j.getObjVal? "startTs").getInt?,
-          ← (← j.getObjVal? "endTs").getInt?,
-          ← (← j.getObjVal? "mode").getStr?)
+private def parseState (j : Json) : Except String Verified.Eval.JourneyShape.Drawn := do
+  return { startTs := ← (← j.getObjVal? "startTs").getInt?
+           endTs := ← (← j.getObjVal? "endTs").getInt?
+           mode := ← (← j.getObjVal? "mode").getStr? }
 
 private def shapeJson (a : Array String) : Json := Json.arr (a.map Json.str)
 

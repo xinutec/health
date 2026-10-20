@@ -353,9 +353,48 @@ Three ways out, to decide before the corpus moves:
   as before S1; the wait row (07-01, 09-06) is lost and the decoder's own
   finding is thrown away at the fold.
 
-A with the wait rows added as well (the narratives should carry what the
-signal shows; B's rows under A's rule split nothing) is the recommendation;
-it is a measurement-rule change, so his call.
+A, by his standing direction (2026-10-20: "it can be as long as it is; five
+minutes hardcoded is one of those rigid numbers"), which the asking should
+not have needed — priors and physics as likelihood terms, never thresholds,
+is the project's design principle (`2026-07-continuity-c4.md`).
+
+### The journey rule without a number (2026-10-20)
+
+On the narrative side, the decoder side and the drawn-timeline shape referee
+alike (`Journeys`, `DecoderScore`, `JourneyShape`): **a stay — or unaudited
+time — the day boards a ride from is the wait for it, a pause however long
+and whatever it is called; a stay the day walks or drives away from bounds
+the journey; a sleep bounds it; unaudited time straight after a ride is the
+platform it alights onto.** The only number left is the rows' own minute,
+inside which a gap is rounding. No place name is read.
+
+Two rules tried and refuted the same day, both measured on the frozen
+scoreboard and the served-day floors:
+
+- *A placed stay bounds, a placeless one pauses.* The narrator names every
+  visit; the decoder does not (a venue not in the places table is a placeless
+  stay), so the decoder's journeys merged across unnamed visits where the
+  narrator's split: 04-29, 06-15 and 10-08 lost every match. And 05-18's one
+  minute "@ Baker Street" between two trains is a change, not a visit.
+- *A stay is a pause if a ride follows before the next stay* (for 06-12,
+  where he waited on Victoria's forecourt, walked down to the platform and
+  boarded). A visit, the walk to the station and the train is how most trips
+  begin, so this read every such visit as a wait and merged trips across the
+  corpus (05-15 3 → 1, 06-22 3 → 1 journeys expected). Without geometry the
+  referee cannot tell a forecourt from Home; 06-12's journey is the rule's
+  blind spot, one key.
+
+Under the rule the frozen scoreboard reads 141 journeys expected (was 152:
+waits before rides join their trips on 06-29, 07-01, 07-16, 09-06, 10-01,
+10-08 and the TGV day), 127 matched (was 125), legs, lines, stations and
+phantoms unchanged. The served-day journey floor loses two keys to the
+definition: 06-12 14:16Z (the forecourt wait above) and 10-03 11:30Z, where
+the served day draws a four-minute stop inside a walk the signal shows as a
+slowing (16–17 steps a minute for two minutes), which the five-minute
+tolerance used to absorb; both are the decoder's to win. The five narratives
+carry their platform waits from the signal, each ride row re-windowed to its
+first fast minute (06-15's boarding by the ride's length, unseen
+underground).
 
 With the fitter's population corrected (three waits before a ride: 4, 5, 14
 minutes; Gamma(2.91, 0.38) by moments, floor 4) and the floor in the decoder:
