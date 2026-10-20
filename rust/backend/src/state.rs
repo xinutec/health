@@ -40,13 +40,12 @@ pub struct AppState {
     /// across a restart, since the task polling for it is gone. A stored
     /// "pending" would be a lie nobody could clear.
     pub flows: Arc<crate::routes::nextcloud_connect::PendingFlows>,
-    /// In-flight Fitbit OAuth handshakes: state token → (user, PKCE verifier,
-    /// the token itself, compared with the callback's).
+    /// In-flight Fitbit OAuth handshakes: state token → (user, PKCE verifier).
     ///
     /// ⚠ Server-side, and single-use. The verifier must never reach the browser
     /// — PKCE exists so that whoever redeems the code proves they started the
     /// flow.
-    pub oauth_states: Arc<crate::location_cache::LocationCache<(String, String, String)>>,
+    pub oauth_states: Arc<crate::location_cache::LocationCache<(String, String)>>,
     /// Per-device Owntracks proxy state: recent fixes, last pushed profile,
     /// manual-hold deadline.
     pub owntracks: Arc<crate::routes::owntracks::ProxyState>,

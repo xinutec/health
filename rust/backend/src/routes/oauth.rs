@@ -407,7 +407,7 @@ pub async fn fitbit_auth(
     st.oauth_states.put(
         &state_token,
         chrono::Utc::now().timestamp_millis(),
-        (session.user_id.clone(), verifier, state_token.clone()),
+        (session.user_id.clone(), verifier),
     );
 
     // ⚠ The OAuth routes genuinely need these; `Config::from_env` requires
@@ -455,7 +455,7 @@ pub async fn fitbit_callback(
             "Invalid or expired OAuth state. Please try again from /fitbit/auth.",
         );
     };
-    let Some((state_user, verifier, stored)) = st.oauth_states.take(state_token, now_ms) else {
+    let Some((state_user, verifier)) = st.oauth_states.take(state_token, now_ms) else {
         return sign_in_problem(
             StatusCode::FORBIDDEN,
             "Invalid or expired OAuth state. Please try again from /fitbit/auth.",
@@ -463,23 +463,15 @@ pub async fn fitbit_callback(
     };
     // ⚠ The state's user must be THIS session's user. Without this check a
     // stolen callback URL would link the attacker's Fitbit to whoever opened it.
-    if state_user != session.user_id {
+    // That comparison is the binding, so it is the proof the exchange demands.
+    let Some(proof) = StateMatched::check(&state_user, &session.user_id) else {
         return sign_in_problem(
             StatusCode::FORBIDDEN,
             "Session user does not match OAuth state. Please try again.",
         );
-    }
+    };
     let Some(code) = p.code.as_deref().filter(|c| !c.is_empty()) else {
         return sign_in_problem(StatusCode::BAD_REQUEST, "Missing authorization code.");
-    };
-
-    // The lookup found the entry by this key; the proof is the comparison
-    // itself, which the exchange cannot be called without.
-    let Some(proof) = StateMatched::check(state_token, &stored) else {
-        return sign_in_problem(
-            StatusCode::FORBIDDEN,
-            "Invalid or expired OAuth state. Please try again from /fitbit/auth.",
-        );
     };
     match finish_fitbit_link(&st, &state_user, &verifier, code, proof).await {
         Ok(scopes) => Json(json!({
