@@ -10,6 +10,14 @@ references:
 
 # Levels shared across segments: the walk that resumes, the stay that potters
 
+> Superseded in part, 2026-10-20: every flip-row and scoreboard figure below was
+> measured under the journey referee's five-minute pause and on the
+> `fit_loo_s53` records; the referee has no pause since 2026-10-20 and the arms
+> are compared on `fit_wf`. The current numbers and the design as built are in
+> `2026-10-station-states.md`; this file keeps the levels' derivation and the
+> journey state's eight runs as history.
+
+
 The two classes that keep the flip net worse (36 narrated rows lost, 16
 gained, 3 impossible legs, 2026-10-18) have one root. Every decoded segment
 draws its own heart-rate level, its own fix share and its own duration, and

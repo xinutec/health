@@ -278,6 +278,15 @@ journey. Status: assembler shipped (#228), eval/persistence/UI pending (#227,
 
 ## The cutover plan (2026-10-13)
 
+> Where it stands (2026-10-20): both decoder arms read net positive against
+> the served day on the narrated rows under the referee without its pause —
+> the base decoder at the head of the fold 18 lost / 21 gained, the journey
+> state 22 / 27 — on one set of fresh records; the flip is the next decision,
+> his, by the 2026-10-19 rule. The design as built, the rule and the numbers:
+> `2026-10-station-states.md`. The text below is the plan as written on
+> 2026-10-13 and its measurements since, kept as the record of how the margin
+> was reached.
+
 **Where it stands.** The served day is the Lean cascade (`Verified.Geo.PassFold`)
 over the raw inputs. The decoder reaches it through one pass, `hsmmOverride`
 (`PlaceOverride.applyHsmmPlaceOverride`): which place a stay is at. Its train
@@ -437,7 +446,8 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    ride's own start or end) is a stay at the station in the head: 175 of
    190. Carved at every ride's end as well it reaches 177 of 193 and loses
    seven journeys — a platform wait at the origin, which his rows fold into
-   the walk or the ride, outlasts the referee's five-minute pause. The short
+   the walk or the ride, outlasted the five-minute pause the referee had
+   until 2026-10-20 (now: a stay before a ride is its wait, however long). The short
    stops are the decoder's: scored with its own path (`path_debug`), the
    stop as a stay loses by 12–22 nats, at Fnac on three duration priors
    against one and the entry, at Currys and Lidl on the minute emissions,
