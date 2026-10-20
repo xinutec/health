@@ -1558,7 +1558,10 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             match alights[e]! with
             | none => pure ()
             | some a =>
-              if a.id == σ.id then continue
+              -- The same STATION is no ride: a station is several nodes (King's
+              -- Cross has six), and a node of the board station within reach of
+              -- the next fix priced a one-minute ride to itself at 0.8 minutes.
+              if a.stationName == σ.stationName then continue
               let (goal, fc2) := footOf footCache a
               footCache := fc2
               let pm := goal.fold (fun (acc : Option Float) id => match dist.get? id with
