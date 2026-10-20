@@ -168,7 +168,9 @@ pub fn router(state: AppState) -> Router {
         // ⚠ Unauthenticated on purpose. `/health` is what an operator curls
         // when the dashboard is broken, which is exactly when a login might be
         // too; `/version` is what makes a stale client visible in the footer.
+        // dev-lint: allow-unauthenticated-route what an operator curls when sign-in is broken (above)
         .route("/health", get(site::health))
+        // dev-lint: allow-unauthenticated-route the build sha, for the footer's stale-client check
         .route("/version", get(site::version))
         .with_state(state)
         // ⚠ The SPA's own routes are served the shell, so a deep link or a
