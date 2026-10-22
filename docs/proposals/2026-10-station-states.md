@@ -189,7 +189,14 @@ boundary or a label):
   wait (S1 is the wait before boarding) and does not name the stay after a
   ride, so the pass still does that work. It retires with the state or the
   naming that replaces it. The chain's post-hoc line pick where the leg names
-  its station — cut when the sweep reads the same without it.
+  its station — NOT YET (measured 2026-10-22, the S2 leg's own line kept where
+  it named its board station): the frozen scoreboard is unmoved on the 43
+  narrated days, and 9 of the 200 history days move 10 legs, every one a
+  Wembley Park ↔ Finchley Road / Baker Street ride swapping Metropolitan and
+  Jubilee on their shared track, both ways. The two pickers disagree only where
+  no narrative judges them; it is cut when a judge exists for that track (a
+  narrated ride there, or the pair's ride time against both lines' calls read
+  off the signal).
 - After S3: the station chain's anchor, transfer and margin constants
   (`StationChain.lean`, "Scoring terms").
 - Not by this: buses (no bus state).
