@@ -1200,13 +1200,6 @@ def dayResult (j : Json) : Json :=
     let darkMove : Verified.Geo.PassFold.Pass := ("darkMoveAtPlace", fun segs =>
       Verified.Geo.SegmentMerge.absorbDarkMoveAtPlace segs env.geoFixes)
     let tail := chosen.filter (DECODER_TAIL.contains ·.1)
-    -- The waits before a train take their station's name, and the walk to the
-    -- platform between two of them stays a walk: the tail names, it does not
-    -- re-draw the decoder's day.
-    let tail := tail.map fun (n, f) =>
-      if n == "boardingStayLabel"
-        then (n, fun segs => Verified.Geo.PassFold.boardingStayLabels env segs false)
-        else (n, f)
     let tail := match tail.findIdx? (·.1 == "hsmmOverride") with
       | some k => tail.insertIdx! (k + 1) darkMove
       | none => tail.push darkMove

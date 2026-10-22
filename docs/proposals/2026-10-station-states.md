@@ -179,9 +179,17 @@ boundary or a label):
   today and any day without a decode, so `absorbIntraPlaceWalk`'s twelve
   minutes and `consolidateJitterStays`' 75 m go with it when the history
   re-decode reads the same without them.
-- With S1 and S2 on the shipped record: `boardAtWait`, `boardingStayLabel`'s
-  fold, `interchangeStayLabel`, and the chain's post-hoc line pick where the leg
-  names its station — each cut when the 200-day sweep reads the same without it.
+- With S1 and S2 on the shipped record: `boardAtWait` and `boardingStayLabel`'s
+  fold — CUT 2026-10-22, neither ran under the head and the 200-day sweep read
+  the same (`histfold-headed.sh`, headed against headed on one decode dump);
+  `interchangeStayLabel` — NOT YET: without it four of the 200 days move a stay's
+  name (05-22's nineteen minutes at Finchley Road after the Met become the
+  shop beside it, 05-07's night becomes a mall, 04-23's two hours at St Pancras
+  become Work, 04-26 the mainline spelling); the decoder has no alight-side
+  wait (S1 is the wait before boarding) and does not name the stay after a
+  ride, so the pass still does that work. It retires with the state or the
+  naming that replaces it. The chain's post-hoc line pick where the leg names
+  its station — cut when the sweep reads the same without it.
 - After S3: the station chain's anchor, transfer and margin constants
   (`StationChain.lean`, "Scoring terms").
 - Not by this: buses (no bus state).

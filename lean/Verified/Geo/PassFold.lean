@@ -344,7 +344,7 @@ proximity list kept to the stations the line's RELATIONS stop at (#238,
 (66 stations for the Northern's real 52, 54 for the Circle's 35; the mainline
 "London King's Cross" on the Victoria) and OMITS stations the line truly serves
 (21 on the Central). The filter removes the inflation only; an omission stays
-one. Read by `boardingAnchor`, `alightAnchor` and `boardAtWait`; on the corpus
+one. Read by `boardingAnchor` and `alightAnchor`; on the corpus
 it moved one day, 08-08's Victoria ride, which now boards at King's Cross St
 Pancras instead of the mainline station. -/
 def Env.servedStations (e : Env) : String → Array Verified.Geo.LineMembership.ServedStation :=
@@ -542,14 +542,11 @@ private def boardingNames (e : Env) (segs : Array Seg) : Array (Option (String �
 /-- Name the waits before a train after their station — the chain back from
 the train (`TransitPlace.stationsBeforeBoarding`, through a stay or a short
 walk inside the board station) and the chain forward from a stay the station
-building encloses (`TransitPlace.stationsFromEnclosed`, read off `placeKind`)
-— then, with `foldInside`, fold the walks between two waits at the SAME
-station into one wait when the walk never leaves that station's range: moving
-about inside Gare Montparnasse is being at Gare Montparnasse, not a journey.
-Under the decoder head the fold is off: the decoder's walk to the platform
+building encloses (`TransitPlace.stationsFromEnclosed`, read off `placeKind`).
+Names only: the decoder's walk to the platform between two waits at one station
 stands (10-08's 07:13–07:21Z at Hendaye, the journey's first leg to the
-narrative and the referee), and the tail names without re-drawing. -/
-def boardingStayLabels (e : Env) (segs : Array Seg) (foldInside : Bool := true) : Array Seg := Id.run do
+narrative and the referee). -/
+def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
   let names := boardingNames e segs
   let mut out := segs
   for i in [0 : out.size] do
@@ -561,51 +558,6 @@ def boardingStayLabels (e : Env) (segs : Array Seg) (foldInside : Bool := true) 
                                refinedReason := some (match s.refinedReason with
                                  | some r => s!"{r}; {why}"
                                  | none => why) }
-  if !foldInside then return out
-  let absorbed := out.mapIdx fun i w =>
-    if Verified.Geo.SegmentMerge.effectiveMode w != "walking"
-        || w.endTs - w.startTs > Verified.Geo.TransitPlace.INTERCHANGE_WALK_MAX_S then w
-    else match (if i == 0 then none else out[i - 1]?), out[i + 1]? with
-      | some prev, some next =>
-        match prev.place with
-        | some st =>
-          if !isStationStay prev || !isStationStay next || next.place != some st then w
-          else
-            let pts := inWindow e w
-            if pts.isEmpty || !pts.all (inStation e st) then w
-            else
-              let why := s!"moving about inside {st} — not a journey leg"
-              { w with refinedMode := some "stationary", place := prev.place
-                       placeSource := prev.placeSource, city := prev.city, wayName := none
-                       refinedReason := some (match w.refinedReason with
-                         | some r => s!"{r}; {why}"
-                         | none => why) }
-        | none => w
-      | _, _ => w
-  return if absorbed == out then out
-    else Verified.Geo.SegmentMerge.mergeAdjacentStays absorbed e.steps
-
-/-- A train leaving straight from a wait named for a station boards there, when
-its line is known to serve it (2026-10-01: the ride from the wait in Hendaia
-read "Irun Ficoba →", the next stop, where its first fixes were). -/
-def boardAtWait (e : Env) (segs : Array Seg) : Array Seg := Id.run do
-  let mut out := segs
-  for i in [1 : out.size] do
-    let some prev := out[i - 1]? | continue
-    let some s := out[i]? | continue
-    if Verified.Geo.SegmentMerge.effectiveMode s != "train" || !isStationStay prev then continue
-    if s.startTs - prev.endTs > Verified.Geo.RailReconcile.THROUGH_GAP_S then continue
-    let some st := prev.place | continue
-    let some rail := Verified.Geo.RailAbsorbers.parseRailWayName s.wayName | continue
-    let some line := rail.line | continue
-    if rail.board == st || rail.alight == st then continue
-    if !Verified.Geo.LineMembership.lineServes line st e.servedStations then continue
-    let why := s!"boards at {st}, the wait it left from (was {rail.board})"
-    out := out.set! i { s with
-      wayName := some s!"{st} → {rail.alight} · {line}"
-      refinedReason := some (match s.refinedReason with
-        | some r => if r == "" then why else s!"{r}; {why}"
-        | none => why) }
   return out
 
 /-- A held position must last this long after a ride to say the rider stayed
@@ -1104,9 +1056,6 @@ def passes (e : Env) : Array Pass := #[
   -- above; after it, so a stay already named a station keeps the chain open.
   ("boardingStayLabel", fun segs => boardingStayLabels e segs),
 
-  -- …and the train leaving straight from such a wait boards at its station.
-  ("boardAtWait", fun segs => boardAtWait e segs),
-
   -- A ride ending on a fix the phone then held alights where the next fresh
   -- fix is (#1891).
   ("rideThroughHold", fun segs => rideThroughHold e segs),
@@ -1222,7 +1171,7 @@ private def PAIR_MIRROR : Env :=
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
     "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "interchangeStayLabel",
-    "boardingStayLabel", "boardAtWait", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
+    "boardingStayLabel", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
     "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
@@ -1244,7 +1193,7 @@ def TS_CASCADE : Array String := #[
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
   -- `walkDwell`, `stayEdgeWalk`, `lineSubstitute`, `boardingStayLabel`,
-  -- `railThrough`, `boardAtWait`, `rideThroughHold`, `alightAfterHold`, `alightAtLastFix` and
+  -- `railThrough`, `rideThroughHold`, `alightAfterHold`, `alightAtLastFix` and
   -- `railSnapFinal` are Lean-only;
   -- they sit here so the containment check keeps holding for the order the TS had.
   "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
@@ -1252,10 +1201,10 @@ def TS_CASCADE : Array String := #[
   "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
   "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "boardingStayLabel",
-  "boardAtWait", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
+  "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
   "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 54
+#guard TS_CASCADE.size == 53
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1684,15 +1633,6 @@ private def farPhantomOut : Array Seg := runNamed MIX "finalMerge" farPhantomDay
   fun s => s.mode != "stationary" || s.placeSource.any (·.rule == "station")
 #guard !(fires MIX "boardingStayLabel" #[st 0 7200, tr 7200 9000 (some "S → T")])
 #guard !(fires MIX "boardingStayLabel" #[tr 0 600 (some "A → S"), st 600 900])
--- A train leaving straight from a wait named for a station its line serves
--- boards there; a station the line is not known to serve is left alone.
-private def waitAt (a b : Int) (name : String) : Seg :=
-  { st a b (some name) with placeSource := some ⟨name, "station", none⟩ }
-#guard (runNamed MIX "boardAtWait"
-    #[waitAt 0 600 "S", tr 610 3000 (some "M → T · Metropolitan")])[1]!.wayName
-  == some "S → T · Metropolitan"
-#guard !(fires MIX "boardAtWait" #[waitAt 0 600 "Elsewhere", tr 610 3000 (some "M → T · Metropolitan")])
-#guard !(fires MIX "boardAtWait" #[waitAt 0 600 "S", tr 700 3000 (some "M → T · Metropolitan")])
 -- The ride on to the true alight, stranded as the fast head of the next walk.
 #guard fires MIX "alightAnchor" #[tr 0 2400 (some "S → T · Metropolitan"), wk 2400 6000]
 -- Two legs of one Metropolitan ride, split by a sliver, are one ride.
@@ -2200,7 +2140,7 @@ def witnessed : Array String :=
 
 -- `lineSubstitute` fires on a leg whose line the relations rule out.
 #guard fires SUB "lineSubstitute" #[leg "Euston Square → King's Cross St Pancras · Victoria Line"]
-#guard witnessed.size == 54
+#guard witnessed.size == 53
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
