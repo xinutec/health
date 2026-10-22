@@ -48,6 +48,30 @@ pub fn fixture_names() -> Result<Option<Vec<String>>> {
     Ok(Some(names))
 }
 
+/// What `decoded_days` holds for `date` once the decoder has run at this
+/// `CLASSIFIER_VERSION`: the frozen decode's blessed `expected`, the rows
+/// `save_decode` writes. A day fixture's own `hsmmDecode` is the row at capture
+/// time, from a decoder since replaced, so a replay reads this in its place —
+/// as production reads the re-decoded row. `Ok(None)` without a frozen twin;
+/// an error when the twin is unblessed (`expected` empty), because the fold
+/// would otherwise head with a decode nothing has judged.
+pub fn stored_decode(date: &str, user: &str) -> Result<Option<Value>> {
+    let name = format!("{date}-{user}.json");
+    let path = corpus_dir().join(&name);
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    let fx: Value = serde_json::from_str(&raw).with_context(|| format!("{name} is not JSON"))?;
+    let expected = fx["expected"]
+        .as_array()
+        .with_context(|| format!("{name}: no expected"))?;
+    anyhow::ensure!(
+        !expected.is_empty(),
+        "{name}: the frozen decode is unblessed (DECODE_BLESS=1 fills `expected`)"
+    );
+    Ok(Some(fx["expected"].clone()))
+}
+
 /// One fixture, parsed: a corpus name, or a path (any name with a `/`) to a
 /// frozen request outside the corpus, such as a history capture.
 pub fn read(name: &str) -> Result<Value> {

@@ -278,12 +278,14 @@ journey. Status: assembler shipped (#228), eval/persistence/UI pending (#227,
 
 ## The cutover plan (2026-10-13)
 
-> Where it stands (2026-10-20): both decoder arms read net positive against
-> the served day on the narrated rows under the referee without its pause —
-> the base decoder at the head of the fold 18 lost / 21 gained, the journey
-> state 22 / 27 — on one set of fresh records; the flip is the next decision,
-> his, by the 2026-10-19 rule. The design as built, the rule and the numbers:
-> `2026-10-station-states.md`. The text below is the plan as written on
+> Where it stands (2026-10-22): FLIPPED. The decoder's segments head the
+> served fold on every day with a stored decode and Lean runs only the naming
+> tail over them; today and any day the re-decode has not reached stay the
+> cascade's. Shipped with the journey state on the record at
+> `CLASSIFIER_VERSION` 11, by his 2026-10-18 rule (net, not row for row): 18
+> narrated rows cut, 22 newly held, three journeys cut and six gained. The
+> design as built, the rule and the numbers: `2026-10-station-states.md`; what
+> retires next is its "What retires". The text below is the plan as written on
 > 2026-10-13 and its measurements since, kept as the record of how the margin
 > was reached.
 
@@ -459,7 +461,8 @@ on ten (−16), the trailing mostly 10-08 (−4: Paris, the TGV, the Métro),
    mixture, then the cadence, each measured.
    **What a re-decode would change today: nothing graded.** The served day
    fed the live decode (s43c) or the next (the chain's wait, a stay's fitted
-   spread) in place of each fixture's stored one (`FOLD_DECODE_FROM`): every
+   spread) in place of each fixture's stored one (`FOLD_DECODE_FROM`, retired
+   at the flip, when the stored decode became the head's input): every
    gate passes, no journey and no graded stay name moves on any narrated day.
    The served day takes only stay places from the decoder (`hsmmOverride`),
    and those agree. So the decoder's improvements reach him at the flip, and

@@ -139,7 +139,7 @@ const UNANSWERED_KINDS: [&str; 6] = [
 /// that elected Home or Work from 1.2σ away asks the resolver at its own
 /// centroid. 04-29 gained that key (live, the answer moves no stay); 09-30 was
 /// re-captured for it and answers every key; 05-20 had fallen to 3.
-const UNANSWERED_BY_DAY: [(&str, usize); 42] = [
+const UNANSWERED_BY_DAY: [(&str, usize); 44] = [
     ("2026-04-29", 8),
     ("2026-04-30", 6),
     ("2026-05-11", 2),
@@ -184,6 +184,10 @@ const UNANSWERED_BY_DAY: [(&str, usize); 42] = [
     // Captured the same day, mid-journey: 9 geocodes and 3 ways off the
     // mirror's ground in France and under the Channel.
     ("2026-10-01", 202),
+    // Under the decoder's head a stay asks a geocode the mirror itself has no
+    // answer for (`recapture-asks` answered every other key).
+    ("2026-10-07", 1),
+    ("2026-10-08", 1),
 ];
 
 fn ceiling_for(date: &str) -> usize {

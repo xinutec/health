@@ -118,7 +118,10 @@ fn run_corpus(shard: usize) {
         let got = backend::row_json::render_segments(&segments).expect("segments render");
         let got = got.as_array().cloned().unwrap_or_default();
         // `DECODE_BLESS=1`: the fixture's `expected` becomes TODAY'S decode, the
-        // compared fields only — for landing a decoder change the scoreboard's
+        // rendered row whole — the row `save_decode` stores and the served fold
+        // heads with, so `boardTs` and whatever else Lean grows reach the
+        // corpus gate as they reach production; the comparison below reads the
+        // named fields only. For landing a decoder change the scoreboard's
         // live arm has already judged (#366). Tab-indented like the capture.
         // `DECODE_DUMP_OUT=<path>`: the Lean decode per day, one JSON line each,
         // APPENDED — for laying an arm's segments against the narrative without
@@ -136,31 +139,7 @@ fn run_corpus(shard: usize) {
         }
         if std::env::var("DECODE_BLESS").is_ok() {
             let mut fx = fx.clone();
-            fx["expected"] = Value::Array(
-                got.iter()
-                    .map(|g| {
-                        let mut o = serde_json::Map::new();
-                        for f in [
-                            "startTs",
-                            "endTs",
-                            "mode",
-                            "placeId",
-                            "lineName",
-                            "boardStation",
-                            "alightStation",
-                        ] {
-                            // `placeId` and `lineName` are written even when null: the
-                            // frozen fixtures carry them explicitly.
-                            if let Some(v) = g.get(f)
-                                && (!v.is_null() || f == "placeId" || f == "lineName")
-                            {
-                                o.insert(f.into(), v.clone());
-                            }
-                        }
-                        Value::Object(o)
-                    })
-                    .collect(),
-            );
+            fx["expected"] = Value::Array(got.clone());
             let mut buf = Vec::new();
             let fmt = serde_json::ser::PrettyFormatter::with_indent(b"\t");
             let mut ser = serde_json::Serializer::with_formatter(&mut buf, fmt);

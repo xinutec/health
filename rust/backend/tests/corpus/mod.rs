@@ -272,9 +272,18 @@ pub fn load_trace(
 
 /// Replay one already-parsed fixture. `Err` carries a message already prefixed
 /// with `name`, which is the shape every caller's `failures` vector wants.
-pub fn replay(name: &str, fx: Value, trace: Option<&TraceAnswerer>) -> Result<Replay, String> {
+pub fn replay(name: &str, mut fx: Value, trace: Option<&TraceAnswerer>) -> Result<Replay, String> {
     let (date, user) = (&name[..10], name[11..].trim_end_matches(".json"));
 
+    // The stored decode is the frozen twin's blessed one, as the DB holds it
+    // after the re-decode; the fixture's own is a replaced decoder's. A day
+    // without a twin would head its fold with that stale decode and grade a day
+    // production never serves, so it is refused: capture the twin
+    // (`decode-day --dry-run` under `DECODE_CAPTURE`) and bless it.
+    let stored = backend::decode_fixture::stored_decode(date, user)
+        .map_err(|e| format!("{name}: {e:#}"))?
+        .ok_or_else(|| format!("{name}: no frozen decode twin in tests/golden/decoded_days"))?;
+    fx["inputs"]["hsmmDecode"] = stored;
     let inputs = &fx["inputs"];
     let rowset = inputs
         .get("osmRowSet")

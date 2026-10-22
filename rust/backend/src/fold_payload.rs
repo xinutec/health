@@ -1062,7 +1062,7 @@ fn decoder_head_segments(inputs: &Map<String, Value>, var: &str) -> Result<Optio
             return Ok(Some(row["segments"].clone()));
         }
     }
-    // A day the dump does not hold (no narrative to score) folds as served.
+    // A day the dump does not hold (no narrative to score) folds on its stored decode.
     Ok(None)
 }
 
@@ -1127,31 +1127,27 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     // optimisation must not be smuggled through it — it belongs one level up,
     // where it is visible at the call site and has its own test.
     let bus_reachable = reachable_bus_routes(i.get("busRouteCache"), obs.get("points"));
-    // ⚠ `FOLD_DECODER_HEAD` HEADS THE FOLD WITH THE DECODER: the day's segments
-    // from a decoder dump (the scoreboard's `DECODE_DUMP_OUT`) replace the stored
-    // decode, and Lean runs only the naming tail over them — the flip, measured.
-    // Never served or blessed.
+    // THE DECODER HEADS THE FOLD on every day it has decoded: its segments are
+    // the day, and Lean runs only the naming tail over them (`DayEntry`,
+    // `decoderHead`). A day without a stored decode at this `CLASSIFIER_VERSION`
+    // — today, which the cron never decodes, or a finished day the re-decode
+    // has not reached — folds through the cascade until it has one.
+    // `FOLD_DECODER_HEAD=<dump>` puts an arm's decode (the scoreboard's
+    // `DECODE_DUMP_OUT`) in the stored one's place: a decoder change on the
+    // served day, measured before it ships.
     let decoder_head = decoder_head_segments(i, "FOLD_DECODER_HEAD")?;
     if decoder_head.is_some() {
-        eprintln!("⚠ FOLD_DECODER_HEAD — the decoder heads this fold; this day is an experiment");
+        eprintln!("⚠ FOLD_DECODER_HEAD — an arm's decode heads this fold, not the stored one");
+    }
+    let stored = i
+        .get("hsmmDecode")
+        .filter(|d| d.as_array().is_some_and(|a| !a.is_empty()));
+    let decode = decoder_head.as_ref().or(stored);
+    if decode.is_some() {
         env.insert("decoderHead".into(), Value::Bool(true));
     }
-    // ⚠ `FOLD_DECODE_FROM` replaces the stored decode with a dump's, and the
-    // cascade serves as usual: what a re-decode would change in the served day.
-    let decoder_head = match decoder_head {
-        Some(h) => Some(h),
-        None => {
-            let d = decoder_head_segments(i, "FOLD_DECODE_FROM")?;
-            if d.is_some() {
-                eprintln!(
-                    "⚠ FOLD_DECODE_FROM — the stored decode is replaced; this day is an experiment"
-                );
-            }
-            d
-        }
-    };
     for (k, v) in encode_caches(
-        decoder_head.as_ref().or_else(|| i.get("hsmmDecode")),
+        decode,
         i.get("railRouteCache"),
         bus_reachable.as_ref().or_else(|| i.get("busRouteCache")),
         i.get("railStopsCache"),
@@ -1161,10 +1157,7 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     // A train's stations, as the decoder's chain resolved them, onto the
     // decode `encode_caches` wrote. Here and not in it: `fold_env` pins that
     // encoder against the TypeScript's, which never carried them.
-    let decode_rows = decoder_head.as_ref().or_else(|| i.get("hsmmDecode"));
-    if let (Some(Value::Array(out)), Some(Value::Array(src))) =
-        (env.get_mut("hmmDecode"), decode_rows)
-    {
+    if let (Some(Value::Array(out)), Some(Value::Array(src))) = (env.get_mut("hmmDecode"), decode) {
         for (o, h) in out.iter_mut().zip(src) {
             if let (Some(o), Some(h)) = (o.as_object_mut(), h.as_object()) {
                 for k in ["boardStation", "alightStation"] {

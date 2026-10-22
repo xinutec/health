@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-status: built behind the journey state's record key; measured; the flip is the next decision
+status: SHIPPED at the flip (2026-10-22) — the decoder heads the served fold on every decoded day, with the journey state on the shipped record (`CLASSIFIER_VERSION` 11)
 references:
   - decoder-roadmap.md
   - 2026-10-shared-levels.md
@@ -13,7 +13,11 @@ references:
 The decoder roadmap's step 2: the platform wait, the board station and the
 line are one state, not three fixes. Built inside the journey state
 (`2026-10-shared-levels.md`, "The journey state"), behind the record's
-`segEmission.journey` key. The history of how it got here is in git and the
+`segEmission.journey` key, and served since the flip of 2026-10-22: the
+decoder's segments head the fold on every day with a stored decode, Lean runs
+the naming tail over them, and a day without one (today; a day the re-decode
+has not reached) is still the cascade's (`fold_payload.rs`,
+`DayEntry.decoderHead`). The history of how it got here is in git and the
 task; this file is the design as built, the rule it is judged by, the numbers,
 and what is open.
 
@@ -47,8 +51,16 @@ legs sharing the base states' emissions, `Verified/Hsmm/Journey.lean`):
   waits after their station without folding the walk between two of them.
 - **The record.** The journey state's additions beside a fitter record are in
   golden `fits/journey-record-2026-10-19.json` (the `unknown` level, the journey
-  params, `durationFits.unknown`); the wait's duration is the fitter's own.
+  params, `durationFits.unknown`); the wait's duration is the fitter's own
+  (nine narrated platform waits on the 2026-10-20 narratives, floor two
+  minutes). The shipped record is golden `fits/decoder-params.json`: the
+  in-sample fit with those additions laid over it, the Secret's one line.
   Decode time +50% a day.
+- **The gate folds what production folds.** A day fixture's own `hsmmDecode`
+  is a replaced decoder's row; the corpus gate folds each day on its frozen
+  decode twin's blessed rows (`decode_fixture::stored_decode`, the row
+  `decoded_days` holds after the re-decode) and refuses a day without a twin.
+  `FOLD_DECODER_HEAD=<dump>` puts an arm's decode in the stored one's place.
 
 ## The journey rule (the referee, both sides)
 
@@ -87,6 +99,17 @@ served day (`flipcheck.sh`).
 |---|---|---|
 | base decoder at the head of the fold | 129/313/63/69/5 | 18 / 21 |
 | journey state: S2 legs, S1 wait, the tail above | 129/316/62/67/6 | 22 / 27 |
+
+The flip itself (2026-10-22), on the in-sample record refitted on the
+2026-10-20 narratives, frozen scoreboard and the same instrument: with the
+journey state 129/315/61/65/4 and 21 lost / 28 gained; the same record without
+it 129/313/63/69/4 (the old record's counts to the number) and 18 / 22. The
+journey state ships. Against the served day's floors: 18 truth rows cut and 22
+newly held (527 → 531), three journeys cut (05-25 11:30Z, 07-07 15:48Z,
+10-07 10:39Z) and six gained (131 → 134); the impossible legs on 06-18 and the
+teleport on 10-02 gone, a kinematic leg each on 07-02 and 08-10 under the
+sharded gate (ceilings set by hand). The days losing a whole leg kind stay
+07-06 (the hop) and 06-09 (the bus).
 
 Journey state against the base head: +6 gained (05-18's hop, the platform
 waits 06-15, 06-17, 06-18, 09-15, 07-02's and 10-08's walks, 07-16's re-timed
@@ -134,11 +157,6 @@ boundary or a label):
 
 ## Open
 
-- **The flip** — his call by his 2026-10-19 rule (several rows; no day losing a
-  whole leg kind): the margin is there; the days that lose a leg kind under
-  either arm are 07-06 (the one-stop hop walked through) and 06-09 (the bus,
-  which no arm has). Finished days only, `CLASSIFIER_VERSION` bump, deploy,
-  history re-decode.
 - **S2's remaining losses:** 06-16 is the train-cadence class (116 steps at
   11:05Z inside a train at 37 km/h cost the narrated Met leg 69 nats; refuted
   twice, `2026-10-segment-emissions.md`); 07-02's one ride without a station
@@ -156,10 +174,11 @@ boundary or a label):
 
 ## What retires
 
-- At the flip: the fold's stay-absorbing and window-stretching passes under the
-  head are already out of its tail (`finalMerge`); `absorbIntraPlaceWalk`'s
-  twelve minutes and `consolidateJitterStays`' 75 m go with the served cascade
-  when the history re-decode reads the same without them.
+- Now the flip is served: the fold's stay-absorbing and window-stretching
+  passes are out of the head's tail (`finalMerge`); the cascade still draws
+  today and any day without a decode, so `absorbIntraPlaceWalk`'s twelve
+  minutes and `consolidateJitterStays`' 75 m go with it when the history
+  re-decode reads the same without them.
 - With S1 and S2 on the shipped record: `boardAtWait`, `boardingStayLabel`'s
   fold, `interchangeStayLabel`, and the chain's post-hoc line pick where the leg
   names its station — each cut when the 200-day sweep reads the same without it.
@@ -177,4 +196,5 @@ transition and expected ride time, against a forced alternative; legs are named
 `arms8.sh <tag>` for the held-out scoreboard, `flipcheck.sh <tag> <dump>` for
 the rows (one corpus gate at a time: the flip check rewrites and restores the
 name-confidence ledger), `rowaudit.py` for a lost row beside the head and the
-signal.
+signal; `truthcut.py` and `journeyfloor.py` apply a gate log's cuts and gains
+to the two floors by hand.

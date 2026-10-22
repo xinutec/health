@@ -122,7 +122,17 @@ pub(crate) fn day(fixture: &str) -> Result<()> {
         .split_once('-')
         .and_then(|_| Some((name.get(..10)?, name.get(11..)?)))
         .with_context(|| format!("{name} is not <YYYY-MM-DD>-<user>"))?;
-    let inputs = parsed.get("inputs").context("the fixture has no inputs")?;
+    let mut inputs = parsed
+        .get("inputs")
+        .context("the fixture has no inputs")?
+        .clone();
+    // The frozen twin's blessed decode stands in for the stored row, as the
+    // corpus gate reads it; a fixture without one (a history capture) folds on
+    // the decode it carries.
+    if let Some(stored) = backend::decode_fixture::stored_decode(date, user)? {
+        inputs["hsmmDecode"] = stored;
+    }
+    let inputs = &inputs;
 
     let cap = backend::head::capture(inputs, date, user)?;
     let rows = inputs
@@ -948,9 +958,16 @@ pub(crate) async fn recapture_asks(user: &str, fixture_path: &str) -> Result<()>
         .context("the fixture has no meta.date")?
         .to_string();
     let now_ms = chrono::Utc::now().timestamp_millis();
+    // The fold that asks is the gate's: on the frozen twin's blessed decode,
+    // not the capture's own, so the lookups re-recorded are the ones the
+    // served day makes. The fixture written back keeps its capture.
+    let mut folding = fixture.clone();
+    if let Some(stored) = backend::decode_fixture::stored_decode(&date, user)? {
+        folding["inputs"]["hsmmDecode"] = stored;
+    }
     let (folded, matcher, geocodes, rows) = backend::mirror_source::rerecord_unanswered(
         pool.clone(),
-        fixture.clone(),
+        folding,
         user.to_string(),
         date.clone(),
         now_ms,

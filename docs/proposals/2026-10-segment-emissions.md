@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-status: SHIPPED — the fitted decoder decodes production from one parameter record (`DECODER_PARAMS_JSON` from Secret `health-decoder`, written by `fit_emissions`), now s43c at CLASSIFIER_VERSION 10 (pair speeds with fitted outlier shares); held out by day 125 / 305 / 61 / 54 / 6, referee 142, and under the decoder head 143 narrated journeys against the served day's 142
+status: SHIPPED — the fitted decoder decodes production from one parameter record (`DECODER_PARAMS_JSON` from Secret `health-decoder`, written by `fit_emissions`); since 2026-10-22 the record carries the journey state (`2026-10-station-states.md`) at CLASSIFIER_VERSION 11 and the decoder's segments ARE the served day wherever one is stored; the s43c record at version 10 measured held out by day 125 / 305 / 61 / 54 / 6, referee 142
 references:
   - decoder-roadmap.md
   - 2026-10-posterior-confidence.md

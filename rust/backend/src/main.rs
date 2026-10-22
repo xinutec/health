@@ -622,9 +622,10 @@ async fn check() -> Result<()> {
     // day would otherwise be indistinguishable from a day that has no decode.
     let check_date: Option<String> = sqlx::query_scalar(
         "SELECT DATE_FORMAT(MAX(date), '%Y-%m-%d') FROM decoded_days \
-         WHERE user_id = ? AND classifier_version = 7",
+         WHERE user_id = ? AND classifier_version = ?",
     )
     .bind(&user)
+    .bind(classification_inputs::CLASSIFIER_VERSION)
     .fetch_one(&pool)
     .await
     .context("choosing a check date from decoded_days")?;

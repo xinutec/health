@@ -1003,7 +1003,7 @@ def refineDecoderBoundaries (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
 /-- The decoder's segments as the fold's input, measured from the fixes inside
 each: mean speed over the path, the fixes' centroid and count. A train keeps
 its route as `wayName` (`board → alight · line`) when the decoder's chain named
-both ends, else its line. ⚠ A measurement seam (`FOLD_DECODER_HEAD`), never served. -/
+both ends, else its line. The served day's input wherever the day has a decode. -/
 def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
     (pts : Array Verified.SpeedFix) : Array Seg :=
   let build : Int → Int → String → Option String → Option String → Seg :=
@@ -1072,9 +1072,10 @@ def dayResult (j : Json) : Json :=
     -- carries the OSM enrichment stage that would otherwise split the chain in
     -- two and force the corrections to start from another arm's output.
     let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
-    -- ⚠ `decoderHead` (`FOLD_DECODER_HEAD`): the decoder's segments head the
+    -- `decoderHead`: the day has a decode, so the decoder's segments head the
     -- fold, the segmentation stages and passes stand down, and only
-    -- `DECODER_TAIL` runs. The flip, measured; never served or blessed.
+    -- `DECODER_TAIL` runs. Without one (today; a day not yet re-decoded) the
+    -- cascade draws the day.
     let decoderHead ← optBool envJson "decoderHead" false
     let env := if decoderHead
       then { env with hmmDecode := refineDecoderBoundaries env.hmmDecode env.points } else env
