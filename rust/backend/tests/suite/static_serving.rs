@@ -134,3 +134,33 @@ async fn the_root_still_explains_itself() {
 // 404s, so the assertion would have described the environment rather than the
 // code — and it would have failed on a correct router. The hand-listed SPA
 // routes in `routes/mod.rs` are covered by their own presence, not by this.
+
+#[test]
+fn only_a_content_hashed_file_is_cached_for_good() {
+    // An icon, the manifest and the service worker's files keep their names
+    // across builds: unmarked, a WebView keeps them on heuristics, and a year of
+    // `immutable` would pin the old one on every phone.
+    use backend::routes::site::cache_for;
+    let ok = StatusCode::OK;
+    assert_eq!(cache_for("/", "text/html", ok), Some("no-cache"));
+    assert_eq!(
+        cache_for("/main-JLBKO2QH.js", "text/javascript", ok),
+        Some("public, max-age=31536000, immutable")
+    );
+    for path in ["/icon.svg", "/manifest.webmanifest", "/ngsw-worker.js"] {
+        assert_eq!(
+            cache_for(path, "image/svg+xml", ok),
+            Some("no-cache"),
+            "{path}"
+        );
+    }
+    // An API answer and an error are not this middleware's to decide.
+    assert_eq!(
+        cache_for("/api/heartrate/intraday", "application/json", ok),
+        None
+    );
+    assert_eq!(
+        cache_for("/media/nope.woff2", "text/plain", StatusCode::NOT_FOUND),
+        None
+    );
+}

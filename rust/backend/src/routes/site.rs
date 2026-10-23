@@ -6,7 +6,7 @@
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
@@ -109,24 +109,67 @@ pub async fn version() -> Response {
 /// every response including the API's, so an `else` branch stamping `immutable`
 /// on whatever was left would put a year-long cache on JSON — the same bug
 /// pointing the other way.
+///
+/// A FILE is decided too: one whose name carries its content hash is
+/// `immutable`, and any other — an icon, the manifest, the service worker's
+/// files, which keep their names across builds — revalidates, or a WebView keeps
+/// it on heuristics. See [`cache_for`].
 pub async fn html_must_revalidate(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
+    let path = req.uri().path().to_owned();
     let mut res = next.run(req).await;
     if res.headers().contains_key(header::CACHE_CONTROL) {
         return res;
     }
-    let is_html = res
+    let content_type = res
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.starts_with("text/html"));
-    if is_html {
+        .unwrap_or_default();
+    if let Some(value) = cache_for(&path, content_type, res.status()) {
         res.headers_mut()
-            .insert(header::CACHE_CONTROL, "no-cache".parse().expect("literal"));
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static(value));
     }
     res
+}
+
+/// What a response that said nothing about caching should say, or nothing: the
+/// page revalidates; a file (a dot in the last segment) is `immutable` when its
+/// name carries its content hash and revalidates otherwise; an error and an API
+/// answer are left alone.
+pub fn cache_for(path: &str, content_type: &str, status: StatusCode) -> Option<&'static str> {
+    if content_type.starts_with("text/html") {
+        return Some("no-cache");
+    }
+    if status.is_client_error() || status.is_server_error() {
+        return None;
+    }
+    let name = path.rsplit('/').next().unwrap_or("");
+    if !name.contains('.') {
+        return None;
+    }
+    Some(if is_content_hashed(name) {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    })
+}
+
+/// A name carrying its content hash (`main-7GNM4EPX.js`, a font's `-ABCD1234`):
+/// a new build is a new name, so it may be cached for ever.
+fn is_content_hashed(name: &str) -> bool {
+    let Some((stem, _ext)) = name.rsplit_once('.') else {
+        return false;
+    };
+    let Some((_, hash)) = stem.rsplit_once('-') else {
+        return false;
+    };
+    hash.len() == 8
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 
 /// The landing page shown when no Angular build is present — **at the root
