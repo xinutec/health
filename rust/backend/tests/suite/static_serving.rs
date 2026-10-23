@@ -98,6 +98,24 @@ async fn an_unknown_route_without_an_extension_is_a_404() {
 }
 
 #[tokio::test]
+async fn the_page_is_asked_for_again_every_time() {
+    // The page names the bundle; with only `Last-Modified` a WebView keeps it as
+    // fresh for a tenth of its age. The build-less root is the page this harness
+    // can reach; a deep link needs a build, and the fleet probe asks that one.
+    let res = app()
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .expect("router answered");
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()
+            .get(header::CACHE_CONTROL)
+            .map(|v| v.to_str().unwrap()),
+        Some("no-cache")
+    );
+}
+
+#[tokio::test]
 async fn the_root_still_explains_itself() {
     // ⚠ NOT symmetry with the cases above, and not negotiable: a build-less
     // deployment has to account for itself to whoever opens it, and
