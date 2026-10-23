@@ -458,39 +458,49 @@ reliably attached by this point — the TS does the same, for the same reason.
 The scan reads the array it is REWRITING, so a stay renamed at `i` is what index
 `i + 1` sees when it looks for its bracketing trains. That is the TS's `out[i] =`
 in place, and it is load-bearing for a run of two changes. -/
-def interchangeStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
+private def isStationStay (s : Seg) : Bool :=
+  Verified.Geo.SegmentMerge.effectiveMode s == "stationary" && s.placeSource.any (·.rule == "station")
+
+/-- The stations in range of a stay's centroid, nearest first, for the alight
+rule — or the stay's own name when it must keep it. A name yields only when
+the picker found it by rank alone, the weakest source in
+`NameConfidence.COUNTS` (06-15: thirty minutes at Green Park's bus stop read
+"Pret A Manger"); a name from the stay's own fixes at the venue stands against
+the station beside it (06-15: thirteen minutes at a Pret 69 m from Euston's
+node; 06-09: a coffee 145 m from Wembley Park's), as does a station's, the
+decoder's (its wait arrives with the station and no source), a night's and an
+established focus place's (04-23: two hours at Work beside St Pancras). -/
+private def stationsAtAlight (e : Env) (s : Seg) : Array String := Id.run do
+  if s.place.isSome && !s.placeSource.any (·.rule == "ranked") then return s.place.toArray
+  if (s.focusPlaceId.bind e.focusPlaceDays).any
+      (· ≥ Verified.Geo.TransitPlace.INTERCHANGE_FOCUS_GUARD_MIN_DAYS) then return #[]
+  let some (cLat, cLon) := centroidOf e s | return #[]
+  return Verified.Geo.TransitPlace.stationsWithin cLat cLon e.nearbyStations
+
+/-- Name the first stay after a train for the station its label says it
+alighted at, when the stay is in range of it
+(`TransitPlace.stationsAfterAlighting`): the mirror of `boardingStayLabels`,
+and the rule the enrichment's own alight rule cannot reach — under the decoder's
+head a walk up from the platform parts the ride from the stay (05-22's nineteen
+minutes at Finchley Road, named for the shop beside it). Names only. -/
+def alightStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
+  let trainAlight (i : Nat) : Option String := do
+    let s ← segs[i]?
+    let rail ← Verified.Geo.RailAbsorbers.parseRailWayName s.wayName
+    if rail.alight.isEmpty then none else some rail.alight
+  let names := Verified.Geo.TransitPlace.stationsAfterAlighting segs
+    (fun i => (segs[i]?.map (stationsAtAlight e)).getD #[]) trainAlight
   let mut out := segs
   for i in [0 : out.size] do
     let some s := out[i]? | continue
-    if s.mode != "stationary" then continue
-    let some (cLat, cLon) := centroidOf e s | continue
-    -- Bracketed by trains: a change of trains. Otherwise the ALIGHT rule the
-    -- early enrichment applies — a stay at the station right after a train —
-    -- deferred to here, because an Underground ride is raw `driving` when the
-    -- enrichment runs and only becomes a train in this cascade: 05-22's
-    -- 19-minute wait at Finchley Road after the Met was named "O2 Centre", the
-    -- shop next door, for that alone (2026-09-28, #185).
-    let named : Option (String × String) :=
-      match Verified.Geo.TransitPlace.stationAtTransitInterchange out (Int.ofNat i) cLat cLon
-              e.nearbyStations (stayFocusDays := s.focusPlaceId.bind e.focusPlaceDays) with
-      | some station => some (station, "transit interchange → named station")
-      | none =>
-        let prev := if i == 0 then none else out[i - 1]?
-        (Verified.Geo.TransitPlace.stationAtTrainAlight prev cLat cLon e.nearbyStations).map
-          fun station => (station, "alighted here → named station")
-    match named with
-    | none => pure ()
-    | some (station, why) =>
-      if some station != s.place then
-        let reason := match s.refinedReason with
-          | some r => s!"{r}; {why}"
-          | none => why
-        out := out.set! i { s with place := some station, refinedReason := some reason
-                                   placeSource := some ⟨station, "station", some (cLat, cLon)⟩ }
+    let some (some station) := names[i]? | continue
+    if s.place == some station then continue
+    out := out.set! i { s with place := some station
+                               placeSource := some ⟨station, "station", centroidOf e s⟩
+                               refinedReason := some (match s.refinedReason with
+                                 | some r => s!"{r}; alighted here → named station"
+                                 | none => "alighted here → named station") }
   return out
-
-private def isStationStay (s : Seg) : Bool :=
-  Verified.Geo.SegmentMerge.effectiveMode s == "stationary" && s.placeSource.any (·.rule == "station")
 
 /-- Is `p` within station range of a node named `st`? -/
 private def inStation (e : Env) (st : String) (p : Shed.PointF) : Bool :=
@@ -1050,11 +1060,12 @@ def passes (e : Env) : Array Pass := #[
   -- A stay at a station bracketed by trains on BOTH sides is a change of
   -- trains, not a venue visit — name it the station so a co-located shop cannot
   -- surface as a destination.
-  ("interchangeStayLabel", fun segs => interchangeStayLabels e segs),
-
-  -- The waits before a train are at the station, the mirror of the alight rule
-  -- above; after it, so a stay already named a station keeps the chain open.
+  -- The waits before a train are at the station; first, so a change of trains
+  -- is named for the train it waits for, as his rows write one.
   ("boardingStayLabel", fun segs => boardingStayLabels e segs),
+
+  -- The first stay after a train is at the station it alighted at.
+  ("alightStayLabel", fun segs => alightStayLabels e segs),
 
   -- A ride ending on a fix the phone then held alights where the next fresh
   -- fix is (#1891).
@@ -1170,8 +1181,8 @@ private def PAIR_MIRROR : Env :=
     "rideHeadClaim", "stayArrivalClaim", "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
     "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
-    "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "interchangeStayLabel",
-    "boardingStayLabel", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
+    "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "boardingStayLabel",
+    "alightStayLabel", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
     "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
@@ -1192,15 +1203,17 @@ def TS_CASCADE : Array String := #[
   "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel", "vehicleSplit",
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
-  -- `walkDwell`, `stayEdgeWalk`, `lineSubstitute`, `boardingStayLabel`,
-  -- `railThrough`, `rideThroughHold`, `alightAfterHold`, `alightAtLastFix` and
-  -- `railSnapFinal` are Lean-only;
+  -- `walkDwell`, `stayEdgeWalk`, `lineSubstitute`, `alightStayLabel`,
+  -- `boardingStayLabel`, `railThrough`, `rideThroughHold`, `alightAfterHold`,
+  -- `alightAtLastFix` and `railSnapFinal` are Lean-only (`alightStayLabel`
+  -- stands where the TS's `interchangeStayLabel` did, after the boarding
+  -- labeller);
   -- they sit here so the containment check keeps holding for the order the TS had.
   "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
   "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
-  "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "boardingStayLabel",
+  "lineSubstitute", "changeoverWindow", "boardingStayLabel", "alightStayLabel",
   "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
   "vehicleIdentity"]
 
@@ -1616,16 +1629,27 @@ private def farPhantomOut : Array Seg := runNamed MIX "finalMerge" farPhantomDay
 -- every stay carrying the id — including the one actually at the place — would
 -- satisfy all three guards above.
 #guard farPhantomOut[0]!.focusPlaceId == some 7 && farPhantomOut[0]!.place == some "The Office"
--- A stay at a station with a train either side is a change of trains.
-#guard fires MIX "interchangeStayLabel"
-  #[tr 0 600 (some "A → S"), st 600 900, tr 900 1500 (some "S → T")]
--- A stay at the station with a train BEFORE it only — alighted and waited,
--- however long — takes the station's name too; after a walk it does not
--- (05-22's ambulance wait at Finchley Road, 2026-09-28).
-#guard fires MIX "interchangeStayLabel" #[tr 0 600 (some "A → S"), st 600 1800, dr 1800 2400]
-#guard (runNamed MIX "interchangeStayLabel" #[tr 0 600 (some "A → S"), st 600 1800, dr 1800 2400])[1]!.place
-  == (runNamed MIX "interchangeStayLabel" #[tr 0 600 (some "A → S"), st 600 900, tr 900 1500 (some "S → T")])[1]!.place
-#guard !(fires MIX "interchangeStayLabel" #[wk 0 600, st 600 1800, dr 1800 2400])
+-- The first stay after a train is at the station its label alighted at: a
+-- change of trains, a wait however long, and across the walk up from the
+-- platform (05-22's ambulance wait at Finchley Road); for the label's own
+-- station, not the nearest; and not after a stay, nor without a train.
+#guard fires MIX "alightStayLabel" #[tr 0 600 (some "A → S"), st 600 900, tr 900 1500 (some "S → T")]
+#guard fires MIX "alightStayLabel" #[tr 0 600 (some "A → S"), st 600 1800, dr 1800 2400]
+#guard (runNamed MIX "alightStayLabel" #[tr 0 600 (some "A → S"), wk 600 720, st 720 1800, dr 1800 2400])[2]!.place
+  == some "S"
+#guard (runNamed MIX "alightStayLabel" #[tr 0 600 (some "A → S"), st 600 900, wk 900 1000, st 1000 1800])[3]!.place
+  == none
+#guard !(fires MIX "alightStayLabel" #[tr 0 600 (some "A → X"), st 600 1800, dr 1800 2400])
+#guard !(fires MIX "alightStayLabel" #[tr 0 600 (some "Metropolitan Line"), st 600 1800])
+#guard !(fires MIX "alightStayLabel" #[wk 0 600, st 600 1800, dr 1800 2400])
+-- A stay the decoder named (a place and no source) keeps its name, and so does
+-- one the picker named from the stay's own fixes; a name by rank alone yields.
+#guard !(fires MIX "alightStayLabel" #[tr 0 600 (some "A → S"), st 600 1800 (some "T")])
+#guard !(fires MIX "alightStayLabel"
+  #[tr 0 600 (some "A → S"), { st 600 1800 (some "T") with placeSource := some ⟨"T", "nearField", none⟩ }])
+#guard (runNamed MIX "alightStayLabel"
+  #[tr 0 600 (some "A → S"), { st 600 1800 (some "T") with placeSource := some ⟨"T", "ranked", none⟩ }])[1]!.place
+  == some "S"
 -- The waits that lead to a train are at its station, across a short walk too;
 -- a stay longer than any wait for a train is somewhere he went.
 #guard fires MIX "boardingStayLabel" #[st 0 600, wk 600 900, st 900 1500, tr 1500 3000 (some "S → T")]
@@ -1666,7 +1690,7 @@ private def NOSERVE : Env :=
 /-! ### `displayTz`, whose branches nothing else owns
 
 The other 31 entries call a function some module pins. This one and
-`interchangeStayLabel` are written here, so their behaviour is pinned here too —
+`alightStayLabel` are written here, so their behaviour is pinned here too —
 a witness that they merely change something would leave the choice of
 coordinate, and the fallback, untested. -/
 

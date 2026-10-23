@@ -13,12 +13,12 @@ inside the concourse.
   range, is at the station just alighted at (2026-05-22: an ambulance wait on
   the Finchley Road forecourt read "Loft Coffee Company"). A genuine café visit
   has a walking segment in between, so `prev` would be walking.
-* `stationAtTransitInterchange` — a SHORT stay in station range bracketed by
-  trains on both sides, each reached directly or across one short
-  platform-change walk, is a change of trains (2026-06-29: a Baker Street
-  Circle→Met platform change read "Krispy Kreme", a unit mapped 40 m away
-  inside the station). The first rule cannot see this one: it bails the moment
-  a walk sits between the train and the stay.
+* `stationsAfterAlighting` — the first stay after a train, reached across
+  walks alone, is at the station the train's own label says it alighted at,
+  when that station is in range of the stay (05-22's nineteen minutes at
+  Finchley Road after the Met, across the two-minute walk up from the
+  platform; a change of trains at Baker Street). The first rule cannot see
+  across the walk, and under the decoder's head there is one.
 * `stationsBeforeBoarding` — a stay that runs straight into a train, or is
   parted from it only by a short walk inside the board station, and the stays
   before it at the same station across short walks, are the wait for it
@@ -30,11 +30,9 @@ inside the concourse.
   (2026-10-03: the last five minutes before Montparnasse's platform walk read
   "McDonald's").
 
-The first two are `async` in the TS only because the station lookup is injected
+The first is `async` in the TS only because the station lookup is injected
 (`osm: Pick<OsmAdapter, "nearbyStations">`) — the TubeHop shape. Modelled here
-with the lookup as an ordinary function of `(lat, lon, radiusM)`, which is what
-reference-tests the private `bracketingTrain` and `isShortWalk` through the
-public functions rather than needing a test-only export.
+with the lookup as an ordinary function of `(lat, lon, radiusM)`.
 
 Wholly EXACT — no trigonometry and no arithmetic beyond a duration subtraction;
 the distances arrive already computed from the adapter.
@@ -128,12 +126,6 @@ satisfy, so a short station-sited stay bracketed by trains is a change of trains
 regardless of the transfer walk's exact length. -/
 def INTERCHANGE_WALK_MAX_S : Int := 720
 
-/-- A change of trains is a short wait on the platform. A stay longer than this,
-even bracketed by trains, is a genuine destination reached by one ride and left
-by a later one — a hospital appointment between an outbound and a return train
-hours apart, not an interchange. -/
-def INTERCHANGE_DWELL_MAX_S : Int := 900
-
 /-- Established-focus-place guard: a stay the place prior confidently assigned
 to a focus place visited on at least this many distinct days is a genuine
 destination and keeps its label even when train legs bracket it.
@@ -156,42 +148,6 @@ def segAt (segments : Array Seg) (i : Int) : Option Seg :=
   else
     let n := i.toNat
     if h : n < segments.size then some segments[n] else none
-
-private def isShortWalk (s : Seg) : Bool :=
-  effMode s == "walking" && s.endTs - s.startTs ≤ INTERCHANGE_WALK_MAX_S
-
-/-- Is the segment chain on one side of the stay a train, reached either
-directly or across a single short platform-change walk? -/
-def bracketingTrain (segments : Array Seg) (adjacent beyond : Int) : Bool :=
-  match segAt segments adjacent with
-  | none => false
-  | some a =>
-    if effMode a == "train" then true
-    else if isShortWalk a then
-      match segAt segments beyond with
-      | none => false
-      | some b => effMode b == "train"
-    else false
-
-/-- Transit-interchange continuity: the station a short, train-bracketed stay
-sits at. `none` when the stay is too long, is an established focus place, is not
-transit-bracketed on BOTH sides, or no station is close enough.
-
-Requiring trains on both sides (within one short walk) is what separates a
-change of trains from alight → walk to a café → walk back → board. -/
-def stationAtTransitInterchange
-    (segments : Array Seg) (i : Int) (lat lon : Float)
-    (stationsLookup : Float → Float → Float → Array NearbyStation)
-    (radiusM : Float := STATION_AT_ALIGHT_RADIUS_M)
-    (stayFocusDays : Option Int := none) : Option String :=
-  match segAt segments i with
-  | none => none
-  | some stay =>
-    if stay.endTs - stay.startTs > INTERCHANGE_DWELL_MAX_S then none
-    else if stayFocusDays.any (· ≥ INTERCHANGE_FOCUS_GUARD_MIN_DAYS) then none
-    else if !bracketingTrain segments (i - 1) (i - 2) then none
-    else if !bracketingTrain segments (i + 1) (i + 2) then none
-    else nameWithin (stationsLookup lat lon radiusM) radiusM
 
 /-- The longest wait before boarding that is still the wait for the train:
 2026-09-30's Eurostar check-in at St Pancras was 74 minutes. A stay longer
@@ -343,6 +299,33 @@ def stationsFromEnclosed (segments : Array Seg)
       if effMode s == "stationary" then out := out.set! i (some st)
   return out
 
+/-- Alighting continuity, the mirror of `stationsBeforeBoarding`: the first stay
+after a train, reached across walks alone, is at the station the train alighted
+at when that station is in range of it. The ride's own label says where it
+alighted (`trainAlight i`), so the stay is named for THAT station and not for
+the nearest; `stationsAt i` is the stations in range of the stay at `i`, or none
+when it must keep its name. The stay's position is the evidence, not the walk's:
+the fixes after surfacing from a platform sit a kilometre out at 400–3000 m
+accuracy for a minute before settling (05-22 at Finchley Road: then 25 m from
+the platform for the nineteen minutes of the wait). No bound on the stay's
+length; a stay out of range closes the chain (05-12: nine minutes' walk from
+Wembley Park to a shop 265 m from the platforms), and so does any other mode. -/
+def stationsAfterAlighting (segments : Array Seg)
+    (stationsAt : Nat → Array String)
+    (trainAlight : Nat → Option String) : Array (Option String) := Id.run do
+  let mut out : Array (Option String) := Array.replicate segments.size none
+  let mut chain : Option String := none
+  for i in [0 : segments.size] do
+    let some s := segments[i]? | continue
+    match effMode s, chain with
+    | "train", _ => chain := trainAlight i
+    | "walking", _ => pure ()
+    | "stationary", some st =>
+      if (stationsAt i).contains st then out := out.set! i (some st)
+      chain := none
+    | _, _ => chain := none
+  return out
+
 /-! ## Reference guards
 
 Pinned against `lean/experiments/transit-place-refs.mts`. -/
@@ -365,7 +348,6 @@ private def noStations (_lat _lon _r : Float) : Array NearbyStation := #[]
 
 #guard STATION_AT_ALIGHT_RADIUS_M == 150
 #guard INTERCHANGE_WALK_MAX_S == 720
-#guard INTERCHANGE_DWELL_MAX_S == 900
 #guard INTERCHANGE_FOCUS_GUARD_MIN_DAYS == 3
 
 /-! ### `stationAtTrainAlight` -/
@@ -395,58 +377,14 @@ private def alight (prev : Option Seg)
 -- The radius is a parameter, not a constant: the same station admits at 200 m.
 #guard alight (some (md "train")) beyond 200 == some "Outside"
 
-/-! ### `stationAtTransitInterchange` -/
-
 private def sg (mode : Mode) (startTs endTs : Int) (refinedMode : Option Mode := none) : Seg :=
   { mode, startTs, endTs, refinedMode }
 
-/-- `train | stay | train` — both sides directly adjacent. Stay at index 1. -/
+/-- `train | stay | train` — a change of trains. Stay at index 1. -/
 private def direct : Array Seg :=
   #[sg "train" 0 600, sg "stationary" 600 900, sg "train" 900 1500]
 
-/-- `train | walk | stay | walk | train` — one short platform change each side.
-Stay at index 2. -/
-private def viaWalk : Array Seg :=
-  #[sg "train" 0 600, sg "walking" 600 900, sg "stationary" 900 1200,
-    sg "walking" 1200 1500, sg "train" 1500 2100]
-
 private def withAt (segs : Array Seg) (i : Nat) (s : Seg) : Array Seg := segs.set! i s
-
-private def ix (segs : Array Seg) (i : Int)
-    (lookup : Float → Float → Float → Array NearbyStation := two)
-    (focusDays : Option Int := none) : Option String :=
-  stationAtTransitInterchange segs i 51.5 (-38.2) lookup STATION_AT_ALIGHT_RADIUS_M focusDays
-
-#guard ix direct 1 == some "Near"
-#guard ix viaWalk 2 == some "Near"
--- The short-walk bar is inclusive, and one second over disarms the whole side.
-#guard ix (withAt viaWalk 1 (sg "walking" 180 900)) 2 == some "Near"
-#guard ix (withAt viaWalk 1 (sg "walking" 179 900)) 2 == none
--- A short walk only qualifies the side if a TRAIN sits beyond it.
-#guard ix (withAt viaWalk 0 (sg "driving" 0 600)) 2 == none
--- …and "beyond" off the front of the array is `undefined`, not index 0.
-#guard ix (viaWalk.extract 1 viaWalk.size) 1 == none
-#guard ix (direct.extract 1 direct.size) 0 == none
-#guard ix (direct.extract 0 2) 1 == none
-#guard ix direct 9 == none
--- The negative index itself. Degenerate on purpose, and it has to be: with a
--- STATIONARY stay the `Nat`-truncation bug is unreachable, because both `i - 1`
--- and `i - 2` clamp to index 0, which is either the stay or the short walk that
--- led there — and neither can pass the train test. Only a stay that is itself a
--- train separates `segments[-1] === undefined` from `segments[0]`.
-#guard ix #[sg "train" 0 600, sg "train" 600 1200] 0 == none
--- The dwell bar is inclusive too.
-#guard ix (withAt direct 1 (sg "stationary" 600 1500)) 1 == some "Near"
-#guard ix (withAt direct 1 (sg "stationary" 599 1500)) 1 == none
--- The focus guard fires at the constant, not below it.
-#guard ix direct 1 two (some 2) == some "Near"
-#guard ix direct 1 two (some 3) == none
--- A bracketing leg is judged on its EFFECTIVE mode, both directions.
-#guard ix (withAt direct 0 (sg "driving" 0 600 (some "train"))) 1 == some "Near"
-#guard ix (withAt direct 0 (sg "train" 0 600 (some "walking"))) 1 == none
-#guard ix direct 1 noStations == none
-#guard ix direct 1 tie == some "First"
-#guard ix direct 1 beyond == none
 
 /-! ### `stationsBeforeBoarding` -/
 
@@ -576,6 +514,39 @@ private def inside (segs : Array Seg) (at_ : Nat) (others : List (Nat × Array S
 #guard board (withAt wait 3 (sg "driving" 1100 1300)) == #[none, none, none, none, S, none]
 #guard board (withAt wait 5 (sg "driving" 2100 9000 (some "train"))) == board wait
 #guard board (withAt wait 5 (sg "train" 2100 9000 (some "walking"))) == #[none, none, none, none, none, none]
+
+/-! ### `stationsAfterAlighting` -/
+
+/-- Every stay is in range of station "S" alone unless listed otherwise; the
+trains alight where `alights` says, nowhere otherwise. -/
+private def after (segs : Array Seg) (alights : List (Nat × String))
+    (others : List (Nat × Array String) := []) : Array (Option String) :=
+  stationsAfterAlighting segs
+    (fun i => match others.find? (·.1 == i) with
+      | some (_, sts) => sts
+      | none => #["S"])
+    (fun i => (alights.find? (·.1 == i)).map (·.2))
+
+-- A change of trains; the second train's own alight is not reached.
+#guard after direct [(0, "S"), (2, "T")] == #[none, S, none]
+-- Across the walk up from the platform, and the stay's length is no bar.
+#guard after #[sg "train" 0 600, sg "walking" 600 720, sg "stationary" 720 9000] [(0, "S")]
+  == #[none, none, S]
+-- The first stay only.
+#guard after #[sg "train" 0 600, sg "stationary" 600 900, sg "walking" 900 1000, sg "stationary" 1000 1800]
+    [(0, "S")]
+  == #[none, S, none, none]
+-- A stay out of the alight station's range closes the chain; so does a drive.
+#guard after #[sg "train" 0 600, sg "walking" 600 1200, sg "stationary" 1200 1800] [(0, "S")] [(2, #["T"])]
+  == #[none, none, none]
+#guard after #[sg "train" 0 600, sg "driving" 600 900, sg "stationary" 900 1800] [(0, "S")]
+  == #[none, none, none]
+-- The ride's own alight, not the nearest station; a ride without one names nothing.
+#guard after direct [(0, "T")] == #[none, none, none]
+#guard after direct [] == #[none, none, none]
+-- The train is judged on its effective mode.
+#guard after (withAt direct 0 (sg "driving" 0 600 (some "train"))) [(0, "S")] == #[none, S, none]
+#guard after (withAt direct 0 (sg "train" 0 600 (some "walking"))) [(0, "S")] == #[none, none, none]
 
 end Guards
 

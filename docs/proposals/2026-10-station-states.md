@@ -182,13 +182,29 @@ boundary or a label):
 - With S1 and S2 on the shipped record: `boardAtWait` and `boardingStayLabel`'s
   fold — CUT 2026-10-22, neither ran under the head and the 200-day sweep read
   the same (`histfold-headed.sh`, headed against headed on one decode dump);
-  `interchangeStayLabel` — NOT YET: without it four of the 200 days move a stay's
-  name (05-22's nineteen minutes at Finchley Road after the Met become the
-  shop beside it, 05-07's night becomes a mall, 04-23's two hours at St Pancras
-  become Work, 04-26 the mainline spelling); the decoder has no alight-side
-  wait (S1 is the wait before boarding) and does not name the stay after a
-  ride, so the pass still does that work. It retires with the state or the
-  naming that replaces it. The chain's post-hoc line pick where the leg names
+  `interchangeStayLabel` — CUT 2026-10-23, into its mirror: `alightStayLabel`
+  names the first stay after a ride, across walks, for the station the ride's
+  own label alighted at when the stay is in range of it, and only where the
+  picker's name came by rank alone or there was none
+  (`TransitPlace.stationsAfterAlighting`; the measured basis is in its doc).
+  The old pass's adjacency and bracketing rules and its dwell bound went:
+  under the head a walk up from the platform parts nearly every ride from the
+  stay after it (05-22's nineteen minutes at Finchley Road, named for the shop
+  beside it, now the station: truth 531 → 532; 06-15's bus-stop wait at Green
+  Park, "Pret A Manger" before, named for the station and still outside his
+  row's wording). Measured on the 200 days against run_flip0: 9 days move a
+  stay's name. Without the source rule 16 did, four of them against his rows
+  (a Pret 69 m from Euston's node, a coffee 145 m from Wembley Park's, John
+  Lewis above Canary Wharf, a 143-minute dinner 96 m from Liverpool Street:
+  every wrong rename replaced a `nearField` name, every right one a `ranked`
+  name or none; 15–46 m from a node of the station against 69–145 m). The
+  dinner is named by rank and is still renamed: the alight side has no fitted
+  duration, which the decoder's own wait state would bring. The boarding
+  labeller runs first, so a change of trains keeps the name of the train it
+  waits for (10-08's Hendaye). An alight-side wait STATE waits on a
+  population: the narrated stays at the alight station are seven changes
+  before another ride, which S1 covers, and one terminal wait (05-22). The
+  chain's post-hoc line pick where the leg names
   its station — NOT YET (measured 2026-10-22, the S2 leg's own line kept where
   it named its board station): the frozen scoreboard is unmoved on the 43
   narrated days, and 9 of the 200 history days move 10 legs, every one a

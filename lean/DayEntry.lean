@@ -914,7 +914,7 @@ def DECODER_TAIL : Array String :=
     -- day (10-08: the walk to the platform between two stays named after
     -- Hendaye station became the stay), and under the head the decoder's
     -- boundaries stand; the tail names, it does not re-draw.
-    "biomEnrich", "hsmmOverride", "interchangeStayLabel", "boardingStayLabel",
+    "biomEnrich", "hsmmOverride", "boardingStayLabel", "alightStayLabel",
     "alightAfterHold", "alightAtLastFix", "railSnapFinal", "vehicleIdentity"]
 
 def MS_TO_KMH : Float := 3.6
