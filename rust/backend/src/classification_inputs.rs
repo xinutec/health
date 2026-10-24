@@ -669,7 +669,7 @@ pub async fn hsmm_decode(pool: &MySqlPool, user_id: &str, date: &str) -> Result<
 /// two to agree and nothing that would report it if they stopped: the symptom
 /// is a silent
 /// re-decode, not an error.
-pub const CLASSIFIER_VERSION: i32 = 11;
+pub const CLASSIFIER_VERSION: i32 = 12;
 
 /// The main-sleep windows bracketing this day: today's morning sleep and the
 /// night beginning this evening.

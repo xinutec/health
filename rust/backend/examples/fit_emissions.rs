@@ -145,6 +145,64 @@ struct Day {
     /// place after a walk and before a ride (`durationFits.wait`). A pause
     /// between two walks is the placeless stay's, not the platform's.
     waits: Vec<f64>,
+    /// Each pass of a station inside a narrated ride, its slowest minute's
+    /// speed (km/h) and whether the ride's line calls there (`journey.stops`).
+    stops: Vec<(f64, bool)>,
+}
+
+/// EM for the calling evidence: each pass's slowest-minute speed is stopped
+/// (exponential) or moving (Gaussian), the stopped share by class. A share is
+/// read by the rule of succession, as every share of a count in the record:
+/// the calling class's EM share alone reaches 1, which would make a calling
+/// station passed at speed impossible. Started from the pooled median split.
+fn fit_stops(xs: &[(f64, bool)]) -> [f64; 5] {
+    let mut sorted: Vec<f64> = xs.iter().map(|x| x.0).collect();
+    sorted.sort_by(f64::total_cmp);
+    let med = sorted[sorted.len() / 2];
+    let (lo, hi): (Vec<f64>, Vec<f64>) = sorted.iter().partition(|&&v| v < med);
+    let mean_of = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
+    let (mut pc, mut pt) = (0.5, 0.5);
+    let mut rate = 1.0 / mean_of(&lo).max(f64::MIN_POSITIVE);
+    let mut mean = mean_of(&hi);
+    let mut sd =
+        (hi.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / hi.len().max(1) as f64).sqrt();
+    let nc = xs.iter().filter(|x| x.1).count() as f64;
+    let nt = xs.len() as f64 - nc;
+    for _ in 0..500 {
+        let f0 = |v: f64| rate * (-rate * v).exp();
+        let f1 = |v: f64| {
+            (-0.5 * ((v - mean) / sd).powi(2)).exp() / (sd * (2.0 * std::f64::consts::PI).sqrt())
+        };
+        let r: Vec<f64> = xs
+            .iter()
+            .map(|&(v, c)| {
+                let pi = if c { pc } else { pt };
+                let (a, b) = (pi * f0(v), (1.0 - pi) * f1(v));
+                if a + b > 0.0 { a / (a + b) } else { 0.0 }
+            })
+            .collect();
+        let sum_c: f64 = xs.iter().zip(&r).filter(|(x, _)| x.1).map(|(_, r)| r).sum();
+        let sum_t: f64 = xs
+            .iter()
+            .zip(&r)
+            .filter(|(x, _)| !x.1)
+            .map(|(_, r)| r)
+            .sum();
+        pc = (sum_c + 1.0) / (nc + 2.0);
+        pt = (sum_t + 1.0) / (nt + 2.0);
+        let rs: f64 = r.iter().sum();
+        rate = rs / xs.iter().zip(&r).map(|(x, r)| r * x.0).sum::<f64>();
+        let w: f64 = r.iter().map(|r| 1.0 - r).sum();
+        mean = xs.iter().zip(&r).map(|(x, r)| (1.0 - r) * x.0).sum::<f64>() / w;
+        sd = (xs
+            .iter()
+            .zip(&r)
+            .map(|(x, r)| (1.0 - r) * (x.0 - mean).powi(2))
+            .sum::<f64>()
+            / w)
+            .sqrt();
+    }
+    [pc, pt, rate, mean, sd]
 }
 
 fn main() -> Result<()> {
@@ -248,6 +306,10 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
         /// A ride: the row's own mode is train or bus (the decoder's `driving`
         /// covers a bus; a wait is for a timetable, not a cab).
         ride: bool,
+        /// A ride's narrated line and stations, for its passes (`journey.stops`).
+        line: Option<String>,
+        from: Option<String>,
+        to: Option<String>,
         s: i64,
         e: i64,
     }
@@ -278,6 +340,9 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
                     sleeping: tm == "sleeping",
                     place: !row["truth"]["place"].is_null(),
                     ride: matches!(tm, "train" | "bus"),
+                    line: row["truth"]["lineName"].as_str().map(str::to_owned),
+                    from: row["truth"]["from"].as_str().map(str::to_owned),
+                    to: row["truth"]["to"].as_str().map(str::to_owned),
                     s,
                     e,
                 })
@@ -355,8 +420,42 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
             .collect()
     };
 
+    // The stations each narrated ride passes wholly inside it, its board and
+    // alight stations left out: the decoder's `StationStops.passes`, as its
+    // leg cell reads them.
+    let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+    let mut stops = Vec::new();
+    for r in rows.iter().flatten().filter(|r| r.ride) {
+        let Some(line) = &r.line else { continue };
+        for p in out["stationPasses"].as_array().into_iter().flatten() {
+            let (Some(first), Some(last), Some(v), Some(st)) = (
+                p["firstTs"].as_i64(),
+                p["lastTs"].as_i64(),
+                p["speedKmh"].as_f64(),
+                p["station"].as_str(),
+            ) else {
+                continue;
+            };
+            // Wholly inside the ride, after its first minute and before its
+            // last, as the leg cell reads a pass (`Journey.stopTerm`).
+            if first <= r.s || last >= r.e - 60 {
+                continue;
+            }
+            if [&r.from, &r.to]
+                .iter()
+                .any(|x| x.as_deref().is_some_and(|x| same(x, st)))
+            {
+                continue;
+            }
+            let calls = p["calls"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|l| l.as_str().is_some_and(|l| same(l, line))));
+            stops.push((v, calls));
+        }
+    }
     let mut day = Day {
         waits,
+        stops,
         ..Default::default()
     };
     for (i, &(mode, s, e)) in spans.iter().enumerate() {
@@ -689,10 +788,38 @@ fn write_fit(
     let runs: Vec<&Run> = used.iter().flat_map(|d| d.runs.iter()).collect();
     let of = |m: &str| -> Vec<&Run> { runs.iter().copied().filter(|r| r.mode == m).collect() };
     let mut log = Vec::new();
+    // `STOPS_DUMP=<file>`: the station passes inside narrated rides, one
+    // `[speedKmh, calls]` per line, for reading the population.
+    if verbose && let Ok(path) = std::env::var("STOPS_DUMP") {
+        let rows: Vec<String> = used
+            .iter()
+            .flat_map(|d| d.stops.iter())
+            .map(|(v, c)| format!("[{v}, {c}]"))
+            .collect();
+        std::fs::write(&path, rows.join("\n"))?;
+    }
 
     // Segment emission.
     let mut se = form.files["segment-emission"].clone();
     let u_max = se["uMaxKmh"].as_f64().unwrap_or(300.0);
+    // With `fitStops`, a train's calling evidence (`StopCalls`): the narrated
+    // rides' station passes as one stopped-or-moving mixture with a calling
+    // and a through share, by EM.
+    if form.decoder["fitStops"].as_bool() == Some(true) {
+        let xs: Vec<(f64, bool)> = used.iter().flat_map(|d| d.stops.iter().copied()).collect();
+        let nc = xs.iter().filter(|x| x.1).count();
+        if nc >= MIN_N && xs.len() - nc >= MIN_N {
+            let p = fit_stops(&xs);
+            se["journey"]["stops"] = json!({
+                "piCall": round4(p[0]), "piThrough": round4(p[1]), "rate": round4(p[2]),
+                "mean": round4(p[3]), "sd": round4(p[4]),
+            });
+            log.push(format!(
+                "stops: {nc} calling and {} through passes; stopped share {:.3} calling, {:.3} through; stopped rate {:.4}/kmh, moving {:.1} ± {:.1} km/h",
+                xs.len() - nc, p[0], p[1], p[2], p[3], p[4]
+            ));
+        }
+    }
     // With `fitCentreSigma`, a stay's fixes scatter about its centre as a 2-D
     // Gaussian of variance σ² + the fix's accuracy² per axis: σ by maximum
     // likelihood over every narrated stay's lit minutes (the centre score's

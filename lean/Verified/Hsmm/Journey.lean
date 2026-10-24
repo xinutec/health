@@ -78,6 +78,20 @@ structure Tables where
   /-- `pairOk[a * L + b]`: leg `b` may follow leg `a` — the rule beside the base
       matrix (a wait at σ continues only into a ride boarding at σ). -/
   pairOk : Array Bool
+  /-- Per leg `l`, `stopPre[l * (T + 1) + t]`: its line's calling evidence at
+      the passes before minute `t`, its board station's left out
+      (`StationStops`); empty without the record's `stops`. -/
+  stopPre : FloatArray := FloatArray.empty
+  /-- `stopAlight[l * T + e]`: the leg's alight station at `e` as an index into
+      `stopAlightPre`, whose passes the leg leaves out too. -/
+  stopAlight : Array (Option Nat) := #[]
+  stopAlightPre : Array FloatArray := #[]
+  /-- `stopActive[l * T + e]`: the evidence of the leg's passes under way at
+      `e` and `stopActiveFirst` the earliest one's first minute
+      (`StationStops.activeEvidence`): a pass that runs past the leg's end is
+      its arrival, not a call. -/
+  stopActive : FloatArray := FloatArray.empty
+  stopActiveFirst : Array Nat := #[]
   /-- `best`'s table once computed (`cell[(d - 1) * T + e]`), for the path
       debugger; empty until then. -/
   cell : FloatArray := FloatArray.empty
@@ -96,14 +110,34 @@ def pairLogPdf (d expected : Float) : Float :=
   let z := (d - expected) / sigma
   NEG_HALF_LOG_TWO_PI - Float.log sigma - HALF * z * z
 
+/-- The leg's calling evidence: the passes whose run lies wholly inside it,
+    after its first minute and before its last — a run touching its start is
+    the wait at its board station, one touching its end its arrival — and not
+    at its own board and alight stations. -/
+@[inline] def stopTerm (tb : Tables) (l d e : Nat) : Float :=
+  if tb.stopPre.size == 0 then 0 else
+  let start := e + 1 - d
+  if e < start + 2 then 0 else
+  let T1 := tb.T + 1
+  -- The runs begun inside, less those still under way at the end.
+  let s0 := tb.stopPre.get! (l * T1 + e) - tb.stopPre.get! (l * T1 + start + 1)
+  let s := if tb.stopActiveFirst[l * tb.T + e]! > start then s0 - tb.stopActive.get! (l * tb.T + e) else s0
+  match tb.stopAlight[l * tb.T + e]? with
+  | some (some k) =>
+    let ap := tb.stopAlightPre[k]!
+    s - (ap.get! e - ap.get! (start + 1))
+  | _ => s
+
 /-- The leg's cell: its slot's cell, with the generic duration prior replaced
-    by the pair's ride-time density where the leg has a pair at `e`. -/
+    by the pair's ride-time density where the leg has a pair at `e`, and its
+    calling evidence (`stopTerm`). -/
 @[inline] def legCell (tb : Tables) (l d e : Nat) : Float :=
   let slot := tb.legSlot[l]!
   let base := tb.legDur.get! ((slot * tb.maxJ + (d - 1)) * tb.T + e)
   let exp := tb.expectedMin.get! (l * tb.T + e)
-  if exp == negInf then base
-  else base - tb.durBaseF.get! (slot * tb.maxJ + (d - 1)) + pairLogPdf (Verified.FloatConst.natToFloat d) exp
+  let cell := if exp == negInf then base
+    else base - tb.durBaseF.get! (slot * tb.maxJ + (d - 1)) + pairLogPdf (Verified.FloatConst.natToFloat d) exp
+  cell + stopTerm tb l d e
 
 /-- One candidate length for leg `l` ending at `s0 + i`: the path before it
     (the first-leg prior at `s0`, else the hoisted transition), its emissions,

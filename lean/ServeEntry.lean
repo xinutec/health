@@ -979,7 +979,13 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let continueLog := match ((jj.getObjVal? "continue").toOption >>= num) with
         | some pr => if pr > recordZero then Float.log pr else Verified.FloatConst.negInf
         | none => Verified.FloatConst.negInf
-      pure { maxJ, firstLeg := legs "firstLeg", lastLeg := legs "lastLeg", continueLog }
+      -- `stops: {piCall, piThrough, rate, mean, sd}`, the train legs' calling evidence.
+      let stops : Option Verified.Hsmm.StopCalls.Params := do
+        let sj ← (jj.getObjVal? "stops").toOption.filter (!·.isNull)
+        let g := fun (k : String) => (sj.getObjVal? k).toOption >>= num
+        pure { piCall := ← g "piCall", piThrough := ← g "piThrough", rate := ← g "rate",
+               mean := ← g "mean", sd := ← g "sd" }
+      pure { maxJ, firstLeg := legs "firstLeg", lastLeg := legs "lastLeg", continueLog, stops }
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
            obsChain, asleep, unlistedCentre, journey }
   let some segEm := segEm?
@@ -1522,10 +1528,12 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         for t in [0:T] do out := out.set! (li * T + t) false
         for t in starts do out := out.set! (li * T + t) true
       return out
-    let expectedMin : FloatArray := Id.run do
+    let (expectedMin, alightName) : FloatArray × Array (Option String) := Id.run do
       let mut out := FloatArray.mk (Array.replicate (L * T) Verified.FloatConst.negInf)
+      -- The station each paired leg alights at, per end minute (`stopAlight`).
+      let mut names : Array (Option String) := Array.replicate (L * T) none
       match g? with
-      | none => return out
+      | none => return (out, names)
       | some g =>
         let mut alightCache : Std.HashMap String (Array (Option Verified.Hsmm.StationChain.ChainNode)) := {}
         let mut footCache : Std.HashMap String (Std.HashSet String) := {}
@@ -1578,6 +1586,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
               -- Cross has six), and a node of the board station within reach of
               -- the next fix priced a one-minute ride to itself at 0.8 minutes.
               if a.stationName == σ.stationName then continue
+              names := names.set! (li * T + e) a.stationName
               let (goal, fc2) := footOf footCache a
               footCache := fc2
               let pm := goal.fold (fun (acc : Option Float) id => match dist.get? id with
@@ -1599,7 +1608,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
                       + Verified.Hsmm.StationChain.STOP_OVERHEAD_MIN
                 out := out.set! (li * T + e) expected
               | none => pure ()
-        return out
+        return (out, names)
     let firstCtxL : FloatArray := Id.run do
       let mut out := FloatArray.mk (Array.replicate (L * T) journeyZero)
       for (bi, li) in baseOf.zipIdx do
@@ -1633,8 +1642,54 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       match st? with
       | some n => base ++ "@" ++ (n.stationName.getD n.id)
       | none => base
+    -- The train legs' calling evidence (`StationStops`), with the record's `stops`.
+    let (stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst) :
+        FloatArray × Array (Option Nat) × Array FloatArray × FloatArray × Array Nat :=
+      match jp.stops, g? with
+      | some sp, some g => Id.run do
+        let ps := Verified.Hsmm.StationStops.passes g c.obs
+        let calls := fun (line : String) (st : String) => match rels? with
+          | some rels => match Verified.Hsmm.ServedStations.servedStationSet rels line with
+            | some served => Verified.Hsmm.ServedStations.stationNameServed served st
+            | none => false
+          | none => false
+        let lineOf := fun (l : Nat) =>
+          let st := c.states[l]!
+          if st.mode != .train then none else
+          st.lineName.filter fun n => !Verified.Hsmm.Emissions.isPlaceholderLine n
+        let mut pre := FloatArray.mk (Array.replicate (L * (T + 1)) journeyZero)
+        let mut active := FloatArray.mk (Array.replicate (L * T) journeyZero)
+        let mut activeFirst : Array Nat := Array.replicate (L * T) T
+        let mut alightIdx : Array (Option Nat) := Array.replicate (L * T) none
+        let mut alightPre : Array FloatArray := #[]
+        let mut alightKey : Std.HashMap (String × String) Nat := {}
+        for (entry, li) in legList.zipIdx do
+          let (l, _, st?) := entry
+          let some line := lineOf l | continue
+          let row := Verified.Hsmm.StationStops.prefixSum
+            (Verified.Hsmm.StationStops.lineEvidence sp ps T (calls line) (st?.bind (·.stationName)))
+          for t in [0:T + 1] do pre := pre.set! (li * (T + 1) + t) (row.get! t)
+          let (act, actFirst) := Verified.Hsmm.StationStops.activeEvidence sp ps T (calls line)
+            (st?.bind (·.stationName))
+          for t in [0:T] do
+            active := active.set! (li * T + t) (act.get! t)
+            activeFirst := activeFirst.set! (li * T + t) actFirst[t]!
+          for e in [0:T] do
+            let some a := alightName[li * T + e]! | continue
+            let k ← match alightKey.get? (line, a) with
+              | some k => pure k
+              | none =>
+                let k := alightPre.size
+                alightPre := alightPre.push (Verified.Hsmm.StationStops.prefixSum
+                  (Verified.Hsmm.StationStops.lineEvidence sp ps T (fun x => x == a && calls line x)))
+                alightKey := alightKey.insert (line, a) k
+                pure k
+            alightIdx := alightIdx.set! (li * T + e) (some k)
+        return (pre, alightIdx, alightPre, active, activeFirst)
+      | _, _ => (FloatArray.empty, #[], #[], FloatArray.empty, #[])
     let tb : Verified.Hsmm.Journey.Tables :=
       { T, maxJ, journey := jI, legs := legOuter, legName, baseOf, nBase := legs.size
+        stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst
         legStation := legList.map fun (_, _, st?) => st?.bind (·.stationName)
         legSlot := legOuter.map (fun l => (slotOfCls durClass[l]!).getD 0)
         nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
@@ -2107,7 +2162,24 @@ private def assembleSegmentsResult (j : Json) : Json :=
       match pDecodeFast pd ckptStride with
       | none => Json.mkObj [("degenerate", Json.bool true)]
       | some r =>
-        if let .ok dj := j.getObjVal? "emissionDebug" then emissionDebugJson c r.path dj else
+        if let .ok dj := j.getObjVal? "emissionDebug" then
+          -- The stations the day passes, each with the lines calling there:
+          -- the fitter's population for `journey.stops`.
+          let passesJ : Json := match g? with
+            | none => Json.null
+            | some g => Json.arr ((Verified.Hsmm.StationStops.passes g c.obs).map fun q =>
+              let calling := Verified.Hsmm.Assemble.KNOWN_LINES.filter fun line => match rels? with
+                | some rels => match Verified.Hsmm.ServedStations.servedStationSet rels line with
+                  | some served => Verified.Hsmm.ServedStations.stationNameServed served q.station
+                  | none => false
+                | none => false
+              Json.mkObj [("station", Json.str q.station),
+                ("ts", Lean.toJson ((c.obs[q.t]?.map (·.ts)).getD 0)),
+                ("speedKmh", Lean.toJson q.speedKmh),
+                ("firstTs", Lean.toJson ((c.obs[q.first]?.map (·.ts)).getD 0)),
+                ("lastTs", Lean.toJson ((c.obs[q.last]?.map (·.ts)).getD 0)),
+                ("calls", Json.arr (calling.map Json.str).toArray)])
+          (emissionDebugJson c r.path dj).setObjVal! "stationPasses" passesJ else
         if let .ok dj := j.getObjVal? "pathDebug" then pathDebugJson c r.path dj journey else
         if let .ok dj := j.getObjVal? "journeyDebug" then
           (match journey with

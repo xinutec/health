@@ -155,6 +155,42 @@ boundary or a label):
   is already cheap. The structure that names it is the pair's ride time (S2).
 - **The two referee forms above.**
 
+## The calling evidence (S2's stops)
+
+A train leg is scored at each station it passes wholly inside it, for its own
+line where that line calls there: the ratio of a calling train's to a through
+train's density of the pass's speed (`Verified.Hsmm.StopCalls`, the passes in
+`StationStops`, the leg cell's `Journey.stopTerm`). A line that does not call
+there scores nothing. A minute's position is its fixes' median, a kilometre
+apart at speed, so a station is passed where it lies within the chain's
+station radius of the path between two consecutive minutes; the observation is
+the slowest minute within reach of it, else the path's speed. A pass touching
+the leg's first or last minute is its board wait or its arrival, and the leg's
+own board and alight stations are left out by name.
+
+The fit (`fit_emissions`, form `fitStops`): the narrated rides' passes, read
+off the decoder's own output (`emissionDebug.stationPasses`), as one
+stopped-or-moving mixture with a calling and a through share by EM, each share
+by the rule of succession (EM alone puts the calling share at 1). Its record
+key is `segEmission.journey.stops`; the numbers are in the golden record.
+
+Measured on the shipped record with and without the key (2026-10-24):
+scoreboard lines 61 → 64, stations 62 → 66, journeys, leg modes and phantoms
+unchanged; held out on fresh records with and without it, the same direction;
+narrated rows nothing lost, 06-23's ride and the four Finchley Road change rows
+of 06-15 and 09-14 held. On the 200 history days every leg that moves on the
+Wembley Park–Finchley Road stretch agrees with the stops judge
+(`instruments/metjub.py`). Decode cost +3%.
+
+Open, from the history sweep: 06-12's change is drawn by the form that scored
+every pass touching a leg and lost by this one (the generator's entry prior
+holds the single Jubilee ride: +3 for its line, −8 for any other, hand-set, and
+the generator vouches whole station-to-station rides, so never a ride that ends
+in a change); the Euston Square–King's Cross hop ties a Victoria hop from Euston
+on three days within half a nat, a leg too short to have an inside;
+09-10's evening ride ends at Great Portland Street, not Baker Street; 08-28's
+wait at Willesden Green's bus stop is drawn as a walk.
+
 ## Open
 
 - **S2's remaining losses:** 06-16 is the train-cadence class (116 steps at
@@ -217,8 +253,11 @@ boundary or a label):
   at any, 06-23's nineteen-minute Met included). Every one of the eight legs
   whose served line moves is a Met ride by that test (no dwell, 60–100 km/h
   through each platform): the chain's pick is right on six, the leg's own line
-  on two (07-29, 08-24). Neither picker reads the stops; the pick retires when
-  the model does.
+  on two (07-29, 08-24). Neither picker read the stops; the decoder's legs do
+  since the calling evidence (below, "The calling evidence"), and the pick is
+  to be re-measured against them. The train generator's entry prior (+3, −8,
+  hand-set) is the next to measure out: it vouches whole rides, and held
+  06-12's change on one.
 - After S3: the station chain's anchor, transfer and margin constants
   (`StationChain.lean`, "Scoring terms").
 - Not by this: buses (no bus state).

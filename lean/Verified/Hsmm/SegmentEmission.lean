@@ -2,6 +2,7 @@ import Verified.Hsmm.Emissions
 import Verified.Hsmm.Observation
 import Verified.Hsmm.Duration
 import Verified.Hsmm.SegmentEvidence
+import Verified.Hsmm.StopCalls
 /-!
 # Segment-level emissions
 
@@ -93,6 +94,9 @@ structure JourneyParams where
   /-- The platform wait as a leg (S1): on when the record fits a wait
       duration (`durationFits.wait`). -/
   wait : Bool := false
+  /-- A train leg's evidence at the stations it passes (`StopCalls`): on when
+      the record fits it (`journey.stops`). -/
+  stops : Option Verified.Hsmm.StopCalls.Params := none
   deriving Inhabited
 
 structure Params where
