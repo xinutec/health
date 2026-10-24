@@ -875,7 +875,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     match arr.toList.filterMap (fun v => (v.getNum?).toOption.map (·.toFloat)) with
     | [share, sd] => some (share, sd)
     | _ => none : Option (Float × Float))
-  let priors := fun (m : Verified.Hsmm.Emissions.Mode) =>
+  let priorsOf := fun (m : Verified.Hsmm.Emissions.Mode) =>
     let base : Verified.Hsmm.Emissions.ModePrior := match row "modePriors" m with
       | some #[g, sm, ss, hm, hs, z, cm, cs] =>
         ⟨g, sm, ss, hm, hs, z, cm, cs, Verified.Hsmm.Emissions.MAINLINE_SPEED_MEAN,
@@ -903,10 +903,24 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       rail := tw "rail" d.rail, lineProximity := tw "lineProximity" d.lineProximity
       continuity := tw "continuity" d.continuity, entry := tw "entry" d.entry
       chain := tw "chain" d.chain, duration := tw "duration" d.duration }
-  let fits := fun (m : Verified.Hsmm.Emissions.Mode) =>
+  let fitsOf := fun (m : Verified.Hsmm.Emissions.Mode) =>
     match row "durationFits" m with
     | some #[a, b] => ({ alpha := a, beta := b, sampleCount := 10 } : Verified.Hsmm.Duration.GammaFit)
     | _ => Verified.Hsmm.Assemble.baselineFit m
+  -- Both read once per mode here: the emissions ask them for every minute of
+  -- every state, and as closures over the record each ask re-read its JSON
+  -- (a third of the emission table's time, in GMP from the numbers' decoding).
+  let modeIdx : Verified.Hsmm.Emissions.Mode → Nat := fun m => match m with
+    | .stationary => 0 | .walking => 1 | .cycling => 2 | .driving => 3
+    | .train => 4 | .plane => 5 | .unknown => 6
+  let modeList : List Verified.Hsmm.Emissions.Mode :=
+    [.stationary, .walking, .cycling, .driving, .train, .plane, .unknown]
+  let priorsT := (modeList.map priorsOf).toArray
+  let fitsT := (modeList.map fitsOf).toArray
+  let priors := fun (m : Verified.Hsmm.Emissions.Mode) =>
+    match priorsT[modeIdx m]? with | some p => p | none => priorsOf m
+  let fits := fun (m : Verified.Hsmm.Emissions.Mode) =>
+    match fitsT[modeIdx m]? with | some f => f | none => fitsOf m
   let mainlineFit : Option Verified.Hsmm.Duration.GammaFit := do
     let f ← fitted
     let arr ← ((f.getObjVal? "durationFits") >>= (·.getObjVal? "mainline") >>= (·.getArr?)).toOption

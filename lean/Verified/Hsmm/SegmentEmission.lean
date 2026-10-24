@@ -427,17 +427,21 @@ private def logNormalDensity (x mu sigma : Float) : Float :=
   let z := (Float.log x - mu) / sigma
   Float.exp (-HALF * z * z) / (x * sigma * SQRT_TWO_PI)
 
+/-- `dispScore` under the mode's own fitted parameters `q`. -/
+@[inline] def dispScoreWith (p : Params) (mode : Mode) (q : DispParams) (d : Nat)
+    (w : SegmentEvidence.Window) : Float :=
+  let slopMin := Float.sqrt w.slopVar / SegmentEvidence.SLOP_SPEED_M_PER_MIN
+  let hours := (Verified.FloatConst.natToFloat d + slopMin) / MIN_PER_H
+  let dist := max w.dispM ONE
+  let main := if mode == .stationary then logNormalDensity dist q.mu q.sigma
+    else logNormalDensity (dist / KM_M / hours) q.mu q.sigma / (hours * KM_M)
+  Float.log ((ONE - q.eps) * main + q.eps / (p.uMaxKmh * hours * KM_M))
+
 /-- The density, per metre, of the segment's net displacement under one mode;
     `0` without bracketing fixes. `d` is the segment's length in minutes. -/
 def dispScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentEvidence.Window) : Float :=
   match w, p.disp.find? (·.1 == mode) with
-  | some w, some (_, q) =>
-    let slopMin := Float.sqrt w.slopVar / SegmentEvidence.SLOP_SPEED_M_PER_MIN
-    let hours := (Verified.FloatConst.natToFloat d + slopMin) / MIN_PER_H
-    let dist := max w.dispM ONE
-    let main := if mode == .stationary then logNormalDensity dist q.mu q.sigma
-      else logNormalDensity (dist / KM_M / hours) q.mu q.sigma / (hours * KM_M)
-    Float.log ((ONE - q.eps) * main + q.eps / (p.uMaxKmh * hours * KM_M))
+  | some w, some (_, q) => dispScoreWith p mode q d w
   | _, _ => ZERO
 
 /-- `log f_mode(D) − log Σ_m f_m(D)` over the modes with a fitted displacement:
@@ -455,8 +459,13 @@ def dispPosteriorScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentE
     -- a one-minute "flight" that went nowhere is not a free bridge between
     -- two stays.
     let flat := Float.log (ONE / (p.uMaxKmh * (Verified.FloatConst.natToFloat d / MIN_PER_H) * KM_M))
-    let own := if p.disp.any (·.1 == mode) then dispScore p mode d w else flat
-    let all := (p.disp.map fun (m, _) => dispScore p m d w) ++ [flat]
+    -- Each mode's score from its own entry, once; the state's is among them
+    -- (the first entry of its mode, as `dispScore`'s search takes).
+    let scored := p.disp.map fun (m, q) => (m, dispScoreWith p m q d w')
+    let own := match scored.find? (·.1 == mode) with
+      | some (_, v) => v
+      | none => flat
+    let all := scored.map (·.2) ++ [flat]
     let mx := all.foldl max own
     own - (mx + Float.log (all.foldl (fun acc v => acc + Float.exp (v - mx)) ZERO))
 
