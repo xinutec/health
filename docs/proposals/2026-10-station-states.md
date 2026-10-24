@@ -209,10 +209,16 @@ boundary or a label):
   it named its board station): the frozen scoreboard is unmoved on the 43
   narrated days, and 9 of the 200 history days move 10 legs, every one a
   Wembley Park ↔ Finchley Road / Baker Street ride swapping Metropolitan and
-  Jubilee on their shared track, both ways. The two pickers disagree only where
-  no narrative judges them; it is cut when a judge exists for that track (a
-  narrated ride there, or the pair's ride time against both lines' calls read
-  off the signal).
+  Jubilee on their shared track, both ways. JUDGED 2026-10-24, and the cut is
+  refuted: between Wembley Park and Finchley Road the Jubilee calls at five
+  surface stations the Metropolitan runs through, and the narrated rides
+  separate on that alone (`fits/instruments/metjub.py`: both Jubilee rides
+  dwell about half a minute at four or five of them, none of the six Met rides
+  at any, 06-23's nineteen-minute Met included). Every one of the eight legs
+  whose served line moves is a Met ride by that test (no dwell, 60–100 km/h
+  through each platform): the chain's pick is right on six, the leg's own line
+  on two (07-29, 08-24). Neither picker reads the stops; the pick retires when
+  the model does.
 - After S3: the station chain's anchor, transfer and margin constants
   (`StationChain.lean`, "Scoring terms").
 - Not by this: buses (no bus state).
