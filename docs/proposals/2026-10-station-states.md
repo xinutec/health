@@ -201,15 +201,28 @@ the narrated rides' first covered minute (true line vouched 0.971 of 68,
 another 0.095 of 680: +2.32 / −3.46), lines −1, stations −2, rows 1 / 1,
 09-14 lost. The narrated ride starts are not the entry term's cases — it
 decides at every leg start the decoder weighs, waits and changes among them —
-so a fit needs the decoder's own candidate starts. Fitted so (2026-10-25):
-every covered minute × every train line of the day's states, true where a
-narrated ride of the line starts in the minute — 68 true (67 vouched), 55,161
-other (10,439 vouched), +1.64 / −3.35 by the rule of succession — and REFUTED
-held out against a control on the same records: journeys 129 → 128, leg modes
-316 → 314, stations 66 → 64, lines unchanged; 07-06's hop vanishes into the
-walk and a 07-16 leg goes. The +3 pays for a short ride the rest of the model
-under-prices, so the term stays hand-set until that ride is priced on its own
-(the short hop's duration, `TrainHopDuration`).
+so a fit needs the decoder's own candidate starts.
+
+⚠ Those two measurements, and the evening's first arms, ran on `fit_emissions
+--loo` records, which carry no journey block: they decoded WITHOUT the journey
+state, control included. On held-out records built as the shipped record plus
+the arm's key, the control reproduces the blessed scoreboard exactly.
+
+Measured so (2026-10-25), the term as what it is — the generator's knowledge of
+a ride, used once per leg: a transition into a train gives the even split over
+train states back, and the entry is (a) the line choice, the vouched lines
+sharing 0.9714 (67 of 68 narrated covered starts vouch the ride's own line)
+and the rest the remainder, and (b) the coverage as evidence of the mode at
+the leg's first minute, `log P(covered | a train leg starts) − log P(covered |
+another leg starts)` = +1.20 / −1.53 (87 of 103 train starts covered, 110 of
+439 others). Held out against the shipped control: journeys, leg modes, lines,
+stations equal, phantoms 4 → 2, narrated rows 530 = 530. Coverage scored per
+MINUTE instead floods the walks beside stations with phantoms (5 → 26), and the
+line choice alone loses five counts. In-sample it loses 07-02's three-minute
+Baker Street → Euston Square ride after the Jubilee (leg modes 318 → 317), held
+out kept by 0.015 nats — the same short leg after a change that 07-16 has. Not
+shipped (golden `fits/arm-trainline-2026-10-25.patch`); the short leg after a
+change is what to price next.
 
 ## Open
 
