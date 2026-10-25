@@ -92,6 +92,14 @@ structure Tables where
       its arrival, not a call. -/
   stopActive : FloatArray := FloatArray.empty
   stopActiveFirst : Array Nat := #[]
+  /-- Per free-starting leg (a base leg: no board station), its slot in `own`
+      (`withOwn`); empty until then, and a leg without one is scored by
+      `candidate`. -/
+  ownSlot : Array (Option Nat) := #[]
+  /-- `own[(slot * maxJ + (d - 1)) * T + e]`: the leg's own score over `d`
+      minutes ending at `e` — emissions, entry and cell — which no start of the
+      journey changes; `−∞` where the leg would begin before the day. -/
+  own : FloatArray := FloatArray.empty
   /-- `best`'s table once computed (`cell[(d - 1) * T + e]`), for the path
       debugger; empty until then. -/
   cell : FloatArray := FloatArray.empty
@@ -173,6 +181,26 @@ def prep (tb : Tables) : Pre := Id.run do
       if a != b && tb.pairOk[a * L + b]! then into := into.modify b (·.push a)
   return { restricted, into }
 
+/-- The tables with `own` filled: once per day, before `best`, so the sweep
+    from every start and the decoded journey's back-pointers read the same
+    numbers. -/
+def withOwn (tb : Tables) : Tables := Id.run do
+  let L := tb.legs.size
+  let T := tb.T
+  let free := (Array.range L).filter fun l => tb.reachStarts[l]!.isEmpty
+  let mut ownSlot : Array (Option Nat) := Array.replicate L none
+  for (l, k) in free.zipIdx do ownSlot := ownSlot.set! l (some k)
+  let mut own := FloatArray.mk (Array.replicate (free.size * tb.maxJ * T) negInf)
+  for (l, k) in free.zipIdx do
+    let b := tb.baseOf[l]!
+    for d in [1 : tb.maxJ + 1] do
+      for e in [d - 1 : T] do
+        let start := e + 1 - d
+        let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
+        own := own.set! ((k * tb.maxJ + (d - 1)) * T + e)
+          (emit + tb.entry.get! (b * T + start) + legCell tb l d e)
+  return { tb with ownSlot, own }
+
 /-- The sweep from `s0` over `w` minutes: `V[i * L + l]`, the best path over
     `[s0, s0 + i]` ending in leg `l`, and its back-pointers (the leg's length;
     a length of `i + 1` is the first leg, and the leg before is `argFrom`). -/
@@ -201,11 +229,23 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
       let mut bd := 0
       let starts := tb.reachStarts[l]!
       if starts.isEmpty then
-        for d in [1:min tb.maxJ (i + 1) + 1] do
-          let cand := candidate tb m s0 i l d
-          if cand > best then
-            best := cand
-            bd := d
+        match tb.ownSlot[l]?.bind id with
+        | some slot =>
+          -- The path before the leg, plus its own score, tabled once (`withOwn`).
+          for d in [1:min tb.maxJ (i + 1) + 1] do
+            let prev := if d == i + 1 then tb.first[l]! + tb.firstCtx.get! (l * T + s0)
+              else m.get! ((i - d) * L + l)
+            if prev == negInf then continue
+            let cand := prev + tb.own.get! ((slot * tb.maxJ + (d - 1)) * T + e)
+            if cand > best then
+              best := cand
+              bd := d
+        | none =>
+          for d in [1:min tb.maxJ (i + 1) + 1] do
+            let cand := candidate tb m s0 i l d
+            if cand > best then
+              best := cand
+              bd := d
       else
         -- A paired leg begins only within reach of its station.
         let mut k := firstAt[l]!

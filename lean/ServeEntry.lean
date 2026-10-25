@@ -1729,6 +1729,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         first := legOuter.map (prior true jp.firstLeg)
         last := legOuter.map fun l => if isWaitLeg l then Verified.FloatConst.negInf else prior false jp.lastLeg l
         firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, durBaseF, pairOk }
+    let tb := Verified.Hsmm.Journey.withOwn tb
     let inner := Verified.Hsmm.Journey.best tb
     let tb := { tb with cell := inner }
     let (durDelta, durBaseJ, bad) : Array Nat × Array Nat × Option Int := Id.run do
