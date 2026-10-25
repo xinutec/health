@@ -1046,6 +1046,20 @@ fn utc_datetime_str_to_seconds(s: &str) -> Option<i64> {
 ///
 /// Only consumed when the day has no states AND no points (#1055).
 pub async fn empty_day_bracket(pool: &MySqlPool, user_id: &str, date: &str) -> Result<Value> {
+    let Some(prev) = empty_day_bracket_place(pool, user_id, date).await? else {
+        return Ok(Value::Null);
+    };
+    bracket_centroid(pool, prev).await
+}
+
+/// The place a no-data day is bracketed at (`empty_day_bracket`'s rule), or
+/// `None`: the previous day ended there and the next day's dominant place is
+/// the same.
+pub async fn empty_day_bracket_place(
+    pool: &MySqlPool,
+    user_id: &str,
+    date: &str,
+) -> Result<Option<u64>> {
     // ⚠ `u64`, NOT `i64`. `presence_log.*_place_id` is INT UNSIGNED, which sqlx
     // treats as a distinct type and refuses to hand back as a signed integer —
     // the same trap `num` carries a branch for, met here through `query_scalar`
@@ -1092,12 +1106,14 @@ pub async fn empty_day_bracket(pool: &MySqlPool, user_id: &str, date: &str) -> R
     };
 
     let (Some(prev), Some(next)) = (prev, next) else {
-        return Ok(Value::Null);
+        return Ok(None);
     };
-    if prev != next {
-        return Ok(Value::Null);
-    }
+    Ok((prev == next).then_some(prev))
+}
 
+/// The bracket place's centroid, which names the stay; `null` when the place
+/// no longer exists.
+async fn bracket_centroid(pool: &MySqlPool, prev: u64) -> Result<Value> {
     // ⚠ CAST AS CHAR: DECIMAL again, and this one is the centroid that names
     // the stay. Getting 0.0 here would place a hospital admission in the Gulf
     // of Guinea and still return a bracket.

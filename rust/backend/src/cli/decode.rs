@@ -195,6 +195,40 @@ pub(crate) async fn decode_one(
         Some(tz),
     )
     .await?;
+    // A day that observes nothing has nothing to decode. Where its bracket
+    // agrees — the day before ended at a place and the day after was mostly
+    // there (`empty_day_bracket`) — it is one stay there, written as its
+    // decode; with no bracket it stays undecoded, which is the rule's own
+    // answer: it does not guess.
+    if inputs.get("emptyDayBracket").is_some_and(|b| !b.is_null()) {
+        let h = backend::head::run(&inputs, date)?;
+        if h.segs_raw.is_empty()
+            && h.points.is_empty()
+            && let Some(place) =
+                backend::classification_inputs::empty_day_bracket_place(pool, user_id, date).await?
+        {
+            let segments = serde_json::json!([{
+                "startTs": bounds.start_utc, "endTs": bounds.end_utc,
+                "mode": "stationary", "placeId": place, "lineName": null,
+            }]);
+            if dry_run {
+                println!("{}", serde_json::to_string(&segments[0])?);
+                eprintln!(
+                    "[{user_id} {date}] DRY RUN — a bracketed day: 1 segment, nothing written"
+                );
+                return Ok(1);
+            }
+            let inputs_through = backend::decode_freshness::horizon(
+                bounds.end_utc,
+                inputs
+                    .pointer("/biometrics/stepsThrough")
+                    .and_then(serde_json::Value::as_i64),
+                loaded_at,
+            );
+            save_decode(pool, user_id, date, &segments, inputs_through).await?;
+            return Ok(1);
+        }
+    }
     // `head::capture` owns the observation tensor; nothing here rebuilds it.
     let cap = backend::head::capture(&inputs, date, user_id)?;
     let obs = cap.get("obs").context("capture has no obs")?.clone();
@@ -953,8 +987,8 @@ pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
 /// it in a CHILD `decode-day` process: one process over many days retained
 /// memory until it was killed, and a day per
 /// process held flat. After a write, that day's presence row. A day that fails
-/// counts an attempt in the queue, so a day the decoder refuses (no
-/// observations and a cross-day bracket) stops being tried.
+/// counts an attempt in the queue, so a day that keeps failing stops being
+/// tried.
 ///
 /// ⚠ NO `migrate()` here: `backend serve` performs it, in the same pod.
 pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Result<()> {
