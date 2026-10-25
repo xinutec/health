@@ -580,7 +580,7 @@ fn parse_input_fix(v: &Value) -> Option<Fix> {
 /// capture's other keys — they are intermediate boundaries kept for the day
 /// gate, not inputs.
 ///
-/// ⚠ AN EMPTY DAY IS REFUSED RATHER THAN APPROXIMATED. When a day observes
+/// ⚠ AN EMPTY DAY WITHOUT A DECODE IS REFUSED RATHER THAN APPROXIMATED. When a day observes
 /// nothing, `tail.bracketPlace` carries the resolved NAME of the cross-day
 /// bracket centroid, and resolving it is a mirror `bestPlace` lookup this
 /// function has no adapter for. Omitting the field silently would produce a
@@ -595,7 +595,13 @@ pub fn capture(inputs: &Value, date: &str, user: &str) -> Result<Value> {
         .unwrap_or("UTC");
     let bounds = crate::timezone::date_bounds_utc(date, Some(tz))?;
 
-    if head.segs_raw.is_empty() && head.points.is_empty() {
+    // A stored decode heads the fold and names the stay by its place; only the
+    // cascade needs the bracket's name.
+    let decoded = inputs
+        .get("hsmmDecode")
+        .and_then(Value::as_array)
+        .is_some_and(|d| !d.is_empty());
+    if head.segs_raw.is_empty() && head.points.is_empty() && !decoded {
         let bracket = inputs.get("emptyDayBracket");
         if bracket.is_some_and(|b| !b.is_null()) {
             anyhow::bail!(

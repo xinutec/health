@@ -1005,15 +1005,26 @@ each: mean speed over the path, the fixes' centroid and count. A train keeps
 its route as `wayName` (`board → alight · line`) when the decoder's chain named
 both ends, else its line. The served day's input wherever the day has a decode. -/
 def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
-    (pts : Array Verified.SpeedFix) : Array Seg :=
-  let build : Int → Int → String → Option String → Option String → Seg :=
-    fun startTs endTs mode wayName place =>
+    (pts : Array Verified.SpeedFix)
+    (places : List (Int × Verified.Geo.PlaceOverride.PlaceLookup) := []) : Array Seg :=
+  let build : Int → Int → String → Option String → Option String → Option Int → Seg :=
+    fun startTs endTs mode wayName place placeId =>
     let w := pts.filter fun p => decide (p.ts ≥ startTs) && decide (p.ts ≤ endTs)
     let path := (w.toList.zip w.toList.tail).foldl (fun s (a, b) =>
       s + Verified.Hsmm.FloatScore.haversineMeters a.lat a.lon b.lat b.lon) ZERO_F
     let dur := Float.ofInt (endTs - startTs)
     let n := Verified.FloatConst.natToFloat w.size
-    let centre := if w.isEmpty then (none, none)
+    -- A day with no fix at all is where the decoder placed it — a whole day
+    -- bracketed at a place — at the place's own position, so the stay namer
+    -- names it there as it names any stay. Only then: a dark stretch inside a
+    -- day keeps the name the rest of the evidence gives it (04-30's stay at a
+    -- shop became the residential street beside it).
+    let atPlace := if !pts.isEmpty || mode != "stationary" then none else
+      (placeId.bind fun pid => (places.find? (·.1 == pid)).map (·.2)).bind fun pl =>
+        match pl.lat, pl.lon with
+        | some la, some lo => some (la, lo)
+        | _, _ => none
+    let centre := if w.isEmpty then (atPlace.map (·.1), atPlace.map (·.2))
       else (some (w.foldl (· + ·.lat) ZERO_F / n), some (w.foldl (· + ·.lon) ZERO_F / n))
     { HEAD_SEG with
       startTs, endTs, mode, wayName, place
@@ -1041,9 +1052,9 @@ def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
       || ((hmm[i + 1]?).any (·.mode == "walking") && trainAt (i + 2))
     let rideStart := if afterTrain then max h.startTs (h.boardTs.getD h.startTs) else h.startTs
     let rideEnd := if beforeTrain then min h.endTs (h.alightTs.getD h.endTs) else h.endTs
-    (if rideStart > h.startTs then #[build h.startTs rideStart "stationary" none h.boardStation] else #[])
-      ++ #[build rideStart rideEnd h.mode way (if h.mode == "stationary" then h.boardStation else none)]
-      ++ (if rideEnd < h.endTs then #[build rideEnd h.endTs "stationary" none h.alightStation] else #[])).flatten
+    (if rideStart > h.startTs then #[build h.startTs rideStart "stationary" none h.boardStation none] else #[])
+      ++ #[build rideStart rideEnd h.mode way (if h.mode == "stationary" then h.boardStation else none) h.placeId]
+      ++ (if rideEnd < h.endTs then #[build rideEnd h.endTs "stationary" none h.alightStation none] else #[])).flatten
 
 /-- The passes whose output differs from what they were handed — computed from
 the trace rather than declared, so it cannot drift from what ran. This is the
@@ -1079,7 +1090,7 @@ def dayResult (j : Json) : Json :=
     let decoderHead ← optBool envJson "decoderHead" false
     let env := if decoderHead
       then { env with hmmDecode := refineDecoderBoundaries env.hmmDecode env.points } else env
-    let headSegs := decoderSegs env.hmmDecode env.points
+    let headSegs := decoderSegs env.hmmDecode env.points env.hsmmPlaces
     -- The watch's last sync: the step stream is complete only up to it.
     let stepsThrough ← optInt envJson "stepsThrough"
     let splitCtx : Stays.SplitContext :=
