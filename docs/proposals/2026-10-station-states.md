@@ -191,6 +191,18 @@ on three days within half a nat, a leg too short to have an inside;
 09-10's evening ride ends at Great Portland Street, not Baker Street; 08-28's
 wait at Willesden Green's bus stop is drawn as a walk.
 
+The train generator's entry prior (+3 for a vouched line on a covered minute,
+−8 for any other), measured 2026-10-25 against the shipped record, in-sample
+and held out alike — REFUTED in both forms, so it stays: removed, journeys
+−1, leg modes −3, lines −3, stations −7, rows 3 lost / 1 gained, a kinematic
+leg on 05-18, and 06-15 and 09-14's Finchley Road changes undone (it carries
+the whole station-to-station ride); fitted as two log-likelihood ratios at
+the narrated rides' first covered minute (true line vouched 0.971 of 68,
+another 0.095 of 680: +2.32 / −3.46), lines −1, stations −2, rows 1 / 1,
+09-14 lost. The narrated ride starts are not the entry term's cases — it
+decides at every leg start the decoder weighs, waits and changes among them —
+so a fit needs the decoder's own candidate starts.
+
 ## Open
 
 - **S2's remaining losses:** 06-16 is the train-cadence class (116 steps at
