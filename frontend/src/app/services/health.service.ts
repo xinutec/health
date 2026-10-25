@@ -274,6 +274,9 @@ export interface VelocityData {
   journeys?: ServedJourney[];
   /** Per-phase wall-clock ms from the server-side classification pipeline. */
   timing?: Record<string, number>;
+  /** The day has never been decoded and is being decoded now: its track and
+   *  batteries are here, its states and journeys are not yet. */
+  decoding?: boolean;
 }
 
 /** The most recent location fix — for the live "where are they now"

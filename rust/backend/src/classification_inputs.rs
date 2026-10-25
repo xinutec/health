@@ -625,27 +625,21 @@ fn stops_array(row: &sqlx::mysql::MySqlRow, col: &str) -> Option<Value> {
     parse_stops(&row.try_get::<String, _>(col).ok()?)
 }
 
-/// The day's HSMM decode from `decoded_days`, or `null`.
+/// The day's stored HSMM decode from `decoded_days`, or `null` when the day has
+/// never been decoded.
 ///
-/// ⚠ `null` HAS TWO CAUSES AND THEY MEAN THE SAME THING HERE: no row, or a row
-/// left by an older classifier. `loadDecode` checks `classifier_version` and
-/// discards a mismatch, so a stale decode reads as "not decoded yet" rather
-/// than as evidence — which is right, because the segments a version-6 run
-/// produced are not the segments version 7 would.
-///
-/// The version is filtered IN SQL rather than after the fetch. Same answer,
-/// and it does not drag a MEDIUMTEXT across the wire to throw it away.
+/// ⚠ ANY VERSION. A day holds one row, overwritten in place, so a row left by
+/// an older classifier is the newest decode the day has: it is served while
+/// the decode worker replaces it (`decode_freshness` judges it stale and
+/// queues it). Before, a mismatch read as "not decoded" and the day fell back
+/// to the cascade, which no longer draws a day.
 pub async fn hsmm_decode(pool: &MySqlPool, user_id: &str, date: &str) -> Result<Value> {
-    let row = sqlx::query(
-        "SELECT segments_json FROM decoded_days \
-         WHERE user_id = ? AND date = ? AND classifier_version = ?",
-    )
-    .bind(user_id)
-    .bind(date)
-    .bind(CLASSIFIER_VERSION)
-    .fetch_optional(pool)
-    .await
-    .context("reading decoded_days")?;
+    let row = sqlx::query("SELECT segments_json FROM decoded_days WHERE user_id = ? AND date = ?")
+        .bind(user_id)
+        .bind(date)
+        .fetch_optional(pool)
+        .await
+        .context("reading decoded_days")?;
     let Some(row) = row else {
         return Ok(Value::Null);
     };

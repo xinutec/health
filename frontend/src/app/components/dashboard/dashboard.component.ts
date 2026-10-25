@@ -141,6 +141,10 @@ export interface LoadTimings {
  * on `HealthService` so every API call carries `X-Share-Token`; the
  * server gates read-only + date-window.
  */
+/** How often a day still being decoded is asked for again: a decode takes a
+ *  minute or two. */
+const DECODING_RETRY_MS = 30_000;
+
 @Component({
 	selector: "app-dashboard",
 	standalone: true,
@@ -355,6 +359,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	 *  AND we are not mid-load — during a (re)load the spinner overlay owns
 	 *  the screen, and a stale previous day still shows underneath. */
 	readonly velocityError = computed(() => this.velocityFailed() && !this.dayLoading());
+	/** The day is still being decoded: the timeline says so, and the day
+	 *  reloads itself until its states arrive. */
+	readonly dayDecoding = computed(() => this.velocity()?.decoding === true && !this.dayLoading());
 	readonly latestActivity = computed(() => selectDayActivity(this.activity(), this.selectedDate()));
 	readonly latestSleep = computed(() => selectDayMainSleep(this.sleep(), this.selectedDate()));
 
@@ -426,6 +433,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
 		// tab is lazily (re)created on every visit, so holding the fix
 		// here is what stops it resetting — and flickering — on each
 		// tab switch.
+		// A day being decoded is asked for again until its decode lands.
+		effect((onCleanup) => {
+			if (!this.dayDecoding()) return;
+			const t = setTimeout(() => this.dayData.reload(), DECODING_RETRY_MS);
+			onCleanup(() => clearTimeout(t));
+		});
 		effect((onCleanup) => {
 			if (!this.isToday()) {
 				// A past day has no live marker or tail.

@@ -1,7 +1,7 @@
 import { type ComponentFixture, TestBed } from "@angular/core/testing";
 import { signal } from "@angular/core";
 import { provideRouter, Router } from "@angular/router";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type ActivityDay, HealthService, type SleepLog, type VelocityData } from "../../services/health.service";
 import { todayLocal } from "../../time-utils";
 import { DashboardComponent } from "./dashboard.component";
@@ -394,6 +394,42 @@ describe("DashboardComponent — velocity load failure", () => {
 		expect(cmp.velocityError(), "error cleared after successful retry").toBe(false);
 		expect(q(fixture, ".velocity-error"), "retry banner gone").toBeFalsy();
 		expect(q(fixture, "app-timeline"), "timeline chart restored").toBeTruthy();
+	});
+});
+
+describe("DashboardComponent — a day still being decoded", () => {
+	beforeEach(() => TestBed.resetTestingModule());
+
+	const q = (fixture: ComponentFixture<unknown>, sel: string): Element | null =>
+		(fixture.nativeElement as HTMLElement).querySelector(sel);
+
+	it("says the day is being decoded in place of the timeline, and asks again", async () => {
+		// Fake time that also runs with real time, so the fixture helpers
+		// still settle while the retry interval can be jumped.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+		try {
+			const mock = makeHealthMock();
+			const fixture = setup(mock);
+			const cmp = fixture.componentInstance;
+			await boot(fixture);
+			mock.pending.get(todayLocal())?.resolve({ ...vel(), decoding: true });
+			await pump(fixture);
+
+			expect(cmp.dayDecoding(), "decoding state set").toBe(true);
+			expect(q(fixture, ".velocity-decoding"), "decoding note rendered").toBeTruthy();
+			expect(q(fixture, "app-timeline"), "no timeline while decoding").toBeFalsy();
+
+			// After the retry interval the day is asked for again; its decode
+			// has landed and the timeline replaces the note.
+			vi.advanceTimersByTime(30_000);
+			await pump(fixture);
+			mock.pending.get(todayLocal())?.resolve(vel());
+			await pump(fixture);
+			expect(q(fixture, ".velocity-decoding"), "note gone once decoded").toBeFalsy();
+			expect(q(fixture, "app-timeline"), "timeline shown once decoded").toBeTruthy();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

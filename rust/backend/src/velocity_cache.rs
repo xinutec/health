@@ -187,6 +187,12 @@ impl VelocityCache {
             None => {
                 tracing::debug!(key, "velocity-cache MISS");
                 match compute().await {
+                    // ⚠ A day still being decoded seats NOTHING either: its
+                    // decode lands within minutes, and a seated "decoding"
+                    // would be served for the whole TTL after it had.
+                    Ok(result) if result.get("decoding").and_then(Value::as_bool) == Some(true) => {
+                        Ok(result)
+                    }
                     Ok(result) => {
                         self.seat(key, &result, now_ms, policy)?;
                         Ok(result)

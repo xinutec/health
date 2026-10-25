@@ -330,6 +330,22 @@ pub async fn compute_with(
     }
 
     let h = head::run(&inputs, date)?;
+    // A day never decoded is being decoded (it was queued above): its track
+    // and batteries now, its states when the worker has written them.
+    if inputs.get("hsmmDecode").is_none_or(Value::is_null) {
+        return Ok(json!({
+            "points": h.points.iter().map(|p| json!({
+                "ts": p.ts, "lat": p.lat, "lon": p.lon,
+                "speedKmh": p.speed_kmh, "bearing": p.bearing,
+            })).collect::<Vec<_>>(),
+            "rawFixes": h.display_fixes.iter().map(|f| json!({
+                "ts": f.ts, "lat": f.lat, "lon": f.lon, "accuracy": f.accuracy,
+            })).collect::<Vec<_>>(),
+            "segments": [], "states": [], "episodes": [], "journeys": [],
+            "battery": h.battery.iter().map(|(ts, l)| json!({ "ts": ts, "level": l })).collect::<Vec<_>>(),
+            "decoding": true,
+        }));
+    }
     let cap = head::capture(&inputs, date, user_id)?;
     mark(&mut timing, "head");
 

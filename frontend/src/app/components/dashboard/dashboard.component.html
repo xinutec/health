@@ -64,7 +64,7 @@
 						@if (!showsLocation()) {
 							<!-- The owner shares health only: no timeline to draw. -->
 						} @else if (velocityError()) {
-							<div class="section velocity-error">
+							<div class="section velocity-note velocity-error">
 								<p>Couldn't load your location, transport and timeline for this day.</p>
 								<button mat-stroked-button (click)="retryDay()">Retry</button>
 							</div>
@@ -75,9 +75,15 @@
 							<div class="section">
 								<app-battery-chart [data]="velocity()" />
 							</div>
-							<div class="section">
-								<app-timeline [data]="velocity()" [referenceDate]="selectedDate()" />
-							</div>
+							@if (dayDecoding()) {
+								<div class="section velocity-note velocity-decoding">
+									<p>This day is being decoded. Its timeline appears here in a minute or two.</p>
+								</div>
+							} @else {
+								<div class="section">
+									<app-timeline [data]="velocity()" [referenceDate]="selectedDate()" />
+								</div>
+							}
 						}
 						<details class="perf-panel">
 							<summary>Performance</summary>
