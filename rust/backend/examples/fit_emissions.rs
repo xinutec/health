@@ -148,6 +148,12 @@ struct Day {
     /// Each pass of a station inside a narrated ride, its slowest minute's
     /// speed (km/h) and whether the ride's line calls there (`journey.stops`).
     stops: Vec<(f64, bool)>,
+    /// Each narrated ride's start on a covered minute: whether the generator
+    /// vouches its line there (`trainLine`).
+    line_vouched: Vec<bool>,
+    /// The narrated legs' first minutes counted `[train and covered, train and
+    /// not, other and covered, other and not]` (`trainLine`'s coverage terms).
+    coverage: [f64; 4],
 }
 
 /// EM for the calling evidence: each pass's slowest-minute speed is stopped
@@ -453,9 +459,42 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
             stops.push((v, calls));
         }
     }
+    let mut line_vouched = Vec::new();
+    for r in rows.iter().flatten().filter(|r| r.mode == Some("train")) {
+        let Some(line) = &r.line else { continue };
+        let Some(m) = by_ts.get(&(r.s - r.s.rem_euclid(60))) else {
+            continue;
+        };
+        if m["covered"].as_bool() != Some(true) {
+            continue;
+        }
+        line_vouched.push(
+            m["linesAt"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|l| l.as_str().is_some_and(|l| same(l, line)))),
+        );
+    }
+    let mut coverage = [0.0; 4];
+    for r in rows.iter().flatten() {
+        let Some(mode) = r.mode else { continue };
+        {
+            let Some(m) = by_ts.get(&(r.s - r.s.rem_euclid(60))) else {
+                continue;
+            };
+            let cov = m["covered"].as_bool() == Some(true);
+            coverage[match (mode == "train", cov) {
+                (true, true) => 0,
+                (true, false) => 1,
+                (false, true) => 2,
+                (false, false) => 3,
+            }] += 1.0;
+        }
+    }
     let mut day = Day {
         waits,
         stops,
+        line_vouched,
+        coverage,
         ..Default::default()
     };
     for (i, &(mode, s, e)) in spans.iter().enumerate() {
@@ -817,6 +856,36 @@ fn write_fit(
             log.push(format!(
                 "stops: {nc} calling and {} through passes; stopped share {:.3} calling, {:.3} through; stopped rate {:.4}/kmh, moving {:.1} ± {:.1} km/h",
                 xs.len() - nc, p[0], p[1], p[2], p[3], p[4]
+            ));
+        }
+    }
+    // With `fitTrainLine`, the share of a narrated ride's start, on a covered
+    // minute, that the generator's vouched lines take: whether it vouches the
+    // ride's own line there, by the rule of succession.
+    if form.decoder["fitTrainLine"].as_bool() == Some(true) {
+        let xs: Vec<bool> = used
+            .iter()
+            .flat_map(|d| d.line_vouched.iter().copied())
+            .collect();
+        if xs.len() >= MIN_N {
+            let k = xs.iter().filter(|x| **x).count();
+            let q = (k as f64 + 1.0) / (xs.len() as f64 + 2.0);
+            let n = used.iter().fold([0.0; 4], |mut a, d| {
+                for (x, y) in a.iter_mut().zip(d.coverage) {
+                    *x += y;
+                }
+                a
+            });
+            let share = |k: f64, of: f64| (k + 1.0) / (of + 2.0);
+            let (tr, ot) = (n[0] + n[1], n[2] + n[3]);
+            let covered = (share(n[0], tr) / share(n[2], ot)).ln();
+            let uncovered = (share(n[1], tr) / share(n[3], ot)).ln();
+            se["trainLine"] = json!({
+                "vouchedShare": round4(q), "covered": round4(covered), "uncovered": round4(uncovered),
+            });
+            log.push(format!(
+                "train line: {k} of {} narrated starts vouched; share {q:.4}; coverage {} of {tr} train starts, {} of {ot} others: covered {covered:+.3}, uncovered {uncovered:+.3}",
+                xs.len(), n[0], n[2]
             ));
         }
     }

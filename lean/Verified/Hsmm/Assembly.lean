@@ -1,5 +1,4 @@
 import Verified.Hsmm.Entry
-import Verified.Hsmm.TrainGenerator
 import Verified.Hsmm.TrainHopDuration
 import Verified.Hsmm.Transitions
 import Verified.Hsmm.Quantize
@@ -14,7 +13,7 @@ into the integer tensors the verified trellis reads. Together with
 
 `buildHsmmModel`'s composition (decode.ts):
 * `emission   = base + geometric + routeRail + lineProximity`  — `EmissionFull`.
-* `entry      = entryPrior + trainGen.entry`                   — `entryLogProbFull`.
+* `entry      = entryPrior`                                    — `entryLogProbFull`.
 * `initial    = 0`                                              — `Entry.initialStateLogProb`.
 * `duration   = trainHopDuration`                              — `durationLogProbFull`.
 * `transition = transition (+ chainContext, −∞ short-circuit)` — `transitionLogProbFull`.
@@ -42,14 +41,11 @@ open Verified.Hsmm.Quantize (quantize)
 
 /-! ## Factor composition (the `buildHsmmModel` sums) -/
 
-/-- `entryLogProb = baseEntryLogProb(s,obs) + trainGen.entry(s,obs)`. The
-    hour-profile / visit-weight resolution and the `(covered, lineValid)` verdict
-    are caller-side (the maps and the candidate generator); this is the sum. -/
+/-- `entryLogProb = baseEntryLogProb(s,obs)`, the hour-profile / visit-weight
+    resolution caller-side. A train's generator entry is `Assemble.trainLineLog`. -/
 def entryLogProbFull (s : State) (hourLocal : Nat) (useHourProfiles : Bool)
-    (profile : Option (Array Float)) (nPlaces : Nat) (visitWeight : Option Float)
-    (covered lineValid : Bool) : Float :=
+    (profile : Option (Array Float)) (nPlaces : Nat) (visitWeight : Option Float) : Float :=
   Entry.entryLogProb s hourLocal useHourProfiles profile nPlaces visitWeight
-    + TrainGenerator.trainEntryPrior s covered lineValid
 
 /-- `initialLogProb`: uniform `0` today. -/
 def initialLogProbFull (s : State) : Float := Entry.initialStateLogProb s
@@ -103,13 +99,10 @@ private def stt (m : Mode) (pid : Option Int) (ln : Option String) : State := �
 private def prof : Array Float := ((Array.range 24).map (fun i => (i.toFloat + 1) / 300)).set! 3 0.0005
 private def gf (a b : Float) : GammaFit := ⟨a, b, 10⟩
 
--- entry = entryPrior + trainGen.entry
-#guard entryLogProbFull (stt .stationary (some 5) none) 14 true (some prof) 2 (some 0.3) false false
-  == -0.32850406697203594                              -- stationary: entryPrior only, trainGen 0
-#guard entryLogProbFull (stt .train none (some "Jubilee")) 14 true (some prof) 2 (some 0.3) true true
-  == 3                                                 -- train: entryPrior 0, generator boost
-#guard entryLogProbFull (stt .train none (some "Metropolitan")) 14 true (some prof) 2 (some 0.3) true false
-  == -8                                                -- train: covered but line invalid
+-- entry = entryPrior
+#guard entryLogProbFull (stt .stationary (some 5) none) 14 true (some prof) 2 (some 0.3)
+  == -0.32850406697203594
+#guard entryLogProbFull (stt .train none (some "Jubilee")) 14 true (some prof) 2 (some 0.3) == 0
 
 -- initial = 0
 #guard initialLogProbFull (stt .stationary (some 5) none) == 0

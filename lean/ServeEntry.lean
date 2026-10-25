@@ -1000,10 +1000,18 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         pure { piCall := ← g "piCall", piThrough := ← g "piThrough", rate := ← g "rate",
                mean := ← g "mean", sd := ← g "sd" }
       pure { maxJ, firstLeg := legs "firstLeg", lastLeg := legs "lastLeg", continueLog, stops }
+    -- `trainLine: {vouchedShare, covered, uncovered}`, the train generator's
+    -- evidence at a leg's start.
+    let trainLine : Option Verified.Hsmm.SegmentEmission.TrainLine := do
+      let tl ← (f.getObjVal? "trainLine").toOption.filter (!·.isNull)
+      let g := fun (k : String) => (tl.getObjVal? k).toOption >>= num
+      pure { vouchedShare := ← g "vouchedShare", covered := ← g "covered", uncovered := ← g "uncovered" }
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
-           obsChain, asleep, unlistedCentre, journey }
+           obsChain, asleep, unlistedCentre, journey, trainLine }
   let some segEm := segEm?
     | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
+  if segEm.trainLine.isNone then
+    throw "flags.segEmission.trainLine is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
   -- The wait leg exists only with a fitted wait duration.
   let segEm := { segEm with journey := segEm.journey.map fun jp => { jp with wait := waitFit.isSome } }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
@@ -1054,6 +1062,9 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   -- chooses the place.
   let stayEntryLog : Array Float :=
     ctx.states.map fun src => Float.log (Verified.FloatConst.natToFloat (count src .stationary))
+  -- And into a train: the entry chooses the line (`trainLine`).
+  let trainEntryLog : Array Float :=
+    ctx.states.map fun src => Float.log (Verified.FloatConst.natToFloat (count src .train))
   -- `flags.entryCounts` (harness arm): `{alpha, beta}` — the entry prior as
   -- smoothed counts of visits (`Assemble.entryCountsTable`); the places' counts
   -- ride on the request as `visits`.
@@ -1074,7 +1085,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | _, _ => #[]
     | none => #[]
   let durationNoFloor := ((flags.getObjVal? "durationNoFloor") >>= (·.getBool?)).toOption.getD false
-  let ctx := { ctx with priors, fits, mainlineFit, waitFit, waitMin, weights, segPref, placePrior, transWeight, stayEntryLog, durationNoFloor,
+  let ctx := { ctx with priors, fits, mainlineFit, waitFit, waitMin, weights, segPref, placePrior, transWeight, stayEntryLog, trainEntryLog, durationNoFloor,
                         visitCounts, entryTable }
   let lineProxBest := Verified.Hsmm.Assemble.lineProxBestTable ctx
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx

@@ -215,14 +215,20 @@ sharing 0.9714 (67 of 68 narrated covered starts vouch the ride's own line)
 and the rest the remainder, and (b) the coverage as evidence of the mode at
 the leg's first minute, `log P(covered | a train leg starts) − log P(covered |
 another leg starts)` = +1.20 / −1.53 (87 of 103 train starts covered, 110 of
-439 others). Held out against the shipped control: journeys, leg modes, lines,
-stations equal, phantoms 4 → 2, narrated rows 530 = 530. Coverage scored per
-MINUTE instead floods the walks beside stations with phantoms (5 → 26), and the
-line choice alone loses five counts. In-sample it loses 07-02's three-minute
-Baker Street → Euston Square ride after the Jubilee (leg modes 318 → 317), held
-out kept by 0.015 nats — the same short leg after a change that 07-16 has. Not
-shipped (golden `fits/arm-trainline-2026-10-25.patch`); the short leg after a
-change is what to price next.
+439 others). Coverage scored per MINUTE instead floods the walks beside stations
+with phantoms (5 → 26), and the line choice alone loses five counts. With the
+vouched lines SPLITTING their share, in-sample lost 07-02's three-minute Baker
+Street → Euston Square leg after the Jubilee by 0.02 nats: three lines serve that
+pair on one track, and a best path sees one line, so the split charged it log 3.
+A vouched line therefore scores `log q` each — the decode tells them apart by
+their own evidence and the chain names the line.
+
+SHIPPED 2026-10-25 (record `segEmission.trainLine`, CLASSIFIER_VERSION 13), the
+hand-set +3 / −8 deleted with `Verified.Hsmm.TrainGenerator`: held out and
+in-sample alike journeys, leg modes, lines and stations equal, phantoms 4 → 2,
+narrated rows 530 = 530; five frozen decodes lose a phantom train (07-14's and
+09-14's in the night, two `unknown_rail` rides in Nijmegen on 04-30, 05-25's and
+08-10's single minutes).
 
 ## Open
 

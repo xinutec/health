@@ -16,7 +16,7 @@ and produces the five per-cell model callbacks — `emitAt`/`entryAt`/`initAt`/
 verified trellis reads — the whole model, built in Lean from parsed inputs.
 
 The callbacks add NO new arithmetic over the composition layer: each is a lookup
-into the bundled maps (`isCovered ts`, `lineValid`, `placeCoords`, the mode's
+into the bundled maps (`isCovered ts`, `placeCoords`, the mode's
 `baselineFit`) feeding an already-V8-pinned composed callback. So the guards here
 check the RESOLUTION — that each callback pulls the right observation row, state,
 coverage verdict, and place datum — riding on the composition's own parity pins
@@ -120,6 +120,9 @@ structure ModelContext where
       into a stay gives that back, so the place is chosen by the entry prior
       alone and not also by the even split. -/
   stayEntryLog : Array Float := #[]
+  /-- The same for the train states, under `SegmentEmission.Params.trainLine`:
+      the line is chosen by the entry alone. -/
+  trainEntryLog : Array Float := #[]
   /-- Per state, the prefix sums over minute pairs `(t, t+1)` of the pair's
       speed score under the state (`pairTables`): entry `i` sums
       the pairs before `i`. -/
@@ -417,23 +420,41 @@ def entryCountsAt (c : ModelContext) (st : State) (h : Nat) : Option Float :=
   | some (m, unk) => some (match st.placeId with | some pid => m.getD pid unk | none => unk)
   | none => none
 
-/-- `entry(s, obs[t])` — base entry prior + train-generator entry, with the
-    hour profile / visit weight / coverage verdict resolved for the state. -/
+/-- The train generator's entry for a train starting at `ts`
+    (`SegmentEmission.TrainLine`): the line term — `log q` for a line it vouches
+    there, the rest sharing `1 − q` evenly, `1/n` each where it is silent or
+    vouches none of them — plus the coverage term. -/
+def trainLineLog (c : ModelContext) (tl : SegmentEmission.TrainLine) (covered : Bool) (ts : Int)
+    (st : State) : Float :=
+  let q := tl.vouchedShare
+  let trains := c.states.filter (·.mode == .train)
+  let n := Verified.FloatConst.natToFloat trains.size
+  let vouched := TrainCandidates.linesAt c.coverage ts
+  let isV := fun (x : State) => x.lineName.any vouched.contains
+  let v := Verified.FloatConst.natToFloat (trains.filter isV).size
+  let line :=
+    if !covered || v == 0 || v == n then -Float.log n
+    else if isV st then Float.log q else Float.log ((1 - q) / (n - v))
+  line + if covered then tl.covered else tl.uncovered
+
+/-- `entry(s, obs[t])` — the base entry prior, or a train's generator entry
+    (`trainLineLog`), with the hour profile / visit weight / coverage verdict
+    resolved for the state. -/
 def entryAt (c : ModelContext) (t s : Nat) : Float :=
   match c.obs[t]?, c.states[s]? with
   | none, _ | _, none => negInf
   | some o, some st =>
   if st.mode == .unknown then SEG_ZERO else
   let covered := coveredAt c o.ts
-  let lineValid := match st.lineName with
-    | some l => (TrainCandidates.linesAt c.coverage o.ts).contains l
-    | none => false
   let profile := match st.placeId with | some pid => c.hourProfiles.get? pid | none => none
   let weight := match st.placeId with | some pid => c.visitWeights.get? pid | none => none
   match (if st.mode == .stationary then entryCountsAt c st o.hourLocal else none) with
   | some v => c.weights.entry * v
   | none =>
-    c.weights.entry * Assembly.entryLogProbFull st o.hourLocal true profile c.nPlaces weight covered lineValid
+  match (if st.mode == .train then c.segEm.p.trainLine else none) with
+  | some tl => c.weights.entry * trainLineLog c tl covered o.ts st
+  | none =>
+    c.weights.entry * Assembly.entryLogProbFull st o.hourLocal true profile c.nPlaces weight
 
 /-- `initial(s)` — uniform 0. -/
 def initAt (c : ModelContext) (s : Nat) : Float :=
@@ -581,7 +602,9 @@ theorem durAt_eq_durAtFrom (c : ModelContext) (s d e : Nat) :
 /-- What a transition into a stay gives back (`ModelContext.stayEntryLog`);
     `0` otherwise. -/
 def stayEntryAt (c : ModelContext) (a : Nat) (dst : State) : Float :=
-  if dst.mode == .stationary then c.stayEntryLog.getD a SEG_ZERO else SEG_ZERO
+  if dst.mode == .stationary then c.stayEntryLog.getD a SEG_ZERO
+  else if dst.mode == .train then c.trainEntryLog.getD a SEG_ZERO
+  else SEG_ZERO
 
 /-- `transition(a, b, obs[t])` — static prior + chain context (with the `−∞`
     short-circuit), chain penalty resolved over the model + place coords. -/
@@ -650,9 +673,18 @@ private def approxG (a b : Float) : Bool := Float.abs (a - b) < 1e-6
     ctxU.placeCoords false none jub obsTrain)
 #guard (emitAt ctxU 0 jubIdx) == (emitAt ctxC 0 jubIdx)
 
--- entryAt: covered + line-valid → the +3 generator boost (train state ⇒ base entry 0).
-#guard entryAt ctxC 0 jubIdx == 3
-#guard entryAt ctxU 0 jubIdx == 0                          -- uncovered → generator silent
+-- entryAt: a train's entry is the generator's, under a record that carries it.
+private def segLine : SegmentEmission.Params :=
+  { segNone with trainLine := some { vouchedShare := 0.9, covered := 1.2, uncovered := -1.5 } }
+private def trainsN : Float := Verified.FloatConst.natToFloat (ctxU.states.filter (·.mode == .train)).size
+-- Covered and vouched: `log q` and the coverage term.
+#guard approxG (entryAt { ctxC with segEm := SegmentEmission.prepare segLine 1 } 0 jubIdx)
+  (Float.log 0.9 + 1.2)
+-- Uncovered: the even split over the train states and the uncovered term.
+#guard approxG (entryAt { ctxU with segEm := SegmentEmission.prepare segLine 1 } 0 jubIdx)
+  (-Float.log trainsN - 1.5)
+-- Without it, no train term at all (train state ⇒ base entry 0).
+#guard entryAt ctxC 0 jubIdx == 0
 
 -- durAt: coverage resolution drives the one-stop-hop relaxation of the sub-floor.
 #guard durAt ctxC jubIdx 1 0 == 0                          -- covered sub-floor hop → relaxed

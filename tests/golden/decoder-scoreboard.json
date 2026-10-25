@@ -333,7 +333,7 @@
 		"stationsAsserted": 3,
 		"stationsMatching": 2,
 		"stationsMissing": 1,
-		"phantomRides": 1
+		"phantomRides": 0
 	},
 	"2026-07-15": {
 		"journeysExpected": 3,
@@ -393,7 +393,7 @@
 		"stationsAsserted": 3,
 		"stationsMatching": 3,
 		"stationsMissing": 0,
-		"phantomRides": 1
+		"phantomRides": 0
 	},
 	"2026-09-15": {
 		"journeysExpected": 2,

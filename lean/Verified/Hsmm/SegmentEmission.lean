@@ -99,6 +99,24 @@ structure JourneyParams where
   stops : Option Verified.Hsmm.StopCalls.Params := none
   deriving Inhabited
 
+/-- The train generator's evidence at a train leg's first minute, fitted
+    (`fitTrainLine`) at the narrated legs' first minutes:
+
+* `vouchedShare`: `P(the generator vouches the ride's own line)`; a vouched
+  line scores `log vouchedShare`, the others share the rest evenly. Vouched
+  lines share the station pair the generator found, so the decode tells them
+  apart by their own evidence and the chain names the line — a best path sees
+  one line, where a split among them would charge it `log v`.
+* `covered` / `uncovered`: `log P(covered | a train leg starts) − log
+  P(covered | a leg of another mode starts)`, and the same uncovered — the
+  generator's coverage as evidence of the mode, once per leg (per minute it
+  would count one window many times). -/
+structure TrainLine where
+  vouchedShare : Float
+  covered : Float
+  uncovered : Float
+  deriving Inhabited
+
 structure Params where
   sigmaW : Float
   rho : Float
@@ -135,6 +153,11 @@ structure Params where
       per-minute off-network term, which charged a per-segment fact on every
       lit minute and so grew with the stay's length. -/
   unlistedCentre : Option Float := none
+  /-- What the train generator knows at a train's start (`TrainLine`): with it
+      a transition into a train gives the even split over train states back,
+      and the entry scores the line and the coverage. Without it a train's
+      line is the even split alone. -/
+  trainLine : Option TrainLine := none
   /-- The journey state (`Assemble` adds one when this is set): a journey is
       one segment of the outer trellis whose cell is the best leg path over
       its window (`Journey`), with the heart-rate and fix-presence level drawn
