@@ -18,3 +18,9 @@ cd "$SCRIPT_DIR/.."
 echo "==> lake build (verified core + #guard checks)"
 (cd lean && lake build)
 
+# Nothing in the package that `verified_cli` cannot reach (`lean/Deadcode.lean`):
+# a declaration nothing runs, and a #guard or theorem about only such code, is
+# deleted rather than kept. `--control` first, so a green run is not a blind one.
+echo "==> lake exe deadcode (nothing unreached)"
+(cd lean && lake build deadcode && lake exe deadcode --control && lake exe deadcode)
+

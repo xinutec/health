@@ -151,16 +151,6 @@ def lineBaseToken (lineName : String) : String :=
 def normalizeStationName (name : String) : String :=
   String.ofList ((name.toList.map Char.toLower).filter Char.isAlphanum)
 
-/-- Is `needle` a prefix of any suffix of the list? (Lean 4.30 has
-`List.isPrefixOf` but no `List.isInfixOf`.) -/
-private def containsSubList (needle : List Char) : List Char → Bool
-  | [] => needle.isEmpty
-  | c :: tl => needle.isPrefixOf (c :: tl) || containsSubList needle tl
-
-/-- `String.prototype.includes`, over `List Char`. -/
-private def containsSub (haystack needle : String) : Bool :=
-  containsSubList needle.toList haystack.toList
-
 /-- The relations serving a pipeline line label: `ref` or `name` CONTAINS the
 label's base token, case-insensitively. Empty when nothing matches — including
 compound labels and labels that strip to an empty base. -/
@@ -312,8 +302,6 @@ def pickLineByStoppingPattern (candidates : Array String) (board alight : String
       match possible with
       | #[only] => some only.1
       | _ => none
-
-/-! ## Guards -/
 
 /-! ### `lineBaseToken` -/
 

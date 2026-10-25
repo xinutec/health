@@ -368,12 +368,6 @@ pub fn run(inputs: &Value, date: &str) -> Result<Head> {
     let display_fixes = admitted;
 
     let points = kalman(&gps_points)?;
-    // The stay set is the SAME accuracy-capped snapped fixes the smoother got,
-    // but un-smoothed and carrying no velocity: `findStays` wants where the
-    // phone reported being, and the Kalman's velocity coupling would smear a
-    // stationary cluster. Note this is `Some(...)` even when empty — passing
-    // `None` would make the segmenter double the movement fixes up as stay
-    // evidence, which is a different day.
     Ok(Head {
         points,
         in_day,
@@ -556,13 +550,6 @@ pub fn capture(inputs: &Value, date: &str, user: &str) -> Result<Value> {
     obs.insert("rawFixes".into(), accuracy_rows(&head.in_day));
     obs.insert("displayFixes".into(), accuracy_rows(&head.display_fixes));
     obs.insert("steps".into(), pick(biom("steps"), ["ts", "steps"]));
-    obs.insert(
-        "stepsThrough".into(),
-        inputs
-            .pointer("/biometrics/stepsThrough")
-            .cloned()
-            .unwrap_or(Value::Null),
-    );
     obs.insert("hr".into(), pick(biom("hr"), ["ts", "bpm"]));
     obs.insert("sleep".into(), pick(biom("sleep"), ["startTs", "endTs"]));
 

@@ -57,17 +57,6 @@ than part-way through one, and higher than the client's own floor so the walk
 ends before the client starts refusing calls. -/
 def BACKFILL_BUDGET_FLOOR : Int := 15
 
-/-- Consecutive empty days that mark an intraday stream complete. -/
-def DEFAULT_MAX_EMPTY_DAYS : Int := 14
-
-/-- Consecutive empty windows that mark a range stream complete. Far lower than
-the day count because a window is 30 days: three empty windows is 90 days with
-nothing in them. -/
-def DEFAULT_MAX_EMPTY_WINDOWS : Int := 3
-
-/-- The largest range Fitbit's daily-summary endpoints accept in one call. -/
-def RANGE_WINDOW_DAYS : Int := 30
-
 /-- Why a stream stopped for good. Carried so the caller can log which of the
 three it was — they look identical in `sync_state` and mean different things. -/
 inductive CompleteReason where

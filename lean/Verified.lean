@@ -61,7 +61,6 @@ import Verified.Geo.LazyWeight
 import Verified.Geo.LazyLower
 import Verified.Geo.Metric
 import Verified.Geo.Match
-import Verified.Geo.RingSearch
 import Verified.Geo.LazyDijkstra
 import Verified.Geo.LazyInv
 import Verified.Geo.LazyFuel
@@ -116,7 +115,6 @@ import Verified.Geo.RailAbsorbers
 import Verified.Geo.RailRuns
 import Verified.Geo.RailRunAnnotate
 import Verified.Geo.RailReconcile
-import Verified.Geo.RailJourney
 import Verified.Geo.WalkAnchors
 import Verified.Geo.WalkAnnotate
 import Verified.Geo.WalkMatchAdapt
@@ -128,13 +126,10 @@ import Verified.Geo.RoadMatchAnnotate
 import Verified.Geo.Enrich
 import Verified.Geo.RefineMode
 import Verified.Geo.TubeHop
-import Verified.Geo.UndergroundRun
-import Verified.Geo.UndergroundJourney
 import Verified.Geo.TransitPlace
 import Verified.Geo.OsmSpatial
 import Verified.Geo.LineStoppingPattern
 import Verified.Geo.LineStations
-import Verified.Geo.LineMembership
 import Verified.Geo.BestPlace
 import Verified.Geo.StayEnrich
 import Verified.Geo.EnrichFold

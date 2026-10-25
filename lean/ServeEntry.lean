@@ -2031,7 +2031,7 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
       if e < i then Json.null else
       match Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (e - i + 1) e with
       | some w =>
-        -- The span `dispScore` divides by: the minutes and the bracket slop's.
+        -- The span `dispScoreWith` divides by: the minutes and the bracket slop's.
         let hours := (Verified.FloatConst.natToFloat (e - i + 1)
           + Float.sqrt w.slopVar / Verified.Hsmm.SegmentEvidence.SLOP_SPEED_M_PER_MIN) / MINUTES_PER_HOUR
         Json.mkObj [("dispM", Lean.toJson w.dispM), ("hours", Lean.toJson hours)]
@@ -2864,29 +2864,14 @@ private def bioLabelsResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
-/-! ## The pipeline head (`verified_cli head`)
+/-! ## Snapping fixes to known places (`verified_cli head`)
 
-The two TS algorithm steps still standing between the raw fixes and `segsRaw`,
-which is the day fold's ONLY input:
-
-    raw fixes → gpsquality (Lean) → snapToPlace (HERE) → kalman (Lean)
-              → classifySegments (HERE) → segsRaw → day
-
-Both have been complete and `#guard`-pinned under `Verified` for some time with
-NOTHING CALLING THEM — `scripts/lean-reachability.mjs` found the pair among 31
-such orphans. This verb is what makes them reachable, and it is the thing
-`LEAN_DAY=solo` was blocked on: with the head in TS, the fold's own inputs are
-computed by the arm the mode is meant to retire, so there is no TS to remove.
+`Verified.Geo.PlacePrior.snapToPlace` over a day's raw fixes:
 
     { "op": "snap",
       "fixes":  [[latBits, lonBits, accBits|null], …],
       "places": [[latBits, lonBits, radiusBits|null, id|null], …] }
   → { "snapped": [[latBits, lonBits, accBits|null, moved], …] }  one per fix, in order
-
-    { "op": "segments",
-      "pts":     [[ts, latBits, lonBits, speedBits, bearingBits], …],
-      "stayPts": [[ts, latBits, lonBits], …] | null }
-  → { "segs": [ {startTs, endTs, mode, …}, … ] }
 
 ⚠ `snap` is BATCHED over the whole day, deliberately. The TS calls `snapToPlace`
 once per fix inside a `.map` (`velocity.ts:687`); a round trip per fix would be
@@ -2936,60 +2921,6 @@ private def headResult (j : Json) : Json :=
   match parsed with
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
-
-/-! ## The refinement cascade (`verified_cli day`)
-
-`Verified.Geo.PassFold.runPassesTraced` — all 38 passes of the `velocity.ts`
-cascade over one day's segments, in ONE bridge call. The fold is the unit
-because the order is the thing being measured: a pass at a time would let the
-shell re-impose the sequence, and then the sequence would not be under test.
-
-  { "segsRaw": [ …segment…, ],   -- the segmentation output, and the ONLY input
-    "env":  { …observations, day tables, lookup answer tables… },
-    "trace": true|false }
-
-ONE input as of #430 B2. It was two for as long as the OSM enrichment stage sat
-unported between the splits and the corrections — the corrections had to start
-from what the TS arm handed them, because feeding the splits' output straight in
-would have skipped a stage silently. `Verified.Geo.EnrichFold` closed that gap,
-and the join was taken only after the day gate measured the new `segsEnriched`
-boundary identical on all 33 golden days. Every boundary below `segsRaw` is now
-Lean consuming Lean, and each is still returned and compared, so a difference is
-named where it happens rather than read off the end.
-
-### Why the lookups cross as answer tables
-
-`Env`'s six mirror lookups are FUNCTIONS. They cross as recorded (args →
-answer) tables because that is what they cost: measured over the 33-fixture
-corpus (`lean/experiments/passfold-env-size.mts`), all six together are 0.154
-MiB/day, against 13.7 MiB/day to push the raw rows and compute them here. The
-row-set stays golden's oracle for the reason #412 gives; the serve path takes
-the answers.
-
-The road and walk solvers stay SHELL CALLBACKS and their geometry never
-crosses at all — 4.31 MiB/day of road and building rows saved, twelve times
-the whole rest of the payload. Their own parity is `LEAN_MATCH`'s job, not the
-fold's: what the fold is measuring is the cascade.
-
-### Keys are bit patterns, not rendered coordinates
-
-A table keyed on a decimal rendering would be keyed on something JS and Lean
-disagree about, and a key that disagrees is a MISS — which is the one failure
-this must not have. Every float argument keys on `Float.toBits`, so the two
-sides agree exactly or not at all.
-
-### A miss is a hard error, and that needs the caller's help
-
-An absent entry must never read as an empty answer: `LineMembership.scan`
-takes an empty served-station lookup as "line unknown" and vetoes a journey
-that happened (#423), so a short answer asserts a physical impossibility.
-
-`panic!` alone does NOT give that. Measured: it prints a backtrace, returns
-`Inhabited.default` and the process continues with exit 0 — the miss becomes
-`#[]`. With `LEAN_ABORT_ON_PANIC=1` in the environment it aborts, and the
-message names the key. So the spawning shell MUST set that variable; it is
-load-bearing, not decoration. -/
-
 
 /-! ## Focus-place mining (`verified_cli focus`)
 

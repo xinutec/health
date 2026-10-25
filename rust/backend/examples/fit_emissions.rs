@@ -59,7 +59,7 @@ const MIN_RUNS: usize = 5;
 const MIN_WAITS: usize = 3;
 /// A run's heart rate enters the between-run spread from this many minutes.
 const MIN_RUN_HR: usize = 5;
-/// The duration fit's variance floor (`Duration.fitDurationDistribution`'s).
+/// The duration fit's variance floor.
 const DUR_VAR_FLOOR: f64 = 4.0;
 /// A listed place further than this from a lit stay is not where it was
 /// (`Emissions.PLACE_RADIUS_M`).
@@ -698,7 +698,7 @@ fn stop_split(xs: &[f64], cut: f64) -> (f64, f64, f64, f64) {
 }
 
 /// A mode's net displacement: lognormal `(μ, σ)` with a share `ε` spread evenly
-/// over `0–uMax` km/h — `SegmentEmission.dispScore`'s form, by EM.
+/// over `0–uMax` km/h — `SegmentEmission.dispScoreWith`'s form, by EM.
 fn disp_mixture(mode: &str, ws: &[(f64, f64)], u_max: f64) -> Option<(f64, f64, f64)> {
     if ws.len() < MIN_RUNS {
         return None;

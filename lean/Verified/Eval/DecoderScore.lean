@@ -4,8 +4,8 @@ import Verified.Eval.Journeys
 /-!
 # Decoder scoreboard — the ten per-day journey-structure counts (#1048)
 
-Port of the scoring half of `src/eval/journey-score.ts` (`statesToMinutes`,
-`decoderJourneys`, `scoreJourneys`'s counters) and the whole of
+Port of the scoring half of `src/eval/journey-score.ts` (`decoderJourneys`,
+`scoreJourneys`'s counters) and the whole of
 `src/eval/decoder-scoreboard.ts` (`scoreStations`, `countPhantomRides`),
 recovered from `06346bd^`. The oracle is `tests/golden/decoder-scoreboard.json`
 — dates and counts a human blessed from the TypeScript before it went.
@@ -67,7 +67,6 @@ def isRideModeStr (m : String) : Bool :=
 def isVehicleModeStr (m : String) : Bool :=
   m == "train" || m == "bus" || m == "driving" || m == "cycling" || m == "plane"
 
-
 /-- Decoded segments to minutes — `t` steps from the RAW `startTs`, not a
 minute-aligned one (`segmentsToMinutes`, `score-decoder-golden.ts:117`). -/
 def segmentsToMinutes (segs : Array Seg) : Array DecoderMinute := Id.run do
@@ -77,20 +76,6 @@ def segmentsToMinutes (segs : Array Seg) : Array DecoderMinute := Id.run do
     while t < s.endTs do
       out := out.push { ts := t, mode := s.mode, lineName := s.lineName,
                         board := s.board, alight := s.alight }
-      t := t + 60
-  return out
-
-/-- A coarse state timeline to minutes — one entry per TOP-OF-MINUTE inside
-each window (`statesToMinutes`, `journey-score.ts:129`); line/place/stations
-are not carried. -/
-def statesToMinutes (states : Array (Int × Int × String)) : Array DecoderMinute := Id.run do
-  let mut out : Array DecoderMinute := #[]
-  for (startTs, endTs, mode) in states do
-    let mut t := ((startTs + 59) / 60) * 60
-    -- ⚠ Int division truncates toward zero; `Math.ceil` on a NEGATIVE start
-    -- would differ, but no timestamp in this system is negative.
-    while t < endTs do
-      out := out.push { ts := t, mode := mode }
       t := t + 60
   return out
 
@@ -333,8 +318,6 @@ private def dm (t : Int) (m : String) (l : Option String := none)
 
 -- segmentsToMinutes steps from the RAW start; 90..210 yields 90 and 150.
 #guard (segmentsToMinutes #[⟨90, 210, "walking", none, none, none⟩]).map (·.ts) == #[90, 150]
--- statesToMinutes ceils to the top of minute: 90..210 yields 120 and 180.
-#guard (statesToMinutes #[(90, 210, "walking")]).map (·.ts) == #[120, 180]
 
 -- Contiguous same-mode same-line minutes merge into one leg; board keeps the
 -- FIRST minute's, alight the LAST's (overwritten even to none).

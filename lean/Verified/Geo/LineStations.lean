@@ -1,12 +1,11 @@
 /-!
 # Which stations does a line serve? (port of `src/geo/line-stations.ts`)
 
-`stationsOnLine` is the PRODUCER for `Verified.Geo.LineMembership`, which until
-now took its answer as an injected `String → Array ServedStation`. That injection
-was honest while the answer came out of MariaDB; it is a hole once the row-set
-pushes the raw rows (#414), because the decision it stands for — "this station is
-within 300 m of some way of this line" — is exactly the kind of spatial judgement
-the OSM port exists to move out of the database.
+The two halves of the `stationsOnLine` ask, with the host's SQL between them:
+`lineNamesMatching` resolves the line name against the mirror's names, and
+`filterStationsByLineProximity` keeps the stations within 300 m of some way of
+the line — a spatial judgement, so it is made here from the raw rows rather
+than in the database.
 
 ## The mirror does not record membership, so this INFERS it
 
@@ -14,8 +13,7 @@ OSM route relations name their member stops, but the local mirror ingests way
 geometry only. So membership is proximity-inferred: a station point within
 `MAX_DIST_M` of any way of the line counts as served. The error direction is
 OVER-inclusion — a station beside a passing-but-not-stopping line counts — which
-is what makes the result safe as a veto and useless as an assertion. See
-`LineMembership`, which consumes it and says the same thing from the other side.
+is what makes the result safe as a veto and useless as an assertion.
 
 300 m is not a tolerance, it is a physical offset: a surface station's named node
 sits 20-80 m from the track, while a tube station's named node is at the STREET

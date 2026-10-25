@@ -171,18 +171,6 @@ def forwardWindow (today : String) (storedCursor : Option String) : Option (Stri
       -- TypeScript compares.
       | some _ => some (if c < overlapStart then c else overlapStart, today)
 
-/-- How many days of PhoneTrack history one request asks for. Matches the
-`setDate(+7)` step the TypeScript walks the tz-inference window with. -/
-def TRACK_CHUNK_DAYS : Int := 7
-
-/-- How many chunks a single tz-inference window may be split into before the
-request is refused outright.
-
-Twenty-six weeks either side of the 30-day default, which covers every window
-`forwardWindow` can produce and the 180-day one `refresh-focus-places` asks for.
--/
-def MAX_TRACK_CHUNKS : Int := 60
-
 private def chunksFrom (ze : Int) (days : Int) : Int → Nat → List (String × String)
   | _, 0 => []
   | zs, n + 1 =>

@@ -128,9 +128,6 @@ theorem max_eq_right {a b : Score} (h : a ≤ b) : max a b = b := by
 theorem ne_negInf_of_add_left {a b : Score} (h : a + b ≠ negInf) : a ≠ negInf :=
   fun ha => h (by rw [ha]; exact negInf_add b)
 
-theorem ne_negInf_of_add_right {a b : Score} (h : a + b ≠ negInf) : b ≠ negInf :=
-  fun hb => h (by rw [hb]; exact add_negInf a)
-
 instance : Std.Associative (fun a b : Score => a + b) := ⟨add_assoc⟩
 instance : Std.Commutative (fun a b : Score => a + b) := ⟨add_comm⟩
 

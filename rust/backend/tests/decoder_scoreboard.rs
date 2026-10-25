@@ -10,7 +10,7 @@
 //!
 //! The `expected` block of each `decoded_days` fixture is the TypeScript
 //! decoder's FROZEN output — this harness does not decode. Agreement therefore
-//! proves the SCORING pipeline (`statesToMinutes`-family, `decoderJourneys`,
+//! proves the SCORING pipeline (`decoderJourneys`,
 //! `scoreStations`, `countPhantomRides`, the journey counters) reproduces the
 //! blessed counts from the same decoded segments; it says nothing about the
 //! decoder itself. The decode half needs the pre/post-boundary shell chain and

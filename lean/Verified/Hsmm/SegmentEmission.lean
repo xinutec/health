@@ -427,7 +427,8 @@ private def logNormalDensity (x mu sigma : Float) : Float :=
   let z := (Float.log x - mu) / sigma
   Float.exp (-HALF * z * z) / (x * sigma * SQRT_TWO_PI)
 
-/-- `dispScore` under the mode's own fitted parameters `q`. -/
+/-- The net-displacement score of a window under mode `mode`'s fitted
+parameters `q`. -/
 @[inline] def dispScoreWith (p : Params) (mode : Mode) (q : DispParams) (d : Nat)
     (w : SegmentEvidence.Window) : Float :=
   let slopMin := Float.sqrt w.slopVar / SegmentEvidence.SLOP_SPEED_M_PER_MIN
@@ -436,13 +437,6 @@ private def logNormalDensity (x mu sigma : Float) : Float :=
   let main := if mode == .stationary then logNormalDensity dist q.mu q.sigma
     else logNormalDensity (dist / KM_M / hours) q.mu q.sigma / (hours * KM_M)
   Float.log ((ONE - q.eps) * main + q.eps / (p.uMaxKmh * hours * KM_M))
-
-/-- The density, per metre, of the segment's net displacement under one mode;
-    `0` without bracketing fixes. `d` is the segment's length in minutes. -/
-def dispScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentEvidence.Window) : Float :=
-  match w, p.disp.find? (·.1 == mode) with
-  | some w, some (_, q) => dispScoreWith p mode q d w
-  | _, _ => ZERO
 
 /-- `log f_mode(D) − log Σ_m f_m(D)` over the modes with a fitted displacement:
     the posterior of the mode given the segment's net displacement under a flat
@@ -460,7 +454,7 @@ def dispPosteriorScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentE
     -- two stays.
     let flat := Float.log (ONE / (p.uMaxKmh * (Verified.FloatConst.natToFloat d / MIN_PER_H) * KM_M))
     -- Each mode's score from its own entry, once; the state's is among them
-    -- (the first entry of its mode, as `dispScore`'s search takes).
+    -- (the first entry of its mode).
     let scored := p.disp.map fun (m, q) => (m, dispScoreWith p m q d w')
     let own := match scored.find? (·.1 == mode) with
       | some (_, v) => v
@@ -579,10 +573,6 @@ private def pTest : Params :=
   { sigmaW := 8, rho := 0.8
     byMode := [(.stationary, ⟨84, 9, 0.09, 0.064⟩), (.train, ⟨89, 9, 2.55, 1.04⟩)]
     disp := [(.stationary, ⟨3.5, 1.5, 0.006⟩), (.train, ⟨3.4, 0.6, 0.025⟩)] }
--- Two hours that end 50 m from where they began are a stay; 8 km in twenty minutes a ride.
-#guard dispScore pTest .stationary 109 (some ⟨50, 0, 0⟩) > dispScore pTest .train 109 (some ⟨50, 0, 0⟩) + 10
-#guard dispScore pTest .train 20 (some ⟨8000, 0, 0⟩) > dispScore pTest .stationary 20 (some ⟨8000, 0, 0⟩) + 3
-#guard dispScore pTest .walking 20 (some ⟨8000, 0, 0⟩) == 0
 #guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ + 10
 #guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ - 1
 #guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ == 0

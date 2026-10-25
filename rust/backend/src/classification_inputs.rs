@@ -1035,8 +1035,7 @@ fn utc_datetime_str_to_seconds(s: &str) -> Option<i64> {
 /// day's DOMINANT place is also X, the user was at X throughout — the classic
 /// multi-day hospital stay. Either side missing, or the two disagreeing, and
 /// there is no bracket; the day stays blank rather than being guessed at.
-/// `bracketedStayPlaceId` is that whole rule and it is three lines, so it is
-/// inlined here rather than given a module.
+/// The rule is three lines, so it is inlined here rather than given a module.
 ///
 /// Only consumed when the day has no states AND no points (#1055).
 pub async fn empty_day_bracket(pool: &MySqlPool, user_id: &str, date: &str) -> Result<Value> {

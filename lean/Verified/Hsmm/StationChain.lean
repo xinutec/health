@@ -497,10 +497,7 @@ def boardAnchorAt (obs : Array ObsRow) (firstIdx : Nat) (legStartTs : Int) : Opt
     | none => none
     | some b => some (⟨b.lat, b.lon, max 0 (mins legStartTs b.ts), SLOP_SPEED_M_PER_MIN⟩, b.ts)
 
-def boardAnchor (obs : Array ObsRow) (firstIdx : Nat) (legStartTs : Int) : Option Anchor :=
-  (boardAnchorAt obs firstIdx legStartTs).map (·.1)
-
-/-- First observed fix at/after the leg end (alight side) — `boardAnchor`
+/-- First observed fix at/after the leg end (alight side) — `boardAnchorAt`
     mirrored, with `nextGpsFix` off the leg's LAST row as the bookend. -/
 def alightAnchorAt (obs : Array ObsRow) (lastIdx : Nat) (legEndTs : Int) : Option (Anchor × Int) :=
   let rec scan (i : Nat) (fuel : Nat) : Option (Anchor × Int) :=
@@ -517,9 +514,6 @@ def alightAnchorAt (obs : Array ObsRow) (lastIdx : Nat) (legEndTs : Int) : Optio
   | none => match (obs[lastIdx]?).bind (·.nextGpsFix) with
     | none => none
     | some b => some (⟨b.lat, b.lon, max 0 (mins b.ts legEndTs), SLOP_SPEED_M_PER_MIN⟩, b.ts)
-
-def alightAnchor (obs : Array ObsRow) (lastIdx : Nat) (legEndTs : Int) : Option Anchor :=
-  (alightAnchorAt obs lastIdx legEndTs).map (·.1)
 
 /-! ## Side candidates: which stations one end of a leg may be -/
 
@@ -647,7 +641,7 @@ structure TrackFix where
 /-- Project each in-leg fix onto the nearest point of `line`'s track, dropping
     fixes further off it than `TRAJ_OFFLINE_MAX_M`.
 
-    Scans the line's own edge set directly — `edgesNear`'s grid indexes geometry
+    Scans the line's own edge set directly — `edgesNearIdx`'s grid indexes geometry
     VERTICES, so it goes blind mid-span of a sparse edge.
 
     `bestDist` is seeded once per FIX and carried across edges, and the

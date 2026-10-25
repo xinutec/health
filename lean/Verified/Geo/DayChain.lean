@@ -9,7 +9,7 @@ does next — attribute the sleep windows, cut the segment list into a state
 timeline, continue a trailing dwell, and draw the episodes — is six more stages,
 and this composes them.
 
-Every body was already ported. `segmentsToDayStates`, `derivePlaceForSleep` and
+Every body was already ported. `segmentsToDayStates`, `derivePlaceForSleepAt` and
 `detectKnownPlaceStays` are `Geo.DayState`; `applyDwellContinuation` is
 `Geo.DwellContinuation`; `buildEpisodes` is `Geo.EpisodeGeometry`. What did not
 exist was anything that ran them in order against the same day, which is why the
@@ -23,7 +23,7 @@ at all.
                             when today's first stationary segment is hours late.
     sleepPlace              SHELL. A generic "Stay" label gets one chance at a
                             lodging POI from the mirror.
-    derivePlaceForSleep     over the day's segments PLUS the synthetic stay
+    derivePlaceForSleepAt   over the day's segments PLUS the synthetic stay
                             candidates, per raw sleep window.
     segmentsToDayStates     over the day's segments and those enriched windows.
                             NOT the candidate set — the synthetics exist only to
@@ -51,7 +51,7 @@ UNPROVEN.
 namespace Verified.Geo.DayChain
 
 open Verified.Geo.DayState (DayState SleepWindow StayFix StayKnownPlace StayCandidate
-  segmentsToDayStates derivePlaceForSleep detectKnownPlaceStays)
+  segmentsToDayStates detectKnownPlaceStays)
 
 /-- A Fitbit sleep window before place attribution — `RawSleepWindow`
 (`src/sleep/load.ts`). The `place` this lacks is exactly what the chain adds. -/
@@ -149,7 +149,7 @@ def episodeState (s : DayState) : Verified.Geo.EpisodeGeometry.State :=
 /-- A post-midnight stay candidate as the sleep-place attributor reads it: a
 synthetic stationary segment. It never enters the day's segment output, only the
 candidate set, so every field but the window, the mode and the place is filler —
-and `derivePlaceForSleep` reads exactly those. -/
+and `derivePlaceForSleepAt` reads exactly those. -/
 def stayCandidateSeg (c : StayCandidate) : Verified.Geo.DayState.Seg :=
   { startTs := c.startTs, endTs := c.endTs, mode := "stationary", place := some c.place
     -- The name stands for the mined place's centre; a sleep named after this
@@ -263,7 +263,7 @@ def distinctSleepWindows (raw : List RawSleepWindow) : List RawSleepWindow :=
 
 /-- `enrichSleepWindows` — the raw windows, each given the place its onset side
 points at. A one-line map in the TS, and the decision it wraps is
-`derivePlaceForSleep`.
+`derivePlaceForSleepAt`.
 
 ⚠ The BRACKET is consulted first. Where both sides of the window agree it is
 strictly better evidence than the side-and-gap ranking, which cannot see across

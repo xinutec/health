@@ -1,66 +1,25 @@
 import Verified.Geo.Enrich
 import Verified.Geo.StayEnrich
--- For `Shed.PointF` — the Kalman fix as the day's `Env` carries it. Neither of
--- the two branches needs it; the LOOP does, because sampling the window is the
--- dispatch's job and not either branch's.
+-- For `Shed.PointF`, the Kalman fix as the day's `Env` carries it.
 import Verified.Geo.StaySplit
 /-!
-# The OSM enrichment stage (port of the `enriched` loop, `src/geo/velocity.ts`
-903-1054)
+# Naming one stay from its own fixes
 
-The loop between the split stage and the five corrections. It has exactly two
-branches and both are already ported: {@link Verified.Geo.Enrich} is the moving
-one and {@link Verified.Geo.StayEnrich} is the stationary one. What is here is
-the DISPATCH — which branch a segment takes, what it is handed, and the three
-ways a segment leaves the loop untouched.
-
-With it the Lean day stops being two sub-chains (#430 B2). `classifySegments`'
-output runs through {@link Verified.Geo.SplitFold} to here and out into
-{@link Verified.Geo.PreFold}, and the enrichment stage is no longer a gap the
-comparison has to step over.
-
-## Three ways out without being enriched
-
-All three are the TS's, and none of them is an error:
-
-* `pointCount = 0` — a synthetic gap segment. Enriching it with road names would
-  invent context from no GPS data at all.
-* an empty window — the same refusal one step later, when the fixes exist but
-  none of them fall inside this segment.
-* a stationary segment the venue resolver declines to name, which
-  {@link Verified.Geo.StayEnrich.enrichStay} returns unchanged.
-
-The TS had a FOURTH: the `try` around the body turned any lookup failure into a
-warning and an unenriched segment. That one is deliberately not ported. A lookup
-here is an ask the host answers or DECLINES (#1709); a decline is recorded and
-counted, and a failure is a failure — swallowing either would turn a wiring
-divergence into a segment that merely looks unenriched.
-
-## `prev` is the loop's INPUT, not its output
-
-`stationAtTrainAlight` reads `refinedSegments[i - 1]` — the segment as the split
-stage left it, not as this loop enriched it. The difference is real: enrichment
-writes `refinedMode`, and `effMode` prefers it, so a leg this loop had just
-promoted to `train` would answer the question differently. The TS indexes the
-input array, so this does too.
-
-## What is NOT modelled
-
-`ENRICH_CONCURRENCY` and the `mapLimit` it bounds. The segments are independent
-— the TS's own comment says only wall-clock shape changes — so the concurrency
-is a pool-pressure decision, not part of the computation.
+What is left of the OSM enrichment loop (`src/geo/velocity.ts`'s `enriched`):
+the stationary branch for ONE stay, with the window's centroid and scatter
+computed here, and the record of lookups it reads. `walkDwell` names a stop it
+carved out of a walk with it ({@link Verified.Geo.StayEnrich.enrichStay}), so a
+carved stop is elected and named by the same rules as every other stay.
 -/
 
 namespace Verified.Geo.EnrichFold
 
 open Verified.Geo.SegmentMerge (Seg ResolvedPlace)
--- `Shed` is TOP-LEVEL, not nested under `StaySplit` — see `StaySplit.lean:109`.
+-- `Shed` is TOP-LEVEL, not nested under `StaySplit`.
 open Shed (PointF)
 open Verified.Hsmm.FloatScore (haversineMeters)
 
-/-- What the loop asks the world. All five are the caller's, and all five are
-already answered somewhere in the fold's `Env` — this record exists to name the
-subset the enrichment stage reads rather than to introduce new lookups. -/
+/-- What the passes ask the world, each already answered in the fold's `Env`. -/
 structure Reads where
   /-- `osm.nearbyWays(lat, lon)`. -/
   ways : Float → Float → Array Verified.Geo.Factors.NearbyWay
@@ -78,13 +37,9 @@ structure Reads where
   stored coordinates and resolves the zone there too. -/
   tzAt : Float → Float → String
 
-/-- Name ONE stay from its own fixes: the stationary branch with the window's
-centroid and scatter computed here. The loop below calls it per stay, and
-`walkDwell` calls it for a stop carved out of a walk — so a carved stop is
-elected and named by the same rules as every other stay (Home and Work
-outright, a residence at its place, the rest at the naming coordinate) and
-carries its `focusPlaceId`. A window with no fixes comes back unchanged, as
-the loop's own exit does. -/
+/-- Name ONE stay from its own fixes (Home and Work outright, a residence at its
+place, the rest at the naming coordinate), with its `focusPlaceId`. A window
+with no fixes comes back unchanged. -/
 def nameStay (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
     (places : List Verified.Geo.StayEnrich.NamedPlace)
     (points : Array PointF) (prev : Option Seg) (seg : Seg) : Seg :=
@@ -118,134 +73,5 @@ def nameStay (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
         reads.place lat lon pref
           (if withStay then some (seg.startTs, seg.endTs, reads.tzAt lat lon) else none) }
     biom places prev seg cLat cLon spreadM
-
-/-- Run the enrichment stage over one day's segments. -/
-def enrichFold (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
-    (places : List Verified.Geo.StayEnrich.NamedPlace)
-    (points : Array PointF) (segs : Array Seg) : Array Seg :=
-  segs.mapIdx fun i seg =>
-    if seg.pointCount == 0 then seg else
-    let segPoints := points.filter fun p => p.ts ≥ seg.startTs && p.ts ≤ seg.endTs
-    if segPoints.isEmpty then seg else
-    if seg.mode == "stationary" then
-      nameStay reads biom places points (if i == 0 then none else segs[i - 1]?) seg
-    else
-      let pts := segPoints.map fun p =>
-        ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt)
-      let named := (Verified.Geo.Enrich.enrichMovingSegment reads.ways reads.geocode seg pts).getD seg
-      -- A walk carries every road it was on (`roadsByTime`); its label stays
-      -- the five-sample pick's, so the served day reads as before.
-      if seg.mode == "walking" then
-        { named with roads := (Verified.Geo.Enrich.roadsByTime reads.ways pts seg.endTs).map (·.1) }
-      else named
-
-/-! ## Guards
-
-The two branches are pinned in their own modules. What is pinned here is the
-DISPATCH: which branch a segment takes, the three untouched exits, and that
-`prev` comes from the input array. -/
-
-section Guards
-
-open Verified.Geo.TubeHop (NearbyStation)
-
-/-- Binary-exact, so a guard fails on the window rather than on the rounding of
-a mean — the same choice {@link Verified.Geo.SplitFold} makes and for the same
-reason. -/
-private def LAT : Float := 51.5
-private def LON : Float := -0.5
-
-private def pt (ts : Int) (lat lon : Float) : PointF := { ts, lat, lon, speedKmh := 0 }
-
-private def POINTS : Array PointF := #[pt 0 LAT LON, pt 60 LAT LON, pt 120 LAT LON]
-
-/-- Reports the coordinate and both flags, so a guard can pin the QUESTION the
-dispatch asked and not only the name that came back. -/
-private def spy : Reads :=
-  { ways := fun _ _ => #[]
-    geocode := fun _ _ _ => none
-    stations := fun _ _ _ => #[]
-    place := fun lat lon pref stay =>
-      some { label := s!"{fx lat}|{fx lon}|{pref}|{stay.isSome}", city := none }
-    tzAt := fun _ _ => "Europe/London" }
-  where fx (x : Float) : String := (Verified.JsNum.toFixed x 3).getD "?"
-
-private def stay : Seg :=
-  { startTs := 0, endTs := 120, mode := "stationary", pointCount := 3 }
-
-private def run (segs : Array Seg) : Array Seg := enrichFold spy {} [] POINTS segs
-
--- A stay with no mined place is named by the resolver, at the day's centroid,
--- WITH a window — the no-winner arm.
-#guard (run #[stay])[0]!.place == some "51.500|-0.500|false|true"
-
--- The centroid is the MEAN of the fixes in the window, not the first of them and
--- not the segment's own coordinates. Pinned here because nothing downstream
--- would catch a wrong one on a synthetic day: the branches take whatever they
--- are handed. On a real day the recorded lookup tables do catch it — a 0.01°
--- perturbation aborts the day gate on an uncaptured `tzAt` key — but that is the
--- corpus's finding, not this module's, and this is where it belongs.
---
--- Read to three decimals rather than compared as doubles: 51.6 is not exact in
--- binary and its mean with 51.5 is not either, so a guard on the raw double
--- would be a guard on the last bit. What is under test is WHICH fixes enter the
--- mean, and the rendering leaves exactly that visible.
-private def OFFSET : Array PointF := #[pt 0 51.5 (-0.5), pt 120 51.6 (-0.25)]
-#guard (enrichFold spy {} [] OFFSET #[stay])[0]!.place == some "51.550|-0.375|false|true"
--- Only the fixes INSIDE the window count towards it.
-private def SPILL : Array PointF := OFFSET.push (pt 600 52.0 0.0)
-#guard (enrichFold spy {} [] SPILL #[stay])[0]!.place == some "51.550|-0.375|false|true"
-
--- A synthetic gap segment is left alone even though its window has fixes.
-#guard (run #[{ stay with pointCount := 0 }])[0]!.place == none
--- So is a segment whose window holds none — the fixes exist, just not here.
-#guard (run #[{ stay with startTs := 600, endTs := 900 }])[0]!.place == none
--- ... and a resolver with no answer leaves the stay unnamed rather than
--- naming it nothing.
-#guard (enrichFold { spy with place := fun _ _ _ _ => none } {} [] POINTS #[stay])[0]!.place == none
-
-/-! ### The scatter reaches the branch -/
-
-/-- A cafe 0.002° (≈220 m) north of the fixes, established enough that the
-election accepts it from there. -/
-private def cafeNorth : Verified.Geo.StayEnrich.NamedPlace :=
-  { cand := { id := 1, centroidLat := LAT + 0.002, centroidLon := LON, radiusM := 50,
-              uniqueDays := 40, hourProfile := none }
-    displayName := some "Stay", amenityLabel := some "Cafe" }
-
--- Fixes on one spot: the resolver is asked at the fixes, not at the place.
-#guard (enrichFold spy {} [cafeNorth] POINTS #[stay])[0]!.place == some "51.500|-0.500|false|true"
--- The same centroid from fixes a kilometre apart: the blend goes to the place.
-private def WIDE : Array PointF := #[pt 0 (LAT + 0.01) LON, pt 60 LAT LON, pt 120 (LAT - 0.01) LON]
-#guard (enrichFold spy {} [cafeNorth] WIDE #[stay])[0]!.place == some "51.502|-0.500|false|true"
--- Three fixes on one spot over six hours: the scatter is nil but they saw a
--- hundredth of the stay, so the floor inflates to ~110 m and the blend sits
--- past the midpoint towards the place (≈ 51.5011).
-private def SPARSE : Array PointF := #[pt 0 LAT LON, pt 7200 LAT LON, pt 14400 LAT LON]
-#guard (enrichFold spy {} [cafeNorth] SPARSE #[{ stay with endTs := 6 * 3600 }])[0]!.place
-  == some "51.501|-0.500|false|true"
-
-/-! ### The branch, and where `prev` comes from -/
-
-private def STATION : NearbyStation :=
-  { name := "Finchley Road", lat := some LAT, lon := some LON, distanceM := 10 }
-
-private def withStation : Reads := { spy with stations := fun _ _ _ => #[STATION] }
-
-private def train : Seg := { stay with mode := "train", startTs := -120, endTs := 0 }
-
--- A stay right after a train is at the station, so the alight arm reads the
--- PRECEDING element of the array it was handed.
-#guard (enrichFold withStation {} [] POINTS #[train, stay])[1]!.place == some "Finchley Road"
--- The first segment has no predecessor, so the same stay alone is not.
-#guard (enrichFold withStation {} [] POINTS #[stay])[0]!.place == some "51.500|-0.500|false|true"
-
--- A moving segment takes the other branch entirely: no place is written, and
--- `refinedMode` is — including from a resolver that would have named a stay.
-private def walk : Seg := { stay with mode := "walking", avgSpeed := 4 }
-#guard (run #[walk])[0]!.place == none
-#guard (run #[walk])[0]!.refinedMode == some "walking"
-
-end Guards
 
 end Verified.Geo.EnrichFold

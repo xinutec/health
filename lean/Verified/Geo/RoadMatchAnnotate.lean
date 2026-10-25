@@ -193,11 +193,6 @@ def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array
 def annotateRoadMatches (env : Env) (segments : Array Seg) (points : Array Fix) : Array Seg :=
   (annotateRoadMatchesTraced env segments points).run' #[]
 
-/-- The read trace alone. -/
-def readsOf (env : Env) (segments : Array Seg) (points : Array Fix) :
-    Array Verified.Geo.OsmCorridor.Read :=
-  ((annotateRoadMatchesTraced env segments points).run #[]).2
-
 /-! ## Guards (V8 reference values)
 
 Every number below is `lean/experiments/road-match-annotate-refs.mts`'s output
@@ -220,11 +215,6 @@ private def m (la lo ts : Float) : MPt := ⟨la, lo, ts⟩
 private def fx (ts : Int) (la lo sp : Float) : Fix := ⟨ts, la, lo, sp⟩
 private def sg (a b : Int) (mode : Mode) (refined : Option Mode := none) : Seg :=
   { startTs := a, endTs := b, mode := mode, refinedMode := refined }
-private def approxRead (a b : Verified.Geo.OsmCorridor.Read) : Bool :=
-  approx a.lat b.lat && approx a.lon b.lon && approx a.radiusM b.radiusM
-private def approxReads (a b : Array Verified.Geo.OsmCorridor.Read) : Bool :=
-  a.size == b.size && (a.zip b).all fun (x, y) => approxRead x y
-private def r (la lo rad : Float) : Verified.Geo.OsmCorridor.Read := ⟨la, lo, rad⟩
 private def approxM (a b : MPt) : Bool :=
   approx a.lat b.lat && approx a.lon b.lon && approx a.ts b.ts
 private def approxPath : Option (Array MPt) → Option (Array MPt) → Bool
@@ -236,9 +226,6 @@ private def approxOut (a b : Array Seg) : Bool :=
     x.startTs == y.startTs && x.endTs == y.endTs
       && x.mode == y.mode && x.refinedMode == y.refinedMode
       && approxPath x.matchedPath y.matchedPath
-
-private def wy (id : Int) (name subtype : String) (cs : Array Pt) : Way :=
-  { osmId := id, name := some name, subtype := some subtype, coords := cs }
 
 private structure RoadsEntry where
   lat : Float
@@ -502,124 +489,78 @@ private def outOf (segs : Array Seg) (fixes : Array Fix) : Array Seg :=
 -- S1: a walking leg is not a road mode — untouched, and it reads nothing
 private def S1_SEGS : Array Seg := #[sg 2000 2300 "walking" none]
 private def S1_FIXES : Array Fix := CORNER_CUT
---   leg 0: ineligible or too sparse — no match attempted
-#guard approxReads (readsOf ENV S1_SEGS S1_FIXES)
-  #[]
 #guard approxOut (outOf S1_SEGS S1_FIXES) #[
   sg 2000 2300 "walking" none]
 
 -- S2: three in-window fixes: under MIN_LEG_FIXES before any read
 private def S2_SEGS : Array Seg := #[sg 6000 6120 "driving" none]
 private def S2_FIXES : Array Fix := TOO_FEW
---   leg 0: ineligible or too sparse — no match attempted
-#guard approxReads (readsOf ENV S2_SEGS S2_FIXES)
-  #[]
 #guard approxOut (outOf S2_SEGS S2_FIXES) #[
   sg 6000 6120 "driving" none]
 
 -- S3: the p85 stray bar is the SOLE blocker: 95 m off-road, match 60 m away
 private def S3_SEGS : Array Seg := #[sg 2000 2300 "driving" none]
 private def S3_FIXES : Array Fix := CORNER_CUT
---   leg 0: use=false rawOff=94.99812748508089 matchedOff=0 stray=60.000000000114255
-#guard approxReads (readsOf ENV S3_SEGS S3_FIXES)
-  #[r 51.501317523056656 (-0.1363322829128949) 443.0]
 #guard approxOut (outOf S3_SEGS S3_FIXES) #[
   sg 2000 2300 "driving" none]
 
 -- S4: the same leg as bus: same verdict, so the mode only gates eligibility
 private def S4_SEGS : Array Seg := #[sg 2000 2300 "bus" none]
 private def S4_FIXES : Array Fix := CORNER_CUT
---   leg 0: use=false rawOff=94.99812748508089 matchedOff=0 stray=60.000000000114255
-#guard approxReads (readsOf ENV S4_SEGS S4_FIXES)
-  #[r 51.501317523056656 (-0.1363322829128949) 443.0]
 #guard approxOut (outOf S4_SEGS S4_FIXES) #[
   sg 2000 2300 "bus" none]
 
 -- S5: refinedMode makes a walking-classified leg eligible
 private def S5_SEGS : Array Seg := #[sg 2000 2300 "walking" (some "driving")]
 private def S5_FIXES : Array Fix := CORNER_CUT
---   leg 0: use=false rawOff=94.99812748508089 matchedOff=0 stray=60.000000000114255
-#guard approxReads (readsOf ENV S5_SEGS S5_FIXES)
-  #[r 51.501317523056656 (-0.1363322829128949) 443.0]
 #guard approxOut (outOf S5_SEGS S5_FIXES) #[
   sg 2000 2300 "walking" (some "driving")]
 
 -- S6: refinedMode takes a driving-classified leg OUT of scope
 private def S6_SEGS : Array Seg := #[sg 2000 2300 "driving" (some "walking")]
 private def S6_FIXES : Array Fix := CORNER_CUT
---   leg 0: ineligible or too sparse — no match attempted
-#guard approxReads (readsOf ENV S6_SEGS S6_FIXES)
-  #[]
 #guard approxOut (outOf S6_SEGS S6_FIXES) #[
   sg 2000 2300 "driving" (some "walking")]
 
 -- S7: a 3.4 km run on the carriageway — the corridor arm, many reads
 private def S7_SEGS : Array Seg := #[sg 1000 2020 "driving" none]
 private def S7_FIXES : Array Fix := LONG_ONROAD
---   leg 0: use=false rawOff=0 matchedOff=0 stray=0
-#guard approxReads (readsOf ENV S7_SEGS S7_FIXES)
-  #[r 51.5 (-0.14) 50.0,
-    r 51.506288178224935 (-0.14) 50.0,
-    r 51.51257635644988 (-0.14) 50.0,
-    r 51.51886453467481 (-0.14) 50.0,
-    r 51.52515271289975 (-0.14) 50.0,
-    r 51.530542579949696 (-0.14) 50.0]
 #guard approxOut (outOf S7_SEGS S7_FIXES) #[
   sg 1000 2020 "driving" none]
 
 -- S8: the matcher declines outright — the gate never runs
 private def S8_SEGS : Array Seg := #[sg 3000 3300 "driving" none]
 private def S8_FIXES : Array Fix := NEAR_PARALLEL
---   leg 0: matcher returned null
-#guard approxReads (readsOf ENV S8_SEGS S8_FIXES)
-  #[r 51.502245777937475 (-0.13933860839412862) 404.0]
 #guard approxOut (outOf S8_SEGS S8_FIXES) #[
   sg 3000 3300 "driving" none]
 
 -- S9: a lone teleport: the matcher sees the despiked five, not six
 private def S9_SEGS : Array Seg := #[sg 4000 4300 "driving" none]
 private def S9_FIXES : Array Fix := SPIKED
---   leg 0: use=false rawOff=0 matchedOff=0 stray=0
-#guard approxReads (readsOf ENV S9_SEGS S9_FIXES)
-  #[r 51.50179662234998 (-0.14) 350.0]
 #guard approxOut (outOf S9_SEGS S9_FIXES) #[
   sg 4000 4300 "driving" none]
 
 -- S10: cycling caps at 35 km/h — two fixes survive, under MIN_LEG_FIXES
 private def S10_SEGS : Array Seg := #[sg 5000 5180 "cycling" none]
 private def S10_FIXES : Array Fix := FAST_CYCLE
---   leg 0: ineligible or too sparse — no match attempted
-#guard approxReads (readsOf ENV S10_SEGS S10_FIXES)
-  #[]
 #guard approxOut (outOf S10_SEGS S10_FIXES) #[
   sg 5000 5180 "cycling" none]
 
 -- S11: the same fixes as bus: no cap entry, so all four survive
 private def S11_SEGS : Array Seg := #[sg 5000 5180 "bus" none]
 private def S11_FIXES : Array Fix := FAST_CYCLE
---   leg 0: use=false rawOff=0 matchedOff=0 stray=0
-#guard approxReads (readsOf ENV S11_SEGS S11_FIXES)
-  #[r 51.50134746676249 (-0.14) 300.0]
 #guard approxOut (outOf S11_SEGS S11_FIXES) #[
   sg 5000 5180 "bus" none]
 
 -- S12: empty corridor: one read, then a bail before the matcher
 private def S12_SEGS : Array Seg := #[sg 7000 7240 "driving" none]
 private def S12_FIXES : Array Fix := NOWHERE
---   leg 0: empty corridor after 1 read — no match attempted
-#guard approxReads (readsOf ENV S12_SEGS S12_FIXES)
-  #[r 51.50179662234998 0.14860724619843596 350.0]
 #guard approxOut (outOf S12_SEGS S12_FIXES) #[
   sg 7000 7240 "driving" none]
 
 -- S13: two legs — the trace is leg-by-leg, not interleaved
 private def S13_SEGS : Array Seg := #[sg 2000 2300 "driving" none, sg 3000 3300 "driving" none]
 private def S13_FIXES : Array Fix := (CORNER_CUT ++ NEAR_PARALLEL)
---   leg 0: use=false rawOff=94.99812748508089 matchedOff=0 stray=60.000000000114255
---   leg 1: matcher returned null
-#guard approxReads (readsOf ENV S13_SEGS S13_FIXES)
-  #[r 51.501317523056656 (-0.1363322829128949) 443.0,
-    r 51.502245777937475 (-0.13933860839412862) 404.0]
 #guard approxOut (outOf S13_SEGS S13_FIXES) #[
   sg 2000 2300 "driving" none,
   sg 3000 3300 "driving" none]
@@ -627,12 +568,6 @@ private def S13_FIXES : Array Fix := (CORNER_CUT ++ NEAR_PARALLEL)
 -- S14: an ineligible leg between two eligible ones contributes no reads
 private def S14_SEGS : Array Seg := #[sg 2000 2300 "driving" none, sg 6000 6120 "driving" none, sg 3000 3300 "driving" none]
 private def S14_FIXES : Array Fix := (CORNER_CUT ++ TOO_FEW ++ NEAR_PARALLEL)
---   leg 0: use=false rawOff=94.99812748508089 matchedOff=0 stray=60.000000000114255
---   leg 1: ineligible or too sparse — no match attempted
---   leg 2: matcher returned null
-#guard approxReads (readsOf ENV S14_SEGS S14_FIXES)
-  #[r 51.501317523056656 (-0.1363322829128949) 443.0,
-    r 51.502245777937475 (-0.13933860839412862) 404.0]
 #guard approxOut (outOf S14_SEGS S14_FIXES) #[
   sg 2000 2300 "driving" none,
   sg 6000 6120 "driving" none,
@@ -641,29 +576,18 @@ private def S14_FIXES : Array Fix := (CORNER_CUT ++ TOO_FEW ++ NEAR_PARALLEL)
 -- S15: the window is INCLUSIVE at both ends: a boundary fix is in
 private def S15_SEGS : Array Seg := #[sg 2060 2240 "driving" none]
 private def S15_FIXES : Array Fix := CORNER_CUT
---   leg 0: use=false rawOff=94.99812748508089 matchedOff=0 stray=60.000000000114255
-#guard approxReads (readsOf ENV S15_SEGS S15_FIXES)
-  #[r 51.50107797340999 (-0.1359414606003345) 340.0]
 #guard approxOut (outOf S15_SEGS S15_FIXES) #[
   sg 2060 2240 "driving" none]
 
 -- S16: all three bars clear — the pass attaches a matchedPath
 private def S16_SEGS : Array Seg := #[sg 8000 8300 "driving" none]
 private def S16_FIXES : Array Fix := CORNER_TIGHT
---   leg 0: use=true rawOff=38.46118856892588 matchedOff=0 stray=0
-#guard approxReads (readsOf ENV S16_SEGS S16_FIXES)
-  #[r 51.50142232602707 (-0.13579114432627282) 482.0]
 #guard approxOut (outOf S16_SEGS S16_FIXES) #[
   { sg 8000 8300 "driving" none with matchedPath := some #[m 51.5 (-0.14) 8000.0, m 51.5 (-0.1342278550760313) 8132.0, m 51.503593244699964 (-0.1342278550760313) 8300.0] }]
 
 -- S17: the accepting leg beside a rejecting one: only the first is rewritten
 private def S17_SEGS : Array Seg := #[sg 8000 8300 "driving" none, sg 2000 2300 "driving" none]
 private def S17_FIXES : Array Fix := (CORNER_TIGHT ++ CORNER_CUT)
---   leg 0: use=true rawOff=38.46118856892588 matchedOff=0 stray=0
---   leg 1: use=false rawOff=94.99812748508089 matchedOff=0 stray=60.000000000114255
-#guard approxReads (readsOf ENV S17_SEGS S17_FIXES)
-  #[r 51.50142232602707 (-0.13579114432627282) 482.0,
-    r 51.501317523056656 (-0.1363322829128949) 443.0]
 #guard approxOut (outOf S17_SEGS S17_FIXES) #[
   { sg 8000 8300 "driving" none with matchedPath := some #[m 51.5 (-0.14) 8000.0, m 51.5 (-0.1342278550760313) 8132.0, m 51.503593244699964 (-0.1342278550760313) 8300.0] },
   sg 2000 2300 "driving" none]
@@ -671,38 +595,14 @@ private def S17_FIXES : Array Fix := (CORNER_TIGHT ++ CORNER_CUT)
 -- S18: a spike inside the accepting leg: despiked, so the match still lands
 private def S18_SEGS : Array Seg := #[sg 8000 8300 "driving" none]
 private def S18_FIXES : Array Fix := CORNER_SPIKED
---   leg 0: use=true rawOff=38.46118856892588 matchedOff=0 stray=0
-#guard approxReads (readsOf ENV S18_SEGS S18_FIXES)
-  #[r 51.50142232602707 (-0.13579114432627282) 482.0]
 #guard approxOut (outOf S18_SEGS S18_FIXES) #[
   { sg 8000 8300 "driving" none with matchedPath := some #[m 51.5 (-0.14) 8000.0, m 51.5 (-0.1342278550760313) 8132.0, m 51.503593244699964 (-0.1342278550760313) 8300.0] }]
 
 -- S19: a fix exactly ON the cycling cap survives — the bar is inclusive
 private def S19_SEGS : Array Seg := #[sg 9000 9180 "cycling" none]
 private def S19_FIXES : Array Fix := CAP_EXACT
---   leg 0: use=false rawOff=0 matchedOff=0 stray=0
-#guard approxReads (readsOf ENV S19_SEGS S19_FIXES)
-  #[r 51.50134746676249 (-0.14) 300.0]
 #guard approxOut (outOf S19_SEGS S19_FIXES) #[
   sg 9000 9180 "cycling" none]
-
-/-! ### Deliberately unpinned
-
-One branch of this pass survives a mutation sweep, and it survives because it
-cannot change the answer:
-
-* **the `ways.isEmpty` bail.** Deleting it sends an empty corridor on to the
-  matcher and then to the gate — and the gate cannot accept there.
-  `matchImprovesDisplay` computes `rawOffRoadM` as the worst distance from the
-  drawn line to the network, which is 0 when there IS no network, and its
-  first conjunct needs `rawOffRoadM > 25`. `DisplayGate`'s own `dNoWays`
-  guard pins that. So the bail is a COST decision (do not run a matcher over
-  nothing) and not a correctness one, and no output guard can see it.
-
-What WOULD see it is a trace of matcher calls, the way the mirror reads are
-traced. That is not modelled: the matcher is a pure `Env` field, and giving
-it a call log would put a test-only channel into the pass's shape.
--/
 
 end Guards
 

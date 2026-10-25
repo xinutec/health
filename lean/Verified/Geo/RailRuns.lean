@@ -4,10 +4,8 @@ import Verified.Fix
 /-!
 # Rail-run leaves (port of the pure functions in `src/geo/passes/rail-runs.ts`)
 
-Three helpers the rail-run annotator uses to decide where a ride began and
-ended, and what to call the line it ran on. The surrounding
-`annotateRailRuns` orchestration is async (station and line lookups against
-OSM) and stays shell; these are its pure decisions.
+Three helpers the train labeller (`Verified.Geo.RailRunAnnotate`) uses to decide
+where a ride began and ended, and what to call the line it ran on.
 
 * `findBoardingPlatformFix` — walk backwards from the first train-speed fix to
   the platform the rider actually boarded from.

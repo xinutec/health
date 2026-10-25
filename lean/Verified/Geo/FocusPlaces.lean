@@ -46,9 +46,7 @@ def STAY_RADIUS_M : Float := 100
 /-- How long a dwell must last to be MINED as a visit. Short enough to catch
 cafés.
 
-NOT `Verified.Geo.Segments.SEGMENT_STAY_MIN_S` (15 min), which asks whether
-there is a stay in the track at all. This is the LOWER bar, on purpose. Both
-were called `STAY_MIN_DURATION_SEC` until #762. -/
+Not a bar on whether there is a stay in the track at all. -/
 def FOCUS_VISIT_MIN_S : Int := 10 * 60
 def ACCURACY_FILTER_M : Float := 200
 def CLUSTER_RADIUS_M : Float := 150

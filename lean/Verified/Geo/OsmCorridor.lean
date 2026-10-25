@@ -203,7 +203,6 @@ def corridorWays (query : Float → Float → Float → Option (Array Way))
       acc := unionById acc ws
   return if answered then some acc else none
 
-
 /-! ## Guards (V8 reference values)
 
 Every number below is `lean/experiments/road-match-annotate-refs.mts`'s output
@@ -293,9 +292,6 @@ private def R12_TRACK : Array Pt := #[p 51.5 (-0.14), p 51.50538986704995 (-0.14
 #guard approxPts (resamplePolyline R12_TRACK 600.0000000003515 48) #[p 51.5 (-0.14), p 51.50538986704995 (-0.14)]
 
 /-! ### `corridorWays` — the arm choice, the read trace, the union -/
-
-private def wy (id : Int) (name subtype : String) (cs : Array Pt) : Way :=
-  { osmId := id, name := some name, subtype := some subtype, coords := cs }
 
 private structure RoadsEntry where
   lat : Float
@@ -475,38 +471,6 @@ private def U_B : Array Way := #[
 #guard jsRound 399.4 == 399.0
 #guard jsRound 399.5 == 400.0
 #guard jsRound 400.5 == 401.0
-
-/-! ### Deliberately unpinned
-
-A mutation sweep over this module leaves four comparisons that no guard can
-distinguish. Each survives for a reason, not for want of a fixture.
-
-* **`nextAt ≤ acc + segLen` vs `<`.** When the walk lands exactly on a
-  segment's end, BOTH spellings emit that point: `≤` emits it as this
-  segment's `t = 1`, and `<` emits it as the next segment's `t = 0` — the
-  same coordinate, at the same position in the array, because the segments
-  share the vertex. On the FINAL segment `<` instead leaves it to the
-  endpoint push, which fires whenever the gap exceeds 1 m; the gap there is a
-  whole `step`, and every caller's step is 700 m. `R12` is the fixture that
-  lands on the boundary — its step is the segment's own MEASURED length, not
-  a round number — and it shows the two agreeing.
-* **`segLen > 0` vs `≥ 0`.** The zero-length branch can never iterate:
-  `nextAt > acc` holds on entry to every segment (it starts at `step > 0`
-  with `acc = 0`, and each segment exits with `nextAt > acc + segLen`), so a
-  segment of length zero fails `nextAt ≤ acc + 0` immediately. It becomes
-  reachable only at `step = 0`, which `max stepM …` cannot produce for a
-  caller passing a positive `stepM` — the only caller passes 700.
-* **`d > best` vs `d ≥ best`** in the farthest-fix fold. The two differ only
-  in which of two EQUAL values is retained, and the retained number is the
-  same either way.
-* **`maxDist ≤ 600` vs `<`.** This one needs `maxDist` to be exactly 600.0,
-  and a sweep of the two-point N-S family — the endpoint moved one latitude
-  ULP at a time, 4,000,000 steps, 2,000,000 distinct distances — never landed on it.
-  The closest approaches were 599.9999999995606 below and 600.0000000003515 above.
-  The reason is granularity: at 600 m one latitude ULP moves the distance by
-  ~7.9e-10 m while the result's own ULP is ~1.14e-13 m, so each input step
-  skips thousands of representable outputs. UNPINNED, and measured to be so.
--/
 
 end Guards
 

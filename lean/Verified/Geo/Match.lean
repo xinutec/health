@@ -26,7 +26,7 @@ The file runs the whole pipeline in three parts:
   penalty, even-odd ray cast with an integer bbox reject and a fix-support
   scan).
 - **Part 2 — graph / candidates / routing**: `buildQGraph`,
-  `qCandidatesForFix`, and `qRouteBetween` over the reused `LazyDijkstra`
+  `qCandidatesForFixFast`, and `qRouteBetween` over the reused `LazyDijkstra`
   cache.
 - **Part 3 — Viterbi + walk pipeline**: `qMatchTrajectory` /
   `qMatchWalkSegment`, then the honesty corollaries.
@@ -505,8 +505,8 @@ the last read off `mkQCorridor` directly.
 
 Dilating the box by a cell before filing is what makes the middle step pure
 interval containment. The alternative — filing the raw box and arguing that a
-nearby query still rasterises into some filed cell — is the density argument
-`RingSearch.lean` never managed to discharge. -/
+nearby query still rasterises into some filed cell — needs a rasterisation
+density argument. -/
 
 /-- Floor division is monotone: a smaller coordinate cannot land in a later
 cell. Every grid here rests on this. -/
@@ -521,8 +521,7 @@ endpoints were filed under. Every grid in this file reduces to this: file an
 item across the cells its interval spans, and any query inside the interval is
 found in one bucket. Grids that answer *proximity* rather than *containment*
 (the corridor's) dilate the interval by a cell first, and then apply this to the
-dilated one — which is why none of them needs a rasterisation-density argument
-(cf. `RingSearch.lean`'s undischarged `hgeom`). -/
+dilated one — which is why none of them needs a rasterisation-density argument. -/
 theorem fdiv_mem_range {lo hi p cell : Int} (hcell : 0 < cell)
     (h1 : lo ≤ p) (h2 : p ≤ hi) :
     lo.fdiv cell ≤ p.fdiv cell ∧ p.fdiv cell ≤ hi.fdiv cell :=
@@ -585,36 +584,11 @@ theorem near_chord_cell_range {p f : QPt} {farUm : Nat}
   exact ⟨cell_mem_range (by omega) (by omega) (by omega),
     cell_mem_range (by omega) (by omega) (by omega)⟩
 
-/-- Brute-force nearest-chord distance (the float grid is exact by its
-own argument), clamped at `farUm` (`QCorridor.distTo`). -/
-def QCorridor.distTo (co : QCorridor) (p : QPt) : Nat := Id.run do
-  if co.fixes.size == 0 then return 0
-  if co.fixes.size == 1 then return qDist p (co.fixes.getD 0 default)
-  let mut best : Nat := co.farUm
-  for i in [1:co.fixes.size] do
-    let a := co.fixes.getD (i - 1) default
-    let b := co.fixes.getD i default
-    if latGapUm p a b ≥ best then continue
-    let c : Int := cosQ ((a.la + b.la).tdiv 2)
-    let bx : Int := ((b.lo - a.lo) * 11132 * c).fdiv 1048576
-    let vy : Int := (b.la - a.la) * 11132
-    let px : Int := ((p.lo - a.lo) * 11132 * c).fdiv 1048576
-    let py : Int := (p.la - a.la) * 11132
-    let len2 : Int := bx * bx + vy * vy
-    let d : Nat :=
-      if len2 = 0 then qDist p a
-      else
-        let dot : Int := max 0 (min (px * bx + py * vy) len2)
-        qDist p { la := a.la + roundDiv (dot * (b.la - a.la)) len2
-                  lo := a.lo + roundDiv (dot * (b.lo - a.lo)) len2, ts := 0 }
-    if d < best then best := d
-  return best
-
-/-- **Grid-indexed `distTo`** — same value, one bucket instead of every chord.
-`distTo` was the matcher's hot spot (O(chords) per graph edge, and there is one
-`distTo` per edge weight); the float matcher hit the same wall and answered it
+/-- **Grid-indexed distance to the corridor** — the value a scan of every chord
+gives, from one bucket. The scan was the matcher's hot spot (O(chords) per graph
+edge, one per edge weight); the float matcher hit the same wall and answered it
 with a chord grid. Reading only `p`'s own cell is exact because the bucket holds
-every chord within `farUm` (`near_chord_cell_range`), and `distTo` clamps at
+every chord within `farUm` (`near_chord_cell_range`), and the distance clamps at
 `farUm`, so a chord filed elsewhere could not have lowered the answer anyway.
 
 Two further departures from the spec's shape, both value-preserving:
@@ -703,9 +677,9 @@ footprint index `inAnyRingFast` reads.
 
 `grid` files ring `i` in every cell its bounding box meets. Because the test
 here is *containment* rather than proximity, no dilation is needed: a `p` inside
-ring `i`'s box is inside one of those cells, so ring `i` is in `p`'s own bucket
-(`ring_box_cell_range`). The bucket therefore holds every ring that survives the
-box reject, which is exactly the set `inAnyRing`'s scan would test. -/
+ring `i`'s box is inside one of those cells (`fdiv_mem_range` on each axis), so
+ring `i` is in `p`'s own bucket. The bucket therefore holds every ring that
+survives the box reject, which is exactly the set a scan of every ring tests. -/
 structure QBuildings where
   rings : Array (Array QPt)
   boxes : Array QBox
@@ -758,37 +732,12 @@ def mkQBuildings (buildings : Array (Array QPt)) (fixes : Array QPt)
       cy := cy + 1
   return { rings, boxes, fixes, crossFactor, supportUm, cellLa, cellLo, grid }
 
-/-- **The bucket `inAnyRingFast` reads holds every ring whose box contains the
-query.** A ring filed in some other cell fails `inAnyRing`'s own box reject, and
-a ray cast the scan never performs cannot change a disjunction — so scanning one
-bucket and scanning all rings return the same `Bool`.
-
-Both cell widths are positive as `mkQBuildings` computes them (a non-negative
-division plus one, with `cmin` clamped to at least 1); that is read off the
-constructor rather than proved, and it is the only structural step here. -/
-theorem ring_box_cell_range {p : QPt} {b : QBox} {cellLa cellLo : Int}
-    (hLa : 0 < cellLa) (hLo : 0 < cellLo)
-    (h1 : b.minLa ≤ p.la) (h2 : p.la ≤ b.maxLa)
-    (h3 : b.minLo ≤ p.lo) (h4 : p.lo ≤ b.maxLo) :
-    (b.minLa.fdiv cellLa ≤ p.la.fdiv cellLa ∧ p.la.fdiv cellLa ≤ b.maxLa.fdiv cellLa)
-    ∧ (b.minLo.fdiv cellLo ≤ p.lo.fdiv cellLo ∧ p.lo.fdiv cellLo ≤ b.maxLo.fdiv cellLo) :=
-  ⟨fdiv_mem_range hLa h1 h2, fdiv_mem_range hLo h3 h4⟩
-
-/-- Brute-force footprint test — box reject, then the exact ray cast. -/
-def QBuildings.inAnyRing (bld : QBuildings) (p : QPt) : Bool := Id.run do
-  for i in [0:bld.rings.size] do
-    let b := bld.boxes.getD i default
-    if p.la < b.minLa || p.la > b.maxLa || p.lo < b.minLo || p.lo > b.maxLo then
-      continue
-    if qPointInRing p (bld.rings.getD i default) then return true
-  return false
-
-/-- **Grid-indexed `inAnyRing`** — same value, one bucket instead of every ring.
-The brute-force scan was the matcher's dominant cost (two `factor` samples per
-graph edge, each scanning all ~3k corridor footprints); `p`'s bucket contains
-every ring whose box contains `p` (`ring_box_cell_range`), and a ring the scan
-would reject on its box cannot change a disjunction of ray casts, so the two
-agree. Bucket order is ascending ring index, as in the scan. -/
+/-- **Grid-indexed footprint test** — the value a scan of every ring gives, from
+one bucket. The scan was the matcher's dominant cost (two `factor` samples per
+graph edge, each over all ~3k corridor footprints); `p`'s bucket contains every
+ring whose box contains `p`, and a ring the scan would reject on its box cannot
+change a disjunction of ray casts, so the two agree. Bucket order is ascending
+ring index, as in the scan. -/
 def QBuildings.inAnyRingFast (bld : QBuildings) (p : QPt) : Bool := Id.run do
   let cands := bld.grid.getD (cellKeyN (p.la.fdiv bld.cellLa) (p.lo.fdiv bld.cellLo)) #[]
   for i in cands do
@@ -1143,29 +1092,11 @@ def cutTieInclusive (sorted : Array QCand) (maxCands : Nat) : Array QCand := Id.
     if (sorted.getD i default).dist ≤ cutoff then n := n + 1 else break
   return sorted.extract 0 n
 
-/-- `candidatesForFix`'s twin: scan every segment, keep projections
-within the radius, sort by `(dist, si)` (a strict total order — `si`
-distinct — so `qsort` is deterministic), take the first `maxCands` plus
-any tie behind them. -/
-def qCandidatesForFix (fix : QPt) (gr : QGraph) (radiusUm maxCands : Nat) :
-    Array QCand := Id.run do
-  let mut cands : Array QCand := #[]
-  for si in [0:gr.segments.size] do
-    let s := gr.segments.getD si default
-    let a := gr.vertices.getD s.u default
-    let b := gr.vertices.getD s.v default
-    if latGapUm fix a b > radiusUm then continue
-    let proj := qProject fix a b
-    if proj.dist ≤ radiusUm then
-      cands := cands.push { la := proj.la, lo := proj.lo, dist := proj.dist, si, tn := proj.tn, td := proj.td }
-  let sorted := cands.qsort (fun p q => p.dist < q.dist || (p.dist == q.dist && p.si < q.si))
-  return cutTieInclusive sorted maxCands
-
 /-- Spatial index over a graph's segments, cells one `radiusUm` wide, each
 segment filed in every cell its endpoint box **dilated by one cell** touches. A
 segment within `radiusUm` of `fix` is within `radiusUm` of its own box, hence at
 most one cell away from it on each axis, hence filed in `fix`'s own cell — so
-one bucket holds every segment `qCandidatesForFix` could keep
+one bucket holds every segment a scan of all segments could keep
 (`near_segment_cell_range`).
 
 The longitude cell is stepped by `(radiusUm + 1)·2^20`, not `radiusUm·2^20`,
@@ -1208,71 +1139,6 @@ def mkQSegIndex (gr : QGraph) (radiusUm : Nat) (cmin : Int) : QSegIndex := Id.ru
         cx := cx + 1
       cy := cy + 1
   return { cellLa, cellLo, grid }
-
-/-- Two strictly increasing lists of naturals with the same members are equal.
-Ascending order plus set equality pins the sequence — the fact that lets a
-grid-indexed scan be compared to a full scan without any appeal to how either
-one was built. -/
-theorem eq_of_pairwise_lt {l₁ l₂ : List Nat}
-    (h₁ : l₁.Pairwise (· < ·)) (h₂ : l₂.Pairwise (· < ·))
-    (hmem : ∀ a, a ∈ l₁ ↔ a ∈ l₂) : l₁ = l₂ := by
-  induction l₁ generalizing l₂ with
-  | nil =>
-    cases l₂ with
-    | nil => rfl
-    | cons b t => exact absurd ((hmem b).mpr (List.mem_cons_self ..)) (by simp)
-  | cons a t ih =>
-    cases l₂ with
-    | nil => exact absurd ((hmem a).mp (List.mem_cons_self ..)) (by simp)
-    | cons b t₂ =>
-      rw [List.pairwise_cons] at h₁ h₂
-      -- Both heads are their list's minimum and each lies in the other list,
-      -- so neither can be the strictly smaller one.
-      have hab : a = b := by
-        have ha2 : a ∈ b :: t₂ := (hmem a).mp (List.mem_cons_self ..)
-        have hb1 : b ∈ a :: t := (hmem b).mpr (List.mem_cons_self ..)
-        rcases List.mem_cons.mp ha2 with h | h
-        · exact h
-        · rcases List.mem_cons.mp hb1 with h' | h'
-          · exact h'.symm
-          · have p1 := h₁.1 b h'
-            have p2 := h₂.1 a h
-            omega
-      subst hab
-      have htail : ∀ x, x ∈ t ↔ x ∈ t₂ := by
-        intro x
-        constructor
-        · intro hx
-          rcases List.mem_cons.mp ((hmem x).mp (List.mem_cons_of_mem _ hx)) with h | h
-          · have := h₁.1 x hx; omega
-          · exact h
-        · intro hx
-          rcases List.mem_cons.mp ((hmem x).mpr (List.mem_cons_of_mem _ hx)) with h | h
-          · have := h₂.1 x hx; omega
-          · exact h
-      rw [ih h₁.2 h₂.2 htail]
-
-/-- **One bucket equals the full scan.** If a bucket lists indices in strictly
-ascending order, stays inside `[0, n)`, and omits nothing that passes `keep`,
-then filtering it gives exactly the sequence a full `[0, n)` scan would — same
-elements, same order.
-
-This is the bridge every grid-indexed path in this file needs, and it is where
-the ascending, deduplicated fill order earns its keep: without it the bucket
-would still hold the right *set* but not the right sequence, and downstream
-code that is order-sensitive (a `qsort` with ties, an `extract` prefix) could
-diverge. With it, the fast and slow arms are comparing identical arrays. -/
-theorem filter_eq_filter_range {n : Nat} {bkt : List Nat} {keep : Nat → Bool}
-    (hasc : bkt.Pairwise (· < ·))
-    (hsub : ∀ i ∈ bkt, i < n)
-    (hsup : ∀ i, i < n → keep i = true → i ∈ bkt) :
-    bkt.filter keep = (List.range n).filter keep := by
-  refine eq_of_pairwise_lt (hasc.filter _) (List.pairwise_lt_range.filter _) ?_
-  intro a
-  simp only [List.mem_filter, List.mem_range]
-  constructor
-  · rintro ⟨h1, h2⟩; exact ⟨hsub a h1, h2⟩
-  · rintro ⟨h1, h2⟩; exact ⟨hsup a h1 h2, h2⟩
 
 /-- Latitude reach under the *inclusive* radius test. -/
 theorem la_within_cell_le {p f : QPt} {radiusUm : Nat} (h : qDist p f ≤ radiusUm) :
@@ -1320,8 +1186,8 @@ theorem near_segment_cell_range {p f : QPt} {radiusUm : Nat}
   exact ⟨cell_mem_range (by omega) (by omega) (by omega),
     cell_mem_range (by omega) (by omega) (by omega)⟩
 
-/-- **Grid-indexed `qCandidatesForFix`** — same value, one bucket instead of
-every segment. The all-segments scan is `candidatesForFix`'s shape and was the
+/-- **Grid-indexed candidates** — the value a scan of every segment gives, from
+one bucket. The all-segments scan is `candidatesForFix`'s shape and was the
 matcher's largest single cost once the corridor was indexed (one scan of ~25 k
 segments per GPS fix). The bucket holds every segment that can pass the radius
 test (`near_segment_cell_range`), so both arms sort the same candidate set.
@@ -1332,8 +1198,9 @@ same array in gives the same cut out. The two arms never hand `qsort`
 differently-ordered arrays: `mkQSegIndex` fills each bucket
 with `si` ascending (the outer loop is ascending and the push dedups against the
 bucket's last entry), this loop walks the bucket in index order, and the scan
-walks `[0, segments.size)` — so by `filter_eq_filter_range` the two collect the
-*same* array, and whatever `qsort` then does to it, it does to both. Bare core
+walks `[0, segments.size)` — so the two collect the *same* array (a strictly
+ascending bucket that omits nothing the filter keeps filters to the scan's
+sequence), and whatever `qsort` then does to it, it does to both. Bare core
 ships no `qsort` correctness lemma, and this path does not need one. -/
 def qCandidatesForFixFast (fix : QPt) (gr : QGraph) (idx : QSegIndex)
     (radiusUm maxCands : Nat) : Array QCand := Id.run do

@@ -170,20 +170,6 @@ def namingCoordinate (cLat cLon spreadM : Float)
 address beats a co-located venue label. -/
 def RESIDENCE_SLEEP_THRESHOLD_H : Float := 5
 
-/-- How many DISTINCT days a cluster must have been visited before its mined
-`amenityLabel` is allowed to name a stay.
-
-A majority vote taken over a single visit is not a majority — it is one
-observation wearing the shape of a consensus. Below this bar the label is
-dropped and the cascade falls through to the address, which is the neutral
-answer rather than a confident wrong one.
-
-⚠ A cluster that HAS a label and fails this bar is still not `venueless`: the
-TS reads `venueless = wp.amenityLabel === null`, testing the FIELD and not this
-gate's verdict, so it falls through with `preferResidential := false`. Gating
-`venueless` on this too would be the natural-looking change and would diverge. -/
-def MINED_LABEL_MIN_DAYS : Float := 2
-
 /-- In σ of the place ({@link Verified.Geo.PlacePrior.effectiveSigmaM}), how far
 a stay must sit from the Home or Work it elected before the building around it
 is asked about (#325). Census over the corpus (2026-10-04): of 74 stays named
@@ -399,9 +385,8 @@ private def resid : NamedPlace :=
 private def venueless : NamedPlace :=
   { cand := cand 4 LAT LON 40, displayName := some "Stay", sleepHours := 0 }
 
-/-- The same cafe seen on ONE day and on TWO — the pair straddles
-`MINED_LABEL_MIN_DAYS`, so they pin the bar's value and its strictness rather
-than merely exercising the branch. -/
+/-- The same cafe seen on ONE day and on TWO: the day count does not change
+the question asked. -/
 private def cafe1day : NamedPlace := { cafe with cand := cand 5 LAT LON 1 }
 
 private def cafe2day : NamedPlace := { cafe with cand := cand 6 LAT LON 2 }
@@ -464,7 +449,7 @@ private def runFar (reads : Reads) : Seg := enrichStay reads {} [farHome] none s
 #guard (run spy [cafe2day]).place == some "51.520|-0.130|false|true"
 #guard (run spy [cafe1day]).place == some "51.520|-0.130|false|true"
 -- And note WHICH question the one-day cluster asks: `preferResidential=false`.
--- A cluster that fails the day bar still carries an `amenityLabel`, so it is
+-- A one-day cluster still carries an `amenityLabel`, so it is
 -- NOT `venueless` — contrast the venueless guard below, which asks with `true`.
 -- Folding this gate into `venueless` is the plausible-looking change that would
 -- diverge from the TS, which tests the FIELD and not this verdict.

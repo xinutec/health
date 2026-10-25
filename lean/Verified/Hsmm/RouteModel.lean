@@ -8,7 +8,7 @@ import Verified.Hsmm.ChainContext
 /-!
 # Unified route-graph model + fully Lean-computed route-rail factor
 
-Composes the ported route-graph query primitives (`edgesNear`, `pathExistsOnLine`,
+Composes the ported route-graph query primitives (`edgesNearIdx`, `pathExistsOnLine`,
 `pointToPolylineMeters`, `parseLineMemberships`-derived memberships, `haversine`)
 into the route-rail emission term — the FIRST factor whose route-graph facts
 (`linesPresent` / `linesUnderground` at each bookend fix, and per-line
@@ -75,7 +75,7 @@ def buildRouteGraphModel (edges : Array RouteEdge) : RouteGraphModel :=
   { edges, cellIndex, nodeEdges }
 
 /-- Edge indices whose geometry passes within `radiusM` of `(lat, lon)` (grid
-    scan, dedup, first-seen order — same as `RouteGraph.edgesNear`). -/
+    scan, dedup, first-seen order). -/
 def edgesNearIdx (g : RouteGraphModel) (lat lon radiusM : Float) : Array (Fin g.edges.size) :=
   ((neighborCells lat lon).foldl (fun (st : Array (Fin g.edges.size) × Array (Fin g.edges.size)) c =>
     (g.cellIndex.getD c #[]).foldl (fun (st : Array (Fin g.edges.size) × Array (Fin g.edges.size)) i =>

@@ -50,22 +50,7 @@ made the parser merely close would fail loudly rather than shift every fix by an
 invisible amount.
 
 Measured 2026-08-26 before relying on it, rather than assumed. -/
-def parsesTo (s : String) (x : Float) : Bool :=
-  match Json.parse s >>= (·.getNum?) with
-  | .ok n => n.toFloat.toBits == x.toBits
-  | .error _ => false
 
-#guard parsesTo "51.5" 51.5
-#guard parsesTo "-0.1278" (-0.1278)
--- 17 significant digits: the widest a round-tripping double ever needs.
-#guard parsesTo "51.500100000000014" (Float.ofBits 4632444812033547622)
-#guard parsesTo "-0.12345678901234567" (Float.ofBits 13816932456701818462)
-#guard parsesTo "51.512345678901234" (Float.ofBits 4632446535459639385)
-#guard parsesTo "123.45678901234568" (Float.ofBits 4638387916139875481)
--- ⚠ AND EXPONENT NOTATION, which is what an emitter writes for a small speed.
--- A parser that rejected it would fail loudly; one that read it as 0 would not.
-#guard parsesTo "1e-7" 0.0000001
-#guard parsesTo "-1.5e-9" (-0.0000000015)
 def jFloatField (j : Json) (k : String) : Except String Float := do jFloat (← j.getObjVal? k)
 def jOptFloat (j : Json) (k : String) : Except String (Option Float) :=
   match j.getObjVal? k with

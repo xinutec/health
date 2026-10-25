@@ -29,32 +29,4 @@ structure NearbyWay where
   type : String
   subtype : String
 
-/-- Nearest rail-only way and nearest drivable road for a fix's ways. `none` for a
-    kind with nothing in range. -/
-def railRoadDistFromWays (ways : List NearbyWay) : Option Float × Option Float :=
-  let inf : Float := 1.0 / 0.0
-  let (minRail, minRoad) := ways.foldl (fun (acc : Float × Float) w =>
-    match w.distanceM with
-    | none => acc
-    | some d =>
-      if !d.isFinite then acc
-      else if w.type == "railway" && RAIL_ONLY_SUBTYPES.contains w.subtype then
-        (min acc.1 d, acc.2)
-      else if w.type == "highway" && DRIVABLE_HIGHWAY_SUBTYPES.contains w.subtype then
-        (acc.1, min acc.2 d)
-      else acc) (inf, inf)
-  (if minRail.isFinite then some minRail else none,
-   if minRoad.isFinite then some minRoad else none)
-
--- Parity with the real `railRoadDistFromWays`.
-private def w (d : Float) (ty sub : String) : NearbyWay := ⟨some d, ty, sub⟩
-#guard railRoadDistFromWays [w 100 "railway" "rail", w 50 "highway" "primary",
-  w 80 "railway" "subway", w 30 "railway" "tram", w 20 "highway" "footway"]
-  == (some 80, some 50)                                        -- tram/footway excluded
-#guard railRoadDistFromWays [w 40 "highway" "motorway", w 60 "highway" "service"]
-  == (none, some 40)                                            -- no rail in range
-#guard railRoadDistFromWays [] == (none, none)
-#guard railRoadDistFromWays [⟨none, "railway", "rail"⟩, w 25 "railway" "light_rail"]
-  == (some 25, none)                                            -- null distance skipped
-
 end Verified.Geo.RailRoadProximity

@@ -44,12 +44,6 @@ def WALKING_MIN_STRAIGHTNESS : Float := 0.5
 def TRANSIT_KMH : Float := 30
 def TRANSIT_FAST_KMH : Float := 80
 
-
-/-- How far back the history window reaches: long enough to gather
-Significant-mode fixes, which can be minutes apart, short enough that
-yesterday's walk cannot leak in. -/
-def HISTORY_MAX_AGE_SEC : Int := 600
-
 /-- Trajectory needed before in-Move refinement engages. A short burst right
 after escalation cannot support a confident profile. -/
 def MIN_HISTORY_SPAN_FOR_REFINE_SEC : Float := 120
@@ -110,10 +104,6 @@ structure Signals where
       could not resolve a zone, which reads as daytime. -/
   localHour : Option Int := none
   deriving Inhabited, Repr
-
-/-- Drop fixes older than `nowSec - maxAgeSec`. Inclusive at the boundary. -/
-def pruneFixHistory (history : List Fix) (maxAgeSec nowSec : Int) : List Fix :=
-  history.filter (fun f => f.ts ≥ nowSec - maxAgeSec)
 
 private def pathDistanceM (history : List Fix) : Float :=
   match history with
@@ -310,12 +300,6 @@ def decideRemoteConfig (s : Signals) (prev : Option Profile) : Profile :=
 
 /-! ## Guards -/
 
-private def fix (ts : Int) (lat lon : Float) : Fix := { ts, lat, lon }
-
--- Pruning is inclusive at the cutoff.
-#guard (pruneFixHistory [fix 100 0 0, fix 500 0 0] 600 700).length == 2
-#guard (pruneFixHistory [fix 99 0 0, fix 500 0 0] 600 700).length == 1
-
 -- ⚠ A single fast reading escalates with no history at all.
 #guard escalateOnHighSpeed { reportedVelKmh := 100 } == some Profile.transitFast
 #guard escalateOnHighSpeed { reportedVelKmh := 50 } == some Profile.transit
@@ -388,6 +372,5 @@ private def fix (ts : Int) (lat lon : Float) : Fix := { ts, lat, lon }
 -- A train at night is still a train: speed wins everywhere.
 #guard decideRemoteConfig { localHour := some 2, monitoringMode := some 2, reportedVelKmh := 60 }
          (some Profile.night) == Profile.transit
-
 
 end Verified.Owntracks

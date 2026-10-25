@@ -429,11 +429,9 @@ struct OptChunks {
 }
 
 /// How many days of PhoneTrack history one request asks for.
-/// Mirrors `Verified.Sync.TRACK_CHUNK_DAYS`.
 pub const TRACK_CHUNK_DAYS: i64 = 7;
 
 /// How many chunks one tz-inference window may be split into.
-/// Mirrors `Verified.Sync.MAX_TRACK_CHUNKS`.
 pub const MAX_TRACK_CHUNKS: i64 = 60;
 
 /// See `Verified.Sync.chunkRange`.
@@ -1653,7 +1651,7 @@ pub fn owntracks_config(
     })
 }
 
-/// `Verified.Owntracks.HISTORY_MAX_AGE_SEC`.
+/// How long a device's OwnTracks fix history is kept, in seconds.
 pub fn owntracks_history_max_age_sec() -> i64 {
     600
 }

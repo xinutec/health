@@ -254,7 +254,6 @@ def ACCURACY_DEFAULT_M : Float := 10
 
 private def KMH_PER_MS : Float := 3.6
 private def MIN_ONE : Float := 1
-private def MIN_TWO : Float := 2
 private def SECONDS_PER_MINUTE_F : Float := 60
 
 /-- A span's speed `v` (km/h, squared GPS noise `noise`) under a mode's prior:

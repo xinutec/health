@@ -228,6 +228,10 @@ so a fit needs the decoder's own candidate starts.
   answers that it is being decoded), so the split, enrichment and pre-fold
   stages and every pass outside the naming tail went, with the modules only
   they used.
+- What the cut left unreachable — CUT 2026-10-25 by `lake exe deadcode`
+  (`lean/Deadcode.lean`): every declaration `verified_cli` cannot reach, and
+  the guards and theorems about only that code, went from the shared modules,
+  with six modules that emptied. The Lean check now fails on any.
 - With S1 and S2 on the shipped record: `boardAtWait` and `boardingStayLabel`'s
   fold — CUT 2026-10-22, neither ran under the head and the 200-day sweep read
   the same (`histfold-headed.sh`, headed against headed on one decode dump);

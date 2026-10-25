@@ -89,19 +89,6 @@ def extractBusRoutes (rels : Array RawRelation) (nodes : Array (Nat × ResolvedN
       , stops := stops }
   return out
 
-/-- Union routes across tiles, FIRST tile to yield a relation owning it.
-
-Returns each route with the tile key it came from — the writer replaces only the
-tiles that answered, and that column is what makes a partial run lossless. -/
-def unionByFirstTile (perTile : Array (String × Array BusRoute)) : Array (String × BusRoute) :=
-  Id.run do
-    let mut out : Array (String × BusRoute) := #[]
-    for (key, routes) in perTile do
-      for r in routes do
-        if !out.any (fun p => p.2.osmRelationId == r.osmRelationId) then
-          out := out.push (key, r)
-    return out
-
 /-! ## Guards -/
 
 private def N (id : Nat) (name : Option String) : Nat × ResolvedNode :=
@@ -129,13 +116,6 @@ private def R (id : Nat) (route ref name : Option String) : RawRelation :=
 #guard (extractBusRoutes #[{ R 1 (some "bus") (some "38") none with relType := some "multipolygon" }] NODES).isEmpty
 -- One stop cannot anchor a ride.
 #guard (extractBusRoutes #[{ R 1 (some "bus") (some "38") none with members := #[M 1 "stop"] }] NODES).isEmpty
-
--- ⚠ FIRST TILE OWNS — the opposite of the rail arm, and ported that way.
-private def A : BusRoute := { routeRef := "38", routeName := some "from A", osmRelationId := 9, stops := #[] }
-private def B : BusRoute := { routeRef := "38", routeName := some "from B", osmRelationId := 9, stops := #[] }
-#guard (unionByFirstTile #[("t1", #[A]), ("t2", #[B])]).size == 1
-#guard (unionByFirstTile #[("t1", #[A]), ("t2", #[B])])[0]! == ("t1", A)
-#guard (unionByFirstTile #[("t2", #[B]), ("t1", #[A])])[0]! == ("t2", B)
 
 #guard buildBusRouteOverpassQuery "51.5" "-0.2" "51.6" "-0.1"
         == "[out:json][timeout:180];relation[route=bus](51.5,-0.2,51.6,-0.1);out body;node(r);out body;"

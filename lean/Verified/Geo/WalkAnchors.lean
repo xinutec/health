@@ -25,8 +25,6 @@ against Node/V8 (`lean/experiments/walk-anchors-refs.mts`).
 
 namespace Verified.Geo.WalkAnchors
 
-abbrev Mode := String
-
 /-- A vertex of a snapped rail track — the shared drawn-path vertex. -/
 abbrev SPt := Verified.Geo.PathPt
 

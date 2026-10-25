@@ -8,13 +8,11 @@ Port of the Tier-5 day-assembly cluster:
 * `src/sleep/day-state.ts` — `segmentsToDayStates` (the boundary sweep that
   turns segments + Fitbit sleep windows into the day's non-overlapping state
   sequence) and `clipInferredFuture`.
-* `src/sleep/load.ts` — `derivePlaceForSleep`, the side-ranked choice of which
-  stay names a sleep window.
+* `src/sleep/load.ts` — `derivePlaceForSleepAt`, the side-ranked choice of
+  which stay names a sleep window.
 * `src/sleep/known-place-stays.ts` — `detectKnownPlaceStays`, dwell clustering
   in raw fixes snapped to mined focus places.
-* `src/infer/day-grammar.ts` — `parseStationPair` and `checkDayConstraints`,
-  the hard laws a physically-possible day must obey.
-* `src/geo/inferred-stay.ts` — `bracketedStayPlaceId`, `buildInferredStayState`.
+* `src/geo/inferred-stay.ts` — `buildInferredStayState`.
 
 All of these are already pure in the TS: no DB, no `Intl`, no async. So they
 port whole, including the output records — unlike the record-*sequencing*
@@ -24,27 +22,11 @@ windows and the empty-day bracket (`loadDaySleepWindows`, `loadEmptyDayBracket`)
 the tz/civil-date work (`dateBoundsUtc`, `nextDateString`), and the OSM
 resolution in `inferEmptyDayStatesFromBracket`.
 
-## Two separator parsers that are NOT the same function
-
-`parseStationPair` here and {@link Verified.Geo.Worldline.parseRailWayName} both
-read a `Board → Alight · Line` label, and they behave DIFFERENTLY. That is
-faithful to the TS, not an oversight:
-
-* `parseRailWayName` (`rail-snap.ts`) uses `indexOf`/`slice` — it strips the
-  line suffix first and rejoins the arrow tail, so `"A → B → C"` alights at
-  `"B → C"`.
-* `parseStationPair` (`day-grammar.ts`) uses `split(sep, 2)`, and JS `split`
-  with a limit TRUNCATES rather than keeping the remainder, so `"A → B → C"`
-  alights at `"B"` and the `"→ C"` is silently dropped.
-
-Both are pinned by guards below and in `Worldline`.
-
 Exactness: everything here is comparison, counting and string handling ⇒
 EXACT, except `haversineMeters` (atan2) behind the cluster/snap tests, which is
 ≤1 ULP and only ever compared against metre thresholds. UNPROVEN; pinned
 against Node/V8 (`lean/experiments/day-state-refs.mts`).
 -/
-
 
 namespace Verified.Geo.DayState
 
@@ -261,7 +243,6 @@ def stripPartialMinutesAsleep (states : List DayState) (sleeps : List SleepWindo
     else if sleeps.any (fun w => w.startTs == s.startTs && w.endTs == s.endTs) then s
     else { s with minutesAsleep := none })
 
-
 /-- The city header the timeline draws above a state — a port of the client's
 `cityForState`, not a new rule (#339).
 
@@ -332,7 +313,6 @@ def clipInferredFuture (states : List DayState) (nowTs : Int) : List DayState :=
 
 /-! ## Sleep-place attribution -/
 
-
 private def PLACE_FALLBACK_MAX_GAP_SEC : Int := 6 * 3600
 
 /--
@@ -367,10 +347,6 @@ def derivePlaceForSleepAt (winStart winEnd : Int) (segments : List Seg) :
     | some (_, br, bg) =>
       if rank < br || (rank == br && gap < bg) then some (p, rank, gap) else acc) none
   best.map (fun (p, _, _) => p)
-
-/-- The name alone. -/
-def derivePlaceForSleep (winStart winEnd : Int) (segments : List Seg) : Option String :=
-  (derivePlaceForSleepAt winStart winEnd segments).map (·.1)
 
 /-! ## Known-place dwell detection -/
 
@@ -472,106 +448,7 @@ def detectKnownPlaceStays (fixes : List StayFix) (knownPlaces : List StayKnownPl
                  centroidLat := cLat, centroidLon := cLon, place := name }
         | _, _ => none)
 
-/-! ## Day grammar -/
-
-private def STATION_SEP : String := " → "
-private def LINE_SEP : String := " · "
-
-/-- Modes in which you are aboard a vehicle: moving between two DIFFERENT ones
-    requires alighting first. -/
-private def VEHICLE_MODES : List Mode := ["driving", "bus", "train", "cycling", "plane"]
-
-
-/-- JS `split(sep, limit)` semantics: the result is TRUNCATED to `limit`
-    parts, the remainder is NOT rejoined onto the last one. -/
-private def splitLimit (s sep : String) (limit : Nat) : List String :=
-  (s.splitOn sep).take limit
-
-/-- Parse a moving leg's `Board → Alight · Line` label, or `none` when it is
-    not a station pair.
-
-    Uses `split(sep, 2)` like the TS, so `"A → B → C"` yields alight `"B"` and
-    drops the `"→ C"` — deliberately UNLIKE
-    {@link Verified.Geo.Worldline.parseRailWayName}, which rejoins the tail.
-    See the module header. -/
-def parseStationPair (wayName : Option String) : Option (String × String) :=
-  match wayName with
-  | none => none
-  | some s =>
-    if !(s.splitOn STATION_SEP).length ≥ 2 then none else
-    match splitLimit s STATION_SEP 2 with
-    | [board, rest] =>
-      let alight := (splitLimit rest LINE_SEP 1).headD ""
-      if board.isEmpty || alight.isEmpty then none
-      else some (board.trimAscii.toString, alight.trimAscii.toString)
-    | _ => none
-
-inductive ConstraintId where
-  /-- Two adjacent vehicle legs of DIFFERENT modes with nothing between: you
-      cannot step from one moving vehicle straight into another. -/
-  | vehicleHandoff
-  /-- Two adjacent at-rest states at DIFFERENT named places with no travel
-      between: you cannot teleport. -/
-  | stayTeleport
-  /-- A transit leg whose board and alight are the same stop: a journey that
-      begins and ends in one place is not a journey. -/
-  | transitSameEndpoint
-  deriving Inhabited, BEq, Repr
-
-structure Violation where
-  constraint : ConstraintId
-  /-- Index of the offending state (the FIRST of the pair for adjacency laws). -/
-  index : Nat
-  deriving Inhabited, BEq, Repr
-
-/--
-Every hard-constraint violation in a rendered day, in timeline order. Empty
-means the day is physically possible — it may still be WRONG (that is the
-probabilistic layer's job) but not impossible.
-
-Each law fires only on a genuine physical impossibility, never on a merely
-unusual day: soft implausibilities belong in the scoring, not here. The TS also
-builds a human-readable `detail` string per violation; that is display, so it
-stays shell (same split as `classifyCluster.reason`).
--/
-def checkDayConstraints (states : List DayState) : List Violation := Id.run do
-  let arr := states.toArray
-  let mut out : Array Violation := #[]
-  for hm_i : i in [0:arr.size] do
-    let s := arr[i]
-    -- Law 3 — a transit leg must run between two distinct stations.
-    if s.mode == "train" || s.mode == "bus" then
-      match parseStationPair s.wayName with
-      | some (board, alight) =>
-        if board == alight then
-          out := out.push ⟨ConstraintId.transitSameEndpoint, i⟩
-      | none => pure ()
-    if h : i + 1 < arr.size then
-      let next := arr[i + 1]
-      -- Adjacency laws apply only to contiguous pairs.
-      if next.startTs - s.endTs > CONTIGUITY_MAX_GAP_S then
-        pure ()
-      else
-        -- Law 1 — no direct hand-off between two different vehicles.
-        if VEHICLE_MODES.contains s.mode && VEHICLE_MODES.contains next.mode
-           && s.mode != next.mode then
-          out := out.push ⟨ConstraintId.vehicleHandoff, i⟩
-        -- Law 2 — no teleport between two distinct at-rest places.
-        if REST_MODES.contains s.mode && REST_MODES.contains next.mode
-           && s.place.isSome && next.place.isSome && s.place != next.place then
-          out := out.push ⟨ConstraintId.stayTeleport, i⟩
-  return out.toList
-
 /-! ## Cross-day inference -/
-
-/-- The place a no-data day is attributed to, or `none` when it is not
-    bracketed by the SAME place on both sides (then it is genuinely unknown,
-    not inferable). Confidence comes from how constrained the day is, not from
-    how much data it has. -/
-def bracketedStayPlaceId (prevEndOfDay nextDominant : Option Int) : Option Int :=
-  match prevEndOfDay, nextDominant with
-  | some a, some b => if a == b then some a else none
-  | _, _ => none
 
 /-- The single inferred state spanning a no-data day, once the bracketing place
     has been resolved to a name by the shell. -/
@@ -716,42 +593,16 @@ private def inf (a b : Int) : DayState :=
 -- A whole minute behind now is the first thing worth showing.
 #guard clipInferredFuture [inf (NOW-60) (T0+7200)] NOW == [inf (NOW-60) NOW]
 
-/-! ### `derivePlaceForSleep` -/
+/-! ### `derivePlaceForSleepAt` -/
 
 private def WS : Int := T0 + 10000
 private def WE : Int := T0 + 30000
 
-#guard derivePlaceForSleep WS WE [] == none
-#guard derivePlaceForSleep WS WE [sg (T0+12000) (T0+20000) "walking" (place := some "Home")] == none
-#guard derivePlaceForSleep WS WE [sg (T0+12000) (T0+20000)] == none
-#guard derivePlaceForSleep WS WE [sg (T0+12000) (T0+20000) (place := some "Hospital")] == some "Hospital"
 -- The position comes with the name: where the candidate's record was asked.
 #guard derivePlaceForSleepAt WS WE
   [{ sg (T0+12000) (T0+20000) (place := some "Hospital") with
        placeSource := some ⟨"Hospital", "enclosing", some (51.5, -0.1)⟩ }]
   == some ("Hospital", some (51.5, -0.1))
--- The 2026-06-24 case: a bedtime-side home beats a NEARER wake-side place,
--- because you cannot relocate while asleep.
-#guard derivePlaceForSleep WS WE
-  [sg (T0+30060) (T0+34000) (place := some "Hospital"),
-   sg (T0+2000) (T0+6000) (place := some "Home")] == some "Home"
-#guard derivePlaceForSleep WS WE
-  [sg (T0+2000) (T0+6000) (place := some "Home"),
-   sg (T0+12000) (T0+20000) (place := some "Ward")] == some "Ward"
-#guard derivePlaceForSleep WS WE
-  [sg (T0+2000) (T0+6000) (place := some "Far"),
-   sg (T0+2000) (T0+9000) (place := some "Near")] == some "Near"
--- The 6 h reach is inclusive.
-#guard derivePlaceForSleep WS WE [sg T0 (T0+10000-6*3600-1) (place := some "TooFar")] == none
-#guard derivePlaceForSleep WS WE [sg T0 (T0+10000-6*3600) (place := some "JustInRange")]
-  == some "JustInRange"
-#guard derivePlaceForSleep WS WE
-  [sg (T0+12000) (T0+20000) "walking" (refinedMode := some "stationary") (place := some "Rewritten")]
-  == some "Rewritten"
--- Ties keep the first candidate.
-#guard derivePlaceForSleep WS WE
-  [sg (T0+2000) (T0+6000) (place := some "First"),
-   sg (T0+3000) (T0+6000) (place := some "Second")] == some "First"
 
 /-! ### `detectKnownPlaceStays` -/
 
@@ -792,81 +643,8 @@ private def mkFixes (startTs : Int) (n : Nat) (stepSec : Int) (lat lon : Float) 
     { ts := T0 + Int.ofNat i * 120, lat := HOME_LAT + Float.ofNat i * 0.0001, lon := HOME_LON }))
   [{ homePlace with radiusM := some 150 }]).length == 1
 
-/-! ### `parseStationPair` -/
-
-#guard parseStationPair none == none
-#guard parseStationPair (some "") == none
-#guard parseStationPair (some "Baker Street") == none
-#guard parseStationPair (some "Euston → Kings Cross") == some ("Euston", "Kings Cross")
-#guard parseStationPair (some "Euston → Kings Cross · Northern") == some ("Euston", "Kings Cross")
-#guard parseStationPair (some "  Euston  →  Kings Cross  · Northern") == some ("Euston", "Kings Cross")
-#guard parseStationPair (some "Euston → Kings Cross · Northern · Extra") == some ("Euston", "Kings Cross")
-#guard parseStationPair (some " → Kings Cross") == none
-#guard parseStationPair (some "Euston → ") == none
--- JS `split(sep, 2)` TRUNCATES: the trailing "→ C" is dropped, NOT rejoined.
--- `Worldline.parseRailWayName` deliberately differs here — see the header.
-#guard parseStationPair (some "A → B → C") == some ("A", "B")
-
-/-! ### `checkDayConstraints` -/
-
-private def ds (a b : Int) (mode : Mode) (place : Option String := none)
-    (wayName : Option String := none) : DayState :=
-  { startTs := a, endTs := b, mode := mode, place := place, wayName := wayName }
-
-#guard checkDayConstraints [] == []
-#guard checkDayConstraints
-  [ds T0 (T0+3600) "stationary" (place := some "Home"),
-   ds (T0+3600) (T0+4000) "walking",
-   ds (T0+4000) (T0+6000) "train" (wayName := some "Euston → Kings Cross · Northern")] == []
-#guard checkDayConstraints [ds T0 (T0+3600) "train" (wayName := some "Euston → Euston · Northern")]
-  == [⟨ConstraintId.transitSameEndpoint, 0⟩]
-#guard checkDayConstraints [ds T0 (T0+3600) "bus" (wayName := some "Stop A → Stop A")]
-  == [⟨ConstraintId.transitSameEndpoint, 0⟩]
--- A road name is not a station pair, so the law cannot fire on it.
-#guard checkDayConstraints [ds T0 (T0+3600) "train" (wayName := some "Some Sidings")] == []
-#guard checkDayConstraints
-  [ds T0 (T0+3600) "driving", ds (T0+3600) (T0+5400) "train"]
-  == [⟨ConstraintId.vehicleHandoff, 0⟩]
-#guard checkDayConstraints [ds T0 (T0+3600) "train", ds (T0+3600) (T0+5400) "train"] == []
--- A gap wider than the contiguity window is unobserved time, not impossible.
-#guard checkDayConstraints
-  [ds T0 (T0+3600) "driving", ds (T0+3600+121) (T0+5400) "train"] == []
-#guard checkDayConstraints
-  [ds T0 (T0+3600) "driving", ds (T0+3600+120) (T0+5400) "train"]
-  == [⟨ConstraintId.vehicleHandoff, 0⟩]
-#guard checkDayConstraints
-  [ds T0 (T0+3600) "stationary" (place := some "Home"),
-   ds (T0+3600) (T0+5400) "stationary" (place := some "Work")]
-  == [⟨ConstraintId.stayTeleport, 0⟩]
--- Sleeping counts as at-rest for the teleport law.
-#guard checkDayConstraints
-  [ds T0 (T0+3600) "sleeping" (place := some "Home"),
-   ds (T0+3600) (T0+5400) "stationary" (place := some "Work")]
-  == [⟨ConstraintId.stayTeleport, 0⟩]
--- An unnamed place is not evidence of a teleport.
-#guard checkDayConstraints
-  [ds T0 (T0+3600) "stationary" (place := some "Home"), ds (T0+3600) (T0+5400) "stationary"] == []
-#guard checkDayConstraints
-  [ds T0 (T0+3600) "stationary" (place := some "Home"),
-   ds (T0+3600) (T0+5400) "sleeping" (place := some "Home")] == []
--- Several laws in one day, reported in timeline order.
-#guard checkDayConstraints
-  [ds T0 (T0+3600) "train" (wayName := some "A → A · L"),
-   ds (T0+3600) (T0+5400) "bus",
-   ds (T0+5400) (T0+7200) "stationary" (place := some "Home"),
-   ds (T0+7200) (T0+9000) "stationary" (place := some "Work")]
-  == [⟨ConstraintId.transitSameEndpoint, 0⟩, ⟨ConstraintId.vehicleHandoff, 0⟩,
-      ⟨ConstraintId.stayTeleport, 2⟩]
-
 /-! ### Cross-day inference -/
 
-#guard bracketedStayPlaceId none none == none
-#guard bracketedStayPlaceId none (some 7) == none
-#guard bracketedStayPlaceId (some 7) none == none
-#guard bracketedStayPlaceId (some 7) (some 7) == some 7
-#guard bracketedStayPlaceId (some 7) (some 8) == none
--- Id 0 is a real id, not a falsy blank.
-#guard bracketedStayPlaceId (some 0) (some 0) == some 0
 #guard buildInferredStayState "Ward 12" (some "Europe/London") T0 (T0+86400)
   == { startTs := T0, endTs := T0+86400, mode := "stationary", place := some "Ward 12", placeSource := some "inferred",
        tz := some "Europe/London", inferred := some true }

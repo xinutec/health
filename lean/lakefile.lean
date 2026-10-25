@@ -25,3 +25,10 @@ lean_lib ServeEntry
 @[default_target]
 lean_exe verified_cli where
   root := `Main
+
+/-- What `verified_cli` cannot reach (`Deadcode.lean`). Not a default target:
+it reads the other targets' build. -/
+lean_exe deadcode where
+  root := `Deadcode
+  -- Loading imported extensions runs their initializers.
+  supportInterpreter := true

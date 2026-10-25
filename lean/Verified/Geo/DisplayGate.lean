@@ -12,13 +12,10 @@ import Verified.FloatConst
 The decision *whether to draw the matched line at all*, and where to fall back
 to the raw fixes:
 
-1. `SegmentNearGrid` — exact nearest-chord queries via a rasterised grid and an
-   expanding-ring search. `Verified.Geo.RingSearch` already carries the
-   exactness argument as a theorem; this is the grid the theorem is about.
-2. the off-network metrics (`fractionOffRoad`, `nearestRoadDist`,
-   `maxPolylineOffRoad`, `pointDistToPolyline`,
-   `quantilePointDistToPolyline`) — measured on the *drawn line*, sampling
-   along each chord, not only at the vertices;
+1. `NearGrid` — nearest-chord queries via a rasterised grid;
+2. the off-network metrics (`nearestRoadDist`, `maxPolylineOffRoad`,
+   `pointDistToPolyline`, `quantilePointDistToPolyline`) — measured on the
+   *drawn line*, sampling along each chord, not only at the vertices;
 3. `matchImprovesDisplay` — the three-part gate: the raw line must genuinely
    stray off-network, the match must follow the network better, and the match
    must stay faithful to where the GPS was;
@@ -227,23 +224,6 @@ def NearGrid.nearestDist (g : NearGrid) (lat lon : Float) (clampM : Float := pos
 
 /-! ## Off-network metrics -/
 
-/-- Fraction of `fixes` whose nearest way is further than `thresholdM`. A low
-    value means the raw GPS already hugs the network. -/
-def fractionOffRoad (fixes : Array MPt) (ways : Ways) (thresholdM : Float) : Float := Id.run do
-  if fixes.isEmpty then return 0
-  let mut off : Nat := 0
-  for fx in fixes do
-    let mut best := posInf
-    for w in ways do
-      for hm_i : i in [1:w.size] do
-        have hb_i : i < w.size := hm_i.upper
-        let d := (projectPointToSegment fx.pt w[i - 1] w[i]).distM
-        if d < best then best := d
-        if best ≤ thresholdM then break
-      if best ≤ thresholdM then break
-    if best > thresholdM then off := off + 1
-  return Float.ofNat off / Float.ofNat fixes.size
-
 /-- Nearest distance from a point to any way. With an `index` the query is
     near-constant time; without one it is a full scan of every chord. -/
 def nearestRoadDist (p : Pt) (ways : Ways) (index : Option NearGrid := none) : Float := Id.run do
@@ -259,9 +239,8 @@ def nearestRoadDist (p : Pt) (ways : Ways) (index : Option NearGrid := none) : F
     return best
 
 /-- Maximum off-network distance of a *drawn polyline* — sampling not just the
-    vertices but points every `stepM` along each chord. The signal
-    `fractionOffRoad` misses: sparse fixes each on a way, joined by a chord that
-    cuts across a block. The map draws the chords, so the chords are measured. -/
+    vertices but points every `stepM` along each chord, which sees sparse fixes
+    each on a way joined by a chord that cuts across a block. The map draws the chords, so the chords are measured. -/
 def maxPolylineOffRoad (path : Array Pt) (ways : Ways) (stepM : Float := 15)
     (index : Option NearGrid := none) : Float := Id.run do
   if path.isEmpty || ways.isEmpty then return 0
@@ -598,7 +577,7 @@ private def noWays : Ways := #[]
 #guard segmentDistM (P 10 50) (P 0 0) (P 0 100)
   == (projectPointToSegment (P 10 50) (P 0 0) (P 0 100)).distM
 
--- SegmentNearGrid
+-- `NearGrid`
 private def grid : NearGrid := (NearGrid.ofWays geoWays 64).getD (NearGrid.ofChords #[] 64 0)
 private def gq (n e : Float) : Float := grid.nearestDist (P n e).lat (P n e).lon
 private def gqc (n e clamp : Float) : Float := grid.nearestDist (P n e).lat (P n e).lon clamp
@@ -628,18 +607,6 @@ private def bf (n e : Float) : Float := nearestRoadDist (P n e) geoWays
   (((NearGrid.ofTrack #[P 0 0, P 0 100, P 50 100] 64).getD (NearGrid.ofChords #[] 64 0)).nearestDist
     (P 10 50).lat (P 10 50).lon) 10.000000000019043
 #guard (NearGrid.ofTrack #[P 0 0] 64).isNone
-
--- fractionOffRoad
-private def onStreet : Array MPt := #[T 1 0 0, T 1 40 10, T 1 80 20, T 1 120 30]
-private def inBlock : Array MPt := #[T 50 40 0, T 50 80 10, T 50 120 20]
-private def mixedFixes : Array MPt := #[T 1 0 0, T 1 40 10] ++ inBlock
-
-#guard approx (fractionOffRoad onStreet geoWays 10) 0
-#guard approx (fractionOffRoad inBlock geoWays 10) 1
-#guard approx (fractionOffRoad mixedFixes geoWays 10) 0.59999999999999998
-#guard approx (fractionOffRoad inBlock geoWays 60) 0
-#guard approx (fractionOffRoad #[] geoWays 10) 0
-#guard approx (fractionOffRoad onStreet noWays 10) 1
 
 -- maxPolylineOffRoad
 private def hugging : Array Pt := #[P 1 0, P 1 60, P 1 120]

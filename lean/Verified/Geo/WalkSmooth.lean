@@ -287,17 +287,6 @@ def countSharpTurns (pts : Array Pt) (thresholdDeg : Float := 50) : Nat := Id.ru
       if turnDeg ≥ thresholdDeg then count := count + 1
   return count
 
-/-- Straight-line-normalised path length (drawn ÷ end-to-end) — the smoother's
-    headline effect is a lower tortuosity. -/
-def tortuosity (pts : Array Pt) : Float :=
-  if h2 : pts.size < 2 then 1 else Id.run do
-  let mut len := 0.0
-  for hm_i : i in [1:pts.size] do
-    have hb_i : i < pts.size := hm_i.upper
-    len := len + metersBetween pts[i - 1] pts[i]
-  let straight := metersBetween (pts[0]'(by omega)) (pts[pts.size - 1]'(by omega))
-  return if straight > 1 then len / straight else 1
-
 /-! ## `refineMatchedPath` -/
 
 /-- How far (m) from a staircase-artifact corner the full de-boxing budget
@@ -1239,14 +1228,6 @@ private def WOBBLE : Array WalkFix :=
 -- A duplicated vertex has no direction, so it is skipped rather than counted.
 #guard countSharpTurns #[P 0 0, P 0 0, P 10 10] == 0
 #guard countSharpTurns #[P 0 0, P 0 10, P 0 0] == 1
-
-/-! ### `tortuosity` -/
-
-#guard tortuosity #[P 0 0] == 1
-#guard tortuosity #[P 0 0, P 0 50, P 0 100] == 1
-#guard approx (tortuosity #[P 0 0, P 0 50, P 50 50, P 50 100]) 1.3416416686105039
--- Under a metre end-to-end the ratio is meaningless, so it is pinned at 1.
-#guard tortuosity #[P 0 0, P 0 0.4] == 1
 
 /-! ### `smoothWalkMap` -/
 

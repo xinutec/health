@@ -72,18 +72,6 @@ def PLATFORM_ROLES : List String := ["platform", "platform_entry_only", "platfor
 anchor a call pattern. -/
 def MIN_STOPS : Nat := 2
 
-/-- The node elements of an Overpass response, by id.
-
-⚠ LAST WRITER WINS on a duplicate id, matching `Map.set`. Overpass does not
-normally repeat a node across one response, but a tiled mirror unions several
-responses before this point in the bus arm, and the TypeScript's behaviour there
-is to overwrite. -/
-def indexMemberNodes (nodes : Array (Nat × ResolvedNode)) : Array (Nat × ResolvedNode) :=
-  nodes.foldl (fun acc (id, n) =>
-    match acc.findIdx? (fun p => p.1 == id) with
-    | some k => acc.set! k (id, n)
-    | none => acc.push (id, n)) #[]
-
 private def lookup (nodes : Array (Nat × ResolvedNode)) (id : Nat) : Option ResolvedNode :=
   (nodes.find? (fun p => p.1 == id)).map (·.2)
 
@@ -159,9 +147,5 @@ private def NODES : Array (Nat × ResolvedNode) := #[N 1 (some "A"), N 2 (some "
 -- A non-node member is skipped even with a stop role — ways carry roles too.
 #guard (resolveOrderedStops
           #[{ type := some "way", ref := some 1, role := some "stop" }, M 2 "stop"] NODES).isEmpty
-
--- Last writer wins on a duplicate id.
-#guard (indexMemberNodes #[N 1 (some "old"), N 1 (some "new")]).size == 1
-#guard ((indexMemberNodes #[N 1 (some "old"), N 1 (some "new")])[0]!.2).name == some "new"
 
 end Verified.Geo.OsmRouteMembers

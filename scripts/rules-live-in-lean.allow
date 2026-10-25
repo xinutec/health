@@ -13,11 +13,6 @@
 # which ACCURACY_CEILING_M was the same name for two DIFFERENT rules (200.0 in
 # Rust, 80 in Lean) and was renamed rather than listed.
 
-# Sync-window policy, duplicated for the backfill CLI's argument defaults.
-DEFAULT_MAX_EMPTY_DAYS
-DEFAULT_MAX_EMPTY_WINDOWS
-RANGE_WINDOW_DAYS
-
 # Fitbit tz inference: how far either way to look for a PhoneTrack fix.
 FIX_SEARCH_WINDOW_S
 
@@ -32,11 +27,6 @@ METERS_PER_DEG_LAT
 LATEST_FIX_TTL_MS
 TAIL_MAX_POINTS
 TAIL_TTL_MS
-
-# PhoneTrack fetch chunking — the Rust side chunks the HTTP calls, the Lean side
-# reasons about the chunks.
-MAX_TRACK_CHUNKS
-TRACK_CHUNK_DAYS
 
 # Focus-place mining: how long asleep somewhere makes it a residence.
 RESIDENCE_SLEEP_THRESHOLD_H

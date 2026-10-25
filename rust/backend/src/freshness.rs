@@ -96,7 +96,7 @@ pub const FRESHNESS: &[Freshness] = &[
     Freshness {
         table: "device_battery_log",
         max_lag_days: 3,
-        why: "the watch's last sync from Google's pairedDevices (#260), and the walk splitter's stepsThrough; same-day when measured",
+        why: "the watch's last sync from Google's pairedDevices (#260), and a decode's inputs_through; same-day when measured",
     },
     Freshness {
         table: "spo2_intraday",

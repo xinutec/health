@@ -8,7 +8,7 @@ import Verified.Geo.WalkMatchAdapt
 # `DayEntry` — the day fold's JSON boundary
 
 The day request comes in as one JSON object (`env`, carrying the day's stored
-decode), the decoder's segments are named by the tail (`DECODER_TAIL`), and the
+decode), the decoder's segments are named by the tail (`PassFold.passes`), and the
 timeline goes back out. Every lookup the fold needs beyond its request —
 the OSM tables, the zone at a coordinate, a geocode, a stay's local hours — is
 asked of the host mid-fold through `DayEntry.Host.ask` (#1709). Nothing is
@@ -83,96 +83,11 @@ private def nth (a : Array Json) (i : Nat) : Except String Json :=
 private def strs (j : Json) : Except String (Array String) := do
   (← j.getArr?).mapM (·.getStr?)
 
-private def parsePathPt (j : Json) : Except String Verified.Geo.PathPt := do
-  let a ← j.getArr?
-  return ⟨← jBits (← nth a 0), ← jBits (← nth a 1), ← jBits (← nth a 2)⟩
-
-/-- A positional bit pattern that may be `null` — the array-tuple counterpart of
-{@link optBits}. The mined statistics are the first wire shape where a nullable
-Float sits in a tuple rather than under a key: a mode observed with no HR at all
-has `hrMean = null`, which is not the same claim as `hrMean = 0`. -/
-private def nthBits (a : Array Json) (i : Nat) : Except String (Option Float) := do
-  let v ← nth a i
-  if v.isNull then pure none else some <$> jBits v
-
-/-- One mined `mode_biometrics` row, as `fold-payload.ts` writes it. -/
-private def parseModeStats (j : Json) : Except String Verified.Geo.ModeBiometrics.ModeStats := do
-  let a ← j.getArr?
-  return {
-    mode := ← (← nth a 0).getStr?
-    hrMean := ← nthBits a 1
-    hrStd := ← nthBits a 2
-    hrSampleCount := (← (← nth a 3).getInt?).toNat
-    cadenceMean := ← nthBits a 4
-    cadenceStd := ← nthBits a 5
-    cadenceSampleCount := (← (← nth a 6).getInt?).toNat
-    speedMean := ← nthBits a 7
-    speedStd := ← nthBits a 8
-    speedSampleCount := (← (← nth a 9).getInt?).toNat
-    sampleCount := (← (← nth a 10).getInt?).toNat
-  }
-
-private def optPath (j : Json) (k : String) :
-    Except String (Option (Array Verified.Geo.PathPt)) :=
-  match j.getObjVal? k with
-  | .error _ => pure none
-  | .ok v => do
-    if v.isNull then pure none else some <$> ((← v.getArr?).mapM parsePathPt)
-
-private def parseBiom (j : Json) : Except String Verified.Geo.SegmentMerge.BiometricEnrichment := do
-  return {
-    hrMean := ← optBits j "hrMean"
-    hrMin := ← optBits j "hrMin"
-    hrMax := ← optBits j "hrMax"
-    hrStd := ← optBits j "hrStd"
-    sampleCount := (← (← j.getObjVal? "sampleCount").getInt?).toNat
-    overlapsSleep := ← optBool j "overlapsSleep" false
-    sleepFraction := ← jBits (← j.getObjVal? "sleepFraction")
-    stepsTotal := ← optBits j "stepsTotal"
-  }
-
-private def parseSeg (j : Json) : Except String Seg := do
-  return {
-    startTs := ← (← j.getObjVal? "startTs").getInt?
-    endTs := ← (← j.getObjVal? "endTs").getInt?
-    mode := ← (← j.getObjVal? "mode").getStr?
-    refinedMode := ← optStr j "refinedMode"
-    confidence := ← jBits (← j.getObjVal? "confidence")
-    confidenceMargin := ← jBits (← j.getObjVal? "confidenceMargin")
-    avgSpeed := ← jBits (← j.getObjVal? "avgSpeed")
-    maxSpeed := ← jBits (← j.getObjVal? "maxSpeed")
-    linearity := ← jBits (← j.getObjVal? "linearity")
-    pointCount := ← (← j.getObjVal? "pointCount").getInt?
-    place := ← optStr j "place"
-    city := ← optStr j "city"
-    wayName := ← optStr j "wayName"
-    refinedReason := ← optStr j "refinedReason"
-    refinedKinds := ← (← optArr j "refinedKinds").mapM (·.getStr?)
-    centroidLat := ← optBits j "centroidLat"
-    centroidLon := ← optBits j "centroidLon"
-    focusPlaceId := ← optInt j "focusPlaceId"
-    -- ⚠ Defaults TRUE when absent: a caller that predates this is not asserting
-    -- the direction was unmeasurable, it simply never said (#185).
-    directionResolvable := ← optBool j "directionResolvable" true
-    needsReenrich := ← optBool j "needsReenrich" false
-    needsRename := ← optBool j "needsRename" false
-    vehicleKind := ← optStr j "vehicleKind"
-    roadCorridorFraction := ← optBits j "roadCorridorFraction"
-    displayTz := ← optStr j "displayTz"
-    snappedPath := ← optPath j "snappedPath"
-    matchedPath := ← optPath j "matchedPath"
-    walkMatchedPath := ← optPath j "walkMatchedPath"
-    walkSmoothedPath := ← optPath j "walkSmoothedPath"
-    biometrics := ← match j.getObjVal? "biometrics" with
-      | .error _ => pure none
-      | .ok v => if v.isNull then pure none else some <$> parseBiom v
-  }
-
 private def parsePointF (j : Json) : Except String Shed.PointF := do
   let a ← j.getArr?
   return ⟨← (← nth a 0).getInt?, ← jBits (← nth a 1), ← jBits (← nth a 2), ← jBits (← nth a 3)⟩
 
-private def parseCoarse (j : Json) : Except String Verified.Geo.UndergroundRun.CoarseFix := do
+private def parseCoarse (j : Json) : Except String Verified.Geo.PassFold.CoarseFix := do
   let a ← j.getArr?
   let acc ← match a[3]? with
     | some v => if v.isNull then pure none else some <$> jBits v
@@ -283,10 +198,6 @@ private def parseWpt (j : Json) : Except String Verified.Geo.WalkableRoute.Pt :=
 private def parseRouteRow (j : Json) : Except String Verified.Geo.RailReconcile.RouteRow := do
   let a ← j.getArr?
   return ⟨← (← nth a 0).getStr?, ← (← (← nth a 1).getArr?).mapM parseWpt⟩
-
-private def parseLatLon (j : Json) : Except String Verified.Geo.Bus.LatLon := do
-  let a ← j.getArr?
-  return ⟨← jBits (← nth a 0), ← jBits (← nth a 1)⟩
 
 private def parseBusStop (j : Json) : Except String Verified.Geo.Bus.BusStop := do
   let a ← j.getArr?
@@ -414,7 +325,7 @@ private def entryGeo (j : Json) :
 private def parseTransitStop (j : Json) : Except String Verified.Geo.Bus.TransitStop := do
   return ⟨← (← j.getObjVal? "subtype").getStr?, ← jBits (← j.getObjVal? "distanceM")⟩
 
-private def parseLineStation (j : Json) : Except String Verified.Geo.RailJourney.LineStation := do
+private def parseLineStation (j : Json) : Except String Verified.Geo.PassFold.LineStation := do
   let a ← j.getArr?
   return ⟨← (← nth a 0).getStr?, ← jBits (← nth a 1), ← jBits (← nth a 2)⟩
 
@@ -731,9 +642,9 @@ private def parseEnv (j : Json) : Except String Env := do
       matcher := fun fixes ways buildings => DayEntry.Host.timed "walk.matcher" fun _ =>
         DayEntry.Host.dump "match" (fun _ => matchInputJson fixes ways buildings)
           (Verified.Geo.WalkMatchAdapt.matcher fixes ways buildings)
-      -- The four smoothing/correction leaves. Every one of them was ALREADY
-      -- PORTED — `WalkSmooth.reconstructWalk`, `WalkSmooth.refineMatchedPath`,
-      -- `WalkEscape.correctWalkPath`, `WalkEscape.snapPassages` — and each
+      -- The four smoothing/correction leaves — `WalkSmooth.reconstructWalk`,
+      -- `WalkSmooth.refineMatchedPath`, `WalkEscape.correctWalkPathIn`,
+      -- `WalkEscape.snapPassagesIn` — each
       -- speaks exactly the type its `Env` field declares (`SmoothedPoint` is
       -- `TPt` is `PathPt`), so this is a wiring, not a port.
       --
@@ -748,7 +659,7 @@ private def parseEnv (j : Json) : Except String Env := do
         Verified.Geo.WalkSmooth.reconstructWalk fixes ways buildings {} ev
       refineMatched := fun fixes base => DayEntry.Host.timed "walk.refine" fun _ =>
         Verified.Geo.WalkSmooth.refineMatchedPath fixes base
-      -- The diagnostics arm of `correctWalkPath` is `WALK_CORRECT_DIAG=1` on the
+      -- The diagnostics arm of `correctWalkPathIn` is `WALK_CORRECT_DIAG=1` on the
       -- TS side — a debug side channel that decides nothing, which is why the
       -- `Env` field never modelled it and why dropping `.2` here is not a loss.
       -- `stepBudgetM := none` is the TS's `correctOpts = undefined`: the same
@@ -903,20 +814,6 @@ private def episodeJson (e : Verified.Geo.EpisodeGeometry.Episode) : Json :=
     -- must read `ts` as bits when one is written.
     ("points", Json.arr (e.points.map fun p =>
       Json.mkObj [("lat", fBits p.lat), ("lon", fBits p.lon), ("ts", jOptF p.ts)]))]
-
-/-- The fold's naming tail: the passes that label segments others drew —
-track geometry, bus, road and walk matching, zone, biometrics, the decoder's
-places, a station's name on the stay beside a ride, and a walk between two
-stays at one place absorbed (`finalMerge`: steps about the office are not a
-trip). `decoderHead` runs these alone. -/
-def DECODER_TAIL : Array String :=
-  #["stayArrivalClaim", "walkDwell", "staySteplessDeparture", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
-    -- No `finalMerge` here: its intra-place absorption re-segments the decoder's
-    -- day (10-08: the walk to the platform between two stays named after
-    -- Hendaye station became the stay), and under the head the decoder's
-    -- boundaries stand; the tail names, it does not re-draw.
-    "biomEnrich", "hsmmOverride", "boardingStayLabel", "alightStayLabel",
-    "alightAfterHold", "alightAtLastFix", "railSnapFinal", "vehicleIdentity"]
 
 def MS_TO_KMH : Float := 3.6
 
@@ -1080,7 +977,7 @@ def dayResult (j : Json) : Json :=
     let env ← parseEnv envJson
     let wantTrace ← optBool j "trace" false
     -- The day's segments are the decoder's: a day folds from its stored decode
-    -- and the passes that NAME what it drew (`DECODER_TAIL`). A day with no
+    -- and the passes that NAME what it drew (`PassFold.passes`). A day with no
     -- decode is not folded — the server answers that it is being decoded.
     if env.hmmDecode.isEmpty then
       throw "the day has no decode: a day folds from its decode"
@@ -1096,8 +993,7 @@ def dayResult (j : Json) : Json :=
         place := fun lat lon pref stay => namer.name lat lon stay pref
         tzAt := env.tzAt }
     let enrichPlaces := (← (← optArr envJson "enrichPlaces").mapM parseNamedPlace).toList
-    -- The carved-stop namer is the enrichment stage's own stationary branch,
-    -- bound over the same reads and mined places.
+    -- The carved-stop namer, over the day's reads and mined places.
     let env := { env with
       boundarySlackS := DECODER_BOUNDARY_SLACK_S
       nameStay := fun seg =>

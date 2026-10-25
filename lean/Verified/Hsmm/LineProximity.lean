@@ -4,7 +4,7 @@ import Verified.Hsmm.Emissions
 
 Emission term for `train @ L`: at a GPS-present minute, boost when the fix sits
 on L's track corridor, penalise when L is modelled but the fix is off it (or is
-road-nearer-than-rail). The route-graph spatial queries (`edgesNear`,
+road-nearer-than-rail). The route-graph spatial queries (`edgesNearIdx`,
 `linesInGraph`) stay caller-side and are passed in as resolved facts
 (`lineModeled`, `lineNear`, road/rail distances); this module is the pure
 decision. All outputs are exact rational constants, so parity is exact `==`.

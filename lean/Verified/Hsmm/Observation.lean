@@ -157,10 +157,6 @@ def reacquireAgesAndGaps (gpsPresent : Array Bool) : Array (Option (Int × Int))
         ((0, runGap, age), st.2.push (runGap.map fun g => (Int.ofNat age, Int.ofNat g))))
     ((REACQUIRE_GAP_MIN, none, 0), #[]) |>.2
 
-/-- The reacquire age alone. -/
-def reacquireAges (gpsPresent : Array Bool) : Array (Option Int) :=
-  (reacquireAgesAndGaps gpsPresent).map (·.map (·.1))
-
 /-- Build the observation tensor. `localCtx m = (hourLocal, dayOfWeek)` and
     `proximityAt ts = (roadDistM?, railDistM?)` are caller-resolved (tz / OSM);
     everything else is computed here. -/

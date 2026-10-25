@@ -229,11 +229,6 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint :=
             emittedKmh, roundHalfUp bearing⟩
   return result
 
-/-- Speed → transport-mode class (`classifyMode`). -/
-def classifyMode (speedKmh : Float) : String :=
-  if speedKmh < 2 then "stationary" else if speedKmh < 7 then "walking"
-  else if speedKmh < 30 then "cycling" else if speedKmh < 120 then "driving" else "transit"
-
 -- Parity with the real `filterGpsTrack` (values from Node/V8): a track exercising
 -- init, normal filtering, adaptive noise, innovation-gate rejection (a teleport
 -- spike, dropped from output), and reset + forward-look seed after a long gap.
@@ -256,7 +251,6 @@ private def rowOk (f : FilteredPoint) (ts : Int) (lat lon spd brg : Float) : Boo
 #guard rowOk out[5]! 60 51.500495664150236 (-38.10019179364539346) 4.4 329
 #guard rowOk out[6]! 4000 51.6 (-38.2) 4.717694629017221 328.1536087263755  -- reset: UNROUNDED
 #guard rowOk out[7]! 4010 51.6001 (-38.2001) 4.7 328
-#guard classifyMode 1.0 == "stationary" && classifyMode 5 == "walking" && classifyMode 20 == "cycling"
 
 -- The velocity-observability bound, which `track` above never reaches. Shape of
 -- the 2026-08-05 Baker Street interchange: one stale coordinate repeated while

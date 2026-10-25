@@ -43,12 +43,6 @@ def DRIVABLE_HIGHWAY_SUBTYPES : List String :=
   ["motorway", "trunk", "primary", "secondary", "tertiary", "residential",
    "service", "unclassified", "track", "living_street"]
 
-/-- Query radius in metres. ⚠ Wider than the line-proximity factor's `NEAR_M`
-(250) ON PURPOSE: when a fix is "near" line L by the route graph, the rail way
-must also be in range HERE, or the road-vs-rail comparison is a null rather than
-a comparison. -/
-def PROXIMITY_RADIUS_M : Float := 300
-
 /-- One way from a `nearbyWays` answer. -/
 structure NearbyWay where
   type : String
@@ -87,7 +81,6 @@ def railRoadDistFromWays (ways : List NearbyWay) : Proximity := Id.run do
     else if w.type == "highway" && DRIVABLE_HIGHWAY_SUBTYPES.contains w.subtype then
       minRoad := some (match minRoad with | none => d | some m => min m d)
   return { railDistM := minRail, roadDistM := minRoad }
-
 
 /-! ## Which minutes to ask about, and how few times to ask -/
 
@@ -255,7 +248,6 @@ private def NAN_WAY : NearbyWay :=
 -- Zero is a real distance: a fix ON the way.
 #guard (railRoadDistFromWays [W "highway" "primary" 0]).roadDistM == some 0
 
-
 -- ⚠ MINUTE BUCKETING. A fix before the day starts or at/after it ends is
 -- DROPPED, not clamped — clamping would put a 23:59 fix from yesterday into
 -- minute 0 and give the day a phantom starting location.
@@ -292,7 +284,6 @@ private def T1 : Int := T0 + 1440 * 60
 -- First-seen order, so the shell's query order is stable run to run.
 #guard (distinctQueryPoints #[{ minuteTs := 2, lat := 51.9, lon := 0 },
                               { minuteTs := 1, lat := 51.5, lon := 0 }])[0]!.lat == 51.9
-
 
 -- ⚠ THE JOIN. One answer serves every minute whose median rounds to the same
 -- ~11 m key, which is the whole reason a stationary day costs one query.

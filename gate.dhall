@@ -420,8 +420,8 @@ in  { name = "health"
             PROMISED "the TS↔Lean decode parity harness: 42 seeded problems, day
             scale included, exact path and score agreement required". That
             harness compared against the TypeScript ARM, which retired with the
-            TypeScript backend (#975, 2026-08-26). `scripts/lean-check.sh` has
-            run `lake build` and nothing else since. The row was not silently
+            TypeScript backend (#975, 2026-08-26). `scripts/lean-check.sh` ran
+            `lake build` and nothing else after it. The row was not silently
             green — the `#guard`s are real and they fail the build — but it
             claimed a second, cross-implementation check that no longer existed,
             which is the more flattering half of the claim.
@@ -431,6 +431,11 @@ in  { name = "health"
             floors and ceilings blessed from the TypeScript before it went
             (`corpus_gate`). Those replay gitignored
             corpora, so they are in `deploy.sh` rather than here.
+
+            After the build, `lake exe deadcode`: nothing in the package that
+            `verified_cli` cannot reach, and a `#guard` or theorem about only
+            such code goes with it (`lean/Deadcode.lean`). Its `--control` run
+            first shows the analysis can find what it looks for.
         -}
         G.Check::{
         , name = "Lean verified core (#guards)"

@@ -22,7 +22,7 @@ best score, (2) the trellis's returned path actually achieves that score, and
 namespace Verified.Hsmm.Tests
 
 /-- The decoder contract, checked executably against the oracle. -/
-def check (P : Problem) : Bool :=
+private def check (P : Problem) : Bool :=
   match viterbi P with
   | none => oracleBest P == Score.negInf
   | some r =>
@@ -33,7 +33,7 @@ def check (P : Problem) : Bool :=
 
 /-- Deterministic pseudo-random problem family (no I/O, no clock — a seeded
 integer hash), with hard `-∞` zeros sprinkled through every factor. -/
-def mkP (seed T S maxD : Nat) : Problem where
+private def mkP (seed T S maxD : Nat) : Problem where
   T := T
   S := S
   maxD := maxD
@@ -78,7 +78,7 @@ def mkP (seed T S maxD : Nat) : Problem where
 /-- The still-unproved V1 link, checked executably: the imperative array
 trellis reports exactly the (proved-correct) functional recurrence's score.
 Instances stay tiny — `trellisScore` recomputes columns without memoisation. -/
-def checkTrellis (P : Problem) : Bool :=
+private def checkTrellis (P : Problem) : Bool :=
   match viterbi P with
   | some r => trellisScore P == r.best
   | none => trellisScore P == Score.negInf

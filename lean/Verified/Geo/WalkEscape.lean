@@ -23,9 +23,8 @@ re-clone of an input row.
 
 Two boundary notes:
 
-* `correctWalkPath` takes just the way list: `routeOnWalkable` fuses and builds
-  its own graph now that `toFixed` is ported (`Verified.JsNum`), so nothing is
-  pre-computed for it.
+* `correctWalkPathIn` takes a context built once per walk (`makeBadnessCtx`):
+  the ring boxes, the way grid and the walk graph.
 * The TS `diag` sink is optional, and when it is absent the anchor snap
   distances are not even computed. The Lean twin always returns the records —
   i.e. it reproduces the diag-supplied arm, which is the one with observable
@@ -311,9 +310,6 @@ structure RingCtx where
   grid : Std.HashMap (Int × Int) (Array Nat) := {}
   unfiled : Array Nat := #[]
   deriving Inhabited
-
-/-- The footprints alone, for callers that route around rings. -/
-def RingCtx.buildings (c : RingCtx) : Array Ring := c.footprints.map (·.ring)
 
 structure BadnessCtx where
   ring : RingCtx
@@ -974,11 +970,6 @@ def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
         return (drawn, diags)
   return (out, diags)
 
-/-- `correctWalkPathIn` over a context built for this one call. -/
-def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
-    (opts : CorrectOptions := {}) : Array TPt × Array RunDiag :=
-  correctWalkPathIn (makeBadnessCtx ways buildings opts) drawn opts
-
 /-! ## Passage snap -/
 
 /-- Furthest a passage-snap may MOVE a point (m). Qualification uses `onWayM`
@@ -1101,49 +1092,16 @@ def snapPassagesIn (ctx : BadnessCtx) (pts : Array TPt) : Array TPt := Id.run do
     else out := out.push p
   return out
 
-/-- `snapPassagesIn` over a context built for this one call. -/
-def snapPassages (pts : Array TPt) (walkable : Ways) (buildings : Array Ring)
-    (opts : CorrectOptions := {}) : Array TPt :=
-  snapPassagesIn (makeBadnessCtx walkable buildings opts) pts
-
-/-- Nudge each vertex fully onto its nearest walkable way when that way is
-    within `nudgeReachM`, and otherwise leave it EXACTLY where the GPS put it.
-    Deliberately never a partial move: half-way would strand the point in
-    no-man's-land, neither the GPS truth nor the pavement.
-
-    ⚠ ITS TS TWIN IS GONE (deleted 2026-08-17: nothing called it; the walk draw
-    goes through `walk-smooth-map.ts`). This is no longer a port of anything, and
-    it stays for one reason — the `#guard`s below are the only direct pin on
-    `nearestWalkable`, which IS live, on both sides, via the building-escape
-    path. Deleting this would have quietly dropped that coverage.
-
-    So its reference values can no longer be regenerated: `walk-escape-refs.mts`
-    lost the section that produced them when the TS went. They pin Lean against
-    the TS behaviour as of that date, which is worth more than nothing and less
-    than a live ref — see #1003. -/
-def nudgeTowardWays (drawn : Array TPt) (walkable : Ways) (nudgeReachM : Float) : Array TPt :=
-  if walkable.isEmpty then drawn
-  else drawn.map fun p =>
-    match nearestWalkable p.pt walkable with
-    | some near =>
-      if near.distM ≤ nudgeReachM then { p with lat := near.lat, lon := near.lon } else p
-    | none => p
-
 /-! ## Parity with Node/V8 (`lean/experiments/walk-escape-refs.mts`)
 
 Reference geometry: a 100 m × 100 m block ring of streets at a London origin,
 with footprints placed against it. Everything below is the V8 output verbatim.
-The corrector's private helpers are pinned THROUGH these exported callers —
-`nudgeTowardWays` reads `nearestWalkable` out directly, and the diag records
-expose `segBadnessM` / `pathBadnessM` / the way grid as exact numbers.
+The corrector's private helpers are pinned THROUGH these exported callers, and
+the diag records expose `segBadnessM` / `pathBadnessM` / the way grid as exact
+numbers.
 -/
 
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9
-
-private def approxO : Option Float → Option Float → Bool
-  | none, none => true
-  | some x, some y => approx x y
-  | _, _ => false
 
 private def ptsApprox (a : Array Pt) (b : List Pt) : Bool :=
   a.size == b.length && (a.toList.zip b).all fun (x, y) => approx x.lat y.lat && approx x.lon y.lon
@@ -1170,26 +1128,6 @@ private def HOUSE : Ring := #[P 10 30, P 10 70, P 30 70, P 30 30]
 private def BLOCKHOUSE : Ring := #[P 40 20, P 40 80, P 80 80, P 80 20]
 /-- A footprint whose south wall sits ON the south street. -/
 private def LOWHOUSE : Ring := #[P 0 30, P 0 70, P 30 70, P 30 30]
-
-private def n0 : Pt := P 0 0
-private def n1 : Pt := P 0 100
-private def n2 : Pt := P 100 0
-private def n3 : Pt := P 100 100
-private def dSouth : Float := metersBetween n0 n1
-private def dNorth : Float := metersBetween n2 n3
-private def dSide : Float := metersBetween n0 n2
-
-/-! ### `nudgeTowardWays` — i.e. `nearestWalkable`, read out directly -/
-
-#guard tptsApprox (nudgeTowardWays #[T 0 50 0] STREETS 8) [T 0 50 0]
-#guard tptsApprox (nudgeTowardWays #[T 3 50 0] STREETS 8) [T 0 50 0]
--- At the reach exactly: `<=`, so it still moves.
-#guard tptsApprox (nudgeTowardWays #[T 8 50 0] STREETS 8) [T 0 50 0]
-#guard tptsApprox (nudgeTowardWays #[T 9 50 0] STREETS 8) [T 9 50 0]
--- Near the SW corner the WEST street wins (way order breaks the near-tie).
-#guard tptsApprox (nudgeTowardWays #[T 2 2 0] STREETS 8) [T 2 0 0]
-#guard tptsApprox (nudgeTowardWays #[T 50 50 0] STREETS 8) [T 50 50 0]
-#guard tptsApprox (nudgeTowardWays #[T 50 50 0] #[] 8) [T 50 50 0]
 
 /-! ### `pointInRing` -/
 
@@ -1254,180 +1192,11 @@ private def dSide : Float := metersBetween n0 n2
   | some r => ptsApprox r [P 15 50, P 100 50]
   | none => false
 
-/-! ### `correctWalkPath` -/
-
-private def diagIs (d : RunDiag) (o : Outcome) (straight runBad : Float) (rf : Bool)
-    (routeBad added : Option Float) (budget : Float) (sa sb : Option Float) : Bool :=
-  d.outcome == o && approx d.straightM straight && approx d.runBadM runBad
-    && d.routeFound == rf && approxO d.routeBadM routeBad && approxO d.addedM added
-    && approx d.budgetM budget && approxO d.anchorASnapM sa && approxO d.anchorBSnapM sb
-
-/-- The corner-detour line the block-crossing walk is redrawn as (V8 verbatim). -/
-private def CORNERED : List TPt :=
-  [⟨51.520000000000003, -0.12927816507344128, 1000.0000000000000⟩,
-   ⟨51.520052841833824, -0.12927816507344128, 1005.8823529411765⟩,
-   ⟨51.520081796352734, -0.12896360586988509, 1021.2995844222652⟩,
-   ⟨51.520277528117269, -0.12896360586988589, 1036.5508681193558⟩,
-   ⟨51.520581260172058, -0.12927816507344128, 1064.7058823529412⟩,
-   ⟨51.520634102005879, -0.12927816507344128, 1070.5882352941176⟩,
-   ⟨51.520686943839706, -0.12927816507344128, 1076.4705882352941⟩,
-   ⟨51.520739785673527, -0.12927816507344128, 1082.3529411764705⟩,
-   ⟨51.520792627507348, -0.12927816507344128, 1088.2352941176471⟩,
-   ⟨51.520845469341175, -0.12927816507344128, 1094.1176470588234⟩,
-   ⟨51.520898311174996, -0.12927816507344128, 1100.0000000000000⟩]
-
-private def CROSSING : Array TPt := #[T 0 50 1000, T 100 50 1100]
-
--- A clean walk along the street: one sampling sweep, returned untouched and
--- UN-densified.
-#guard (correctWalkPath #[T 0 10 1000, T 0 50 1030, T 0 90 1060] STREETS #[HOUSE]).1.size == 3
-#guard (correctWalkPath #[T 0 10 1000, T 0 50 1030, T 0 90 1060] STREETS #[HOUSE]).2.isEmpty
-
--- Case 2 is tried FIRST and fails here (the far anchor is 35.29 m out, past the
--- 35 m snap radius), so case 2.5's corner detour carries the fix.
-#guard tptsApprox (correctWalkPath CROSSING STREETS #[HOUSE]).1 CORNERED
-#guard match (correctWalkPath CROSSING STREETS #[HOUSE]).2.toList with
-  | [d] => diagIs d .cornered 58.823529412248945 50.980392157176951 false
-             (some 40.420019872366069) (some 25.215143932469758) 150.0
-             (some 5.8823529409085040) (some 35.294117647032976)
-  | _ => false
-
--- No network at all: nothing to route to, nothing to escape onto. The kept
--- (densified) line then samples marginally WORSE than the input, so the
--- whole-line invariant hands the raw GPS back.
-#guard tptsApprox (correctWalkPath CROSSING #[] #[HOUSE]).1 CROSSING.toList
-#guard match (correctWalkPath CROSSING #[] #[HOUSE]).2.toList with
-  | [d1, d2] =>
-    diagIs d1 .trustGPS 64.705882353157449 60.784313725885113 false none none 150.0 none none
-      && diagIs d2 .invariantRevert 0 0 false none none 150.0 none none
-  | _ => false
-
--- One street only: the graph cannot get around the block, so again the corner
--- detour — and the far anchor's snap distance records the fragmentation.
-#guard tptsApprox (correctWalkPath CROSSING #[#[P 0 0, P 0 100]] #[HOUSE]).1 CORNERED
-#guard match (correctWalkPath CROSSING #[#[P 0 0, P 0 100]] #[HOUSE]).2.toList with
-  | [d] => diagIs d .cornered 58.823529412248945 50.980392157176951 false
-             (some 40.420019872366069) (some 25.215143932469758) 150.0
-             (some 5.8823529409085040) (some 64.705882353157449)
-  | _ => false
-
--- Widen the anchor snap and the route bound: now case 2 wins outright and the
--- walk is redrawn along the streets, round the west side of the block.
-#guard tptsApprox
-    (correctWalkPath CROSSING STREETS #[HOUSE] { routeSnapRadiusM := 60, minRouteBudgetM := 400 }).1
-    [⟨51.520000000000003, -0.12927816507344128, 1000.0000000000000⟩,
-     ⟨51.520000000000003, -0.12927816507344128, 1005.8823529411765⟩,
-     ⟨51.520000000000003, -0.13000000000000000, 1020.5883078121527⟩,
-     ⟨51.520898311174996, -0.13000000000000000, 1050.0002175541611⟩,
-     ⟨51.520898311174996, -0.12927816507344128, 1064.7058823529412⟩,
-     ⟨51.520634102005879, -0.12927816507344128, 1070.5882352941176⟩,
-     ⟨51.520686943839706, -0.12927816507344128, 1076.4705882352941⟩,
-     ⟨51.520739785673527, -0.12927816507344128, 1082.3529411764705⟩,
-     ⟨51.520792627507348, -0.12927816507344128, 1088.2352941176471⟩,
-     ⟨51.520845469341175, -0.12927816507344128, 1094.1176470588234⟩,
-     ⟨51.520898311174996, -0.12927816507344128, 1100.0000000000000⟩]
-#guard match (correctWalkPath CROSSING STREETS #[HOUSE]
-                { routeSnapRadiusM := 60, minRouteBudgetM := 400 }).2.toList with
-  | [d] => diagIs d .routed 58.823529412248945 50.980392157176951 true
-             (some 0) (some 141.17548434733800) 400.0
-             (some 5.8823529409085040) (some 35.294117647032976)
-  | _ => false
-
--- A sub-1 detour ratio refuses every route and every corner detour by
--- construction, so the per-vertex escape is the only lever left: the clipped
--- vertices drop onto the south street the footprint sits against.
-private def ESCAPE_OPTS : CorrectOptions :=
-  { maxDetourRatio := 0.9, minRouteBudgetM := 0, routeSnapRadiusM := 5 }
-
-#guard tptsApprox (correctWalkPath #[T 12 10 1000, T 12 90 1080] STREETS #[LOWHOUSE] ESCAPE_OPTS).1
-    [⟨51.520107797341005, -0.12985563301468825, 1000.0000000000000⟩,
-     ⟨51.520107797341005, -0.12977313759451012, 1005.7142857142857⟩,
-     ⟨51.520107797341005, -0.12969064217433196, 1011.4285714285714⟩,
-     ⟨51.520107797341005, -0.12960814675415383, 1017.1428571428571⟩,
-     ⟨51.520000000000003, -0.12959577250946958, 1022.8571428571429⟩,
-     ⟨51.520000000000003, -0.12959577250946958, 1028.5714285714287⟩,
-     ⟨51.520000000000003, -0.12936066049361941, 1034.2857142857142⟩,
-     ⟨51.520000000000003, -0.12927816507344128, 1040.0000000000000⟩,
-     ⟨51.520000000000003, -0.12919566965326315, 1045.7142857142858⟩,
-     ⟨51.520000000000003, -0.12896055763741299, 1051.4285714285713⟩,
-     ⟨51.520000000000003, -0.12896055763741299, 1057.1428571428571⟩,
-     ⟨51.520107797341005, -0.12894818339272873, 1062.8571428571429⟩,
-     ⟨51.520107797341005, -0.12886568797255060, 1068.5714285714287⟩,
-     ⟨51.520107797341005, -0.12878319255237244, 1074.2857142857142⟩,
-     ⟨51.520107797341005, -0.12870069713219431, 1080.0000000000000⟩]
-#guard match (correctWalkPath #[T 12 10 1000, T 12 90 1080] STREETS #[LOWHOUSE] ESCAPE_OPTS).2.toList with
-  | [d] => diagIs d .escaped 45.714177510194318 39.999905321420506 false none none
-             17.652927586245148 (some 12.000000000339242) (some 12.000000000339242)
-  | _ => false
-
--- Urban block cut: mid-block, past `offNetworkM` from every street with the
--- house wall inside `buildingProxM`. No footprint is crossed, so the corner
--- router has nothing to work with and no vertex has anything to escape from —
--- but the STREETS ring does enclose this chord, and routing it around is
--- exactly what case 2 exists for. The 30 m cut is redrawn as a ~95 m street
--- route: badness 30 → 0, adding 65 m against a 150 m budget.
---
--- This guard used to record `trustGPS` with `routeFound := false`. That was the
--- router's frontier-bound defect frozen as an expectation: the destination edge
--- is long, so Dijkstra had to pop a 160 m node before settling its far end, and
--- the old code answered "no walkable path" on reaching the bound instead of
--- keeping the 95 m route it had already found. Re-derived from V8
--- (`lean/experiments/walk-escape-refs.mts`), not hand-adjusted to pass.
-#guard (correctWalkPath #[T 35 40 1000, T 35 70 1030] STREETS #[HOUSE]).1.size == 3
-#guard match (correctWalkPath #[T 35 40 1000, T 35 70 1030] STREETS #[HOUSE]).2.toList with
-  | [d] => diagIs d .routed 29.999792890312513 29.999792890312513 true (some 0.0)
-             (some 65.000207109359508) 150.0
-             (some 34.999999999671161) (some 29.999792890312513)
-  | _ => false
--- Same geometry, no buildings: open ground is never badness (case 3).
-#guard (correctWalkPath #[T 35 40 1000, T 35 70 1030] STREETS #[]).1.size == 2
-#guard (correctWalkPath #[T 35 40 1000, T 35 70 1030] STREETS #[]).2.isEmpty
-
--- Step-budget invariant: the corner detour is accepted per-run, then the whole
--- leg is discarded because it crossed the pedometer bar.
-#guard tptsApprox (correctWalkPath CROSSING STREETS #[HOUSE] { stepBudgetM := some 105 }).1 CROSSING.toList
-#guard match (correctWalkPath CROSSING STREETS #[HOUSE] { stepBudgetM := some 105 }).2.toList with
-  | [d1, d2] =>
-    diagIs d1 .cornered 58.823529412248945 50.980392157176951 false
-      (some 40.420019872366069) (some 25.215143932469758) 150.0
-      (some 5.8823529409085040) (some 35.294117647032976)
-    && diagIs d2 .budgetRevert 0 0 false none (some 25.215143932469758) 124.78485606753024 none none
-  | _ => false
-
--- A zero reroute budget refuses everything.
-#guard tptsApprox
-    (correctWalkPath CROSSING STREETS #[HOUSE] { minRouteBudgetM := 0, maxLegInflation := 0 }).1
-    CROSSING.toList
-#guard match (correctWalkPath CROSSING STREETS #[HOUSE]
-                { minRouteBudgetM := 0, maxLegInflation := 0 }).2.toList with
-  | [d1, d2] =>
-    diagIs d1 .trustGPS 58.823529412248945 50.980392157176951 false none none 0
-      (some 5.8823529409085040) (some 35.294117647032976)
-    && diagIs d2 .invariantRevert 0 0 false none none 0 none none
-  | _ => false
-
-/-! ### `snapPassages` -/
+/-! ### `snapPassagesIn` -/
 
 /-- The block streets plus a mapped passage THROUGH the house, with a bend the
     drawn chord cuts. -/
 private def PASSAGE_WAYS : Ways := STREETS.push #[P 0 50, P 15 52, P 25 48, P 100 50]
-private def PASSAGE_DRAWN : Array TPt := #[T 0 50 1000, T 20 50 1020, T 100 50 1100]
-
-#guard tptsApprox (snapPassages PASSAGE_DRAWN PASSAGE_WAYS #[HOUSE])
-    [⟨51.520000000000003, -0.12927816507344128, 1000.0000000000000⟩,
-     ⟨51.520100870879510, -0.12925655055175364, 1011.4285714285714⟩,
-     ⟨51.520126088599390, -0.12925114692133136, 1014.2857142857143⟩,
-     ⟨51.520157536319914, -0.12926394170965741, 1017.1428571428571⟩,
-     ⟨51.520179662235002, -0.12927816507344325, 1020.0000000000000⟩,
-     ⟨51.520202607628427, -0.12929291522848069, 1022.9629629629629⟩,
-     ⟨51.520233368326409, -0.12930666174501107, 1025.9259259259259⟩,
-     ⟨51.520259966040349, -0.12930552187814850, 1028.8888888888889⟩,
-     ⟨51.520898311174996, -0.12927816507344128, 1100.0000000000000⟩]
-#guard (snapPassages PASSAGE_DRAWN PASSAGE_WAYS #[]).size == 3
-#guard (snapPassages PASSAGE_DRAWN #[] #[HOUSE]).size == 3
--- Without a way through the footprint nothing is in reach, so the in-building
--- vertex keeps its place: the exemption's drawing half is strictly scoped.
-#guard tptsApprox (snapPassages PASSAGE_DRAWN STREETS #[HOUSE]) PASSAGE_DRAWN.toList
 
 /-! ### The indexed lookups are the linear scans
 

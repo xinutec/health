@@ -6,8 +6,6 @@ import Verified.Geo.RailReconcile
 import Verified.Geo.StaySplit
 import Verified.Geo.SegmentPasses
 import Verified.Geo.TubeHop
-import Verified.Geo.RailJourney
-import Verified.Geo.UndergroundRun
 import Verified.Geo.Factors
 import Verified.Geo.Bus
 import Verified.Geo.PlaceOverride
@@ -64,6 +62,23 @@ does not save them) to delete six one-line projections.
 
 namespace Verified.Geo.PassFold
 
+/-- A pre-Kalman fix with the accuracy its source reported (`none` when it
+reported none). A deep tube ride's fixes come from the cell network, and their
+hundred-metre-plus radii are the underground signal. -/
+structure CoarseFix where
+  ts : Int
+  lat : Float
+  lon : Float
+  accuracy : Option Float := none
+  deriving Inhabited, BEq, Repr
+
+/-- A station a line serves, with the coordinate of its canonical node. -/
+structure LineStation where
+  name : String
+  lat : Float
+  lon : Float
+  deriving Inhabited, BEq, Repr
+
 open Verified.Geo.SegmentMerge (Seg StepPoint)
 
 /-- The day's observations and the shell's lookups. -/
@@ -73,7 +88,7 @@ structure Env where
   points : Array Shed.PointF
   /-- The RAW, pre-Kalman fixes. The underground reconstruction mines these
   because smoothing destroys the coarse cell-network pattern it looks for. -/
-  rawFixes : Array Verified.Geo.UndergroundRun.CoarseFix
+  rawFixes : Array CoarseFix
   /-- Per-minute step rows. -/
   steps : Array StepPoint
   /-- Route-relation stop membership, for the stopping-pattern line picker. -/
@@ -104,7 +119,7 @@ structure Env where
   /-- `osm.stationsOnLine(line)` — every station the line serves, with the
   coordinate of its canonical node. The RICHEST of the three shapes the passes
   ask for; the other two are projections of it. -/
-  stationsOnLine : String → Array Verified.Geo.RailJourney.LineStation := fun _ => #[]
+  stationsOnLine : String → Array LineStation := fun _ => #[]
   /-- `rail_route_cache` rows, filled offline by `refresh-rail-routes`. -/
   railRouteCache : Array Verified.Geo.RailReconcile.RouteRow := #[]
   /-- `bus_route_cache` rows. Empty is the honest "no mirror yet", and the pass
@@ -186,182 +201,10 @@ rename: both carry a `Float` count. -/
 def Env.feasSteps (e : Env) : List Verified.Geo.Worldline.FeasibilityStepPoint :=
   (e.steps.map fun s => ⟨s.ts, s.steps⟩).toList
 
-/-- The step rows as the rail absorbers declare them.
-
-The ONE projection that is not a field-drop: `Verified.Geo.RailAbsorbers`
-types the count `Int` where the env (and `steps_intraday`, and the TS
-`StepPoint`) carry a `Float`. Exact for every value the column can hold — it is
-an integer column — but a genuine conversion rather than a narrowing, so it is
-named here rather than inlined. The Lean modules disagreeing about the type of
-one row is #422; when that closes this becomes a rename like the one above. -/
-def Env.absorberSteps (e : Env) : Array Verified.Geo.RailAbsorbers.StepPoint :=
-  e.steps.map fun s => ⟨s.ts, s.steps.toInt64.toInt⟩
-
-
 /-- The step rows as the biometric windows declare them. A rename: `Float` both
 sides, unlike the two `Int` conversions above. -/
 def Env.biomSteps (e : Env) : List Verified.Geo.BiometricWindows.StepPoint :=
   (e.steps.map fun s => ⟨s.ts, s.steps⟩).toList
-
-/-! ### The line lookup, three ways
-
-`stationsOnLine` is one mirror read, and three passes want three shapes of its
-answer. The env carries the RICHEST — name and coordinate — and each consumer
-takes what it declares, the same rule the fixes follow. -/
-
-/-- Whether NO service in the mirror runs between both named stations — the veto
-form, so the caller's condition reads as the rejection it is.
-
-The `line = none` counterpart to `lineCannotServe`. An absorber that re-anchors a
-boarding to a walked station proposes a NEW pair (that station → the known
-alight); with no line label there is nothing to ask `lineCannotServe` about, and
-the question that remains is whether any service at all connects the two. A
-relation is one direction of one service, so a single relation holding both
-stations is exactly "one ride could do this".
-
-⚠ `false` when either station is absent from every relation — unknown is not
-evidence, the rule `lineCannotServe`'s scan already applies. Without that arm
-every National Rail station would veto, the mirror covering those by operator
-code (`SN7.2`) rather than by a line name. -/
-def Env.noLineConnects (e : Env) (a b : String) : Bool :=
-  let norm := Verified.Geo.LineStoppingPattern.normalizeStationName
-  let na := norm a
-  let nb := norm b
-  let stops (r : Verified.Geo.LineStoppingPattern.RailStopRelation) (t : String) : Bool :=
-    r.stops.any fun s =>
-      match s.name with
-      | none => false
-      | some n => norm n == t
-  if !(e.railStops.any fun r => stops r na) then false
-  else if !(e.railStops.any fun r => stops r nb) then false
-  else !(e.railStops.any fun r => stops r na && stops r nb)
-
-/-- The tube-style lines whose relations stop at BOTH stations, in the label
-form the cascade writes (`"<ref> Line"`). Tube-style: the relation's ref is its
-own name's base token (`Victoria` / `Victoria line: …`), which a Southern
-operator code (`SN7.2`) is not — so a mainline service terminating at London
-Victoria is not a candidate for a tube pair (#238). -/
-def Env.linesServingPair (e : Env) (a b : String) : Array String :=
-  let norm := Verified.Geo.LineStoppingPattern.normalizeStationName
-  let na := norm a
-  let nb := norm b
-  let stops (r : Verified.Geo.LineStoppingPattern.RailStopRelation) (t : String) : Bool :=
-    r.stops.any fun st =>
-      match st.name with
-      | none => false
-      | some n => norm n == t
-  e.railStops.foldl (fun acc r =>
-    match r.lineRef, r.lineName with
-    | some ref, some name =>
-      if (Verified.Geo.LineStoppingPattern.lineBaseToken name).toLower == ref.toLower
-          && stops r na && stops r nb then
-        let label := s!"{ref} Line"
-        if acc.contains label then acc else acc.push label
-      else acc
-    | _, _ => acc) #[]
-
-/-- A rail leg whose LINE cannot serve its own station pair carries the line that
-can (#238's handle 2). Read from the mirror's relations, present in every
-fixture: when the labelled line's relations stop at neither/one of the pair and
-some tube line's relations stop at both, the leg takes that line — the sole
-candidate outright, several by the ride's stopping pattern, and when the pattern
-cannot choose the bare pair, which is honest where the wrong line was not
-(2026-08-07: `Euston Square → King's Cross St Pancras · Victoria Line`; all four
-Victoria relations stop at Euston, three other lines hold that pair). A line the
-relations do not know, or a pair no tube line holds by these names, is left
-alone: unknown is not evidence, and a mainline name (`London King's Cross`) is
-not a tube stop's. The earlier arm that VETOED such a leg to `driving` was
-measured worse (2026-09-11); this one relabels and never demotes. -/
-def substituteLines (e : Env) (segs : Array Seg) : Array Seg :=
-  segs.map fun s =>
-    if Verified.Geo.RailReconcile.effectiveMode s != "train" then s else
-    match s.wayName with
-    | none => s
-    | some w =>
-      match w.splitOn Verified.Geo.RailAbsorbers.RAIL_LINE_SEP with
-      | [pair, line] =>
-        match pair.splitOn "→" with
-        | [a0, b0] =>
-          let a := a0.trimAscii.toString
-          let b := b0.trimAscii.toString
-          let line := line.trimAscii.toString
-          let known := !(Verified.Geo.LineStoppingPattern.railRelationsForLine e.railStops line).isEmpty
-          let serving := e.linesServingPair a b
-          -- By base token, so a direction suffix (`Victoria Line Northbound`)
-          -- neither hides the line nor gets stripped.
-          let tok := fun (l : String) => (Verified.Geo.LineStoppingPattern.lineBaseToken l).toLower
-          if !known || serving.isEmpty || serving.any (fun l => tok l == tok line) then s
-          else
-            let chosen : Option String := match serving with
-              | #[only] => some only
-              | many =>
-                let ride := e.points.map fun p =>
-                  ({ ts := p.ts, lat := p.lat, lon := p.lon, speedKmh := p.speedKmh, bearing := 0 } :
-                    Verified.Geo.LineStoppingPattern.FilteredPoint)
-                Verified.Geo.LineStoppingPattern.pickLineByStoppingPattern many a b e.railStops
-                  ride s.startTs s.endTs
-            let label := match chosen with
-              | some l => s!"{a} → {b} · {l}"
-              | none => s!"{a} → {b}"
-            let why := s!"{line} stops at neither/one of the pair; {serving.size} line(s) hold both"
-            { s with wayName := some label
-                     refinedReason := some (match s.refinedReason with
-                       | some r => s!"{r}; line substituted: {why}"
-                       | none => s!"line substituted: {why}") }
-        | _ => s
-      | _ => s
-
-/-- The normalised names the line's RELATIONS stop at, or `none` when the
-mirror holds no relation for the line — unknown is not evidence. -/
-def Env.relationStops (e : Env) (line : String) : Option (Array String) :=
-  let rels := Verified.Geo.LineStoppingPattern.railRelationsForLine e.railStops line
-  if rels.isEmpty then none
-  else some (rels.flatMap fun r => r.stops.filterMap fun st =>
-    st.name.map Verified.Geo.LineStoppingPattern.normalizeStationName)
-
-/-- `stations` kept to those the line's relations stop at. A line with no
-relation in the mirror keeps every one, and so does a line whose filter would
-leave none. -/
-def Env.onRelations {α : Type} (e : Env) (line : String) (stations : Array α)
-    (name : α → String) : Array α :=
-  match e.relationStops line with
-  | none => stations
-  | some served =>
-    let kept := stations.filter fun st =>
-      served.contains (Verified.Geo.LineStoppingPattern.normalizeStationName (name st))
-    if kept.isEmpty then stations else kept
-
-/-- Name only: what the anchors' served-station test compares — the
-proximity list kept to the stations the line's RELATIONS stop at (#238,
-2026-10-07), the same filter the interchange splicer reads.
-
-`stationsOnLine` is every station point near the line's ways, so it INFLATES
-(66 stations for the Northern's real 52, 54 for the Circle's 35; the mainline
-"London King's Cross" on the Victoria) and OMITS stations the line truly serves
-(21 on the Central). The filter removes the inflation only; an omission stays
-one. Read by `boardingAnchor` and `alightAnchor`; on the corpus
-it moved one day, 08-08's Victoria ride, which now boards at King's Cross St
-Pancras instead of the mainline station. -/
-def Env.servedStations (e : Env) : String → Array Verified.Geo.LineMembership.ServedStation :=
-  fun line => (e.onRelations line (e.stationsOnLine line) (·.name)).map fun s => ⟨s.name⟩
-
-/-- The PROXIMITY list, unfiltered: what the underground-run line pick vetoes
-against, and on purpose. That pick only considers lines found at both ends and
-hugged by the fixes, so the honest list leaves it with NO candidate where the
-proximity list kept a wrong one: 08-07's `Euston Square → King's Cross St
-Pancras` (all four Victoria relations stop at Euston, not Euston Square) then
-never becomes a train and falls to `driving` — measured twice (#181, and #238
-on 2026-10-07). The wrong Victoria label it keeps is relabelled to the bare
-pair later by `substituteLines`. Move this pick onto `servedStations` only
-when it can fall back to the lines the relations say serve the pair. -/
-def Env.nearLineStations (e : Env) : String → Array Verified.Geo.LineMembership.ServedStation :=
-  fun line => (e.stationsOnLine line).map fun s => ⟨s.name⟩
-
-/-- The journey assembler's own shell record. Its radius is an `Int` where the
-env's is a `Float`; widening, so nothing is lost. -/
-def Env.railJourneyEnv (e : Env) : Verified.Geo.RailJourney.Env :=
-  { linesAtPoint := fun lat lon r => e.linesAtPoint lat lon (Float.ofInt r)
-    stationsOnLine := e.stationsOnLine }
 
 /-! ## Radii the cascade chooses
 
@@ -373,13 +216,6 @@ UNPINNED, and that is a gap rather than a decision: nothing here brackets them,
 because the fold has no scenario guards yet. The pass each one feeds does pin
 its own behaviour, so a wrong value surfaces as a wrong answer rather than as
 silence — but that is weaker than a fixture either side of the bar. -/
-
-/-- `UNDERGROUND_STATION_RADIUS_M` (`src/geo/underground-rail.ts`). Wider than
-the rail-run radius: a tunnel reacquire lands further from the platform. -/
-def UNDERGROUND_STATION_RADIUS_M : Float := 350
-
-/-- `UNDERGROUND_LINES_RADIUS_M` (`src/geo/underground-rail.ts`). -/
-def UNDERGROUND_LINES_RADIUS_M : Float := 300
 
 /-- `DEFAULT_RADIUS_M.linesAtPoint` (`src/geo/osm.ts`) — what the adapter falls
 back to when the caller names none, which is how `railRuns` calls it. -/
@@ -571,17 +407,17 @@ def alightAfterHold (e : Env) (segs : Array Seg) : Array Seg := Id.run do
     let some line := rail.line | continue
     let some last := (e.rawFixes.filter (·.ts ≤ s.endTs)).back? | continue
     let after := e.rawFixes.filter (·.ts > s.endTs)
-    let same := fun (f : Verified.Geo.UndergroundRun.CoarseFix) =>
+    let same := fun (f : CoarseFix) =>
       Verified.Hsmm.FloatScore.haversineMeters f.lat f.lon last.lat last.lon ≤ ALIGHT_HOLD_RADIUS_M
     let some k := after.findIdx? (!same ·) | continue
     let some fresh := after[k]? | continue
     let heldTo := if k == 0 then last.ts else (after[k - 1]?.map (·.ts)).getD last.ts
     if heldTo - last.ts < ALIGHT_HOLD_MIN_S then continue
-    let dist := fun (st : Verified.Geo.RailJourney.LineStation) =>
+    let dist := fun (st : LineStation) =>
       Verified.Hsmm.FloatScore.haversineMeters fresh.lat fresh.lon st.lat st.lon
     let stations := e.stationsOnLine line
     let some labelled := stations.find? (·.name == rail.alight) | continue
-    let some nearest := stations.foldl (fun (b : Option Verified.Geo.RailJourney.LineStation) st =>
+    let some nearest := stations.foldl (fun (b : Option LineStation) st =>
       match b with
       | some x => if dist st < dist x then some st else some x
       | none => some st) none | continue
@@ -593,66 +429,6 @@ def alightAfterHold (e : Env) (segs : Array Seg) : Array Seg := Id.run do
       refinedReason := some (match s.refinedReason with
         | some r => if r == "" then why else s!"{r}; {why}"
         | none => why) }
-  return out
-
-/-- A position re-reported underground wanders by this much: 11 m over two and
-a half minutes, measured at Château d'Eau. -/
-def RIDE_HOLD_RADIUS_M : Float := 25
-/-- Below this a "walk" is not stepping: sitting on the train, phone held. -/
-def RIDE_HOLD_MAX_CADENCE_SPM : Float := 20
-/-- The longest unidentified vehicle leg taken as the rest of a ride. -/
-def RIDE_TAIL_MAX_S : Int := 10 * 60
-
-/-- A ride, then a short "walk" whose every fix repeats the ride's last one and
-which barely steps, then an unidentified vehicle leg: the phone held its
-position underground and the train went on. One ride, alighting at its line's
-station nearest where the vehicle leg ended. A Métro 4 ride read Vavin →
-Château d'Eau, a minute and a half of walking on the boulevard above it and a
-three-minute drive; it ran on to Gare du Nord. -/
-def rideThroughHold (e : Env) (segs : Array Seg) : Array Seg := Id.run do
-  let mut out : Array Seg := #[]
-  let mut i := 0
-  while i < segs.size do
-    let some s := segs[i]? | break
-    let merged : Option Seg := do
-      guard (Verified.Geo.SegmentMerge.effectiveMode s == "train")
-      let rail ← Verified.Geo.RailAbsorbers.parseRailWayName s.wayName
-      let line ← rail.line
-      let w ← segs[i + 1]?
-      let v ← segs[i + 2]?
-      guard (Verified.Geo.SegmentMerge.effectiveMode w == "walking"
-        && Verified.Geo.SegmentMerge.effectiveMode v == "driving"
-        && !Verified.Geo.SegmentPasses.hasVehicleClaim v
-        && w.startTs - s.endTs ≤ Verified.Geo.SegmentPasses.CONTIGUITY_MAX_GAP_S
-        && v.startTs - w.endTs ≤ Verified.Geo.SegmentPasses.CONTIGUITY_MAX_GAP_S
-        && w.endTs - w.startTs ≤ Verified.Geo.TransitPlace.PLATFORM_WALK_MAX_S
-        && v.endTs - v.startTs ≤ RIDE_TAIL_MAX_S)
-      let last ← (e.rawFixes.filter (·.ts ≤ s.endTs)).back?
-      let held := e.rawFixes.filter fun f => f.ts ≥ w.startTs && f.ts ≤ w.endTs
-      guard (!held.isEmpty && held.all fun f =>
-        Verified.Hsmm.FloatScore.haversineMeters f.lat f.lon last.lat last.lon ≤ RIDE_HOLD_RADIUS_M)
-      let stepped := e.steps.foldl (fun a p =>
-        if p.ts ≥ w.startTs && p.ts < w.endTs then a + p.steps else a) 0
-      guard (stepped / max 1 (Float.ofInt (w.endTs - w.startTs) / 60) < RIDE_HOLD_MAX_CADENCE_SPM)
-      let fin ← (e.rawFixes.filter fun f => f.ts ≥ v.startTs && f.ts ≤ v.endTs).back?
-      let dist := fun (st : Verified.Geo.RailJourney.LineStation) =>
-        Verified.Hsmm.FloatScore.haversineMeters fin.lat fin.lon st.lat st.lon
-      let st ← (e.stationsOnLine line).foldl (fun (b : Option Verified.Geo.RailJourney.LineStation) x =>
-        match b with
-        | some y => if dist x < dist y then some x else some y
-        | none => some x) none
-      guard (dist st ≤ ALIGHT_FRESH_MAX_M && st.name != rail.board && st.name != rail.alight)
-      let why := s!"rides on to {st.name}: the walk after it held the ride's last fix, unstepped, and the vehicle leg after that ended {toString (Verified.JsNum.jsRound (dist st)).toInt64.toInt} m from it (was {rail.alight})"
-      return { s with
-        endTs := v.endTs
-        pointCount := s.pointCount + w.pointCount + v.pointCount
-        wayName := some s!"{rail.board} → {st.name}{Verified.Geo.Worldline.RAIL_LINE_SEP}{line}"
-        refinedReason := some (match s.refinedReason with
-          | some r => if r == "" then why else s!"{r}; {why}"
-          | none => why) }
-    match merged with
-    | some m => out := out.push m; i := i + 3
-    | none => out := out.push s; i := i + 1
   return out
 
 /-- How far from its last fix a ride's labelled alight may lie and still be
@@ -705,12 +481,6 @@ TS entry — several of these exist only because they run after another. -/
 and the rewrite. Named because a divergence is reported against a pass, and an
 index would not survive an insertion. -/
 abbrev Pass := String × (Array Seg → Array Seg)
-
-/-- A segment flagged `needsRename` takes the name its own window derives, and
-nothing else; no name derived means unnamed, never the stale one. -/
-def renameFlagged (e : Env) (s : Seg) : Seg :=
-  if !s.needsRename then s
-  else { s with needsRename := false, wayName := (e.reenrich s).bind (·.wayName) }
 
 /-- The cascade, in execution order. -/
 def passes (e : Env) : Array Pass := #[
@@ -805,36 +575,14 @@ def passes (e : Env) : Array Pass := #[
   ("vehicleIdentity", fun segs => Verified.Geo.SegmentPasses.resolveVehicleIdentity segs)
 ]
 
-/-- Run the cascade. -/
-def runPasses (e : Env) (segs : Array Seg) : Array Seg :=
-  (passes e).foldl (fun acc (_, run) => run acc) segs
-
-/-- `runPassesTraced` over an EXPLICIT pass array, so a caller can run a PREFIX
-of the cascade.
-
-⚠ **A MEASUREMENT SEAM, NOT A FEATURE.** Health #1071 spent a day attributing
-+595 MiB to the wrong things because `FOLD_SPLIT` resolves to the ROUND and stops
-— there is nothing inside a round that says WHICH pass grew the heap. Running the
-first `n` passes and reading RSS is monotone in `n` by construction, so the jump
-between `n` and `n+1` names the pass without anyone having to guess.
-
-⚠ A truncated cascade produces a WRONG DAY, deliberately: passes exist to undo
-one another (`revertIsolatedCadence` is there to undo the pass before it), so a
-prefix is not a smaller correct answer. Nothing may bless, compare or serve its
-output. -/
+/-- Run a pass array in order, with each pass's output traced. The day fold
+runs its passes through this (`DayEntry.dayResult`), with the names and timing
+it wraps them in. -/
 def runPassArrayTraced (ps : Array Pass) (segs : Array Seg) :
     Array Seg × Array (String × Array Seg) :=
   ps.foldl (fun (acc, trace) (name, run) =>
     let next := run acc
     (next, trace.push (name, next))) (segs, #[])
-
-/-- Run the cascade, keeping each pass's output alongside its name.
-
-The shadow ledger reports a divergence against the pass that produced it, so the
-per-pass output is part of what this module owes its caller — not a debugging
-aid. Same reason `annotateRailRuns` returns its OSM read trace. -/
-def runPassesTraced (e : Env) (segs : Array Seg) : Array Seg × Array (String × Array Seg) :=
-  runPassArrayTraced (passes e) segs
 
 /-- The pass names, in order. -/
 def passNames (e : Env) : Array String := (passes e).map (·.1)
@@ -849,13 +597,6 @@ private def NO_LOOKUPS : Env :=
 private def lat0 : Float := 51.52
 private def lon0 : Float := -0.13
 private def mlat : Float := 1 / 111320
-
-private def march : Array Shed.PointF :=
-  (Array.range 21).map fun k =>
-    { ts := 60 * Int.ofNat k, lat := lat0 + (30 * Float.ofNat k) * mlat, lon := lon0
-      speedKmh := 4 }
-
-private def env : Env := { NO_LOOKUPS with points := march }
 
 /-! ## Every wired pass, demonstrably doing something
 
@@ -875,46 +616,7 @@ fold reaches the pass, with inputs it can act on.
 
 A pass with no witness is named in `unwitnessed` rather than left to be inferred
 from a count, and the two lists must partition the wired set — so a pass added
-without a witness cannot slip in as covered.
-
-Re-measured with the witnesses in place, the same eleven mutations left TWO
-silent: `rideHeadClaim` and `vehicleEdgeShed`, which were the two `unwitnessed`
-entries a mutation could reach. **Both are CLOSED as of 2026-08-30** — each has a
-witness below and each was ablation-checked by replacing its pass with the
-identity, which fails its guard. No mutation of the wired set is silent now.
-
-The second tranche was measured the same way: twelve mutations, eight fire, and
-these FOUR were silent — recorded because a witness proves a pass acts, not that
-every input it is handed matters. Three are now closed (2026-08-06) and the
-fourth is subsumed; the entries stay, struck through, because what made each one
-silent is the reusable part. Both closures needed the SAME move — the pass fires
-either way, so the guard cannot ask whether it acted, only what it produced.
-
-* ~~`boardingAnchor` and `alightAnchor` still fire with `servedStations`
-  replaced by an empty lookup~~ — CLOSED (#423). The `NOSERVE` pair below is
-  what closed it: a mirror that knows the line but does not stop it where the
-  walk arrives, so the veto has something to reject. Re-measured, all three
-  mutations now fail the build — emptying either entry's lookup, or gutting
-  `Env.servedStations` itself (which fails both guards at once).
-* `undergroundRail` also takes `servedStations`, and emptying THAT argument is
-  still silent. Not a fourth hole of its own: the pass is on `unwitnessed`, so
-  nothing shows it acts at all, and its lookup cannot be pinned before it is.
-* ~~`finalMerge` still fires with the far-phantom swallow removed~~ — CLOSED.
-  `fires` was never going to reach it: with the swallow gone that day changes
-  nothing, so "did the pass act" is the wrong question and the guards below
-  assert the OUTPUT instead. Two same-place stays either side of a walk, one on
-  the place and one 990 m off it; the far one is demoted and coalesced. Both
-  mutations fail the build — deleting the swallow, and a swallow that demotes
-  EVERY stay carrying the id, which is what the surviving-near-stay guard is
-  for.
-
-All six step and fix projections are pinned as of 2026-08-30. `Env.feasSteps`
-was the last, and it could not be pinned until `vehicleEdgeShed` and
-`rideHeadClaim` had witnesses, since they are its only consumers — closing those
-two closed this as a side effect rather than as separate work. Re-measured:
-emptying `feasSteps` now fails BOTH of those guards. Note the two projections
-have IDENTICAL bodies, so a probe aimed at one by its text alone hits the other —
-anchor on the signature. -/
+without a witness cannot slip in as covered. -/
 
 section Witnesses
 
@@ -933,12 +635,6 @@ private def mixedTrack : Array Shed.PointF := Id.run do
     d := d + (if fast then 750 else 66)
   return out
 
-/-- Out and back: north for half the window, south for the other half. -/
-private def outAndBack : Array Shed.PointF :=
-  (Array.range 151).map fun k =>
-    let n := if k ≤ 75 then Float.ofNat k else Float.ofNat (150 - k)
-    { ts := 60 * Int.ofNat k, lat := lat0 + (n * 100) * mlat, lon := lon0, speedKmh := 30 }
-
 private def cadence : Array StepPoint :=
   (Array.range 151).map fun k => { ts := 60 * Int.ofNat k, steps := 100 }
 
@@ -950,13 +646,7 @@ private def stationsAt : Float → Float → Float → Array Verified.Geo.TubeHo
     #[{ name := (if lat < lat0 + 22000 * mlat then "S" else "T")
         distanceM := 40, lat := some lat, lon := some lon }]
 
-/-- Three stops along the ride: at its head, at the 22 km bar, and at its tail.
-The coordinates are the ones the fast stretch actually passes, because a route
-whose stops the leg never reaches anchors nothing. -/
-private def stopAt (n : Float) : Verified.Geo.RailJourney.LineStation × Float :=
-  (⟨"", lat0 + n * mlat, lon0⟩, n)
-
-private def lineStations : Array Verified.Geo.RailJourney.LineStation :=
+private def lineStations : Array LineStation :=
   #[⟨"S", lat0 + 3300 * mlat, lon0⟩, ⟨"M", lat0 + 22000 * mlat, lon0⟩,
     ⟨"T", lat0 + 40800 * mlat, lon0⟩]
 
@@ -989,7 +679,6 @@ private def withTrack (pts : Array Shed.PointF) (steps : Array StepPoint) : Env 
     hr := [{ ts := 60, bpm := 60 }, { ts := 120, bpm := 80 }] }
 
 private def MIX : Env := withTrack mixedTrack cadence
-private def BACK : Env := withTrack outAndBack #[]
 
 private def tr (a b : Int) (way : Option String) : Seg :=
   { startTs := a, endTs := b, mode := "train", wayName := way, pointCount := 50, maxSpeed := 50 }
@@ -1012,57 +701,8 @@ private def runNamed (e : Env) (name : String) (day : Array Seg) : Array Seg :=
 private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
   runNamed e name day != day
 
--- Two stays either side of a march the classifier called dwelling: the first
--- pass relabels it and the second coalesces the result. Both are pinned in
--- their firing ORDER above; these pin that each does something at all.
-
--- Two co-located stays, re-resolved from the merged centre.
--- A ride that doubles back is two rides.
--- A short stay at the boarding station, absorbed into the train.
--- A short stationary between a train and onward movement.
--- Drive, brief stop, drive. `BACK` and not `MIX` because the tell is the
--- ABSENCE of steps: if the user had got out the watch would have counted some,
--- and `MIX` walks at 100 spm throughout.
--- …and the SAME sandwich under `MIX`, which walks at 100 spm throughout, is
--- left alone. A negative witness, and the only thing that pins the step COUNT:
--- `absorberSteps` is the one projection that converts rather than drops a
--- field, and a conversion that lost the count would absorb this stop.
--- Leg B boards where leg A alighted, not where it independently resolved.
--- A "platform walk" laid across the track's 4 km/h → 45 km/h boundary: three
--- slow minutes and then the ride, so the departing leg's boarding is pulled back
--- to where the track actually starts moving. Head-only, which is the 07-02 shape
--- mirrored — `MIX` accelerates once and never decelerates, so there is no tail.
--- Two adjacent legs of one ride.
--- A short walk between two trains sharing a station is the platform change.
--- One "walk" spanning a ride comes out walk → ride → walk.
--- A walk whose tail is vehicle-paced, handing off to a confirmed drive.
--- A fast station-to-station driving leg bracketed by walks is a tube hop.
--- A driving leg flush against an identified ride is part of it.
 -- A day ending on a ride nobody placed: `driving` is a claim, `vehicle` is not.
 #guard fires MIX "vehicleIdentity" #[st 0 600, dr 600 1200]
--- A cadence flip with no vehicular context on either side. The tag stays; only
--- the mode reverts, which is why `isCadenceFlip` tests `refinedMode` too.
-private def flipped (a b : Int) : Seg :=
-  { startTs := a, endTs := b, mode := "walking", refinedMode := some "driving"
-    refinedKinds := #["low-cadence"], avgSpeed := 4, pointCount := 50 }
--- …and the SAME flip beside a real drive is kept: a slow leg between two rides
--- is the ride, and the pass exists to spare it. Without this the revert could
--- fire unconditionally and the guard above would not notice.
-
--- A remainder flagged for re-enrichment. `MIX.reenrich` answers `none` — a
--- FAILED re-enrichment — and the flag clears anyway, which is the TS's
--- destructure-and-drop: the leg stays honestly unnamed and no later pass
--- retries it. Asserting only that something changed would not separate that
--- from a pass that cleared nothing, so the flag itself is checked.
--- A day with nothing flagged is returned untouched.
-
--- `renameFlagged`: a flagged walk takes its own window's name; a derivation with
--- no name leaves it unnamed, not holding the stale one; an unflagged walk keeps it.
-private def OWN : Env := { MIX with reenrich := fun s => some { s with wayName := some "Own" } }
-#guard (renameFlagged OWN { wk 0 600 with wayName := some "Stale", needsRename := true }).wayName == some "Own"
-#guard !(renameFlagged OWN { wk 0 600 with wayName := some "Stale", needsRename := true }).needsRename
-#guard (renameFlagged MIX { wk 0 600 with wayName := some "Stale", needsRename := true }).wayName == none
-#guard (renameFlagged OWN { wk 0 600 with wayName := some "Stale" }).wayName == some "Stale"
 
 -- A train run whose route is in the cache gets the track drawn on it.
 #guard fires MIX "railSnap" #[tr 1000 2000 (some "A → B")]
@@ -1090,12 +730,6 @@ private def OWN : Env := { MIX with reenrich := fun s => some { s with wayName :
 
 -- A decode with a place pick overrides the pipeline's attribution.
 #guard fires MIX "hsmmOverride" #[st 0 600, wk 600 1200]
--- Two consecutive stays at one place are one visit.
--- …and two adjacent walks are NOT coalesced, because nothing was swallowed.
--- The TS coalesces only when the far-phantom swallow demoted a stay, testing
--- that by reference equality on the returned array; this is the guard that
--- pins the structural stand-in. Drop the test and these two walks merge.
-
 -- The first stay after a train is at the station its label alighted at: a
 -- change of trains, a wait however long, and across the walk up from the
 -- platform (05-22's ambulance wait at Finchley Road); for the label's own
@@ -1124,30 +758,9 @@ private def OWN : Env := { MIX with reenrich := fun s => some { s with wayName :
   fun s => s.mode != "stationary" || s.placeSource.any (·.rule == "station")
 #guard !(fires MIX "boardingStayLabel" #[st 0 7200, tr 7200 9000 (some "S → T")])
 #guard !(fires MIX "boardingStayLabel" #[tr 0 600 (some "A → S"), st 600 900])
--- The ride on to the true alight, stranded as the fast head of the next walk.
--- Two legs of one Metropolitan ride, split by a sliver, are one ride.
--- One ride labelled as two legs back to back is joined.
--- Boarding re-anchored to the station the preceding walk actually reached.
-
--- …and the SAME two days against a mirror that knows the line but does not stop
--- it where the walk arrives: `M` is the only served station, and neither walk
--- reaches it. The membership veto fires and both anchors decline. #423.
---
--- These are what pin `Env.servedStations`. The positive witnesses above cannot:
--- their walks reach `S`/`T`, which `MIX`'s mirror serves, so they anchor whether
--- the lookup answers or not. And an EMPTY lookup is not a disabled one —
--- `LineMembership.scan` leaves `known` false when every component comes back
--- empty, so a gutted projection reads as "unknown, assert nothing" and both
--- anchors fire again. That is a DIFFERENT answer, not a missing one, which is
--- why the guard has to be negative: only a day the veto is supposed to STOP can
--- tell a populated lookup from an absent one.
-private def NOSERVE : Env :=
-  { MIX with stationsOnLine := fun _ => #[⟨"M", lat0 + 22000 * mlat, lon0⟩] }
-
-
 /-! ### `displayTz`, whose branches nothing else owns
 
-The other 31 entries call a function some module pins. This one and
+The other entries call a function some module pins. This one and
 `alightStayLabel` are written here, so their behaviour is pinned here too —
 a witness that they merely change something would leave the choice of
 coordinate, and the fallback, untested. -/
@@ -1175,47 +788,7 @@ than inferred from the segment. -/
 private def fxm (ts : Int) (metresNorth speedKmh : Float) : Shed.PointF :=
   { ts, lat := lat0 + metresNorth * mlat, lon := lon0, speedKmh }
 
-/-- Four sparse dwell fixes, a 300 s march, a standing wait, then the ride.
-
-⚠ LIFTED VERBATIM from `StaySplit`'s `RideHeadGuards`, and deliberately not
-designed here: those 24 guards already solved the two parts that are invisible
-until they are wrong — the dwell median is TIME-WEIGHTED, so four dwell fixes
-against ten tail fixes would otherwise sit 200 m into the march and
-`MARCH_START_MAX_FROM_DWELL_M` would refuse the carve; and the standing WAIT at
-3500-3600 is what makes the march a march rather than the ride's first metres.
-`lat0`/`mlat` are the same constants there, so the coordinates carry over. -/
-private def rideHeadTrack : Array Shed.PointF :=
-  #[fxm 0 0 0, fxm 1000 5 0, fxm 2000 3 0, fxm 3000 4 0,
-    fxm 3100 10 3.6, fxm 3200 110 3.6, fxm 3300 210 3.6, fxm 3400 310 3.6,
-    fxm 3500 315 0.2, fxm 3600 318 0.1,
-    fxm 3700 1000 25, fxm 3800 2000 30, fxm 3900 3000 32, fxm 4000 4000 34]
-
-/-- Cadence over the march only. The pass needs the wearer STEPPING through the
-run; steps everywhere would not distinguish the march from the dwell. -/
-private def marchSteps : Array StepPoint :=
-  (Array.range 5).map fun k => { ts := 3100 + 60 * Int.ofNat k, steps := 80 }
-
-private def RIDEHEAD : Env :=
-  { NO_LOOKUPS with points := rideHeadTrack, steps := marchSteps }
-
--- A stay that ran on over the boarding: the ride's head is carved back out of
--- it. This is one of the two the module header calls the only unwitnessed
--- entries a MUTATION CAN REACH, and with `vehicleEdgeShed` below it is why
--- `Env.feasSteps` could not be pinned — they are its only consumers.
-
--- A train leg laid across the track's 4 km/h -> 45 km/h boundary at ts 3000, so
--- its HEAD is the walk to the platform: 540 s of pedestrian pace, ~590 m net, at
--- MIX's 100 spm, handed back to the walk before it. The remaining 1200 s of ride
--- clears `MIN_REMAINING_RIDE_S`.
-
-/-- A drive decelerating into its arrival, then a residual parked at the kerb.
-
-⚠ LIFTED from `StaySplit`'s `ArrivalGuards`. The tail is the load-bearing half
-and is easy to get wrong: every residual fix must sit inside
-`ARRIVAL_STAY_RADIUS_M` of the stay centroid, drift under
-`ARRIVAL_TAIL_MAX_NET_M` NET, and read below `ARRIVAL_TAIL_STATIONARY_KMH`
-median — a residual that merely SLOWS is a walk-in from the kerb and the pass
-correctly refuses it. -/
+/-- A drive decelerating into its arrival, then a residual parked at the kerb. -/
 private def arrivalTrack : Array Shed.PointF :=
   #[fxm 500 (-2000) 40, fxm 700 (-1000) 38, fxm 900 (-200) 30,
     fxm 1000 0 25, fxm 1100 600 22, fxm 1200 1200 21,
@@ -1224,13 +797,7 @@ private def arrivalTrack : Array Shed.PointF :=
 
 private def ARRIVAL : Env := { NO_LOOKUPS with points := arrivalTrack }
 
--- A "walk" that is really the drive still arriving, then parking: the drive
--- absorbs its decelerating tail and the residual folds into the stay.
-
--- The SAME track answers the pedestrian mirror, and that is the point rather
--- than a saving: `vehicleArrival` reads the head as a vehicle still moving and
--- `stayArrivalClaim` reads the tail as a walker already standing, so one track
--- with a fast head and a parked tail is the shape BOTH gates want. Here the
+-- `stayArrivalClaim` reads the parked tail as a walker already standing: the
 -- trailing still run is 400 s over a 14 m spread, and 200 s of walk is left
 -- behind — clearing FOOT_ARRIVAL_MIN_DWELL_S, SPREAD_MAX_M and
 -- MIN_WALK_REMAINDER_S respectively.
@@ -1248,39 +815,21 @@ private def DWELL : Env := { NO_LOOKUPS with points := dwellTrack }
 #guard fires DWELL "walkDwell" #[wk 0 1200]
 #guard (runNamed DWELL "walkDwell" #[wk 0 1200]).map (·.mode) == #["walking", "stationary", "walking"]
 
--- A stay whose last 150 s walk 150 m north, at 95 steps/min, into the next
--- stay: the edge pass carves stay | walk | stay.
-private def edgeTrack : Array Shed.PointF :=
-  (Array.range 56).map (fun i => fxm (Int.ofNat i * 30) (if i % 2 == 0 then 0 else 3) 0.2) ++
-  (Array.range 6).map (fun i => fxm (1680 + Int.ofNat i * 25) (Float.ofNat (i + 1) * 25) 4) ++
-  (Array.range 70).map (fun i => fxm (1860 + Int.ofNat i * 30) (150 + if i % 2 == 0 then 0 else 3) 0.2)
-private def EDGE : Env :=
-  { NO_LOOKUPS with points := edgeTrack
-                    steps := (Array.range 3).map fun k => { ts := 1680 + 60 * Int.ofNat k, steps := 95 } }
-
 -- A stay, then a "walk" whose first 300 s have no stepped minute (the stay had
 -- step data, 5/min) before 95 steps/min from 1500: the stay runs to 1500.
 private def STEPLESS : Env :=
   { NO_LOOKUPS with points := dwellTrack
                     steps := #[{ ts := 1100, steps := 5 }] ++
                       (Array.range 20).map fun k => { ts := 1500 + 60 * Int.ofNat k, steps := 95 } }
--- Two stays 1 km apart with 90 s between them: the gap is filled with a vehicle.
-private def gapTrack : Array Shed.PointF :=
-  #[fxm 0 0 0, fxm 600 0 0, fxm 690 1000 0, fxm 1300 1000 0]
-private def GAP : Env := { NO_LOOKUPS with points := gapTrack }
-
--- A still, stepless "walk" (the stay before it had steps) straight into a train
--- joins it; the same walk at a walker's pace does not.
-private def RIDEEDGE : Env := { NO_LOOKUPS with steps := #[{ ts := 100, steps := 30 }] }
 
 #guard (runNamed STEPLESS "staySteplessDeparture" #[st 0 1200, wk 1200 3000]).map (·.startTs) ==
   #[0, 1500]
 
 -- A ride labelled to V whose last fix (at V) is held 300 s, the next fresh fix
 -- 100 m from M: it alights at M. Held 120 s, or fresh nearer V, it does not.
-private def holdLine : Array Verified.Geo.RailJourney.LineStation :=
+private def holdLine : Array LineStation :=
   #[⟨"M", lat0, lon0⟩, ⟨"V", lat0 + 600 * mlat, lon0⟩]
-private def heldFixes (holdS : Int) (freshM : Float) : Array Verified.Geo.UndergroundRun.CoarseFix :=
+private def heldFixes (holdS : Int) (freshM : Float) : Array CoarseFix :=
   #[⟨1000, lat0 + 600 * mlat, lon0, some 60⟩] ++
   ((Array.range (holdS.toNat / 20)).map fun k => ⟨1000 + 20 * Int.ofNat (k + 1), lat0 + 600 * mlat, lon0, some 80⟩) ++
   #[⟨1000 + holdS + 14, lat0 + freshM * mlat, lon0, some 100⟩]
@@ -1290,20 +839,6 @@ private def holdRide : Seg := { tr 0 1000 (some "B → V · L") with }
 #guard (runNamed (HOLD 300 100) "alightAfterHold" #[holdRide]).map (·.wayName) == #[some "B → M · L"]
 #guard !fires (HOLD 120 100) "alightAfterHold" #[holdRide]
 #guard !fires (HOLD 300 450) "alightAfterHold" #[holdRide]
-
--- A ride to V, a walk holding its last fix unstepped, a vehicle leg ending
--- 100 m from G on the line: one ride to G. A walk that steps, or that moves
--- off the held fix, leaves all three alone.
-private def thruLine : Array Verified.Geo.RailJourney.LineStation :=
-  #[⟨"B", lat0 - 5000 * mlat, lon0⟩, ⟨"V", lat0, lon0⟩, ⟨"G", lat0 + 900 * mlat, lon0⟩]
-private def THRU (walkSteps : Float) (heldM : Float) : Env :=
-  { NO_LOOKUPS with
-    rawFixes := #[⟨990, lat0, lon0, some 70⟩, ⟨1100, lat0 + heldM * mlat, lon0, some 600⟩,
-                  ⟨1150, lat0, lon0, some 80⟩, ⟨1300, lat0 + 800 * mlat, lon0, some 30⟩]
-    steps := #[{ ts := 1080, steps := walkSteps }]
-    stationsOnLine := fun _ => thruLine }
-private def thruDay : Array Seg :=
-  #[tr 0 1000 (some "B → V · L"), wk 1060 1150, { wk 1150 1300 with mode := "driving" }]
 
 -- A ride labelled to V whose last fix, at its end, is 497 km from V and 239 m
 -- from a mainline T: it alights at T, and line L, which does not reach T, goes.
@@ -1322,52 +857,6 @@ private def longRide : Seg := tr 0 1000 (some "B → V · L")
 #guard !fires (lastAt 1000 #[{ terminus with subtype := "subway" }]) "alightAtLastFix" #[longRide]
 #guard !fires (lastAt 800 #[terminus]) "alightAtLastFix" #[longRide]
 
-/-- One train leg holding a ride, a walk out of the station, then a standstill —
-the 06-18 shape, lifted from `Interchange`'s own guards.
-
-⚠ THE STANDSTILL IS LOAD-BEARING, not padding. A burst within
-`BURST_EDGE_GUARD_S` of a leg edge is discarded, so the tail burst is only
-visible because the leg runs on past it; end the leg at the walk and the pass
-correctly finds nothing. ⚠ And the braking fix inside the burst's first minute
-is deliberate: resumption is tested from the burst's END, and a ~28 km/h fix
-fifteen seconds in would read as the ride resuming if it were tested from the
-start. -/
-private def tailTrimTrack : Array Shed.PointF := Id.run do
-  let mut pts : Array Shed.PointF := #[]
-  let mut m : Float := 0
-  let mut ts : Int := 0
-  while ts < 420 do
-    pts := pts.push (fxm ts m 64); m := m + 250; ts := ts + 14
-  pts := pts.push (fxm ts m 28); m := m + 110; ts := ts + 14
-  while ts < 600 do
-    pts := pts.push (fxm ts m 5); m := m + 20; ts := ts + 14
-  while ts ≤ 900 do
-    pts := pts.push (fxm ts m 0.3); m := m + 1; ts := ts + 14
-  return pts
-
-/-- Three walking minutes at the alight, clear of both leg edges. -/
-private def tailTrimSteps : Array StepPoint :=
-  (Array.range 3).map fun k => { ts := 420 + 60 * Int.ofNat k, steps := 93 }
-
-private def TAILTRIM : Env :=
-  { NO_LOOKUPS with points := tailTrimTrack, steps := tailTrimSteps }
-
--- A train leg drawn past the moment the rider got off: the tail is trimmed and
--- re-emitted as a walk.
-
-/-- A "stationary" segment with a walker's speed on it. `st` leaves `avgSpeed`
-at zero, and `STATIONARY_WALK_MIN_AVG_SPEED_KMH` is the gate that rejects a
-genuine stop, so a witness for `walkThrough` cannot use it. -/
-private def stw (a b : Int) : Seg :=
-  { startTs := a, endTs := b, mode := "stationary", avgSpeed := 4
-    linearity := 0.2, pointCount := 50 }
-
--- Fifteen minutes labelled stationary that MIX walks straight through: 100 spm
--- against `STATIONARY_WALK_PEAK_CADENCE`, and 66 m/min of real translation so
--- `looksLikeStay` cannot claim it. One segment on purpose — at i = 0
--- `bracketedBySamePlace` is false, which is the branch that lets a lone
--- walk-through be seen at all.
-
 /-- A road-vehicle leg at a bus's average pace. ⚠ `dr` declares 45 km/h and the
 matcher reads `seg.avgSpeed`, not the trace — `busSpeedPlausibility` is a sigmoid
 about `BUS_SPEED_MID_KMH = 38`, so 45 scores 0.24 against a 0.6 floor and a `dr`
@@ -1383,13 +872,6 @@ private def bus (a b : Int) : Seg :=
 -- leg over 3000-6000 boards at S, alights at T and passes M in between — both
 -- ends inside BUS_STOP_ANCHOR_M and the one intermediate stop covered.
 #guard fires MIX "busRoutes" #[bus 3000 6000]
-
--- An unnamed train leg over the fast stretch, boarding near S and alighting
--- near T. ⚠ MIX's `railStops` is EMPTY, and this fires anyway: the stopping
--- pattern disambiguates BETWEEN candidate lines, so a run with one candidate
--- needs none. The roster below used to claim this pass wanted data the
--- synthetic lookups do not carry; it wanted only the stations and lines they
--- already had.
 
 /-- Metres per degree of longitude at `lat0`. The zigzag below is east-west, so
 it needs the longitude scale rather than `mlat`. -/
@@ -1454,43 +936,6 @@ private def WALKMATCH : Env :=
 
 #guard fires WALKMATCH "walkMatch" #[wk 3000 4200]
 
-/-- A 30-minute "one-line" ride that is really two, with the change at 5.5 km.
-
-⚠ THE ENDPOINT LINE SETS MUST BE DISJOINT, which is what MIX cannot do: its
-`linesAtPoint` answers `#["Metropolitan"]` everywhere, so board and alight always
-share a line and `spliceInterchanges` returns early. Here the lookup answers by
-LATITUDE, which is the same trick `byLat` uses for `displayTz`.
-
-⚠ The geometry is sized from the pass's own timing model rather than picked:
-`expectedTs = legStart + BOARD_WAIT_S + (rideM / AVG_INTERSTATION_M) * PER_STOP_S`,
-so a 5500 m ride to the change predicts `180 + 5 * 120 = 780`, and the burst at
-720 sits 60 s off it against a `MAX_TIMING_SLOP_S` of 360. The change is also
-5500 m from BOTH endpoints, clearing `ENDPOINT_EXCLUSION_M`. -/
-private def interchangeTrack : Array Shed.PointF :=
-  (Array.range 31).map fun k =>
-    { ts := 60 * Int.ofNat k
-      lat := lat0 + (11000 * Float.ofNat k / 30) * mlat
-      lon := lon0
-      speedKmh := 40 }
-
-/-- Three walking minutes at the change, clear of both leg edges. -/
-private def interchangeStepsFx : Array StepPoint :=
-  (Array.range 3).map fun k => { ts := 720 + 60 * Int.ofNat k, steps := 93 }
-
-private def CHANGE : Verified.Geo.RailJourney.LineStation :=
-  ⟨"Change", lat0 + 5500 * mlat, lon0⟩
-
-private def INTERCHANGE : Env :=
-  { NO_LOOKUPS with
-    points := interchangeTrack
-    steps := interchangeStepsFx
-    -- Disjoint by latitude: the south half is Metropolitan, the north Jubilee.
-    linesAtPoint := fun lat _ _ =>
-      if lat < lat0 + 5500 * mlat then #["Metropolitan"] else #["Jubilee"]
-    -- …and both stop at the change, which is what makes the pair splice-able.
-    stationsOnLine := fun _ => #[CHANGE] }
-
-
 /-- A standstill at the stop, then a ride at ~40 km/h with two dwells in it —
 `Bus`'s own `AnnotateGuards` fixture, in this module's coordinates.
 
@@ -1517,37 +962,6 @@ private def BUSEV : Env :=
     transitStops := fun _ _ _ => #[{ subtype := "bus_stop", distanceM := 10 }] }
 
 #guard fires BUSEV "busEvidence" #[bus 300 1200]
-
-/-- A walk swallowing a tube ride: good fixes at street level either side, and a
-GPS-dark run between them.
-
-⚠ THE ACCURACY FIELD IS THE WHOLE SIGNAL. `isUndergroundSignal` is
-`accuracy ≥ COARSE_ACCURACY_M = 100` with NO upper bound — it marks the dark
-WINDOW — while `isCoarse` caps at 800 because only those can be snapped to a
-station. 200 here is both, which is what a witness needs: the run has to be
-detected AND reconstructed. The dark span is 1800 s against a
-`MIN_RUN_DURATION_S` of 180.
-
-⚠ The ends are 3000 m apart, over `MIN_JOURNEY_M` = 800, and the two stations
-must differ by NAME — a run that boards and alights at one station is refused. -/
-private def tubeTrack : Array Verified.Geo.UndergroundRun.CoarseFix :=
-  #[⟨0, lat0, lon0, some 10⟩, ⟨300, lat0 + 200 * mlat, lon0, some 10⟩] ++
-  ((Array.range 7).map fun k =>
-    ⟨600 + 300 * Int.ofNat k, lat0 + (400 + 300 * Float.ofNat k) * mlat, lon0, some 200⟩) ++
-  #[⟨2700, lat0 + 2800 * mlat, lon0, some 10⟩, ⟨3000, lat0 + 3000 * mlat, lon0, some 10⟩]
-
-private def TUBE : Env :=
-  { NO_LOOKUPS with
-    rawFixes := tubeTrack
-    points := tubeTrack.map fun f => { ts := f.ts, lat := f.lat, lon := f.lon, speedKmh := 30 }
-    -- ⚠ `pickBestStation` is asked to PREFER "subway", the only caller in the
-    -- repo that expresses a preference, so the stations must carry that subtype.
-    nearbyStations := fun lat _ _ =>
-      #[{ name := if lat < lat0 + 1500 * mlat then "Board" else "Alight"
-          subtype := "subway", distanceM := 40, lat := some lat, lon := some lon0 }]
-    -- One line at both ends and under every coarse fix: the candidate must serve
-    -- both ends AND be hugged by at least one dark fix.
-    linesAtPoint := fun _ _ _ => #["Metropolitan Line"] }
 
 -- A tube ride mined out of the walk that swallowed it.
 

@@ -2,17 +2,14 @@ import Verified.FloatConst
 /-!
 # Per-user biometric mode signatures (port of the pure core of `src/geo/mode-biometrics.ts`)
 
-The heuristic-training + biometric-correction engine: label clean minutes by
-rule, mine per-mode Gaussian stats, and re-classify a segment's mode against
-them (HR / cadence vetoes, then a log-likelihood flip). The segment-array
-transforms in `biometrics.ts` that call these stay shell; ported here:
+The biometric-correction engine: mine per-mode Gaussian stats, and re-classify
+a segment's mode against them (HR / cadence vetoes, then a log-likelihood
+flip):
 
-* `labelMinuteByHeuristic` — confident mode for a clean minute, or `none`.
 * `scoreModeLogLikelihood` — per-modality Gaussian LL (std floored), `-∞` when
   nothing contributes.
 * `isHrImplausibleForMode` / `isCadenceImplausibleForMode` — the veto predicates.
 * `vetoImplausibleHr` / `vetoImplausibleCadence` — demote to the best alternative.
-* `gateCycling` — the hard cycling-evidence gate.
 * `correctModeBySignature` — the full decision (vetoes → margin gate → LL flip).
 * `aggregateModeStats` — mine per-mode mean/std (population).
 
@@ -36,8 +33,6 @@ def CADENCE_VETO_SIGMA : Float := 2.0
 def CADENCE_VETO_FLOOR_SPM : Float := 30
 def CADENCE_VETO_MAX_SPEED_KMH : Float := 15
 def CYCLING_MIN_SPEED_KMH : Float := 12
-def CYCLING_MAX_SPEED_KMH : Float := 35
-def CYCLING_MAX_CADENCE_SPM : Float := 20
 def SIT_MODES : List String := ["driving", "train", "plane"]
 def LOW_CADENCE_MODES : List String := ["cycling", "driving", "train", "plane"]
 def NEVER_FLIP_TARGET : List String := ["cycling"]
@@ -63,28 +58,6 @@ structure ModeStats where
   speedSampleCount : Nat
   sampleCount : Nat
   deriving Inhabited
-
-/-! ## Heuristic labeller -/
-
-/-- Confident mode for a clean per-minute observation, or `none` (ambiguous). -/
-def labelMinuteByHeuristic (obs : MinuteObservation) : Option String := Id.run do
-  match obs.speed with
-  | none => return none
-  | some speed =>
-    let hr := obs.hr
-    if decide (speed < 1) && (match obs.cadence with | none => true | some cv => decide (cv < 5)) then
-      return some "stationary"
-    match obs.cadence with
-    | none => return none
-    | some cv =>
-      if decide (cv ≥ 80) && decide (cv ≤ 140) && decide (speed ≥ 3) && decide (speed ≤ 7) then return some "walking"
-      if decide (cv < 5) && decide (speed ≥ 12) && decide (speed ≤ 25)
-          && (match hr with | some h => decide (h ≥ 100) && decide (h ≤ 170) | none => false) then return some "cycling"
-      let hrLt95 := match hr with | none => true | some h => decide (h < 95)
-      if decide (cv < 5) && decide (speed > 30) && decide (speed ≤ 80) && hrLt95 then return some "driving"
-      if decide (cv < 5) && decide (speed > 80) && decide (speed ≤ 330) && hrLt95 then return some "train"
-      if decide (cv < 5) && decide (speed > 500) then return some "plane"
-      return none
 
 /-! ## Gaussian log-likelihood -/
 
@@ -153,22 +126,6 @@ def vetoImplausibleCadence (segMode : String) (obsHr obsCadence obsSpeed : Optio
   else match bestAlternative segMode ⟨obsHr, obsCadence, obsSpeed⟩ stats with
     | some m => (m, true)
     | none => (segMode, false)
-
-/-- Hard cycling-evidence gate: keep `cycling` only with cycle-band speed and no
-    walking cadence; else demote (driving if too fast, otherwise walking). -/
-def gateCycling (mode : String) (obsCadence obsSpeed : Option Float) : String × Bool :=
-  if mode != "cycling" then (mode, false)
-  else
-    let speedOk := match obsSpeed with
-      | some sp => decide (sp ≥ CYCLING_MIN_SPEED_KMH) && decide (sp ≤ CYCLING_MAX_SPEED_KMH)
-      | none => false
-    let cadenceOk := match obsCadence with | none => true | some c => decide (c < CYCLING_MAX_CADENCE_SPM)
-    if speedOk && cadenceOk then ("cycling", false)
-    else
-      let demoted := match obsSpeed with
-        | some sp => if decide (sp > CYCLING_MAX_SPEED_KMH) then "driving" else "walking"
-        | none => "walking"
-      (demoted, true)
 
 /-- Relabel a segment's mode from per-user biometric signatures: vetoes first,
     then a margin gate, then a log-likelihood flip (never into cycling / a
@@ -246,16 +203,6 @@ private def O (hr cadence speed : Float) : MinuteObservation := ⟨some hr, some
 private def s (x : Float) : Option Float := some x
 private def approxM (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 
-#guard labelMinuteByHeuristic (O 65 0 0.5) == some "stationary"
-#guard labelMinuteByHeuristic (O 90 110 5) == some "walking"
-#guard labelMinuteByHeuristic (O 130 0 18) == some "cycling"
-#guard labelMinuteByHeuristic (O 80 0 55) == some "driving"
-#guard labelMinuteByHeuristic (O 70 0 120) == some "train"
-#guard labelMinuteByHeuristic (O 60 0 600) == some "plane"
-#guard labelMinuteByHeuristic ⟨some 70, some 0, none⟩ == none
-#guard labelMinuteByHeuristic (O 90 0 40) == some "driving"
-#guard labelMinuteByHeuristic (O 120 50 40) == none
-
 private def samples : List (String × MinuteObservation) :=
   [("walking", O 95 110 5), ("walking", O 105 120 6), ("walking", O 100 100 4),
    ("driving", O 80 0 50), ("driving", O 82 0 60), ("cycling", ⟨some 140, none, some 18⟩)]
@@ -290,12 +237,6 @@ private def stats : List ModeStats := aggregateModeStats samples
 #guard isCadenceImplausibleForMode "driving" (s 90) (s 120) stats == false
 #guard isCadenceImplausibleForMode "driving" (s 90) (s 10) stats == true
 #guard isCadenceImplausibleForMode "walking" (s 90) (s 10) stats == false
-
--- gateCycling
-#guard gateCycling "cycling" (s 5) (s 18) == ("cycling", false)
-#guard gateCycling "cycling" (s 5) (s 40) == ("driving", true)
-#guard gateCycling "cycling" (s 90) (s 18) == ("walking", true)
-#guard gateCycling "walking" (s 90) (s 5) == ("walking", false)
 
 -- correctModeBySignature
 #guard correctModeBySignature "cycling" 1 (s 55) (s 100) (s 5) stats == ("walking", true)

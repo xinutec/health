@@ -110,17 +110,8 @@ knowing about from outside. `find lean -name '*.lean'` is the index.
 - `Verified/Geo/ArrayLemmas.lean` — shared `getD`/`setIfInBounds`
   read-after-write lemmas the Lazy-Dijkstra chain (and the matcher passes
   over it) reuse.
-- `Verified/Geo/CellKey.lean` — V4 opener: `map-match-core.ts`'s grid
-  cell-pair key proved collision-free (`cellKey_inj`) and double-exact
-  (`cellKey_magnitude`), with the `2^21` cell-bound premise pinned.
-- `Verified/Geo/RingSearch.lean` — `SegmentNearGrid`'s exactness
-  comment-proof as a theorem (`ringSearch_exact`): the early-stopping
-  expanding-ring search equals the clamped minimum over **all** chords.
-  Order-theoretic — the stop-margin curve and the geometric chain
-  (rasterisation spacing, in-cell offset, cos drift) are abstracted into
-  the named hypothesis `hgeom`, which the future analytic substrate
-  discharges; the search logic itself is proved today. `#guard`s include
-  a toy instance where the early stop demonstrably fires.
+- `Verified/Geo/CellKey.lean` — the matcher grids' cell-pair key proved
+  collision-free (`cellKeyN_inj`), with the `2^21` cell-bound premise pinned.
 - `Verified/Geo/Simplify.lean` — V4 display-pass layer, part 1:
   `simplifyPath`'s Douglas-Peucker recursion, *parametric over the
   metric* (the pass layer is purely combinatorial over point↔chord

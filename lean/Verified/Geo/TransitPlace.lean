@@ -138,17 +138,6 @@ overridable, so the 06-29 Baker Street case this rule exists for keeps working
 even if a low-evidence cluster ever mines at a platform. -/
 def INTERCHANGE_FOCUS_GUARD_MIN_DAYS : Int := 3
 
-/-- Array read at a possibly-out-of-range index, mirroring JS `segments[i]`.
-
-`Int`, not `Nat`: the callers reach for `i - 1` and `i - 2`, and at the head of
-the array those are negative in JS and `undefined`, where `Nat` would truncate
-to 0 and read a real segment. -/
-def segAt (segments : Array Seg) (i : Int) : Option Seg :=
-  if i < 0 then none
-  else
-    let n := i.toNat
-    if h : n < segments.size then some segments[n] else none
-
 /-- The longest wait before boarding that is still the wait for the train:
 2026-09-30's Eurostar check-in at St Pancras was 74 minutes. A stay longer
 than this is somewhere he went, and a train later is how he left it. -/

@@ -16,9 +16,6 @@ Exact: string handling, comparison and one prorated sum. UNPROVEN; pinned by the
 namespace Verified.Geo.Worldline
 
 /-! ## Constants (verbatim) -/
-def PEDESTRIAN_STEP_MAX_KMH : Float := 9
-def PEDESTRIAN_MIN_RUN_NET_M : Float := 120
-def PEDESTRIAN_MIN_RUN_S : Float := 90
 def PEDESTRIAN_MIN_CADENCE_SPM : Float := 60
 def RAIL_STATION_SEP : String := " → "
 def RAIL_LINE_SEP : String := " · "

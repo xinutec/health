@@ -58,9 +58,7 @@ structure ModeRefinement where
   deriving Inhabited, BEq, Repr
 
 /-- Highway subtypes cars cannot be on, so a vehicular segment skips them when a
-closer pedestrian way would otherwise win the label. NOT the complement of
-`Factors.driveableHighwaySubtypes` — that list is the scorer's, this one is the
-cascade's, and `steps`/`bridleway` appear only here. -/
+closer pedestrian way would otherwise win the label. -/
 def PEDESTRIAN_HIGHWAY_SUBTYPES : List String :=
   ["footway", "path", "pedestrian", "cycleway", "bridleway", "steps"]
 

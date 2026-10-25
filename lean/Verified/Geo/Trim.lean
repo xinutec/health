@@ -53,14 +53,9 @@ structure TrimP where
   stallDen : Nat
   slack : Int
 
-/-- Cumulative arc length along indexed points. -/
-def cumArc (pd : π → π → Nat) (pts : Nat → π) : Nat → Nat
-  | 0 => 0
-  | i + 1 => cumArc pd pts i + pd (pts i) (pts (i + 1))
-
-/-- `cumArc` materialised as an array (`arcArr[i] = cumArc i` for
-`i < n`) — the passes query positions many times, and recomputing the
-prefix per query is quadratic. -/
+/-- The cumulative arc length at each position, materialised as an array —
+the passes query positions many times, and recomputing the prefix per query is
+quadratic. -/
 def arcArrGo (pd : π → π → Nat) (pts : Nat → π) (n i last : Nat)
     (acc : Array Nat) : Array Nat :=
   if _h : i < n then
@@ -183,9 +178,8 @@ def trimRebuild (nearLe : π → π → Bool) (path : Nat → π) (n : Nat)
   else acc
 termination_by n - i
 
-/-- The removal flags after both passes (positions materialised once —
-value-identical to querying `cumArc`/`cpGo` directly, which
-`arcArr`/`cpArr` compute). -/
+/-- The removal flags after both passes, with positions materialised once
+(`arcArr`/`cpArr`). -/
 def trimFlags (P : TrimP) (pd : π → π → Nat) (projD : π → π → π → Nat)
     (arcPos : π → π → π → Int → Int → Int) (fx : Nat → π) (nf : Nat)
     (path : Nat → π) (n : Nat) : Array Bool :=

@@ -293,13 +293,6 @@ def scoreWalk (drawn : Array LatLon) (startTs endTs : Float)
   return { tortuosity, drawnLengthM, pedometerM := ped, stepDistanceError,
            offWalkableMeanM, offWalkableP90M }
 
-/-! ## Corridor stall
-
-The witness `scoreWalk` cannot see, because `scoreWalk` never looks at the raw
-fixes: how far the drawn line travels while making no progress ALONG the GPS
-corridor. High for an invented detour, ~0 for a faithful line, a gap-fill (the
-corridor advances) or a there-and-back the GPS actually traced. -/
-
 /-! ⚠ **THE REFEREE KEEPS ITS OWN BODY, AND THAT IS A DELIBERATE DUPLICATE.**
 
 `Verified.Geo.CorridorStall` holds the same DP over `Pt`, because the DECISION
@@ -435,37 +428,6 @@ def maxCorridorStall (fixes path : Array LatLon) (tolM : Float := 15) : Float :=
     worst := max worst (pArc[k]?.getD 0 - pArc[j]?.getD 0)
   return worst
 
-/-! ## The full per-walk verdict -/
-
-/-- Every independent witness for one drawn leg, reported together. -/
-structure WalkPlausibility extends WalkScore where
-  /-- Out-and-back distance the drawn line makes without advancing along the
-  raw GPS corridor (m). -/
-  corridorStallM : Float
-  /-- Length of the raw GPS track (m) — the honest baseline the drawn line is
-  measured against. -/
-  rawLengthM : Float
-  /-- Mean speed implied by the DRAWN line over the leg window (km/h). The
-  off-walkable and stall witnesses are both blind to a line that sprints along
-  a real pavement — a run of low-accuracy fixes drawn as motion (underground,
-  indoors) shows up ONLY here, as an impossible walking speed. 0 when the leg
-  has no duration. -/
-  avgDrawnSpeedKmh : Float
-  deriving Inhabited, Repr
-
-/-- Score a drawn walk against every witness at once. `drawn` is the line the
-map shows — matched, or raw when the matcher bailed. -/
-def walkPlausibility (fixes drawn : Array LatLon) (startTs endTs : Float)
-    (steps : Array PedStep := #[]) (walkable : Option RoadGeometry := none) :
-    WalkPlausibility :=
-  let base := scoreWalk drawn startTs endTs steps walkable
-  let rawLengthM := pathLength fixes
-  let spanSec := endTs - startTs
-  let avgDrawnSpeedKmh := if spanSec > 0 then (base.drawnLengthM / spanSec) * 3.6 else 0
-  { toWalkScore := base
-    corridorStallM := maxCorridorStall fixes drawn
-    rawLengthM, avgDrawnSpeedKmh }
-
 /-! ## Coverage — does the drawn line still reach where the fixes went? -/
 
 /--
@@ -570,9 +532,6 @@ def pointInRing (p : LatLon) (ring : Ring) : Bool := Id.run do
     pj := pi
   return inside
 
-private def inAnyBuilding (p : LatLon) (buildings : Array Ring) : Bool :=
-  buildings.any (fun ring => pointInRing p ring)
-
 /-- A ring's bounding box. An EMPTY ring gets a box no point satisfies
 (`minLat > maxLat`), which matches `pointInRing`'s own `size < 3 → false`. -/
 private structure Box where
@@ -594,7 +553,8 @@ private def ringBox (ring : Ring) : Box := Id.run do
 private def inBox (p : LatLon) (b : Box) : Bool :=
   p.lat >= b.minLat && p.lat <= b.maxLat && p.lon >= b.minLon && p.lon <= b.maxLon
 
-/-- [`inAnyBuilding`] with the ray cast gated behind a bounding-box test.
+/-- Whether `p` is inside any building ring, with the ray cast gated behind a
+bounding-box test.
 
 ⚠ **EXACT, NOT APPROXIMATE.** `pointInRing` casts a ray in +lon: a point outside
 the box has no edge spanning its latitude, or every intersection on one side, so
@@ -610,32 +570,6 @@ else. -/
 private def inAnyBuildingBoxed (p : LatLon) (boxed : Array (Box × Ring)) : Bool :=
   boxed.any (fun br => inBox p br.1 && pointInRing p br.2)
 
-/-- Total length (m) of the drawn line inside ANY building footprint.
-
-The line is sampled into `stepM` sub-segments and each is attributed by its
-MIDPOINT, so the result is length-weighted rather than a vertex count. 0 for a
-degenerate line or an empty building set — and note that an empty building set
-is `0` here and `none` at the caller, which is the distinction the whole file
-turns on. -/
-def buildingCrossingM (drawn : Array LatLon) (buildings : Array Ring)
-    (stepM : Float := 2) : Float := Id.run do
-  if drawn.size < 2 || buildings.isEmpty then return 0
-  -- ONCE per call, not per sample: a walk is sampled every 2 m and each sample
-  -- used to ray-cast every footprint in the day's bbox.
-  let boxed := buildings.map (fun r => (ringBox r, r))
-  let mut crossed := 0.0
-  for hm_i : i in [1:drawn.size] do
-    have hb_i : i < drawn.size := hm_i.upper
-    let a := drawn[i - 1]
-    let b := drawn[i]
-    let segLen := metersBetween a b
-    if segLen == 0 then continue
-    let steps := ceilSteps (segLen / stepM)
-    for k in [0:steps] do
-      let mid := lerp a b ((k.toFloat + 0.5) / steps.toFloat)
-      if inAnyBuildingBoxed mid boxed then crossed := crossed + segLen / steps.toFloat
-  return crossed
-
 /-- A drawn point within this many metres of a walkable way is ON the mapped
 path. -/
 def ON_WAY_M : Float := 8
@@ -645,10 +579,9 @@ more than `onWayM` from EVERY walkable way.
 
 ⚠ This is the metric the gate acts on, and the exclusion is the whole point. A
 line riding a mapped through-building footway — a station concourse, an arcade
-— is a legitimate passage that OSM says is walkable, and it reads 0 here while
-`buildingCrossingM` charges it in full. A chord through a house with no path
-counts in full in both. Gating the superset would have made every concourse a
-defect. -/
+— is a legitimate passage that OSM says is walkable, and it reads 0 here. A
+chord through a house with no path counts in full. Gating on all in-building
+length would have made every concourse a defect. -/
 def offPathBuildingCrossingM (drawn : Array LatLon) (buildings : Array Ring)
     (walkable : RoadGeometry) (onWayM : Float := ON_WAY_M)
     (stepM : Float := 2) : Float := Id.run do
@@ -920,21 +853,10 @@ private def spiked : Array LatLon := fixes.push (P 51.6 (-0.12))
 -- Recorded, not waived: if the stall metric is ever wrong in a way the two-pass
 -- witnesses do not explain, this is the first place to look.
 
-#guard
-  let w := walkPlausibility fixes line 1000 1600 #[⟨1000, 500⟩] (some ways)
-  approx w.corridorStallM 0
-    && approx w.rawLengthM 147.02843372172879
-    && approx w.avgDrawnSpeedKmh 1.0332752130220808
-
 /-! ### Buildings -/
 
 #guard pointInRing (P 51.5004 (-0.12)) ring == true
 #guard pointInRing (P 51.5 (-0.12)) ring == false
-#guard approx (buildingCrossingM line #[ring]) 45.517511111005007
--- An empty building set is 0 here. The CALLER turns that into `none`; this
--- function has no way to tell "no buildings crossed" from "no buildings known",
--- which is exactly why the caller must.
-#guard approx (buildingCrossingM line #[]) 0
 
 -- ⚠ THE PAIR THAT DEFINES THE GATED METRIC. Same line, same building. With
 -- the walkable network present the crossing is a mapped passage and counts 0;
