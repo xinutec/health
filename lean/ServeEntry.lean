@@ -1497,12 +1497,25 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       | some (la, lo) => Verified.Hsmm.FloatScore.haversineMeters la lo n.lat n.lon ≤ journeyReachM
       | none => false
     let fixes : Array (Option (Float × Float)) := (Array.range T).map fixAt
+    -- Each line's served stations, once: matching a line to its relations
+    -- parses every relation's name, and the legs' tables ask per station.
+    let servedSets : Std.HashMap String (Option (Std.HashSet String)) := match rels? with
+      | none => {}
+      | some rels => c.states.foldl (fun m st => match st.lineName with
+        | some line => if m.contains line then m
+          else m.insert line (Verified.Hsmm.ServedStations.servedStationSet rels line)
+        | none => m) {}
+    let servedSet : String → Option (Std.HashSet String) := fun line => match rels? with
+      | none => none
+      | some rels => match servedSets.get? line with
+        | some s => s
+        | none => Verified.Hsmm.ServedStations.servedStationSet rels line
     -- A station is a line's only where the relations have the line calling
     -- there; without relations, where the line's track passes it.
     let servedOn := fun (line : String) (n : Verified.Hsmm.StationChain.ChainNode) =>
       match rels?, n.stationName with
-      | some rels, some name =>
-        match Verified.Hsmm.ServedStations.servedStationSet rels line with
+      | some _, some name =>
+        match servedSet line with
         | some served => Verified.Hsmm.ServedStations.stationNameServed served name
         | none => true
       | _, _ => true
@@ -1550,6 +1563,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       | none => return (out, names)
       | some g =>
         let mut alightCache : Std.HashMap String (Array (Option Verified.Hsmm.StationChain.ChainNode)) := {}
+        -- The calls between a pair, once per (line, board, alight).
+        let mut stopsCache : Std.HashMap (String × String × String) (Option Nat) := {}
         let mut footCache : Std.HashMap String (Std.HashSet String) := {}
         for (entry, li) in legList.zipIdx do
           let (l, _, st?) := entry
@@ -1611,9 +1626,15 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
                 -- The chain's ride-time form: with the calls between the pair
                 -- known, running time plus a stop each; else the all-stations
                 -- average.
-                let calls := match rels?, σ.stationName, a.stationName with
-                  | some rels, some sa, some sb => Verified.Hsmm.ServedStations.intermediateStops rels line sa sb
-                  | _, _, _ => none
+                let calls ← match rels?, σ.stationName, a.stationName with
+                  | some rels, some sa, some sb =>
+                    match stopsCache.get? (line, sa, sb) with
+                    | some k => pure k
+                    | none =>
+                      let k := Verified.Hsmm.ServedStations.intermediateStops rels line sa sb
+                      stopsCache := stopsCache.insert (line, sa, sb) k
+                      pure k
+                  | _, _, _ => pure none
                 let expected := match calls with
                   | some k => (pathM * journeyKmPerM / Verified.Hsmm.StationChain.RIDE_RUN_KMH) * journeyMinPerHour
                       + Verified.Hsmm.StationChain.RIDE_STOP_MIN * Verified.FloatConst.natToFloat k
@@ -1662,10 +1683,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       match jp.stops, g? with
       | some sp, some g => Id.run do
         let ps := Verified.Hsmm.StationStops.passes g c.obs
-        let calls := fun (line : String) (st : String) => match rels? with
-          | some rels => match Verified.Hsmm.ServedStations.servedStationSet rels line with
-            | some served => Verified.Hsmm.ServedStations.stationNameServed served st
-            | none => false
+        let calls := fun (line : String) (st : String) => match servedSet line with
+          | some served => Verified.Hsmm.ServedStations.stationNameServed served st
           | none => false
         let lineOf := fun (l : Nat) =>
           let st := c.states[l]!
@@ -1830,6 +1849,28 @@ private def decodeTraceResult (j : Json) : Json :=
       Json.mkObj [("minutes", Json.arr rows.toArray)]
     | _, _ => Json.mkObj [("error", Json.str "window: [tsFrom, tsTo] required")]
 
+/-- The journey state's station graph and stop relations, from the request:
+    what the leg tables need before the decode. `none` without the journey
+    state. One definition for the serving path and the profiler, so the
+    profiler times the decode the server runs. -/
+private def journeyInputs (c : Verified.Hsmm.Assemble.ModelContext) (j : Json) :
+    Option Verified.Hsmm.StationChain.ChainGraph
+      × Option (Array Verified.Hsmm.ServedStations.RailStopRelation) :=
+  let g? : Option Verified.Hsmm.StationChain.ChainGraph :=
+    if (Verified.Hsmm.Assemble.journeyIdx c).isNone then none else
+    match (optArr j "nodes") >>= (·.mapM parseChainNode) with
+    | .error _ => none
+    | .ok nodes => some
+      { model := c.model, nodes
+      , nodeById := nodes.foldl (fun m n => m.insert n.id n) {}
+      , edgeById := c.model.edges.foldl (fun m e => m.insert e.id e) {} }
+  let rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) :=
+    if g?.isNone then none else
+    match j.getObjVal? "railStopRelations" with
+    | .ok v => if v.isNull then none else ((v.getArr?) >>= (·.mapM parseRelation)).toOption
+    | .error _ => none
+  (g?, rels?)
+
 /-- `verified_cli decodeprof` — the decoder's cost on one day, apart from its
 model build. Reads an `assemblesegments` request plus `"runs"` (default 5),
 builds the `PData` once, then times `pDecodeFast` that many times on it; each
@@ -1857,7 +1898,11 @@ private def decodeProfMain (input : String) : IO UInt32 := do
       let p1 ← IO.monoMsNow
       let tr ← IO.lazyPure fun _ => buildTransitions c T S
       let p2 ← IO.monoMsNow
+      -- The durations as the server builds them: the journey's legs with
+      -- their station graph and stops.
+      let (g?, rels?) := journeyInputs c j
       let du ← IO.lazyPure fun _ => buildDurations c T S maxD halfOB
+        (match tr with | .ok (_, _, _, _, lt) => lt | .error _ => none) g? rels?
       let p3 ← IO.monoMsNow
       -- Sizes, so the phase values are demanded and not merely thunked.
       let phaseCells : Nat :=
@@ -1865,7 +1910,7 @@ private def decodeProfMain (input : String) : IO UInt32 := do
         + (match tr with | .ok (_, _, f, _, _) => f.size | .error _ => 0)
         + (match du with | .ok (_, _, d, _) => d.size | .error _ => 0)
       let t0 ← IO.monoMsNow
-      let built ← IO.lazyPure fun _ => buildPData c maxD
+      let built ← IO.lazyPure fun _ => buildPData c maxD g? rels?
       let t1 ← IO.monoMsNow
       match built with
       | .error e => IO.eprintln s!"error: {e}"; return 1
@@ -2157,19 +2202,7 @@ private def assembleSegmentsResult (j : Json) : Json :=
   | .ok (c, maxD) =>
     -- Under the journey state the leg tables need the station graph before
     -- the decode; the chain below builds its own from the same inputs.
-    let g? : Option Verified.Hsmm.StationChain.ChainGraph :=
-      if (Verified.Hsmm.Assemble.journeyIdx c).isNone then none else
-      match (optArr j "nodes") >>= (·.mapM parseChainNode) with
-      | .error _ => none
-      | .ok nodes => some
-        { model := c.model, nodes
-        , nodeById := nodes.foldl (fun m n => m.insert n.id n) {}
-        , edgeById := c.model.edges.foldl (fun m e => m.insert e.id e) {} }
-    let rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) :=
-      if g?.isNone then none else
-      match j.getObjVal? "railStopRelations" with
-      | .ok v => if v.isNull then none else ((v.getArr?) >>= (·.mapM parseRelation)).toOption
-      | .error _ => none
+    let (g?, rels?) := journeyInputs c j
     match buildPData c maxD g? rels? with
     | .error e => Json.mkObj [("error", Json.str e)]
     | .ok (pd, journey) =>

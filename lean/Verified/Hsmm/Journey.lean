@@ -154,10 +154,29 @@ def pairLogPdf (d expected : Float) : Float :=
   let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
   prev + emit + tb.entry.get! (b * T + start) + legCell tb l d e
 
+/-- What the hoisted transition needs from `pairOk`, once per table: a leg is
+    `restricted` when some leg may not follow it (a wait, which continues only
+    into a ride boarding at its station), and `into[l]` lists the restricted
+    legs that may precede `l`. Every other pair is free, and the transition's
+    price depends on the two legs' bases alone. -/
+structure Pre where
+  restricted : Array Bool
+  into : Array (Array Nat)
+
+def prep (tb : Tables) : Pre := Id.run do
+  let L := tb.legs.size
+  let restricted := (Array.range L).map fun a => (Array.range L).any fun b => !tb.pairOk[a * L + b]!
+  let mut into : Array (Array Nat) := Array.replicate L #[]
+  for a in [0:L] do
+    if !restricted[a]! then continue
+    for b in [0:L] do
+      if a != b && tb.pairOk[a * L + b]! then into := into.modify b (·.push a)
+  return { restricted, into }
+
 /-- The sweep from `s0` over `w` minutes: `V[i * L + l]`, the best path over
     `[s0, s0 + i]` ending in leg `l`, and its back-pointers (the leg's length;
     a length of `i + 1` is the first leg, and the leg before is `argFrom`). -/
-def sweep (tb : Tables) (s0 w : Nat) : FloatArray × Array Nat := Id.run do
+def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat := Id.run do
   let L := tb.legs.size
   let B := tb.nBase
   let T := tb.T
@@ -166,6 +185,15 @@ def sweep (tb : Tables) (s0 w : Nat) : FloatArray × Array Nat := Id.run do
   -- plus the transition into `l` at `s0 + k + 1`.
   let mut m := FloatArray.mk (Array.replicate (w * L) negInf)
   let mut bpD := Array.replicate (w * L) 0
+  -- Per paired leg, the first of its sorted starts at or after `s0`: the
+  -- sweep reads only the starts inside its window, in the same order.
+  let firstAt : Array Nat := tb.reachStarts.map fun starts => Id.run do
+    let mut lo := 0
+    let mut hi := starts.size
+    while lo < hi do
+      let mid := (lo + hi) / 2
+      if starts[mid]! < s0 then lo := mid + 1 else hi := mid
+    return lo
   for i in [0:w] do
     let e := s0 + i
     for l in [0:L] do
@@ -180,8 +208,10 @@ def sweep (tb : Tables) (s0 w : Nat) : FloatArray × Array Nat := Id.run do
             bd := d
       else
         -- A paired leg begins only within reach of its station.
-        for s in starts do
-          if s < s0 || s > e then continue
+        let mut k := firstAt[l]!
+        while k < starts.size && starts[k]! ≤ e do
+          let s := starts[k]!
+          k := k + 1
           let d := e + 1 - s
           if d > tb.maxJ then continue
           let cand := candidate tb m s0 i l d
@@ -190,21 +220,45 @@ def sweep (tb : Tables) (s0 w : Nat) : FloatArray × Array Nat := Id.run do
             bd := d
       v := v.set! (i * L + l) best
       bpD := bpD.set! (i * L + l) bd
-    -- The hoisted transition into every leg that may begin at `e + 1`.
+    -- The hoisted transition into every leg that may begin at `e + 1`: the
+    -- best leg before it, other than itself, plus the transition between their
+    -- bases. The price depends on the bases alone, so each base's best and
+    -- second-best free leg stand for all of them (the second where the best is
+    -- the leg itself); a restricted leg is weighed only where it may precede.
+    -- The same maximum as over every pair: `x ↦ x + t` is monotone.
     if i + 1 < w then
+      let mut b1 := FloatArray.mk (Array.replicate B negInf)
+      let mut b1i : Array Nat := Array.replicate B L
+      let mut b2 := FloatArray.mk (Array.replicate B negInf)
+      for a in [0:L] do
+        if pre.restricted[a]! then continue
+        let va := v.get! (i * L + a)
+        if va == negInf then continue
+        let ba := tb.baseOf[a]!
+        if va > b1.get! ba then
+          b2 := b2.set! ba (b1.get! ba)
+          b1 := b1.set! ba va
+          b1i := b1i.set! ba a
+        else if va > b2.get! ba then
+          b2 := b2.set! ba va
       for l in [0:L] do
         if !tb.reachMask[l * T + (e + 1)]! then continue
         let bl := tb.baseOf[l]!
         let mut best := negInf
-        for a in [0:L] do
-          if a == l then continue
-          if !tb.pairOk[a * L + l]! then continue
+        for ba in [0:B] do
+          let va := if b1i[ba]! == l then b2.get! ba else b1.get! ba
+          if va == negInf then continue
+          let cand := va + tb.trans.get! (((e + 1) * B + ba) * B + bl)
+          if cand > best then best := cand
+        for a in pre.into[l]! do
           let va := v.get! (i * L + a)
           if va == negInf then continue
           let cand := va + tb.trans.get! (((e + 1) * B + tb.baseOf[a]!) * B + bl)
           if cand > best then best := cand
         m := m.set! (i * L + l) best
   return (v, bpD)
+
+def sweep (tb : Tables) (s0 w : Nat) : FloatArray × Array Nat := sweepWith tb (prep tb) s0 w
 
 /-- The leg before `l` in the best path ending at `s0 + k` that continues into
     `l` at `s0 + k + 1`: `m`'s argmax, recomputed from `v`. -/
@@ -232,9 +286,10 @@ def best (tb : Tables) : FloatArray := Id.run do
   let L := tb.legs.size
   let T := tb.T
   let mut out := FloatArray.mk (Array.replicate (tb.maxJ * T) negInf)
+  let pre := prep tb
   for s0 in [0:T] do
     let w := min tb.maxJ (T - s0)
-    let (v, _) := sweep tb s0 w
+    let (v, _) := sweepWith tb pre s0 w
     for i in [0:w] do
       let mut b := negInf
       for l in [0:L] do
