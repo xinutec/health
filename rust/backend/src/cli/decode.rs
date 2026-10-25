@@ -202,8 +202,7 @@ pub(crate) async fn decode_one(
     // answer: it does not guess.
     if inputs.get("emptyDayBracket").is_some_and(|b| !b.is_null()) {
         let h = backend::head::run(&inputs, date)?;
-        if h.segs_raw.is_empty()
-            && h.points.is_empty()
+        if h.points.is_empty()
             && let Some(place) =
                 backend::classification_inputs::empty_day_bracket_place(pool, user_id, date).await?
         {

@@ -294,106 +294,6 @@ pub fn kalman(pts: &[Fix]) -> Result<Vec<Smoothed>> {
         .collect()
 }
 
-/// `Verified.Geo.Segments.classifySegments` — the step whose output IS
-/// `segsRaw`.
-///
-/// `stay_pts` is `None` only when there is no separate stay set; that is the
-/// segmenter's own default (double the movement fixes up as stay evidence) and
-/// is NOT the same as passing an empty array.
-pub fn classify_segments(pts: &[Smoothed], stay_pts: Option<&[Fix]>) -> Result<Vec<Value>> {
-    let mut req = Map::new();
-    req.insert("op".into(), Value::String("segments".into()));
-    req.insert(
-        "pts".into(),
-        Value::Array(
-            pts.iter()
-                .map(|p| {
-                    // ⚠ Position 5 and OPTIONAL: `parseHeadPt` treats a
-                    // five-element row as "no accuracy supplied" and keeps the
-                    // original linearity, so nothing that predates this changes.
-                    json!([
-                        p.ts,
-                        bits(p.lat),
-                        bits(p.lon),
-                        bits(p.speed_kmh),
-                        bits(p.bearing),
-                        opt_bits(p.accuracy)
-                    ])
-                })
-                .collect(),
-        ),
-    );
-    req.insert(
-        "stayPts".into(),
-        match stay_pts {
-            None => Value::Null,
-            Some(s) => Value::Array(
-                s.iter()
-                    .map(|p| json!([p.ts, bits(p.lat), bits(p.lon)]))
-                    .collect(),
-            ),
-        },
-    );
-    let out = ask("head", req)?;
-    let rows = out
-        .get("segs")
-        .and_then(Value::as_array)
-        .context("segments reply has no segs")?;
-    rows.iter().map(seg_json).collect()
-}
-
-/// One Lean segment in the shape the fold reads — the TypeScript's own.
-///
-/// Two differences from the wire row, both required for byte parity with the
-/// frozen `segsRaw`: floats come back as bit patterns and have to render the
-/// way `JSON.stringify` renders them, and the two refinement fields are
-/// OPTIONAL in TypeScript. Lean has no `undefined`, so it sends `null` and `[]`
-/// where the TS omits the key; emitting them would add fields to every segment
-/// of every day.
-fn seg_json(row: &Value) -> Result<Value> {
-    let f = |k: &str| -> Result<Value> {
-        Ok(js_num(unbits(
-            row.get(k)
-                .with_context(|| format!("a segment has no {k}"))?,
-        )?))
-    };
-    let i = |k: &str| -> Result<Value> {
-        Ok(json!(
-            row.get(k)
-                .and_then(Value::as_i64)
-                .with_context(|| format!("a segment has no {k}"))?
-        ))
-    };
-    let mut out = Map::new();
-    out.insert("startTs".into(), i("startTs")?);
-    out.insert("endTs".into(), i("endTs")?);
-    out.insert(
-        "mode".into(),
-        Value::String(
-            row.get("mode")
-                .and_then(Value::as_str)
-                .context("a segment has no mode")?
-                .to_string(),
-        ),
-    );
-    out.insert("confidence".into(), f("confidence")?);
-    out.insert("confidenceMargin".into(), f("confidenceMargin")?);
-    out.insert("avgSpeed".into(), f("avgSpeed")?);
-    out.insert("maxSpeed".into(), f("maxSpeed")?);
-    out.insert("linearity".into(), f("linearity")?);
-    out.insert("pointCount".into(), i("pointCount")?);
-    if let Some(r) = row.get("refinedReason").and_then(Value::as_str) {
-        out.insert("refinedReason".into(), Value::String(r.to_string()));
-    }
-    match row.get("refinedKinds").and_then(Value::as_array) {
-        Some(k) if !k.is_empty() => {
-            out.insert("refinedKinds".into(), Value::Array(k.clone()));
-        }
-        _ => {}
-    }
-    Ok(Value::Object(out))
-}
-
 /// The day's phone-battery trace, compressed to run boundaries.
 ///
 /// `(ts, level)`. Derived from the same in-day fixes as the track, but BEFORE
@@ -403,8 +303,6 @@ pub type Battery = Vec<(i64, i64)>;
 
 /// Everything the head produces from one day's inputs.
 pub struct Head {
-    /// The day fold's only input.
-    pub segs_raw: Vec<Value>,
     /// The Kalman-smoothed track, as the observation tensor reads it.
     pub points: Vec<Smoothed>,
     /// In-day raw fixes, before any filter — the battery trace and `obs.rawFixes`.
@@ -476,10 +374,7 @@ pub fn run(inputs: &Value, date: &str) -> Result<Head> {
     // stationary cluster. Note this is `Some(...)` even when empty — passing
     // `None` would make the segmenter double the movement fixes up as stay
     // evidence, which is a different day.
-    let segs_raw = classify_segments(&points, Some(&gps_points))?;
-
     Ok(Head {
-        segs_raw,
         points,
         in_day,
         display_fixes,
@@ -601,7 +496,7 @@ pub fn capture(inputs: &Value, date: &str, user: &str) -> Result<Value> {
         .get("hsmmDecode")
         .and_then(Value::as_array)
         .is_some_and(|d| !d.is_empty());
-    if head.segs_raw.is_empty() && head.points.is_empty() && !decoded {
+    if head.points.is_empty() && !decoded {
         let bracket = inputs.get("emptyDayBracket");
         if bracket.is_some_and(|b| !b.is_null()) {
             anyhow::bail!(
@@ -713,8 +608,6 @@ pub fn capture(inputs: &Value, date: &str, user: &str) -> Result<Value> {
     Ok(json!({
         "date": date,
         "user": user,
-        "segsRaw": head.segs_raw,
-        "modeStats": inputs.get("modeBiometrics").cloned().unwrap_or(json!([])),
         "obs": Value::Object(obs),
         "tzAt": [],
         "bestPlace": [],

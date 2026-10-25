@@ -1,15 +1,14 @@
 import Verified.Geo.Velocity
 import Verified.Geo.SegmentMerge
-import Verified.Geo.Reversal
 import Verified.Geo.RailRunAnnotate
-import Verified.Geo.UndergroundAnnotate
 import Verified.Geo.RailAbsorbers
 import Verified.Geo.RailReconcile
 import Verified.Geo.StaySplit
 import Verified.Geo.SegmentPasses
 import Verified.Geo.TubeHop
-import Verified.Geo.Interchange
 import Verified.Geo.RailJourney
+import Verified.Geo.UndergroundRun
+import Verified.Geo.Factors
 import Verified.Geo.Bus
 import Verified.Geo.PlaceOverride
 import Verified.Geo.TransitPlace
@@ -19,18 +18,17 @@ import Verified.Geo.RoadMatchAnnotate
 import Verified.Geo.WalkAnnotate
 import Verified.Geo.Landmarks
 /-!
-# The refinement cascade (port of the `passes` array in `src/geo/velocity.ts`)
+# The naming tail
 
-`computeVelocity` classifies a day's GPS into segments and then rewrites that
-list once per pass, each consuming what the last produced (the count is
-`TS_CASCADE.size`, pinned below). The TS expressed the sequence as DATA — one
-array entry per pass, in execution order — because the order is load-bearing
-and several passes exist only to run after another. This is the same array,
-and the same reason.
-
-What arrives here is already segmented and enriched; what leaves is the day the
-API serves. Nothing in this module decides anything itself: it names passes and
-their order, and every decision belongs to the module the entry calls.
+The decoder draws the day (`DayEntry.decoderSegs`); these passes NAME what it
+drew — the track a ride ran on, the bus, the roads of a walk, the zone, the
+biometrics, the decoder's places, the station a stay beside a ride is at — and
+settle a ride's edges against the fixes. They run in order, each consuming what
+the last produced, as one array of entries, because the order is load-bearing:
+a station stay named before boarding keeps the chain open, the track is read
+again after the passes that relabel a ride. Nothing in this module decides
+anything itself: it names passes and their order, and every decision belongs to
+the module the entry calls.
 
 ## The environment
 
@@ -38,8 +36,8 @@ The day's observations and the shell's lookups arrive as one record rather than
 as 20 parameters, so adding a pass that needs a new lookup does not re-thread
 every call site. Three kinds of field live in it:
 
-* **Observations** — the Kalman track, the pre-Kalman coarse fixes the
-  underground reconstruction mines, the step rows.
+* **Observations** — the Kalman track, the pre-Kalman coarse fixes, the step
+  rows.
 * **Mirror reads** — station / line / way lookups against the local OSM mirror.
   Functions of a coordinate, which is what the TS passes them as.
 * **Shell callbacks** — the two things Lean cannot do and does not pretend to:
@@ -199,9 +197,6 @@ one row is #422; when that closes this becomes a rename like the one above. -/
 def Env.absorberSteps (e : Env) : Array Verified.Geo.RailAbsorbers.StepPoint :=
   e.steps.map fun s => ⟨s.ts, s.steps.toInt64.toInt⟩
 
-/-- The second `Float → Int` step conversion — see `absorberSteps`, and #422. -/
-def Env.interchangeSteps (e : Env) : List Verified.Geo.Interchange.StepPoint :=
-  (e.steps.map fun s => ⟨s.ts, s.steps.toInt64.toInt⟩).toList
 
 /-- The step rows as the biometric windows declare them. A rename: `Float` both
 sides, unlike the two `Int` conversions above. -/
@@ -361,24 +356,6 @@ pair later by `substituteLines`. Move this pick onto `servedStations` only
 when it can fall back to the lines the relations say serve the pair. -/
 def Env.nearLineStations (e : Env) : String → Array Verified.Geo.LineMembership.ServedStation :=
   fun line => (e.stationsOnLine line).map fun s => ⟨s.name⟩
-
-/-- Name and coordinate, as a list: what the interchange splicer declares.
-
-⚠ FILTERED TO THE STATIONS THE LINE'S RELATIONS STOP AT (#238, 2026-10-06).
-`stationsOnLine` is every station POINT near the line's ways, so at an
-interchange complex it holds the mainline station beside the tube one — the
-Victoria line's list carried "London King's Cross" as well as "King's Cross
-St Pancras", and the splicer, matching names across both lines, could pick
-the mainline station for a Victoria → Metropolitan change; 06-09's served
-day then named both legs after it, while the decoder's chain (which pays
-`NOT_SERVED` for exactly this) named the tube station — two graders, two
-names for one change. A line with no relation in the mirror keeps every
-point, and so does a line whose filter would leave none. -/
-def Env.interchangeStations (e : Env) : String → List Verified.Geo.Interchange.Station :=
-  fun line =>
-    let all := (e.stationsOnLine line).map fun s =>
-      (⟨s.name, s.lat, s.lon⟩ : Verified.Geo.Interchange.Station)
-    (e.onRelations line all (·.name)).toList
 
 /-- The journey assembler's own shell record. Its radius is an `Int` where the
 env's is a `Float`; widening, so nothing is lost. -/
@@ -737,134 +714,6 @@ def renameFlagged (e : Env) (s : Seg) : Seg :=
 
 /-- The cascade, in execution order. -/
 def passes (e : Env) : Array Pass := #[
-  -- A "stay" whose fixes march in a directed line is slow locomotion, not
-  -- dwelling. Reclassify BEFORE merge and place attribution, so it coalesces
-  -- with the adjacent walk and is never named after a POI it drifted past.
-  ("stationaryCoherence", fun segs =>
-    StationaryCoherence.stationaryCoherence segs e.geoFixes),
-
-  ("merge", fun segs =>
-    Verified.Geo.SegmentMerge.mergeAdjacentMoving
-      (Verified.Geo.SegmentMerge.mergeAdjacentStays segs e.steps)),
-
-  -- Collapse a sit that indoor GPS jitter shattered into several co-located
-  -- stays with different wrong labels, re-resolving the venue from the merged
-  -- centre.
-  ("consolidateJitterStays", fun segs =>
-    Verified.Geo.SegmentMerge.consolidateJitterStays
-      (Verified.Geo.SegmentMerge.attachStayCentroids segs e.geoFixes) e.bestPlace e.tzAt),
-
-  -- A ride that doubles back is two rides with a change between them. Must run
-  -- BEFORE railRuns: once a run is grown across a turnaround the two halves are
-  -- one span, and every downstream gate legitimately passes for an out-and-back
-  -- — yielding a leg that boards and alights at the same station.
-  ("reversalSplit", fun segs => Verified.Geo.Reversal.splitReversingLegs segs e.points),
-
-  ("railRuns", fun segs =>
-    Verified.Geo.RailRunAnnotate.annotateRailRuns
-      { stationsLookup := fun lat lon =>
-          e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M
-        linesLookup := fun lat lon => e.linesAtPoint lat lon LINES_AT_POINT_DEFAULT_RADIUS_M }
-      segs e.points e.railStops),
-
-  -- A tube ride leaves only coarse cell-network fixes, which annotateRailRuns
-  -- cannot resolve. Mine those from the RAW track to identify the line and
-  -- split the swallowing walk into walk → train → walk.
-  -- `points` as well as `rawFixes`: the carve remainder is named from the
-  -- SMOOTHED track by the enricher's rule, while the tunnel window is still
-  -- mined from the raw one. Two different series, two different questions.
-  ("undergroundRail", fun segs =>
-    Verified.Geo.UndergroundAnnotate.annotateUndergroundRuns segs e.rawFixes e.points e.feasSteps
-      (fun lat lon => e.nearbyStations lat lon UNDERGROUND_STATION_RADIUS_M)
-      (fun lat lon => e.linesAtPoint lat lon UNDERGROUND_LINES_RADIUS_M)
-      e.nearbyWays e.nearLineStations),
-
-  -- Second cadence-drive revert. The FIRST runs before the rail passes exist,
-  -- so a platform interchange sandwiched between two rides saw `driving`
-  -- neighbours and survived. Those neighbours are `train` now, so an isolated
-  -- walking-pace flip between two trains reverts to the walk it is. A real
-  -- drive to a station is untouched: it is not pedestrian-paced.
-  ("revertIsolatedCadence2", fun segs =>
-    Verified.Geo.BiometricLabels.revertIsolatedCadenceDrivesApplied segs.toList),
-
-  -- Absorb a platform / concourse wait into the boarding of its train run, so
-  -- a station wait doesn't surface as a standalone stay mislabelled with the
-  -- nearest focus place.
-  ("boardingPlatform", fun segs =>
-    Verified.Geo.RailAbsorbers.absorbBoardingPlatform segs e.points
-      (fun lat lon =>
-        e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)),
-
-  -- A run of short stationary segments between a train and onward movement is
-  -- an interchange, not a phantom place-stay.
-  ("interchange", fun segs => Verified.Geo.RailAbsorbers.absorbInterchanges segs),
-
-  -- A brief stationary segment between two drives with no steps across it is a
-  -- traffic light, not a stop: the biometrics confirm the user never left.
-  ("driveStops", fun segs =>
-    Verified.Geo.RailAbsorbers.absorbDriveStops segs e.absorberSteps),
-
-  -- Physical constraint: back-to-back train legs must share a station. Runs
-  -- after the interchange absorber so it sees the final adjacency, and BEFORE
-  -- railSnap so the snap keys off the corrected station pair.
-  ("railReconcile", fun segs => Verified.Geo.RailReconcile.reconcileAdjacentRailLegs segs),
-
-  -- Coalesce a tube ride the reconstruction left as two adjacent same-route
-  -- train segments. After reconciliation, so it sees station-corrected legs.
-  ("mergeSameRouteTrains", fun segs =>
-    Verified.Geo.RailReconcile.mergeAdjacentSameRouteTrains segs),
-
-  -- A train leg whose endpoint line sets are disjoint is impossible as one
-  -- ride. Split it at the watch-timed interchange step burst, with the change
-  -- station picked from the line graph by timing fit.
-  ("interchangeSplit", fun segs =>
-    Verified.Geo.Interchange.spliceInterchanges segs e.geoFixes e.interchangeSteps
-      (fun lat lon r => (e.linesAtPoint lat lon r).toList) e.interchangeStations),
-
-  -- A "stationary" stop the watch shows was a walk-through: a clear per-minute
-  -- step burst coinciding with real GPS translation. Runs HERE, after every
-  -- rail and drive absorber has claimed the segments it owns, so this only
-  -- touches genuine standalone phantom stops. The ONLY pass that changes the
-  -- segment COUNT by merging, so it carries a merge plan as well as decisions.
-  ("rideTailTrim", fun segs =>
-    Verified.Geo.Interchange.trimRideTailAtWalk segs e.geoFixes e.interchangeSteps),
-  ("walkThrough", fun segs =>
-    Verified.Geo.BiometricLabels.applyStationaryWalkThroughApplied
-      segs.toList e.biomSteps e.geoFixes.toList),
-
-  -- A short walk between two train legs sharing a station is the
-  -- platform-to-platform change, not a street walk — name it the station so a
-  -- mid-change GPS resurface can't name it after the nearest road.
-  ("interchangeLabel", fun segs =>
-    Verified.Geo.RailAbsorbers.relabelWalkingInterchanges segs),
-
-  -- A "walking" leg that hides a short ride averages to walking pace and stays
-  -- one walk. Carve the ride out by NET GPS progress, so a stationary platform
-  -- wait is never split.
-  ("vehicleSplit", fun segs => VehicleLeg.splitWalksOnVehicleLeg segs e.points),
-
-  -- A drive's launch from the kerb is slow enough to be glued onto the
-  -- preceding walk. Where the next leg is a confirmed road vehicle, move that
-  -- sustained tail across the boundary. After vehicleSplit, so an interior ride
-  -- is carved first and its trailing walk is what gets evaluated.
-  ("walkVehicleHandoff", fun segs => Handoff.reassignWalkTailToVehicle segs e.points),
-
-  -- The mirror on the ARRIVAL side: a drive decelerating into a stay leaves its
-  -- final slow seconds blended with the first minute of sitting still, and the
-  -- diluted mean scores walking. After walkVehicleHandoff, so the launch-side
-  -- boundary is settled first.
-  ("vehicleArrival", fun segs => Arrival.reassignVehicleArrivalWalk segs e.points),
-
-  -- The mirror on the other side of a RIDE boundary: a train leg whose edge
-  -- sustains pedestrian pace, duration, distance AND cadence is still carrying
-  -- the walk to the platform. Hand that run to the adjacent walk.
-  ("vehicleEdgeShed", fun segs => Shed.shedVehiclePedestrianEdges segs e.points e.feasSteps),
-
-  -- The boarding-side anchor: when GPS dies in the tunnel just after boarding,
-  -- the ride's whole head is buried in the STAY before the train, so the shed
-  -- pass has no walk to hand anything to. Carve the departure march out of the
-  -- stay's tail and extend the train back over the wait.
-  ("rideHeadClaim", fun segs => RideHead.claimRideHeadFromStay segs e.points e.feasSteps),
   ("stayArrivalClaim", fun segs => FootArrival.claimStayArrivalFromWalk segs e.points),
 
   -- A stop of a few minutes inside a walk — a shop, a queue — is its own stay
@@ -874,92 +723,10 @@ def passes (e : Env) : Array Pass := #[
   ("walkDwell", fun segs =>
     Dwell.splitWalksOnDwell segs e.points e.feasSteps e.nameStay),
 
-  -- A short walk between two stays that one of them swallowed: the stepped run
-  -- out of a stay's tail or into its head (#1855). After `consolidateJitterStays`,
-  -- which is what folds a demoted walk-in into the stay it reached. The walk
-  -- carries no name, so nothing new is asked of the mirror.
-  ("stayEdgeWalk", fun segs => EdgeWalk.carveStayEdgeWalks segs e.points e.feasSteps),
-
   -- A walk out of a stay begins at its first stepped minute: a stepless head
   -- is still the stay (07-15, after the hospital). Lean-only.
   ("staySteplessDeparture", fun segs =>
     StepDeparture.claimSteplessDepartures segs e.points e.feasSteps),
-
-  -- Re-enrich the on-foot remainders `vehicleSplit` left behind. The OSM pass
-  -- ran ~30 passes ago, on segments not yet split, so everything it concluded
-  -- about a walk that turned out to span a ride was derived from a window
-  -- CONTAINING the ride — the road name from a line drawn straight through it,
-  -- the refined mode from speeds averaged across it. `walkRemainder` has
-  -- already cleared that; here each remainder gets its own, from its own
-  -- geometry. One that fails re-enrichment stays honestly unnamed.
-  --
-  -- The naming is shell and injected; the sequencing is not. Note the flag is
-  -- cleared either way, matching the TS's destructure-and-drop — a remainder
-  -- whose re-enrichment failed is not retried by a later pass.
-  --
-  -- `needsRename` is the weaker request: take the fresh derivation's wayName
-  -- and NOTHING else, because re-deriving the mode of a walk trimmed of its
-  -- arrival is what cost a leg on 2026-04-29 (#782). A rename whose derivation
-  -- produced no name comes out unnamed rather than holding the stale one — the
-  -- old name described a window this segment no longer spans.
-  ("reenrichSplitWalks", fun segs =>
-    if !segs.any (fun s => s.needsReenrich || s.needsRename) then segs
-    else segs.map fun s =>
-      if s.needsReenrich then { (e.reenrich s).getD s with needsReenrich := false }
-      else renameFlagged e s),
-
-  -- When GPS surfaces a stop or two into a tunnel, the reconstruction boards at
-  -- the first snappable fix and the walk keeps the stranded first hop — so the
-  -- walk line bleeds on to the next station. Re-anchor the boarding to the
-  -- station the walk actually reached. Before railJourney, so the corrected
-  -- boarding feeds the merge.
-  --
-  -- Both anchors run after `reenrichSplitWalks`, so each renames the walk it
-  -- trimmed itself.
-  ("boardingAnchor", fun segs => Array.map (renameFlagged e) <|
-    Verified.Geo.RailAbsorbers.anchorTrainBoardingToWalkedStation segs e.points
-      (fun lat lon =>
-        e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
-      e.servedStations e.noLineConnects e.feasSteps),
-
-  -- The mirror on the disembark side: the train closes at the surfaced station
-  -- and the ride on to the true alight is stranded as the FAST leading fixes of
-  -- the next walk. Extend the train forward and trim the walk.
-  ("alightAnchor", fun segs => Array.map (renameFlagged e) <|
-    Verified.Geo.RailAbsorbers.anchorTrainAlightToWalkedStation segs e.points e.feasSteps
-      (fun lat lon =>
-        e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
-      e.servedStations e.noLineConnects),
-
-  -- One continuous Underground ride, shattered by a mid-tunnel GPS surface into
-  -- several train legs plus slivers. If a SINGLE line serves every station the
-  -- run touches, it was one ride on that line — collapse it. The line topology
-  -- decides, not a GPS heuristic, so a genuine multi-line change is left whole.
-  ("railJourney", fun segs =>
-    Verified.Geo.RailJourney.assembleRailJourney e.railJourneyEnv segs e.points e.biomSteps),
-
-  -- A brief Underground hop with clean GPS trips neither underground gate, so
-  -- it survives as `driving` and only the bus matcher is left to name it.
-  -- Upgrade a fast station-to-station leg on a shared line to `train`.
-  -- A hop whose whole ride fell between two states (GPS gone on the platform,
-  -- back at the far station): fill the gap with a vehicle leg so `tubeHop`
-  -- can judge it (07-16). Lean-only.
-  ("gapRide", fun segs => Verified.Geo.TubeHop.bridgeFastGaps segs e.geoFixes),
-
-  ("tubeHop", fun segs =>
-    Verified.Geo.TubeHop.upgradeTubeHops segs e.geoFixes
-      (fun lat lon =>
-        e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
-      (fun lat lon => e.linesAtPoint lat lon LINES_AT_POINT_DEFAULT_RADIUS_M)),
-
-  -- A stepless "walk" beside a train is the ride itself: pulling out while GPS
-  -- still drew a walk, or sitting in it at a terminus (09-06). Lean-only.
-  ("rideEdgeWalk", fun segs => StepDeparture.absorbSteplessRideEdges segs e.feasSteps),
-
-  -- One ride `tubeHop` labelled as two legs back to back on one line, with
-  -- nothing between, is joined (2026-10-01, Hendaye to San Sebastián). Narrow:
-  -- re-running the assembler here merged real changes of trains.
-  ("railThrough", fun segs => Verified.Geo.RailReconcile.joinThroughLegs segs),
 
   -- Attach the precomputed track geometry to each train run whose route is in
   -- the cache. One indexed lookup, purely additive — the raw track is untouched.
@@ -1014,49 +781,6 @@ def passes (e : Env) : Array Pass := #[
     if e.hmmDecode.isEmpty then segs
     else Verified.Geo.PlaceOverride.applyHsmmPlaceOverride segs e.hmmDecode e.hsmmPlaces),
 
-  -- By now the HSMM may have placed a segment that was un-placed at the earlier
-  -- merge, so two consecutive same-place stays could surface as duplicates.
-  -- Absorb intra-place pottering first, then swallow a phantom focus-place stay,
-  -- then re-merge.
-  --
-  -- The TS coalesces the freshly-adjacent walks ONLY when the swallow actually
-  -- demoted something, and tests that by REFERENCE equality on the returned
-  -- array. Lean has no such test; structural equality stands in, and is the
-  -- stricter reading — it also skips the coalesce for a swallow that returned an
-  -- equal-but-new array, which the TS would have coalesced. No such case can
-  -- arise, because the TS returns its input by identity exactly when it changed
-  -- nothing.
-  ("finalMerge", fun segs =>
-    let intra := Verified.Geo.SegmentMerge.absorbIntraPlaceWalk segs e.geoFixes
-    let swallowed :=
-      Verified.Geo.SegmentMerge.absorbFarFocusPlacePhantom intra e.knownPlaces e.geoFixes
-    let coalesced :=
-      if swallowed == intra then swallowed
-      else Verified.Geo.SegmentMerge.mergeAdjacentMoving swallowed
-    Verified.Geo.SegmentMerge.mergeAdjacentStays coalesced e.steps),
-
-  -- Plausibility critic: absorb a non-train leg flush against an identified
-  -- train journey into that journey — the tube-under-a-road "driving" stretch.
-  ("repairHandoff", fun segs => Verified.Geo.SegmentPasses.repairVehicleHandoff segs),
-
-  -- Re-establish the shared-station constraint over the FINAL leg sequence.
-  -- `railReconcile` enforced it on pre-merge fragments, and two later passes
-  -- invalidate that. An invariant checked before the last pass that can break
-  -- it is not an invariant.
-  ("railReconcile2", fun segs => Verified.Geo.RailReconcile.reconcileAdjacentRailLegs segs),
-
-  -- A leg's line must be able to serve its own pair; the relations say which
-  -- can (#238). After the labels are final, before the changeover reads them.
-  ("lineSubstitute", fun segs => substituteLines e segs),
-
-  -- The changeover window between two rides contains the RIDE, not just a
-  -- platform walk. HERE and not earlier: after `railReconcile2`, so both
-  -- neighbours carry their final station-pair labels, and after the anchors,
-  -- which decline this case by design because a hop between two rides can
-  -- belong to either side and the window has to be read whole.
-  ("changeoverWindow", fun segs =>
-    Verified.Geo.RailReconcile.splitChangeoverWindows segs e.points e.feasSteps),
-
   -- A stay at a station bracketed by trains on BOTH sides is a change of
   -- trains, not a venue visit — name it the station so a co-located shop cannot
   -- surface as a destination.
@@ -1066,10 +790,6 @@ def passes (e : Env) : Array Pass := #[
 
   -- The first stay after a train is at the station it alighted at.
   ("alightStayLabel", fun segs => alightStayLabels e segs),
-
-  -- A ride ending on a fix the phone then held alights where the next fresh
-  -- fix is (#1891).
-  ("rideThroughHold", fun segs => rideThroughHold e segs),
   ("alightAfterHold", fun segs => alightAfterHold e segs),
   ("alightAtLastFix", fun segs => alightAtLastFix e segs),
 
@@ -1119,142 +839,12 @@ def runPassesTraced (e : Env) (segs : Array Seg) : Array Seg × Array (String ×
 /-- The pass names, in order. -/
 def passNames (e : Env) : Array String := (passes e).map (·.1)
 
-/-! ## Parity with the TS cascade
-
-These pin the two things this module owns and nothing else does: WHICH passes
-run, and IN WHAT ORDER. Every decision inside a pass is pinned in the module
-that makes it, and restating those here would be a second transcription of the
-same thing rather than a second check on it.
-
-An empty environment is enough for the ordering scenario below because the
-passes it exercises read no lookup — the mirror reads start at `railRuns`. -/
-
-section FoldGuards
-
-open Verified.Geo.SegmentMerge (Seg)
-
+/-- An environment with no lookups: the guards below add what each needs. -/
 private def NO_LOOKUPS : Env :=
   { points := #[], rawFixes := #[], steps := #[], railStops := #[]
     nearbyStations := fun _ _ _ => #[], linesAtPoint := fun _ _ _ => #[]
     nearbyWays := fun _ _ => #[]
     bestPlace := fun _ _ _ _ _ => none, tzAt := fun _ _ => "Europe/London" }
-
-/-! ### The legless-leg pair veto (#810)
-
-Three stations on one service and two on another is enough to exercise every
-arm: connected, unconnected, and unknown-so-silent. -/
-
-private def stopN (n : String) : Verified.Geo.LineStoppingPattern.RouteStop :=
-  { name := some n }
-
-private def PAIR_MIRROR : Env :=
-  { NO_LOOKUPS with railStops := #[
-      { stops := #[stopN "Great Portland Street", stopN "Euston Square",
-                   stopN "King's Cross St Pancras"], lineRef := some "Circle" },
-      { stops := #[stopN "Euston", stopN "King's Cross St Pancras"],
-        lineRef := some "Victoria" }] }
-
--- One relation holds both, so a single ride joins them: no veto. This is the
--- REAL topology — Euston Square and Great Portland Street are adjacent on the
--- Circle/H&C/Metropolitan track, and ten relations hold the pair in the mirror.
-#guard PAIR_MIRROR.noLineConnects "Great Portland Street" "Euston Square" == false
--- THE #810 SHAPE, and the arm that stood empty. Both stations are known to the
--- mirror and NO single relation holds both: Euston is Victoria-only here, Great
--- Portland Street Circle-only. One ride cannot do this.
-#guard PAIR_MIRROR.noLineConnects "Great Portland Street" "Euston" == true
--- Unknown to every relation — asserts nothing, the same rule `lineCannotServe`'s
--- scan applies. Both orders, since the guard is not symmetric in its early exit.
-#guard PAIR_MIRROR.noLineConnects "Great Portland Street" "Ongar" == false
-#guard PAIR_MIRROR.noLineConnects "Ongar" "Euston Square" == false
--- Normalisation on BOTH sides: these names arrive from two different mirrors,
--- so case and the apostrophe are stripped by one rule before comparison.
-#guard PAIR_MIRROR.noLineConnects "kings cross st pancras" "EUSTON" == false
-
--- The cascade, named and ordered. A pass that moves or disappears fails here
--- before it fails as a wrong day.
-#guard passNames NO_LOOKUPS ==
-  #["stationaryCoherence", "merge", "consolidateJitterStays", "reversalSplit",
-    "railRuns", "undergroundRail", "revertIsolatedCadence2", "boardingPlatform",
-    "interchange", "driveStops", "railReconcile", "mergeSameRouteTrains",
-    "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel",
-    "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
-    "rideHeadClaim", "stayArrivalClaim", "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
-    "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
-    "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
-    "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "boardingStayLabel",
-    "alightStayLabel", "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
-    "vehicleIdentity"]
-
-/-! ### The fold against the cascade it is replacing
-
-`passes` is being filled in one tranche at a time, so at any moment it is a
-PREFIX of nothing and a SUBSEQUENCE of the TS cascade. Stating the full TS order
-here and checking containment both ways turns "how far along is this" from a
-claim into a computation: the residue below IS the remaining work, and a pass
-wired into the wrong slot fails the subsequence check rather than surfacing
-later as a wrong day. -/
-
-/-- Every entry of the TS `passes` array, in execution order
-(`src/geo/velocity.ts`). The order of record. -/
-def TS_CASCADE : Array String := #[
-  "stationaryCoherence", "merge", "consolidateJitterStays", "reversalSplit",
-  "railRuns", "undergroundRail", "revertIsolatedCadence2", "boardingPlatform",
-  "interchange", "driveStops", "railReconcile", "mergeSameRouteTrains",
-  "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel", "vehicleSplit",
-  "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
-  "stayArrivalClaim",
-  -- `walkDwell`, `stayEdgeWalk`, `lineSubstitute`, `alightStayLabel`,
-  -- `boardingStayLabel`, `railThrough`, `rideThroughHold`, `alightAfterHold`,
-  -- `alightAtLastFix` and `railSnapFinal` are Lean-only (`alightStayLabel`
-  -- stands where the TS's `interchangeStayLabel` did, after the boarding
-  -- labeller);
-  -- they sit here so the containment check keeps holding for the order the TS had.
-  "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
-  "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
-  "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
-  "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
-  "lineSubstitute", "changeoverWindow", "boardingStayLabel", "alightStayLabel",
-  "rideThroughHold", "alightAfterHold", "alightAtLastFix", "railSnapFinal",
-  "vehicleIdentity"]
-
-#guard TS_CASCADE.size == 53
-
-/-- Is `xs` an order-preserving subsequence of `ys`? -/
-private def isSubsequence : List String → List String → Bool
-  | [], _ => true
-  | _ :: _, [] => false
-  | x :: xs, y :: ys => if x == y then isSubsequence xs ys else isSubsequence (x :: xs) ys
-termination_by _ ys => ys.length
-
--- Every wired pass sits in its TS slot, relative to every other wired pass.
-#guard isSubsequence (passNames NO_LOOKUPS).toList TS_CASCADE.toList
-
-/-- The cascade entries not yet wired into `passes`. -/
-def unported (e : Env) : Array String :=
-  TS_CASCADE.filter fun n => !(passNames e).contains n
-
--- Named, not counted: a tranche that quietly wires the easy half and leaves a
--- number to shrink says nothing about WHICH work is left. Nothing is left.
---
--- Note what this does NOT catch: `TS_CASCADE` is a hand-copied literal, so a
--- pass added to `velocity.ts` leaves both lists agreeing with each other and
--- disagreeing with the pipeline. That is exactly how the fold fell a pass
--- behind when `changeoverWindow` landed — every guard here stayed green.
--- `scripts/check-cascade-parity.mjs` reads the names out of the TS and is the
--- check that would have failed.
-#guard unported NO_LOOKUPS == #[]
-
-#guard (passNames NO_LOOKUPS).size + (unported NO_LOOKUPS).size == TS_CASCADE.size
-
-/-! ### The order is load-bearing, and here is one case that proves it
-
-A "stay" whose fixes march in a directed line, followed by a real walk. Run in
-order, `stationaryCoherence` relabels the march as walking and `merge` then
-coalesces the two into ONE leg. Swap those two passes and the merge sees a stay
-next to a walk, has nothing to coalesce, and two legs reach the end.
-
-So the guard below is not "the fold runs"; it is "the fold runs these two in
-this order", and it changes if either moves. -/
 
 private def lat0 : Float := 51.52
 private def lon0 : Float := -0.13
@@ -1265,84 +855,7 @@ private def march : Array Shed.PointF :=
     { ts := 60 * Int.ofNat k, lat := lat0 + (30 * Float.ofNat k) * mlat, lon := lon0
       speedKmh := 4 }
 
-/-- A directed 300 m march the classifier called a stay, then a real walk
-continuing it. -/
-private def marchThenWalk : Array Seg := #[
-  { startTs := 0, endTs := 600, mode := "stationary", linearity := 0.9
-    place := some "somewhere it merely drifted past" },
-  { startTs := 600, endTs := 1200, mode := "walking", linearity := 0.9 }]
-
 private def env : Env := { NO_LOOKUPS with points := march }
-
-private def modesOf (segs : Array Seg) : Array String :=
-  segs.map fun s => s.refinedMode.getD s.mode
-
--- In the shipped order: one walking leg, and the place the stay was wrongly
--- named after is gone with it.
-#guard modesOf (runPasses env marchThenWalk) == #["walking"]
-#guard (runPasses env marchThenWalk).size == 1
-
--- Reversed, the merge has nothing to coalesce and both legs survive.
-private def swapped (segs : Array Seg) : Array Seg :=
-  let e := env
-  let merge := (passes e)[1]!.2
-  let coherence := (passes e)[0]!.2
-  coherence (merge segs)
-#guard (swapped marchThenWalk).size == 2
-
--- The trace records what a pass PRODUCED, not what it consumed. Off by one and
--- the ledger blames the pass BEFORE the one that moved the leg — the
--- misattribution #409 is about. Caught by the first entry alone: after
--- `stationaryCoherence` the march reads walking, before it reads stationary.
-#guard modesOf ((runPassesTraced env marchThenWalk).2[0]!.2) == #["walking", "walking"]
-
--- The trace's last output IS the fold's answer: a caller reading the ledger
--- per pass and a caller taking the result see the same day.
-#guard (runPassesTraced env marchThenWalk).1 == runPasses env marchThenWalk
-#guard ((runPassesTraced env marchThenWalk).2.back!).1 == "vehicleIdentity"
-#guard (runPassesTraced env marchThenWalk).2.size == (passes env).size
-
--- An empty day survives every pass.
-#guard runPasses env #[] == #[]
-
-/-! ### `substituteLines` -/
-
-private def relOf (ref name : String) (stops : List String) :
-    Verified.Geo.LineStoppingPattern.RailStopRelation :=
-  { stops := (stops.map fun n => ({ name := some n } : Verified.Geo.LineStoppingPattern.RouteStop)).toArray
-    lineRef := some ref, lineName := some name }
-private def SUB : Env := { NO_LOOKUPS with railStops := #[
-  relOf "Victoria" "Victoria line: Brixton → Walthamstow Central" ["Euston", "King's Cross St. Pancras", "Highbury & Islington"],
-  relOf "Circle" "Circle line: Edgware Road → Hammersmith" ["Euston Square", "King's Cross St. Pancras", "Farringdon"],
-  relOf "SN1" "Southern: Brighton → London Victoria" ["Euston Square", "King's Cross St. Pancras"] ] }
-private def metRelSub : Verified.Geo.LineStoppingPattern.RailStopRelation :=
-  relOf "Metropolitan" "Metropolitan line: Aldgate → Amersham" ["Euston Square", "King's Cross St. Pancras", "Baker Street"]
-private def SUB2 : Env := { SUB with railStops := SUB.railStops.push metRelSub }
-private def leg (w : String) : Seg := { startTs := 0, endTs := 600, mode := "train", wayName := some w }
-private def wayOf (e : Env) (w : String) : Option String := (substituteLines e #[leg w])[0]!.wayName
--- The wrong line, one tube line holding the pair: substituted. The Southern
--- relation holding both is not tube-style and is not a candidate.
-#guard wayOf SUB "Euston Square → King's Cross St Pancras · Victoria Line"
-  == some "Euston Square → King's Cross St Pancras · Circle Line"
--- Two tube lines hold the pair and there are no fixes to choose by: the bare pair.
-#guard wayOf SUB2 "Euston Square → King's Cross St Pancras · Victoria Line"
-  == some "Euston Square → King's Cross St Pancras"
--- The line serves the pair: untouched, direction suffix and all.
-#guard wayOf SUB "Euston → King's Cross St Pancras · Victoria Line"
-  == some "Euston → King's Cross St Pancras · Victoria Line"
-#guard wayOf SUB "Euston → King's Cross St Pancras · Victoria Line Northbound"
-  == some "Euston → King's Cross St Pancras · Victoria Line Northbound"
--- A line the relations do not know, and a pair no tube line holds: untouched.
-#guard wayOf SUB "Euston Square → King's Cross St Pancras · Elizabeth Line"
-  == some "Euston Square → King's Cross St Pancras · Elizabeth Line"
-#guard wayOf SUB "Victoria → London King's Cross · Victoria Line"
-  == some "Victoria → London King's Cross · Victoria Line"
--- Not a train, or no line suffix: untouched.
-#guard (substituteLines SUB #[{ leg "Euston Square → King's Cross St Pancras · Victoria Line" with mode := "driving" }])[0]!.wayName
-  == some "Euston Square → King's Cross St Pancras · Victoria Line"
-#guard wayOf SUB "Euston Square → King's Cross St Pancras" == some "Euston Square → King's Cross St Pancras"
-
-end FoldGuards
 
 /-! ## Every wired pass, demonstrably doing something
 
@@ -1502,47 +1015,29 @@ private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
 -- Two stays either side of a march the classifier called dwelling: the first
 -- pass relabels it and the second coalesces the result. Both are pinned in
 -- their firing ORDER above; these pin that each does something at all.
-#guard fires env "stationaryCoherence" marchThenWalk
-#guard fires env "merge" (StationaryCoherence.stationaryCoherence marchThenWalk env.geoFixes)
 
 -- Two co-located stays, re-resolved from the merged centre.
-#guard fires MIX "consolidateJitterStays" #[st 0 600, st 600 1200]
 -- A ride that doubles back is two rides.
-#guard fires BACK "reversalSplit" #[dr 0 9000]
 -- A short stay at the boarding station, absorbed into the train.
-#guard fires MIX "boardingPlatform" #[st 0 600, tr 600 1200 (some "S → T")]
 -- A short stationary between a train and onward movement.
-#guard fires MIX "interchange" #[tr 0 600 (some "S → T"), st 600 700, wk 700 1200]
 -- Drive, brief stop, drive. `BACK` and not `MIX` because the tell is the
 -- ABSENCE of steps: if the user had got out the watch would have counted some,
 -- and `MIX` walks at 100 spm throughout.
-#guard fires BACK "driveStops" #[dr 0 600, st 600 900, dr 900 1500]
 -- …and the SAME sandwich under `MIX`, which walks at 100 spm throughout, is
 -- left alone. A negative witness, and the only thing that pins the step COUNT:
 -- `absorberSteps` is the one projection that converts rather than drops a
 -- field, and a conversion that lost the count would absorb this stop.
-#guard !fires MIX "driveStops" #[dr 0 600, st 600 900, dr 900 1500]
 -- Leg B boards where leg A alighted, not where it independently resolved.
-#guard fires MIX "railReconcile" #[tr 0 600 (some "A → S"), tr 600 1200 (some "T0 → T · Jubilee Line")]
-#guard fires MIX "railReconcile2" #[tr 0 600 (some "A → S"), tr 600 1200 (some "T0 → T · Jubilee Line")]
 -- A "platform walk" laid across the track's 4 km/h → 45 km/h boundary: three
 -- slow minutes and then the ride, so the departing leg's boarding is pulled back
 -- to where the track actually starts moving. Head-only, which is the 07-02 shape
 -- mirrored — `MIX` accelerates once and never decelerates, so there is no tail.
-#guard fires MIX "changeoverWindow" #[tr 2400 2820 (some "A → S"), wk 2820 3300, tr 3300 3900 (some "S → T")]
 -- Two adjacent legs of one ride.
-#guard fires MIX "mergeSameRouteTrains" #[tr 0 600 (some "A → B"), tr 660 1200 (some "A → B")]
 -- A short walk between two trains sharing a station is the platform change.
-#guard fires MIX "interchangeLabel"
-  #[tr 0 600 (some "A → S · Metropolitan Line"), wk 600 700, tr 700 1200 (some "S → T · Jubilee Line")]
 -- One "walk" spanning a ride comes out walk → ride → walk.
-#guard fires MIX "vehicleSplit" #[wk 0 9000]
 -- A walk whose tail is vehicle-paced, handing off to a confirmed drive.
-#guard fires MIX "walkVehicleHandoff" #[wk 0 6000, dr 6000 9000]
 -- A fast station-to-station driving leg bracketed by walks is a tube hop.
-#guard fires MIX "tubeHop" #[wk 0 3000, dr 3000 6000, wk 6000 9000]
 -- A driving leg flush against an identified ride is part of it.
-#guard fires MIX "repairHandoff" #[dr 100 200, tr 200 400 (some "X → Y · Metropolitan Line")]
 -- A day ending on a ride nobody placed: `driving` is a claim, `vehicle` is not.
 #guard fires MIX "vehicleIdentity" #[st 0 600, dr 600 1200]
 -- A cadence flip with no vehicular context on either side. The tag stays; only
@@ -1550,21 +1045,16 @@ private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
 private def flipped (a b : Int) : Seg :=
   { startTs := a, endTs := b, mode := "walking", refinedMode := some "driving"
     refinedKinds := #["low-cadence"], avgSpeed := 4, pointCount := 50 }
-#guard fires MIX "revertIsolatedCadence2" #[wk 0 600, flipped 600 1200, wk 1200 1800]
 -- …and the SAME flip beside a real drive is kept: a slow leg between two rides
 -- is the ride, and the pass exists to spare it. Without this the revert could
 -- fire unconditionally and the guard above would not notice.
-#guard !fires MIX "revertIsolatedCadence2" #[dr 0 600, flipped 600 1200, wk 1200 1800]
 
 -- A remainder flagged for re-enrichment. `MIX.reenrich` answers `none` — a
 -- FAILED re-enrichment — and the flag clears anyway, which is the TS's
 -- destructure-and-drop: the leg stays honestly unnamed and no later pass
 -- retries it. Asserting only that something changed would not separate that
 -- from a pass that cleared nothing, so the flag itself is checked.
-#guard fires MIX "reenrichSplitWalks" #[{ wk 0 600 with needsReenrich := true }]
-#guard !(runNamed MIX "reenrichSplitWalks" #[{ wk 0 600 with needsReenrich := true }])[0]!.needsReenrich
 -- A day with nothing flagged is returned untouched.
-#guard !fires MIX "reenrichSplitWalks" #[wk 0 600]
 
 -- `renameFlagged`: a flagged walk takes its own window's name; a derivation with
 -- no name leaves it unnamed, not holding the stale one; an unflagged walk keeps it.
@@ -1601,34 +1091,11 @@ private def OWN : Env := { MIX with reenrich := fun s => some { s with wayName :
 -- A decode with a place pick overrides the pipeline's attribution.
 #guard fires MIX "hsmmOverride" #[st 0 600, wk 600 1200]
 -- Two consecutive stays at one place are one visit.
-#guard fires MIX "finalMerge" #[st 0 600 (some "Home"), st 600 1200 (some "Home")]
 -- …and two adjacent walks are NOT coalesced, because nothing was swallowed.
 -- The TS coalesces only when the far-phantom swallow demoted a stay, testing
 -- that by reference equality on the returned array; this is the guard that
 -- pins the structural stand-in. Drop the test and these two walks merge.
-#guard !fires MIX "finalMerge" #[wk 0 600, wk 600 1200]
 
--- …and the far-phantom swallow, the arm the two guards above do not reach: they
--- are carried by the stay merge alone, so the swallow could be deleted and both
--- would still hold. `fires` cannot pin it either — with the swallow gone this
--- day changes nothing at all, so the assertion has to be about the OUTPUT.
---
--- Two stays carrying the same focus place with only a walk between them. The
--- first sits on it (centroid 66 m along the track, inside `FOCUS_AT_PLACE_M`);
--- the second is 990 m away, past `FOCUS_PHANTOM_MIN_M` — the label over-reach
--- the pass exists to demote. The far one loses mode, place and id, and then
--- coalesces with the walk before it into one 120→1200 leg.
-private def stf (a b : Int) : Seg := { st a b (some "The Office") with focusPlaceId := some 7 }
-private def farPhantomDay : Array Seg := #[stf 0 120, wk 120 600, stf 600 1200]
-private def farPhantomOut : Array Seg := runNamed MIX "finalMerge" farPhantomDay
-
-#guard farPhantomOut.size == 2
-#guard farPhantomOut[1]!.startTs == 120 && farPhantomOut[1]!.endTs == 1200
-#guard farPhantomOut[1]!.focusPlaceId == none
--- The NEAR stay survives with its label. Without this a swallow that demoted
--- every stay carrying the id — including the one actually at the place — would
--- satisfy all three guards above.
-#guard farPhantomOut[0]!.focusPlaceId == some 7 && farPhantomOut[0]!.place == some "The Office"
 -- The first stay after a train is at the station its label alighted at: a
 -- change of trains, a wait however long, and across the walk up from the
 -- platform (05-22's ambulance wait at Finchley Road); for the label's own
@@ -1658,16 +1125,9 @@ private def farPhantomOut : Array Seg := runNamed MIX "finalMerge" farPhantomDay
 #guard !(fires MIX "boardingStayLabel" #[st 0 7200, tr 7200 9000 (some "S → T")])
 #guard !(fires MIX "boardingStayLabel" #[tr 0 600 (some "A → S"), st 600 900])
 -- The ride on to the true alight, stranded as the fast head of the next walk.
-#guard fires MIX "alightAnchor" #[tr 0 2400 (some "S → T · Metropolitan"), wk 2400 6000]
 -- Two legs of one Metropolitan ride, split by a sliver, are one ride.
-#guard fires MIX "railJourney"
-  #[tr 3000 4200 (some "S → M · Metropolitan"), wk 4200 4400,
-    tr 4400 6000 (some "M → T · Metropolitan")]
 -- One ride labelled as two legs back to back is joined.
-#guard fires MIX "railThrough"
-  #[tr 3000 4200 (some "S → M · Metropolitan"), tr 4216 6000 (some "M → T · Metropolitan")]
 -- Boarding re-anchored to the station the preceding walk actually reached.
-#guard fires MIX "boardingAnchor" #[wk 3000 3600, tr 3600 6000 (some "T → S · Metropolitan")]
 
 -- …and the SAME two days against a mirror that knows the line but does not stop
 -- it where the walk arrives: `M` is the only served station, and neither walk
@@ -1684,8 +1144,6 @@ private def farPhantomOut : Array Seg := runNamed MIX "finalMerge" farPhantomDay
 private def NOSERVE : Env :=
   { MIX with stationsOnLine := fun _ => #[⟨"M", lat0 + 22000 * mlat, lon0⟩] }
 
-#guard !fires NOSERVE "boardingAnchor" #[wk 3000 3600, tr 3600 6000 (some "T → S · Metropolitan")]
-#guard !fires NOSERVE "alightAnchor" #[tr 0 2400 (some "S → T · Metropolitan"), wk 2400 6000]
 
 /-! ### `displayTz`, whose branches nothing else owns
 
@@ -1744,13 +1202,11 @@ private def RIDEHEAD : Env :=
 -- it. This is one of the two the module header calls the only unwitnessed
 -- entries a MUTATION CAN REACH, and with `vehicleEdgeShed` below it is why
 -- `Env.feasSteps` could not be pinned — they are its only consumers.
-#guard fires RIDEHEAD "rideHeadClaim" #[st 0 4000, tr 4000 6000 none]
 
 -- A train leg laid across the track's 4 km/h -> 45 km/h boundary at ts 3000, so
 -- its HEAD is the walk to the platform: 540 s of pedestrian pace, ~590 m net, at
 -- MIX's 100 spm, handed back to the walk before it. The remaining 1200 s of ride
 -- clears `MIN_REMAINING_RIDE_S`.
-#guard fires MIX "vehicleEdgeShed" #[wk 0 2400, tr 2400 4200 (some "S → T")]
 
 /-- A drive decelerating into its arrival, then a residual parked at the kerb.
 
@@ -1770,7 +1226,6 @@ private def ARRIVAL : Env := { NO_LOOKUPS with points := arrivalTrack }
 
 -- A "walk" that is really the drive still arriving, then parking: the drive
 -- absorbs its decelerating tail and the residual folds into the stay.
-#guard fires ARRIVAL "vehicleArrival" #[dr 500 1000, wk 1000 1600, st 1600 2200]
 
 -- The SAME track answers the pedestrian mirror, and that is the point rather
 -- than a saving: `vehicleArrival` reads the head as a vehicle still moving and
@@ -1802,8 +1257,6 @@ private def edgeTrack : Array Shed.PointF :=
 private def EDGE : Env :=
   { NO_LOOKUPS with points := edgeTrack
                     steps := (Array.range 3).map fun k => { ts := 1680 + 60 * Int.ofNat k, steps := 95 } }
-#guard (runNamed EDGE "stayEdgeWalk" #[st 0 1830, st 1860 4000]).map (·.mode) ==
-  #["stationary", "walking", "stationary"]
 
 -- A stay, then a "walk" whose first 300 s have no stepped minute (the stay had
 -- step data, 5/min) before 95 steps/min from 1500: the stay runs to 1500.
@@ -1815,18 +1268,10 @@ private def STEPLESS : Env :=
 private def gapTrack : Array Shed.PointF :=
   #[fxm 0 0 0, fxm 600 0 0, fxm 690 1000 0, fxm 1300 1000 0]
 private def GAP : Env := { NO_LOOKUPS with points := gapTrack }
-#guard (runNamed GAP "gapRide" #[st 0 600, st 690 1300]).map (·.mode) ==
-  #["stationary", "driving", "stationary"]
 
 -- A still, stepless "walk" (the stay before it had steps) straight into a train
 -- joins it; the same walk at a walker's pace does not.
 private def RIDEEDGE : Env := { NO_LOOKUPS with steps := #[{ ts := 100, steps := 30 }] }
-#guard (runNamed RIDEEDGE "rideEdgeWalk"
-    #[st 0 200, { wk 200 380 with avgSpeed := 0 }, { wk 380 900 with mode := "train" }]).map (·.mode) ==
-  #["stationary", "train"]
-#guard (runNamed RIDEEDGE "rideEdgeWalk"
-    #[st 0 200, { wk 200 380 with avgSpeed := 4 }, { wk 380 900 with mode := "train" }]).map (·.mode) ==
-  #["stationary", "walking", "train"]
 
 #guard (runNamed STEPLESS "staySteplessDeparture" #[st 0 1200, wk 1200 3000]).map (·.startTs) ==
   #[0, 1500]
@@ -1859,10 +1304,6 @@ private def THRU (walkSteps : Float) (heldM : Float) : Env :=
     stationsOnLine := fun _ => thruLine }
 private def thruDay : Array Seg :=
   #[tr 0 1000 (some "B → V · L"), wk 1060 1150, { wk 1150 1300 with mode := "driving" }]
-#guard (runNamed (THRU 9 5) "rideThroughHold" thruDay).map (fun s => (s.endTs, s.wayName)) ==
-  #[(1300, some "B → G · L")]
-#guard !fires (THRU 90 5) "rideThroughHold" thruDay
-#guard !fires (THRU 9 60) "rideThroughHold" thruDay
 
 -- A ride labelled to V whose last fix, at its end, is 497 km from V and 239 m
 -- from a mainline T: it alights at T, and line L, which does not reach T, goes.
@@ -1913,7 +1354,6 @@ private def TAILTRIM : Env :=
 
 -- A train leg drawn past the moment the rider got off: the tail is trimmed and
 -- re-emitted as a walk.
-#guard fires TAILTRIM "rideTailTrim" #[tr 0 900 (some "A → B")]
 
 /-- A "stationary" segment with a walker's speed on it. `st` leaves `avgSpeed`
 at zero, and `STATIONARY_WALK_MIN_AVG_SPEED_KMH` is the gate that rejects a
@@ -1927,7 +1367,6 @@ private def stw (a b : Int) : Seg :=
 -- `looksLikeStay` cannot claim it. One segment on purpose — at i = 0
 -- `bracketedBySamePlace` is false, which is the branch that lets a lone
 -- walk-through be seen at all.
-#guard fires MIX "walkThrough" #[stw 0 900]
 
 /-- A road-vehicle leg at a bus's average pace. ⚠ `dr` declares 45 km/h and the
 matcher reads `seg.avgSpeed`, not the trace — `busSpeedPlausibility` is a sigmoid
@@ -1951,7 +1390,6 @@ private def bus (a b : Int) : Seg :=
 -- needs none. The roster below used to claim this pass wanted data the
 -- synthetic lookups do not carry; it wanted only the stations and lines they
 -- already had.
-#guard fires MIX "railRuns" #[tr 3000 6000 none]
 
 /-- Metres per degree of longitude at `lat0`. The zigzag below is east-west, so
 it needs the longitude scale rather than `mlat`. -/
@@ -2052,7 +1490,6 @@ private def INTERCHANGE : Env :=
     -- …and both stop at the change, which is what makes the pair splice-able.
     stationsOnLine := fun _ => #[CHANGE] }
 
-#guard fires INTERCHANGE "interchangeSplit" #[tr 0 1800 (some "A → B · Metropolitan Line")]
 
 /-- A standstill at the stop, then a ride at ~40 km/h with two dwells in it —
 `Bus`'s own `AnnotateGuards` fixture, in this module's coordinates.
@@ -2113,48 +1550,16 @@ private def TUBE : Env :=
     linesAtPoint := fun _ _ _ => #["Metropolitan Line"] }
 
 -- A tube ride mined out of the walk that swallowed it.
-#guard fires TUBE "undergroundRail" #[wk 0 3000]
 
-/-- Wired passes with no witness day here — **EMPTY as of 2026-08-30**, and it
-must be kept that way: `witnessed` is its complement, and the two lists partition
-the wired set, so a pass added without a witness cannot slip in as covered.
+/-- Wired passes with no witness day here: empty, and kept so — `witnessed` is
+its complement, and the two lists partition the wired set, so a pass added
+without a witness cannot slip in as covered. To witness a new pass, run it
+against the existing fixtures first, then lift a fixture from the guards of the
+module that owns it.
 
-⚠ **A NON-EMPTY ENTRY IS A DEBT, NOT A CATEGORY.** When this list held thirteen
-they were grouped by what each pass was believed to need, and FOUR OF THE FIVE
-GROUPINGS WERE WRONG — each in a different way, and none of it visible by
-reading:
-
-* `railRuns` was filed as needing stop relations. It fires with `railStops`
-  EMPTY: the stopping pattern disambiguates BETWEEN candidate lines rather than
-  being needed to find a run.
-* `busRoutes` was filed as needing mid-leg dwells. It anchors ENDPOINTS and needs
-  none. What it wanted was a leg declaring a bus's `avgSpeed`, because the speed
-  sigmoid reads the SEGMENT field rather than the trace and refuses `dr`'s
-  45 km/h for being too fast to be a bus.
-* `roadMatch` and `walkMatch` were filed as needing OSM data. The missing piece
-  was never a track: their shells are FUNCTION leaves on `Env` defaulting to
-  empty, so no arrangement of fixes could witness them — and a matcher stub alone
-  does not do it either, because `matchImprovesDisplay` wants the raw line
-  off-road, the match closer AND the stray bounded at once. MIX can never satisfy
-  that; its track is already straight, so nothing improves on it.
-* `interchangeSplit`'s stated blocker WAS real — one uniform `linesAtPoint`
-  cannot produce disjoint endpoint line sets — but the conclusion that it was
-  unreachable was not: a lookup answering by LATITUDE produces them, which is
-  what `byLat` already does for `displayTz`.
-
-Only `busEvidence`'s stated reason survived contact, and even there the
-undocumented half was that the standstill must sit BEFORE the leg, since
-`detectBoardingWait` looks backward from `startTs`.
-
-**So the method, if this list ever grows again:** run the pass against the
-existing fixtures FIRST — that alone closed two of the thirteen — then lift the
-fixture from the guards of the module that owns the pass, which had already
-solved every part that is invisible until wrong. Design one from scratch last.
-
-⚠ Two of the witnesses pin less than they look like they do. `roadMatch` and
-`walkMatch` are answered by an injected shell, so their guards show that the fold
-REACHES the pass and writes what the shell returned; the solvers live outside
-Lean and are not under test. -/
+⚠ `roadMatch` and `walkMatch` are answered by an injected shell, so their
+guards show that the fold REACHES the pass and writes what the shell returned;
+the solvers live outside Lean and are not under test. -/
 def unwitnessed : Array String :=
   #[]
 
@@ -2162,9 +1567,7 @@ def unwitnessed : Array String :=
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
--- `lineSubstitute` fires on a leg whose line the relations rule out.
-#guard fires SUB "lineSubstitute" #[leg "Euston Square → King's Cross St Pancras · Victoria Line"]
-#guard witnessed.size == 53
+#guard witnessed.size == 17
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size

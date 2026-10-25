@@ -554,15 +554,11 @@ pub(crate) async fn day_live(
     .await?;
 
     let cap = backend::head::capture(&inputs, date, user)?;
-    let segs = cap
-        .get("segsRaw")
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
     let pts = cap
         .pointer("/obs/points")
         .and_then(serde_json::Value::as_array)
         .map_or(0, Vec::len);
-    eprintln!("head: {pts} smoothed point(s), {segs} segment(s)");
+    eprintln!("head: {pts} smoothed point(s)");
 
     let r = if from_mirror {
         // ⚠ The clock is read HERE and passed down. Lean's coverage rule takes

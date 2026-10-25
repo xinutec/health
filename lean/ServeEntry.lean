@@ -2919,45 +2919,6 @@ private def parseHeadPlace (j : Json) : Except String Verified.Geo.PlacePrior.Kn
     | none => pure none
   return { centroidLat := la, centroidLon := lo, radiusM := r, id := id }
 
-/-- ⚠ `Verified.Geo.Segments.FilteredPoint`, NOT `Verified.Geo.Kalman`'s. The two
-are the same shape under different field names (`speed_kmh` vs `speedKmh`) and
-`classifySegments` takes this one, so `parseKalmanPt` cannot be reused here. -/
-private def parseHeadPt (j : Json) : Except String Verified.Geo.Segments.FilteredPoint := do
-  let a ← j.getArr?
-  -- ⚠ Index 5, and OPTIONAL. A caller that predates it sends five elements and
-  -- gets `none`, which `linearityOf` reads as "no accuracy supplied" and answers
-  -- with the original formula — so adding it changed no existing behaviour
-  -- (#185). Absent and `null` both mean not supplied; they are NOT zero, which
-  -- would claim a perfect fix.
-  let acc ← match a[5]? with
-    | some v => if v.isNull then pure none else some <$> jBits v
-    | none => pure none
-  return {
-    ts := ← (← nth a 0).getInt?
-    lat := ← jBits (← nth a 1)
-    lon := ← jBits (← nth a 2)
-    speed_kmh := ← jBits (← nth a 3)
-    bearing := ← jBits (← nth a 4)
-    accuracyM := acc }
-
-private def parseHeadStayPt (j : Json) : Except String Verified.Geo.Segments.StayPoint := do
-  let a ← j.getArr?
-  return { ts := ← (← nth a 0).getInt?, lat := ← jBits (← nth a 1), lon := ← jBits (← nth a 2) }
-
-private def headSegJson (s : Verified.Geo.Segments.TrackSegment) : Json :=
-  Json.mkObj [
-    ("startTs", Lean.toJson s.startTs), ("endTs", Lean.toJson s.endTs),
-    ("mode", Json.str s.mode),
-    ("confidence", fBits s.confidence), ("confidenceMargin", fBits s.confidenceMargin),
-    ("avgSpeed", fBits s.avgSpeed), ("maxSpeed", fBits s.maxSpeed),
-    ("linearity", fBits s.linearity), ("pointCount", Lean.toJson s.pointCount),
-    -- ⚠ Whether `linearity` MEANS anything for this segment: it is a net/path
-    -- ratio and reads 1.0 for a path with one effective hop, so a jump inside
-    -- the GPS noise outscores a real walk (#185).
-    ("directionResolvable", Json.bool s.directionResolvable),
-    ("refinedReason", match s.refinedReason with | none => Json.null | some r => Json.str r),
-    ("refinedKinds", Json.arr (s.refinedKinds.map Json.str))]
-
 private def headResult (j : Json) : Json :=
   let parsed : Except String Json := do
     match ← (← j.getObjVal? "op").getStr? with
@@ -2971,21 +2932,6 @@ private def headResult (j : Json) : Json :=
         Json.arr #[fBits r.lat, fBits r.lon,
           (match r.accuracy with | none => Json.null | some a => fBits a),
           Json.bool r.snapped]))]
-    | "segments" =>
-      let pts ← (← (← j.getObjVal? "pts").getArr?).mapM parseHeadPt
-      -- Absent and null both mean "no separate stay set"; the fold then doubles
-      -- the movement fixes up as stay evidence, which is `classifySegments`' own
-      -- default and NOT the same as passing an empty array.
-      let stay ← match j.getObjVal? "stayPts" with
-        | .error _ => pure none
-        | .ok v =>
-          if v.isNull then pure none
-          else do
-            let arr ← v.getArr?
-            let sp ← arr.mapM parseHeadStayPt
-            pure (some sp)
-      return Json.mkObj [("segs", Json.arr
-        ((Verified.Geo.Segments.classifySegments pts stay).map headSegJson))]
     | other => throw s!"unknown head op {other}"
   match parsed with
   | .error e => Json.mkObj [("error", Json.str e)]

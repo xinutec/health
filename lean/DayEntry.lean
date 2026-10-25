@@ -5,10 +5,11 @@ import DayEntry.Host
 import Verified.Geo.WalkMatchAdapt
 
 /-!
-# `DayEntry` — the day cascade's JSON boundary
+# `DayEntry` — the day fold's JSON boundary
 
-The day request comes in as one JSON object (`segsRaw` + `env`), the fold runs,
-and the timeline goes back out. Every lookup the fold needs beyond its request —
+The day request comes in as one JSON object (`env`, carrying the day's stored
+decode), the decoder's segments are named by the tail (`DECODER_TAIL`), and the
+timeline goes back out. Every lookup the fold needs beyond its request —
 the OSM tables, the zone at a coordinate, a geocode, a stay's local hours — is
 asked of the host mid-fold through `DayEntry.Host.ask` (#1709). Nothing is
 carried in the request that the host could answer on demand: there are no
@@ -1077,30 +1078,14 @@ def dayResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let envJson ← j.getObjVal? "env"
     let env ← parseEnv envJson
-    let modeStats := (← (← optArr envJson "modeStats").mapM parseModeStats).toList
     let wantTrace ← optBool j "trace" false
-    -- ONE input, and one chain from here to the episodes (#430 B2). `EnrichFold`
-    -- carries the OSM enrichment stage that would otherwise split the chain in
-    -- two and force the corrections to start from another arm's output.
-    let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
-    -- `decoderHead`: the day has a decode, so the decoder's segments head the
-    -- fold, the segmentation stages and passes stand down, and only
-    -- `DECODER_TAIL` runs. Without one (today; a day not yet re-decoded) the
-    -- cascade draws the day.
-    let decoderHead ← optBool envJson "decoderHead" false
-    let env := if decoderHead
-      then { env with hmmDecode := refineDecoderBoundaries env.hmmDecode env.points } else env
-    let headSegs := decoderSegs env.hmmDecode env.points env.hsmmPlaces
-    -- The watch's last sync: the step stream is complete only up to it.
-    let stepsThrough ← optInt envJson "stepsThrough"
-    let splitCtx : Stays.SplitContext :=
-      { hr := (env.hr.map fun h => ⟨h.ts, h.bpm⟩).toArray
-        steps := env.steps.map fun s => ⟨s.ts, s.steps⟩
-        stepsThrough }
-    let segsSplit := if decoderHead then headSegs else DayEntry.Host.timed "splitFold" fun _ =>
-      Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
-    -- The OSM enrichment stage, chained on both sides so the two sub-chains
-    -- meet here rather than through another arm's output (#430 B2).
+    -- The day's segments are the decoder's: a day folds from its stored decode
+    -- and the passes that NAME what it drew (`DECODER_TAIL`). A day with no
+    -- decode is not folded — the server answers that it is being decoded.
+    if env.hmmDecode.isEmpty then
+      throw "the day has no decode: a day folds from its decode"
+    let env := { env with hmmDecode := refineDecoderBoundaries env.hmmDecode env.points }
+    let segs := decoderSegs env.hmmDecode env.points env.hsmmPlaces
     let namer ← namerOf envJson
     let enrichReads : Verified.Geo.EnrichFold.Reads :=
       { ways := env.nearbyWays
@@ -1110,61 +1095,16 @@ def dayResult (j : Json) : Json :=
         stations := env.nearbyStations
         place := fun lat lon pref stay => namer.name lat lon stay pref
         tzAt := env.tzAt }
-    -- ⚠ `skipEnrich` SKIPS THE OSM ENRICHMENT STAGE, for #1071. `passLimit`
-    -- exonerated the pass cascade (0 passes costs what 38 do), and the same
-    -- round still issues 133 mirror queries with NO pass running — so the OSM
-    -- reads come from here, and this seam says whether the memory does too.
-    --
-    -- ⚠ ONLY ON THIS CALL SITE. `decodeOnly` has the same three lines and must
-    -- keep running the stage: it is the TIMING harness's parse prefix, and an
-    -- ablation flag that silently changed it would move a number nobody was
-    -- measuring.
-    --
-    -- ⚠ A skipped stage is a WRONG day — nothing downstream gets a name, a city
-    -- or a station. For reading RSS only; never served, blessed or compared.
-    -- ⚠ READ OFF `env`, where `build_day_request` writes it (and `walkMatch`).
-    -- The first version read the ROOT, so neither seam ever reached Lean and two
-    -- arms of identical code were recorded as an ablation.
-    let skipEnrich ← optBool envJson "skipEnrich" false
-    -- ⚠ HOISTED out of the branch: `(← …)` may only appear directly in a `do`
-    -- block, not nested inside an `if` expression.
     let enrichPlaces := (← (← optArr envJson "enrichPlaces").mapM parseNamedPlace).toList
-    -- `dbgTrace` so the ablation announces itself FROM LEAN: the Rust warning
-    -- only proves the flag was written, not that it was read.
-    let segsEnriched :=
-      if decoderHead then segsSplit
-      else if skipEnrich then dbgTrace "lean: skipEnrich — enrichment stage skipped" fun _ => segsSplit
-      else DayEntry.Host.timed "enrichFold" fun _ => Verified.Geo.EnrichFold.enrichFold enrichReads
-        { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
-          steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
-        enrichPlaces env.points segsSplit
-    -- The five corrections that run between the OSM enrichment stage and pass 1
-    -- (#430). Same argument as the fold's: they are one stage because the order
-    -- is what is being measured — `revertIsolatedCadence` exists to undo the
-    -- pass before it, so a shell that re-imposed the sequence would put the
-    -- thing under test outside the test. Their observations are the fold's own
-    -- `steps` and `hr`, which is why only `modeStats` was added to the wire.
-    let segs := if decoderHead then segsEnriched else DayEntry.Host.timed "preFold" fun _ =>
-      Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsEnriched env.rawFixes
-    -- ⚠ `passLimit` RUNS A PREFIX OF THE CASCADE, for #1071's per-pass memory
-    -- attribution. Absent it runs them all, which is every caller but the
-    -- ablation harness. A truncated cascade is a WRONG day on purpose — passes
-    -- undo one another — so its output is for reading RSS and nothing else.
     -- The carved-stop namer is the enrichment stage's own stationary branch,
-    -- bound over the same reads and mined places the stage ran with.
+    -- bound over the same reads and mined places.
     let env := { env with
-      boundarySlackS := if decoderHead then DECODER_BOUNDARY_SLACK_S else 0
+      boundarySlackS := DECODER_BOUNDARY_SLACK_S
       nameStay := fun seg =>
         Verified.Geo.EnrichFold.nameStay enrichReads
           { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
             steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
           enrichPlaces env.points none seg }
-    let allPasses := Verified.Geo.PassFold.passes env
-    let chosen := match ← optInt envJson "passLimit" with
-      | some n =>
-        dbgTrace s!"lean: passLimit {n} — running {min n.toNat allPasses.size} of {allPasses.size} passes"
-          fun _ => allPasses.extract 0 n.toNat
-      | none => allPasses
     -- Under the head, the train legs the decoder's chain named nothing on (a
     -- mainline or foreign ride) take the cascade's rail-run label, one leg at a
     -- time; the named legs and the changes between them stay as decoded.
@@ -1210,13 +1150,11 @@ def dayResult (j : Json) : Json :=
     -- `nameStays`, which needs a centroid.
     let darkMove : Verified.Geo.PassFold.Pass := ("darkMoveAtPlace", fun segs =>
       Verified.Geo.SegmentMerge.absorbDarkMoveAtPlace segs env.geoFixes)
-    let tail := chosen.filter (DECODER_TAIL.contains ·.1)
+    let tail := Verified.Geo.PassFold.passes env
     let tail := match tail.findIdx? (·.1 == "hsmmOverride") with
       | some k => tail.insertIdx! (k + 1) darkMove
       | none => tail.push darkMove
-    let chosen := if decoderHead
-      then #[unnamedRail, nameStays, nameMoves] ++ tail
-      else chosen
+    let chosen := #[unnamedRail, nameStays, nameMoves] ++ tail
     let chosen := chosen.map fun (n, f) => (n, fun s => DayEntry.Host.timed s!"pass.{n}" fun _ => f s)
     let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs
     -- The fold's output is the chain's input, which is the whole reason these
@@ -1226,15 +1164,8 @@ def dayResult (j : Json) : Json :=
     let chain ← parseChain envJson out env.points env.displayFixes
     let (states, episodes) := DayEntry.Host.timed "dayChain" fun _ => Verified.Geo.DayChain.dayChain chain
     let base := [
-      -- The split stage's output — the earliest boundary, and the only one whose
-      -- input is not another Lean stage's output.
-      ("segsSplit", Json.arr (segsSplit.map segJson)),
-      -- The enrichment stage's output — the seam between the two sub-chains.
-      ("segsEnriched", Json.arr (segsEnriched.map segJson)),
-      -- The corrections' output — a chain BOUNDARY. Sent
-      -- back so a divergence in the five stages is named where it happens
-      -- rather than read off the fold's output dozens of decisions later.
-      ("segsMid", Json.arr (segs.map segJson)),
+      -- The decoder's segments as the fold received them, before the tail.
+      ("segsSplit", Json.arr (segs.map segJson)),
       ("segs", Json.arr (out.map segJson)),
       ("states", Json.arr (states.map stateJson)),
       ("episodes", Json.arr (episodes.map episodeJson)),

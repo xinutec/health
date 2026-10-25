@@ -1032,7 +1032,7 @@ pub fn encode_geocode(v: &Value) -> Value {
 /// round-trips through text are exactly where this port already found a
 /// one-ULP disagreement with V8. So a round's answers are appended as the rows
 /// the fold reads, and the loop never converts back.
-/// The whole fold request: `{segsRaw, trace, env}`.
+/// The whole fold request: `{trace, env}`.
 ///
 /// Port of `buildDayRequest`. The pieces are separately verified against the
 /// TypeScript; this is the assembly, and the assembly is where a field can be
@@ -1075,7 +1075,6 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
         "homeTz".into(),
         i.get("homeTz").cloned().unwrap_or(Value::Null),
     );
-    env.insert("modeStats".into(), encode_mode_stats(c.get("modeStats")));
     // ⚠ ONLY WHEN THE CALLER SET IT. Lean defaults an absent `walkMatch` to
     // true, so the gates and the CLIs — which never put it in `inputs` — keep
     // the production draw. Writing `true` here instead would say the same thing
@@ -1095,32 +1094,6 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
         "venuePriors".into(),
         encode_venue_priors(i.get("venuePriors")),
     );
-    // ⚠ `FOLD_PASS_LIMIT` RUNS A PREFIX OF THE CASCADE — an ablation seam for
-    // #1071, absent unless the harness sets it. A truncated cascade is a WRONG
-    // day by construction (passes undo one another), so it exists to be measured
-    // and never to be served, blessed or compared.
-    // ⚠ `FOLD_SKIP_ENRICH` drops the OSM enrichment stage — the #1071 ablation
-    // seam the pass-limit result pointed at. Absent by default, loud when set,
-    // and its day is WRONG on purpose.
-    //
-    // ⚠ THE WARNING IS PART OF THE INSTRUMENT, NOT DECORATION. The first attempt
-    // at this seam wired the Lean half and not this half, so the flag was read by
-    // nothing and BOTH arms ran enrichment. Two runs of the same thing agreed to
-    // the row and were recorded as "enrichment exonerated". Grep for this line to
-    // confirm the ablation FIRED before reading any result from it.
-    if std::env::var_os("FOLD_SKIP_ENRICH").is_some() {
-        eprintln!("⚠ FOLD_SKIP_ENRICH — skipping OSM enrichment; this day is WRONG");
-        env.insert("skipEnrich".into(), Value::Bool(true));
-    }
-
-    if let Ok(n) = std::env::var("FOLD_PASS_LIMIT") {
-        let n: u32 = n
-            .parse()
-            .with_context(|| format!("FOLD_PASS_LIMIT is not a number: {n:?}"))?;
-        eprintln!("⚠ FOLD_PASS_LIMIT={n} — running a PREFIX of the cascade; this day is WRONG");
-        env.insert("passLimit".into(), Value::from(n));
-    }
-
     // ⚠ THE FILTER SITS HERE, NOT INSIDE `encode_caches`, and that is deliberate.
     // `fold_env` pins `encode_caches` against what the TypeScript produced, whole
     // field for whole field. That oracle is about the PORT being faithful, so an
@@ -1169,11 +1142,5 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
             }
         }
     }
-    let segs: Vec<Value> = c
-        .get("segsRaw")
-        .and_then(Value::as_array)
-        .map(|a| a.iter().map(encode_seg).collect())
-        .unwrap_or_default();
-
-    Ok(json!({ "segsRaw": segs, "trace": false, "env": env }))
+    Ok(json!({ "trace": false, "env": env }))
 }

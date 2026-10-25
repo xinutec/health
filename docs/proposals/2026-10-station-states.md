@@ -222,11 +222,12 @@ so a fit needs the decoder's own candidate starts.
 
 ## What retires
 
-- Now the flip is served: the fold's stay-absorbing and window-stretching
-  passes are out of the head's tail (`finalMerge`); the cascade still draws
-  today and any day without a decode, so `absorbIntraPlaceWalk`'s twelve
-  minutes and `consolidateJitterStays`' 75 m go with it when the history
-  re-decode reads the same without them.
+- The cascade — CUT 2026-10-25, with `absorbIntraPlaceWalk`'s twelve minutes and
+  `consolidateJitterStays`' 75 m among its 36 passes: every served day folds from
+  its stored decode (decoded on read by the decode worker, a day never decoded
+  answers that it is being decoded), so the split, enrichment and pre-fold
+  stages and every pass outside the naming tail went, with the modules only
+  they used.
 - With S1 and S2 on the shipped record: `boardAtWait` and `boardingStayLabel`'s
   fold — CUT 2026-10-22, neither ran under the head and the 200-day sweep read
   the same (`histfold-headed.sh`, headed against headed on one decode dump);
