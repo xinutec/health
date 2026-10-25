@@ -201,7 +201,15 @@ the narrated rides' first covered minute (true line vouched 0.971 of 68,
 another 0.095 of 680: +2.32 / −3.46), lines −1, stations −2, rows 1 / 1,
 09-14 lost. The narrated ride starts are not the entry term's cases — it
 decides at every leg start the decoder weighs, waits and changes among them —
-so a fit needs the decoder's own candidate starts.
+so a fit needs the decoder's own candidate starts. Fitted so (2026-10-25):
+every covered minute × every train line of the day's states, true where a
+narrated ride of the line starts in the minute — 68 true (67 vouched), 55,161
+other (10,439 vouched), +1.64 / −3.35 by the rule of succession — and REFUTED
+held out against a control on the same records: journeys 129 → 128, leg modes
+316 → 314, stations 66 → 64, lines unchanged; 07-06's hop vanishes into the
+walk and a 07-16 leg goes. The +3 pays for a short ride the rest of the model
+under-prices, so the term stays hand-set until that ride is priced on its own
+(the short hop's duration, `TrainHopDuration`).
 
 ## Open
 
