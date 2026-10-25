@@ -104,6 +104,46 @@ fn the_live_decode_scores_against_the_narratives() {
         .expect("the live arm must not panic");
 }
 
+/// `SCOREBOARD_CACHE=<dir>`: a day's decode, kept under the hash of the
+/// `verified_cli` binary and the whole request. Lean is pure, so the same
+/// binary on the same request decodes the same segments: a control decoded
+/// once stands for every comparison against it, and nothing a change could
+/// move is read from the cache, because the change moves the key.
+fn cache_key(req: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    static BIN: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    let bin = BIN.get_or_init(|| {
+        let path = backend::lean_worker::verified_cli_path().expect("verified_cli resolves");
+        Sha256::digest(std::fs::read(path).expect("verified_cli reads")).to_vec()
+    });
+    let mut h = Sha256::new();
+    h.update(bin);
+    h.update(req.to_string().as_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The day's rendered decode, from the cache or from Lean; `None` for a
+/// degenerate decode.
+fn decode_day(req: &Value, cache: Option<&Path>) -> Option<Value> {
+    let hit = cache.map(|dir| dir.join(format!("{}.json", cache_key(req))));
+    if let Some(p) = &hit
+        && let Ok(text) = std::fs::read_to_string(p)
+    {
+        let v: Value = serde_json::from_str(&text).expect("a cached decode parses");
+        return (!v.is_null()).then_some(v);
+    }
+    let rendered = backend::lean::assemble_segments(req)
+        .expect("assemble answers")
+        .map(|segments| backend::row_json::render_segments(&segments).expect("segments render"));
+    if let Some(p) = &hit {
+        let tmp = p.with_extension("tmp");
+        std::fs::write(&tmp, rendered.clone().unwrap_or(Value::Null).to_string())
+            .expect("the decode cache writes");
+        std::fs::rename(&tmp, p).expect("the decode cache writes");
+    }
+    rendered
+}
+
 fn live_arm() {
     let blessed: BTreeMap<String, Value> = serde_json::from_str(
         &std::fs::read_to_string(BASELINE).expect("the blessed scoreboard is tracked"),
@@ -122,7 +162,26 @@ fn live_arm() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(4);
-    let dates: Vec<&String> = blessed.keys().collect();
+    let cache = std::env::var_os("SCOREBOARD_CACHE").map(std::path::PathBuf::from);
+    if let Some(dir) = &cache {
+        std::fs::create_dir_all(dir).expect("the decode cache directory");
+    }
+    // The slowest days first, by the time each took last (`times.json` in the
+    // cache): the run ends when its last day does, so a long day started late
+    // is the whole tail. A day with no time yet goes first.
+    let times: BTreeMap<String, f64> = match cache
+        .as_ref()
+        .and_then(|d| std::fs::read_to_string(d.join("times.json")).ok())
+    {
+        Some(t) => serde_json::from_str(&t).expect("the cache's times.json parses"),
+        None => BTreeMap::new(),
+    };
+    let mut dates: Vec<&String> = blessed.keys().collect();
+    dates.sort_by(|a, b| {
+        let t = |d: &String| times.get(d).copied().unwrap_or(f64::INFINITY);
+        t(b).total_cmp(&t(a))
+    });
+    let took: std::sync::Mutex<BTreeMap<String, f64>> = std::sync::Mutex::new(times.clone());
     let results: std::sync::Mutex<BTreeMap<String, (Value, Value)>> = std::sync::Mutex::default();
     let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|scope| {
@@ -139,14 +198,19 @@ fn live_arm() {
                         let tz = fx["meta"]["tz"].as_str().unwrap_or("Europe/London");
                         let req = backend::decode_fixture::request(&fx)
                             .unwrap_or_else(|e| panic!("{name}: {e:#}"));
-                        let Some(segments) =
-                            backend::lean::assemble_segments(&req).expect("assemble answers")
-                        else {
+                        let t0 = std::time::Instant::now();
+                        let decoded = decode_day(&req, cache.as_deref());
+                        let secs = t0.elapsed().as_secs_f64();
+                        // A cache hit's time is not the decode's.
+                        if secs > 1.0 {
+                            took.lock()
+                                .expect("times lock")
+                                .insert((*date).clone(), secs);
+                        }
+                        let Some(rendered) = decoded else {
                             eprintln!("scoreboard-live: {date}  DEGENERATE decode");
                             continue;
                         };
-                        let rendered =
-                            backend::row_json::render_segments(&segments).expect("segments render");
                         let live = score(
                             date,
                             tz,
@@ -161,6 +225,10 @@ fn live_arm() {
                 .expect("spawn a scoreboard worker");
         }
     });
+    if let Some(dir) = &cache {
+        let took = took.into_inner().expect("times lock");
+        std::fs::write(dir.join("times.json"), json!(took).to_string()).expect("times write");
+    }
     let results = results.into_inner().expect("results lock");
     for (date, want) in &blessed {
         let Some((live, rendered)) = results.get(date) else {
