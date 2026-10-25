@@ -17,17 +17,23 @@ pub(crate) async fn save_decode(
     user_id: &str,
     date: &str,
     segments: &serde_json::Value,
+    inputs_through: i64,
 ) -> Result<()> {
+    // `decoded_at` is the write's own moment, every write: it defaulted only on
+    // the first insert, so a re-decode kept the first decode's time.
     sqlx::query(
-        "INSERT INTO decoded_days (user_id, date, classifier_version, segments_json) \
-         VALUES (?, ?, ?, ?) \
+        "INSERT INTO decoded_days (user_id, date, classifier_version, segments_json, inputs_through) \
+         VALUES (?, ?, ?, ?, ?) \
          ON DUPLICATE KEY UPDATE classifier_version = VALUES(classifier_version), \
-                                 segments_json = VALUES(segments_json)",
+                                 segments_json = VALUES(segments_json), \
+                                 inputs_through = VALUES(inputs_through), \
+                                 decoded_at = CURRENT_TIMESTAMP",
     )
     .bind(user_id)
     .bind(date)
     .bind(CLASSIFIER_VERSION)
     .bind(serde_json::to_string(segments)?)
+    .bind(inputs_through)
     .execute(pool)
     .await
     .with_context(|| format!("writing decoded_days for {user_id} {date}"))?;
@@ -175,6 +181,7 @@ pub(crate) async fn decode_one(
     dry_run: bool,
 ) -> Result<usize> {
     let bounds = backend::timezone::date_bounds_utc(date, Some(tz))?;
+    let loaded_at = chrono::Utc::now().timestamp();
     let inputs = backend::classification_inputs::load(
         pool,
         &st.http,
@@ -330,7 +337,15 @@ pub(crate) async fn decode_one(
         eprintln!("[{user_id} {date}] DRY RUN — {n} segments, nothing written");
         return Ok(n);
     }
-    save_decode(pool, user_id, date, &segments).await?;
+    // What these inputs were complete through, taken as they were loaded.
+    let inputs_through = backend::decode_freshness::horizon(
+        bounds.end_utc,
+        inputs
+            .pointer("/biometrics/stepsThrough")
+            .and_then(serde_json::Value::as_i64),
+        loaded_at,
+    );
+    save_decode(pool, user_id, date, &segments, inputs_through).await?;
     Ok(n)
 }
 
@@ -929,4 +944,158 @@ pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
         names.len()
     );
     Ok(())
+}
+
+/// `backend watch-decode-queue`: the decoder beside the serving pod.
+///
+/// Each turn takes the day a read queued (`decode_freshness`), else the newest
+/// stale day among the stored decodes in `window_days` and today, and decodes
+/// it in a CHILD `decode-day` process: one process over many days retained
+/// memory until it was killed, and a day per
+/// process held flat. After a write, that day's presence row. A day that fails
+/// counts an attempt in the queue, so a day the decoder refuses (no
+/// observations and a cross-day bracket) stops being tried.
+///
+/// ⚠ NO `migrate()` here: `backend serve` performs it, in the same pod.
+pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Result<()> {
+    use backend::decode_freshness as fresh;
+    use backend::fetch_queue as queue;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let exe = std::env::current_exe().context("locating this binary")?;
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("installing the SIGTERM handler")?;
+    eprintln!(
+        "decode watch: idle every {interval_s}s, decodes kept current over {window_days} day(s)"
+    );
+    loop {
+        let next = match next_stale_day(&pool, window_days).await {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("decode watch: choosing a day failed: {e:#}");
+                None
+            }
+        };
+        let Some((user_id, date)) = next else {
+            tokio::select! {
+                _ = term.recv() => break,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(interval_s)) => continue,
+            }
+        };
+        let key = fresh::queue_key(&user_id, &date);
+        let started = std::time::Instant::now();
+        let child = tokio::process::Command::new(&exe)
+            .args(["decode-day", &user_id, &date])
+            .kill_on_drop(true)
+            .status();
+        let status = tokio::select! {
+            _ = term.recv() => break,
+            s = child => s,
+        };
+        match status {
+            Ok(s) if s.success() => {
+                queue::done(&pool, fresh::QUEUE_KIND, &key).await?;
+                if let Err(e) =
+                    super::refresh::refresh_presence_log(&pool, 1, Some((&user_id, &date))).await
+                {
+                    eprintln!("decode watch: presence row for {user_id} {date}: {e:#}");
+                }
+                eprintln!(
+                    "decode watch: {user_id} {date} decoded in {}s",
+                    started.elapsed().as_secs()
+                );
+            }
+            Ok(s) => {
+                eprintln!("decode watch: {user_id} {date} failed ({s})");
+                queue::failed(
+                    &pool,
+                    fresh::QUEUE_KIND,
+                    &key,
+                    &format!("decode-day exited {s}"),
+                )
+                .await?;
+            }
+            Err(e) => {
+                eprintln!("decode watch: could not run decode-day for {user_id} {date}: {e:#}");
+                queue::failed(&pool, fresh::QUEUE_KIND, &key, "decode-day did not start").await?;
+            }
+        }
+    }
+    eprintln!("decode watch: shutting down");
+    pool.close().await;
+    Ok(())
+}
+
+/// What a read queued, else the newest stale day among the stored decodes in
+/// the window and today; a day whose attempts ran out is not offered again.
+async fn next_stale_day(
+    pool: &sqlx::MySqlPool,
+    window_days: i64,
+) -> Result<Option<(String, String)>> {
+    use backend::decode_freshness as fresh;
+    use backend::fetch_queue as queue;
+    if let Some(p) = queue::due(pool, fresh::QUEUE_KIND, 1)
+        .await?
+        .into_iter()
+        .next()
+        && let Some(day) = fresh::parse_key(&p.key)
+    {
+        return Ok(Some(day));
+    }
+    let exhausted: std::collections::HashSet<String> = sqlx::query_scalar(
+        "SELECT fetch_key FROM osm_fetch_queue WHERE kind = ? AND attempts >= ?",
+    )
+    .bind(fresh::QUEUE_KIND)
+    .bind(queue::MAX_ATTEMPTS)
+    .fetch_all(pool)
+    .await
+    .context("reading the exhausted decodes")?
+    .into_iter()
+    .collect();
+    let now = chrono::Utc::now();
+    let users: Vec<String> = sqlx::query_scalar("SELECT user_id FROM nc_tokens")
+        .fetch_all(pool)
+        .await
+        .context("listing users")?;
+    for user_id in users {
+        let tz = backend::sync_state::get(pool, &user_id, "home_tz")
+            .await?
+            .unwrap_or_else(|| "Europe/London".into());
+        let today = backend::timezone::local_date_at(now.timestamp(), Some(&tz))?;
+        let cutoff = (chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d")?
+            - chrono::Duration::days(window_days))
+        .format("%Y-%m-%d")
+        .to_string();
+        let mut dates: Vec<String> = sqlx::query_scalar(
+            "SELECT CAST(date AS CHAR) FROM decoded_days WHERE user_id = ? AND date >= ? ORDER BY date DESC",
+        )
+        .bind(&user_id)
+        .bind(&cutoff)
+        .fetch_all(pool)
+        .await
+        .context("listing the stored decodes")?;
+        if !dates.contains(&today) {
+            dates.insert(0, today.clone());
+        }
+        let steps_through: Option<i64> =
+            backend::classification_inputs::steps_through(pool, &user_id)
+                .await?
+                .as_i64();
+        for date in dates {
+            if exhausted.contains(&fresh::queue_key(&user_id, &date)) {
+                continue;
+            }
+            let end = backend::timezone::date_bounds_utc(&date, Some(&tz))?.end_utc;
+            let horizon = fresh::horizon(end, steps_through, now.timestamp());
+            if fresh::freshness(pool, &user_id, &date, horizon).await? != fresh::Freshness::Current
+            {
+                // Through the queue, so its attempts are counted.
+                queue::record(pool, fresh::QUEUE_KIND, &fresh::queue_key(&user_id, &date)).await;
+                return Ok(Some((user_id, date)));
+            }
+        }
+    }
+    Ok(None)
 }

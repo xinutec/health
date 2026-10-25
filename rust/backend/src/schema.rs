@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 97] = [
+    let migrations: [&str; 98] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -782,6 +782,10 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         r#"INSERT IGNORE INTO osm_mirror_tile (mode, tile_key, refreshed_at)
      SELECT 'bus', tile_key, MAX(computed_at) FROM bus_route_cache
      WHERE tile_key IS NOT NULL GROUP BY tile_key"#,
+        // What a decode's inputs were complete through (`decode_freshness`): a
+        // decode is stale once they reach further. NULL on the rows written
+        // before it, which read as stale and are decoded again once.
+        r#"ALTER TABLE decoded_days ADD COLUMN IF NOT EXISTS inputs_through BIGINT NULL"#,
     ];
 
     sqlx::query(

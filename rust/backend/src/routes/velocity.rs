@@ -317,6 +317,13 @@ pub async fn compute_with(
         o.insert("walkMatch".into(), json!(false));
     }
     let inputs = inputs;
+    // A day whose stored decode does not stand for these inputs is queued for
+    // the decode worker; this read serves what is stored.
+    // ⚠ The HOME zone's day, as `decode-day` records it: judged against the
+    // display zone's, a day viewed west of home would never read as current.
+    if let Ok(home) = timezone::date_bounds_utc(date, Some(&home_tz)) {
+        backend_queue_if_stale(&st.pool, user_id, date, home.end_utc, &inputs).await;
+    }
     mark(&mut timing, "load");
     for (name, ms) in load_split {
         timing.insert(format!("load.{name}"), json!(ms));
@@ -611,4 +618,22 @@ fn map_error(e: &anyhow::Error) -> Response {
         Json(json!({ "error": "velocity computation failed" })),
     )
         .into_response()
+}
+
+/// `decode_freshness::queue_if_stale` at the horizon these inputs reach.
+async fn backend_queue_if_stale(
+    pool: &sqlx::MySqlPool,
+    user_id: &str,
+    date: &str,
+    day_end_utc: i64,
+    inputs: &Value,
+) {
+    let horizon = crate::decode_freshness::horizon(
+        day_end_utc,
+        inputs
+            .pointer("/biometrics/stepsThrough")
+            .and_then(Value::as_i64),
+        chrono::Utc::now().timestamp(),
+    );
+    crate::decode_freshness::queue_if_stale(pool, user_id, date, horizon).await;
 }

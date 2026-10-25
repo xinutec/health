@@ -61,6 +61,7 @@ mod compression;
 mod config;
 mod connection_status;
 mod date_bounds;
+mod decode_freshness;
 mod decode_request;
 mod decode_window;
 mod decoder_params;

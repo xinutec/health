@@ -288,6 +288,15 @@ pub enum Command {
         #[arg(long, default_value_t = 15)]
         interval_s: u64,
     },
+    /// decode stale days continuously: what the reads queued, then the newest stale day held
+    WatchDecodeQueue {
+        /// seconds to wait when nothing is stale
+        #[arg(long, default_value_t = 60)]
+        interval_s: u64,
+        /// how far back the stored decodes are kept current (the presence log's window)
+        #[arg(long, default_value_t = 90)]
+        window_days: i64,
+    },
     /// issue a session cookie
     MintSession { user: String },
     /// revoke a session cookie

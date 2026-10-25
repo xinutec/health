@@ -1268,7 +1268,11 @@ pub(crate) const RAIL_DEFAULT_WINDOW_DAYS: i64 = 21;
 /// segments in the order they were stored. The rollup's tie-break keeps the
 /// place seen FIRST, so re-ordering either changes which place a day is
 /// attributed to.
-pub(crate) async fn refresh_presence_log(pool: &sqlx::MySqlPool, lookback: i64) -> Result<()> {
+pub(crate) async fn refresh_presence_log(
+    pool: &sqlx::MySqlPool,
+    lookback: i64,
+    only: Option<(&str, &str)>,
+) -> Result<()> {
     use sqlx::Row as _;
 
     backend::schema::migrate(pool).await?;
@@ -1280,11 +1284,24 @@ pub(crate) async fn refresh_presence_log(pool: &sqlx::MySqlPool, lookback: i64) 
         .to_string();
     eprintln!("refresh-presence-log: lookback={lookback}d (cutoff={cutoff})");
 
-    let days = sqlx::query("SELECT user_id, date, segments_json FROM decoded_days WHERE date >= ?")
-        .bind(&cutoff)
+    // One day, for the decode worker after it writes that day's decode.
+    let days = match only {
+        Some((user_id, date)) => sqlx::query(
+            "SELECT user_id, date, segments_json FROM decoded_days WHERE user_id = ? AND date = ?",
+        )
+        .bind(user_id)
+        .bind(date)
         .fetch_all(pool)
         .await
-        .context("reading decoded_days")?;
+        .context("reading decoded_days")?,
+        None => {
+            sqlx::query("SELECT user_id, date, segments_json FROM decoded_days WHERE date >= ?")
+                .bind(&cutoff)
+                .fetch_all(pool)
+                .await
+                .context("reading decoded_days")?
+        }
+    };
     eprintln!(
         "refresh-presence-log: {} decoded day(s) in window",
         days.len()

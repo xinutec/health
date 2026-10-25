@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
             let pool = db::connect(&dbcfg.url())
                 .await
                 .context("connecting to the database")?;
-            let r = refresh_presence_log(&pool, lookback_days).await;
+            let r = refresh_presence_log(&pool, lookback_days, None).await;
             pool.close().await;
             r
         }
@@ -173,6 +173,12 @@ async fn main() -> Result<()> {
         // Both halves, continuously, beside the serving pod (#1889): what a
         // fold declined, and the ground around fixes as they arrive.
         C::WatchFetchQueue { interval_s } => watch_fetch_queue(interval_s).await,
+        // The decodes, continuously, beside the serving pod: what a read
+        // found stale, then the newest stale day held; one process per day.
+        C::WatchDecodeQueue {
+            interval_s,
+            window_days,
+        } => watch_decode_queue(interval_s, window_days).await,
         // #1071's instrument: several days in ONE process, so the arena's
         // high-water is visible; `velocity` restarts the process each time.
         C::VelocityMany { user, dates } => velocity_many(&user, &dates).await,

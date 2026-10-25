@@ -20,7 +20,7 @@ sqlx = { version = "0.9", default-features = false, features = [
     "macros",
     "migrate",
 ] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "process"] }
 # `join_all` over a variable number of borrowed futures — the PhoneTrack
 # device fan-out (#1921). Already in the lockfile via reqwest and sqlx; no
 # new crate builds for it.
