@@ -271,8 +271,8 @@
 		"legLineScorable": 2,
 		"legLineMatching": 2,
 		"stationsAsserted": 4,
-		"stationsMatching": 3,
-		"stationsMissing": 1,
+		"stationsMatching": 4,
+		"stationsMissing": 0,
 		"phantomRides": 0
 	},
 	"2026-07-02": {
@@ -283,8 +283,8 @@
 		"legLineScorable": 3,
 		"legLineMatching": 2,
 		"stationsAsserted": 5,
-		"stationsMatching": 1,
-		"stationsMissing": 1,
+		"stationsMatching": 2,
+		"stationsMissing": 0,
 		"phantomRides": 0
 	},
 	"2026-07-06": {
@@ -295,7 +295,7 @@
 		"legLineScorable": 2,
 		"legLineMatching": 2,
 		"stationsAsserted": 3,
-		"stationsMatching": 2,
+		"stationsMatching": 3,
 		"stationsMissing": 0,
 		"phantomRides": 1
 	},
@@ -307,8 +307,8 @@
 		"legLineScorable": 4,
 		"legLineMatching": 4,
 		"stationsAsserted": 4,
-		"stationsMatching": 3,
-		"stationsMissing": 1,
+		"stationsMatching": 4,
+		"stationsMissing": 0,
 		"phantomRides": 0
 	},
 	"2026-07-10": {
@@ -331,8 +331,8 @@
 		"legLineScorable": 2,
 		"legLineMatching": 2,
 		"stationsAsserted": 3,
-		"stationsMatching": 2,
-		"stationsMissing": 1,
+		"stationsMatching": 3,
+		"stationsMissing": 0,
 		"phantomRides": 0
 	},
 	"2026-07-15": {
@@ -355,8 +355,8 @@
 		"legLineScorable": 2,
 		"legLineMatching": 2,
 		"stationsAsserted": 4,
-		"stationsMatching": 3,
-		"stationsMissing": 1,
+		"stationsMatching": 4,
+		"stationsMissing": 0,
 		"phantomRides": 0
 	},
 	"2026-07-30": {
@@ -367,8 +367,8 @@
 		"legLineScorable": 2,
 		"legLineMatching": 2,
 		"stationsAsserted": 3,
-		"stationsMatching": 2,
-		"stationsMissing": 1,
+		"stationsMatching": 3,
+		"stationsMissing": 0,
 		"phantomRides": 0
 	},
 	"2026-09-06": {

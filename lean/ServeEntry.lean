@@ -1559,6 +1559,48 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       match st? with
       | none => #[]
       | some n => (Array.range T).filter fun t => nearFix fixes[t]! n
+    -- The board station against the fix of the minute BEFORE the leg — where
+    -- he stood when the ride began (the leg's own first minute already moves):
+    -- the chain's anchor form, relative to the best station at that minute.
+    let boardAt : FloatArray := Id.run do
+      let mut raw := FloatArray.mk (Array.replicate (L * T) journeyZero)
+      let mut has := Array.replicate (L * T) false
+      -- A station is a complex of nodes (one per line's platforms); the leg's
+      -- distance is its NAME's nearest node, so two lines boarded at the same
+      -- station tie here and their pairs decide.
+      let stationNodes : Std.HashMap String (Array Verified.Hsmm.StationChain.ChainNode) :=
+        match g? with
+        | none => {}
+        | some g => g.nodes.foldl (fun m n => match n.stationName with
+            | some name => m.insert name ((m.getD name #[]).push n)
+            | none => m) {}
+      for (entry, li) in legList.zipIdx do
+        let (_, _, st?) := entry
+        let some n := st? | continue
+        let nodes := match n.stationName with
+          | some name => stationNodes.getD name #[n]
+          | none => #[n]
+        for t in [0:T] do
+          let f := if t == 0 then fixes[t]! else match fixes[t - 1]! with
+            | some f => some f | none => fixes[t]!
+          match f with
+          | none => pure ()
+          | some (la, lo) =>
+            let dM := nodes.foldl (fun acc x =>
+              min acc (Verified.Hsmm.FloatScore.haversineMeters la lo x.lat x.lon))
+              (Verified.Hsmm.FloatScore.haversineMeters la lo n.lat n.lon)
+            let z := dM / Verified.Hsmm.StationChain.STATION_SIGMA_M
+            raw := raw.set! (li * T + t) (max Verified.Hsmm.StationChain.ANCHOR_CLAMP (-(Verified.Hsmm.Journey.HALF * z * z)))
+            has := has.set! (li * T + t) true
+      let mut out := FloatArray.mk (Array.replicate (L * T) journeyZero)
+      for t in [0:T] do
+        let mut mx := Verified.FloatConst.negInf
+        for li in [0:L] do
+          if has[li * T + t]! then mx := max mx (raw.get! (li * T + t))
+        if mx == Verified.FloatConst.negInf then continue
+        for li in [0:L] do
+          if has[li * T + t]! then out := out.set! (li * T + t) (raw.get! (li * T + t) - mx)
+      return out
     let reachMask : Array Bool := Id.run do
       let mut out := Array.replicate (L * T) true
       for (starts, li) in reachStarts.zipIdx do
@@ -1745,7 +1787,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
         first := legOuter.map (prior true jp.firstLeg)
         last := legOuter.map fun l => if isWaitLeg l then Verified.FloatConst.negInf else prior false jp.lastLeg l
-        firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, alightName, durBaseF, pairOk }
+        firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, alightName, boardAt, durBaseF, pairOk }
     let tb := Verified.Hsmm.Journey.withOwn tb
     let inner := Verified.Hsmm.Journey.best tb
     let tb := { tb with cell := inner }

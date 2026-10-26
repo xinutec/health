@@ -443,6 +443,26 @@ request; a leg is named `train|Metropolitan Line@Euston Square`). It shows
 400 m of UCLH's fixes as Euston Square is, and its ride to King's Cross
 expects 4.07 minutes for the 4 observed, where the Met's one stop expects
 2.7 — the pair's ride time decides, and the fixes underground say nothing.
+
+**2026-10-26, the board side settles it.** Two instrument faults sat under the
+refutations above. The journey's alight was read at the first minute away from
+the board station, and a minute straddling the arrival is the median of its
+fixes, a point between the two stations: away from the board, near no station
+of the line. So the Met's Euston Square → King's Cross hop had no ride time at
+all, and every anchor form was measured against a Victoria pair that had one.
+With the alight required to sit at a served station of the line, the pair is a
+0.03-nat tie. The term that then decides is the board station against the fix
+of the minute BEFORE the leg — where he stood when the ride began — at the
+chain's station sigma, clamped like its anchor, scored per station complex
+(the nearest node of the station's name, or Baker Street's Bakerloo platform
+beats its Met one by proximity and a line with no pair wins the board), and
+relative to the best station admitted at that minute, so a ride never pays
+against a walk. Measured as `DECODE_BLESS` → `DAY_BLESS` → the gate (the fold
+grades the frozen decode): truth 548 → 549 (07-06's hop, Met from Euston
+Square), journeys held, stations 67 → 74 matched and 22 → 16 missing over
+seven days, two walks re-drawn within budget (08-06, 08-07), nothing lost.
+The node-level form was the one refuted again the same evening: 05-18's hop
+lost to the Bakerloo's nearer platform.
 A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
 the chain's post-hoc pick on the served day, with the same fixes.
 

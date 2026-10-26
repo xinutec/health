@@ -89,6 +89,11 @@ structure Tables where
   /-- `alightName[l * T + e]`: the station the fixes put the leg's end at,
       `none` where no served station of its line is within reach. -/
   alightName : Array (Option String) := #[]
+  /-- `boardAt[l * T + t]`: a board-station leg's station against the fix of
+      the minute before `t`, relative to the best station of any leg at `t`
+      (0), so the term separates stations and never a ride from a walk; 0 for
+      a base leg. Empty: no term. -/
+  boardAt : FloatArray := FloatArray.empty
   /-- `stopActive[l * T + e]`: the evidence of the leg's passes under way at
       `e` and `stopActiveFirst` the earliest one's first minute
       (`StationStops.activeEvidence`): a pass that runs past the leg's end is
@@ -163,7 +168,8 @@ def pairLogPdf (d expected : Float) : Float :=
   if prev == negInf then negInf else
   let b := tb.baseOf[l]!
   let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
-  prev + emit + tb.entry.get! (b * T + start) + legCell tb l d e
+  let board := if tb.boardAt.size == 0 then 0 else tb.boardAt.get! (l * T + start)
+  prev + emit + tb.entry.get! (b * T + start) + board + legCell tb l d e
 
 /-- What the hoisted transition needs from `pairOk`, once per table: a leg is
     `restricted` when some leg may not follow it (a wait, which continues only
