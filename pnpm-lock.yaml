@@ -6,7 +6,7 @@ settings:
 
 overrides:
   esbuild: ^0.28.2
-  vite: ~8.3.4
+  vite: ~8.3.5
 
 importers:
 

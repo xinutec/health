@@ -14,21 +14,21 @@
   },
   "private": true,
   "dependencies": {
-    "@angular/cdk": "^22.2.3",
+    "@angular/cdk": "^22.2.4",
     "@angular/common": "^22.2.3",
     "@angular/compiler": "^22.2.3",
     "@angular/core": "^22.2.3",
     "@angular/forms": "^22.2.3",
-    "@angular/material": "^22.2.3",
+    "@angular/material": "^22.2.4",
     "@angular/platform-browser": "^22.2.3",
     "@angular/platform-browser-dynamic": "^22.0.4",
     "@angular/router": "^22.2.3",
     "@angular/service-worker": "^22.2.3",
     "@fontsource/roboto": "^5.3.0",
     "@types/leaflet": "^1.9.21",
-    "@xinutec/ui-harness": "github:xinutec/ui-harness#9acbc25d8f25e3a52b956cdc8aee544d3e0591de",
-    "@xinutec/ui-scaffold": "github:xinutec/ui-harness#9acbc25d8f25e3a52b956cdc8aee544d3e0591de&path:/scaffold",
-    "chart.js": "^4.5.1",
+    "@xinutec/ui-harness": "github:xinutec/ui-harness#7b96e68b0ae3f2fe5e77f481441546dc2fc5db50",
+    "@xinutec/ui-scaffold": "github:xinutec/ui-harness#7b96e68b0ae3f2fe5e77f481441546dc2fc5db50&path:/scaffold",
+    "chart.js": "^4.6.1",
     "leaflet": "^1.9.4",
     "material-icons": "^1.13.14",
     "ng2-charts": "^10.0.0",
@@ -36,8 +36,8 @@
     "tslib": "^2.8.1"
   },
   "devDependencies": {
-    "@angular/build": "^22.2.3",
-    "@angular/cli": "^22.2.3",
+    "@angular/build": "^22.2.4",
+    "@angular/cli": "^22.2.4",
     "@angular/compiler-cli": "^22.2.3",
     "@playwright/test": "1.63.0",
     "@types/node": "^24.19.0",
@@ -47,7 +47,7 @@
     "stylelint": "^17.14.0",
     "stylelint-config-recommended-scss": "^17.0.1",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.71.2",
+    "typescript-eslint": "^8.72.0",
     "vitest": "^4.1.11"
   }
 }

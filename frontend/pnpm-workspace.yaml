@@ -23,7 +23,7 @@ allowBuilds:
   esbuild: true
   lmdb: true
   msgpackr-extract: true
-  "@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/9acbc25d8f25e3a52b956cdc8aee544d3e0591de": true
+  "@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/7b96e68b0ae3f2fe5e77f481441546dc2fc5db50": true
 
 # Carried across from package.json's npm-format `overrides`, which pnpm does not
 # read. Leaving them there does not merely ignore them going forward: `pnpm
@@ -35,7 +35,7 @@ overrides:
   "@babel/core": ^7.29.6
   # @angular/build 22.2.3 pins vite 8.3.0, whose launch-editor has three advisories
   # fixed in 8.3.3. Drop once Angular's own pin passes it.
-  vite: ~8.3.4
+  vite: ~8.3.5
 
 # The catalog names only versions a day old (dev-lint tables/deps.dhall);
 # strict, so a younger install fails instead of writing itself an exclusion.
