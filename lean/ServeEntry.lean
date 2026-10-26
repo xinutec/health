@@ -1605,16 +1605,22 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           let dist := Verified.Hsmm.StationChain.ssspMap
             (Verified.Hsmm.StationChain.lineSssp g line (start.toArray.map (fun id => (id, journeyZero))))
           for e in [0:T] do
-            -- The alight is where the fixes resume AWAY from the board station,
-            -- within the stale window: a track that sits at the station it
-            -- boarded at is the phone repeating its last position underground
-            -- (07-02: Finchley Road until 08:15:20Z, Baker Street at 08:16:47Z).
+            -- The alight is where the fixes resume AWAY from the board station
+            -- and AT a station of the line, within the stale window: a track
+            -- that sits at the station it boarded at is the phone repeating its
+            -- last position underground (07-02: Finchley Road until 08:15:20Z,
+            -- Baker Street at 08:16:47Z), and the minute straddling the arrival
+            -- carries a position between the two stations — away from the
+            -- board, near no alight — so stopping there left a one-stop hop
+            -- with no ride time while a line stationed nearer the midpoint kept
+            -- searching and found its pair.
             let mut m := e
             let mut away := false
             while m < T && m ≤ e + journeyFixStaleMin do
               match fixAfter m with
               | some (la, lo) =>
-                if Verified.Hsmm.FloatScore.haversineMeters la lo σ.lat σ.lon > journeyReachM then away := true
+                if Verified.Hsmm.FloatScore.haversineMeters la lo σ.lat σ.lon > journeyReachM
+                    && (alights[m]!).isSome then away := true
               | none => pure ()
               if away then break
               m := m + 1
@@ -1739,7 +1745,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
         first := legOuter.map (prior true jp.firstLeg)
         last := legOuter.map fun l => if isWaitLeg l then Verified.FloatConst.negInf else prior false jp.lastLeg l
-        firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, durBaseF, pairOk }
+        firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, alightName, durBaseF, pairOk }
     let tb := Verified.Hsmm.Journey.withOwn tb
     let inner := Verified.Hsmm.Journey.best tb
     let tb := { tb with cell := inner }
@@ -2173,6 +2179,9 @@ private def journeyDebugJson (c : Verified.Hsmm.Assemble.ModelContext)
         ("endTs", Lean.toJson (tsOf (x.start + x.d - 1) + 60)),
         ("d", Lean.toJson x.d), ("prev", fl x.prev), ("emit", fl x.emit), ("entry", fl x.entry),
         ("cell", fl x.cell), ("expectedMin", fl x.expectedMin),
+        ("alight", match tb.alightName[x.leg * tb.T + (x.start + x.d - 1)]? with
+          | some (some a) => Json.str a
+          | _ => Json.null),
         ("total", fl (x.prev + x.emit + x.entry + x.cell))]))]
   -- The alternative: segments by leg name, each over `[startTs, endTs)`.
   let alts : Array Json := ((dj.getObjVal? "alt") >>= (·.getArr?)).toOption.getD #[]

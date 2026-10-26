@@ -190,8 +190,8 @@ const POST_TS: &[&str] = &[
 /// enforceable +2, legs +2 (two trains), journeys unchanged. (09-14's is the
 /// mirror and outside this set.)
 const TS_FILES: usize = 31;
-const TS_ROWS: usize = 418;
-const TS_ENFORCEABLE: usize = 393;
+const TS_ROWS: usize = 423;
+const TS_ENFORCEABLE: usize = 398;
 const TS_UNPARSEABLE: usize = 4;
 /// Narratives whose `Times:` is not London: 04-29 (Amsterdam), 06-24 (UTC), and
 /// 10-02 to 10-07 (Madrid).
@@ -201,13 +201,13 @@ const TS_DECLARED_TZ: usize = 8;
 /// their trips; the platform waits on 06-15, 06-17 and 06-18 are rows of their
 /// own, each ride row starting at its boarding; 07-16's hospital visit ends
 /// where its steps begin and the hop after it is a journey of its own.
-const TS_JOURNEYS: usize = 89;
-const TS_LEGS: usize = 245;
+const TS_JOURNEYS: usize = 91;
+const TS_LEGS: usize = 248;
 /// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. The leg total could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
 /// to `stationary`, changes what a leg IS without changing how many there are.
 const TS_LEG_MODES: [(&str, usize); 4] =
-    [("bus", 3), ("driving", 6), ("train", 82), ("walking", 154)];
+    [("bus", 3), ("driving", 6), ("train", 82), ("walking", 157)];
 
 #[test]
 fn the_narrative_corpus_matches_its_blessed_shape() {

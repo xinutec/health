@@ -86,6 +86,9 @@ structure Tables where
       `stopAlightPre`, whose passes the leg leaves out too. -/
   stopAlight : Array (Option Nat) := #[]
   stopAlightPre : Array FloatArray := #[]
+  /-- `alightName[l * T + e]`: the station the fixes put the leg's end at,
+      `none` where no served station of its line is within reach. -/
+  alightName : Array (Option String) := #[]
   /-- `stopActive[l * T + e]`: the evidence of the leg's passes under way at
       `e` and `stopActiveFirst` the earliest one's first minute
       (`StationStops.activeEvidence`): a pass that runs past the leg's end is
