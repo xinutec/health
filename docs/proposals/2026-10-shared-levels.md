@@ -478,6 +478,16 @@ Portland Street, the stop before (05-18, 06-29, 07-01, 07-02, 07-06, 07-07 ×2,
 places; neither floors the other. What would: the journey's alight read like
 the chain's anchor (the fix, not the minute's median) and the chain's anchor
 weighed by its fix's accuracy, so a reacquire in a tunnel cannot re-line a ride.
+
+**2026-10-26, night: the journey's alight reading, fixed.** The alight is the
+LAST minute within the stale window after the leg whose fix is away from the
+board and at a served station of the line, read from the minute's own first
+fix (`ObsRow.firstFix`); the first such minute was a call on the way (07-07:
+Great Portland Street, standing 08:44:29–08:45:03, Euston Square at 08:45:42).
+07-07's ride pairs Wembley Park → Euston Square (13.25), 06-16's → Baker
+Street. Floors held, one decode moved, the scoreboard unchanged: the chain
+still names the served stations. The journey-pair floor above is to be
+re-measured on this reading.
 A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
 the chain's post-hoc pick on the served day, with the same fixes.
 
