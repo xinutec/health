@@ -170,6 +170,12 @@ const POST_TS: &[&str] = &[
 /// 07-02) written as a stay at the station, as his own rows write a change
 /// there (06-29, 07-01) — legs −5 (five walks), rows and journeys unchanged.
 ///
+/// Those five read again from the steps, against his own rows (06-16's
+/// "walking (Baker Street interchange)", 06-29's walk before the stay): each is
+/// the walk between platforms, and 06-23's three still minutes after it are its
+/// platform wait — legs +5 (five walks), rows +1 and enforceable +1 (the wait),
+/// journeys unchanged.
+///
 /// The rides through the Jubilee-only platforms between Wembley Park and
 /// Finchley Road re-read from the signal: on 06-12 and 06-15 the stretch was
 /// ridden non-stop (a Metropolitan train) and the Jubilee taken on from
@@ -177,8 +183,8 @@ const POST_TS: &[&str] = &[
 /// enforceable +2, legs +2 (two trains), journeys unchanged. (09-14's is the
 /// mirror and outside this set.)
 const TS_FILES: usize = 31;
-const TS_ROWS: usize = 417;
-const TS_ENFORCEABLE: usize = 392;
+const TS_ROWS: usize = 418;
+const TS_ENFORCEABLE: usize = 393;
 const TS_UNPARSEABLE: usize = 4;
 /// Narratives whose `Times:` is not London: 04-29 (Amsterdam), 06-24 (UTC), and
 /// 10-02 to 10-07 (Madrid).
@@ -189,12 +195,12 @@ const TS_DECLARED_TZ: usize = 8;
 /// own, each ride row starting at its boarding; 07-16's hospital visit ends
 /// where its steps begin and the hop after it is a journey of its own.
 const TS_JOURNEYS: usize = 89;
-const TS_LEGS: usize = 240;
+const TS_LEGS: usize = 245;
 /// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. The leg total could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
 /// to `stationary`, changes what a leg IS without changing how many there are.
 const TS_LEG_MODES: [(&str, usize); 4] =
-    [("bus", 3), ("driving", 6), ("train", 82), ("walking", 149)];
+    [("bus", 3), ("driving", 6), ("train", 82), ("walking", 154)];
 
 #[test]
 fn the_narrative_corpus_matches_its_blessed_shape() {

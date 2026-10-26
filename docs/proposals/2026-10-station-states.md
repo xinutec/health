@@ -243,9 +243,10 @@ narrated rows 530 = 530; five frozen decodes lose a phantom train (07-14's and
   walks (5, 7, 7, 8, 16, 18 minutes) are the population for its fit.
 - **The decoded wait where no wait is decoded** (07-01's four minutes sit on the
   floor): the stay's end under the decoder is #1947's next slice.
-- **S3, confidence as a posterior:** forward–backward over the trellis; a
-  station or line emitted when its posterior clears a level read off the
-  narrated days, not by `MARGIN_NATS`. Not started.
+- **S3, confidence as a posterior:** measured 2026-10-18 and refuted as a
+  replacement for the gates (`2026-10-posterior-confidence.md`, phase C): the
+  chain's posterior is calibrated but no level beats `MARGIN_NATS` /
+  `ABS_ANCHOR_FLOOR`, which emit 150 sides with none wrong.
 
 ## What retires
 
