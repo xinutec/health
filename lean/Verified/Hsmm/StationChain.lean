@@ -460,18 +460,37 @@ structure Anchor where
       kilometres off is not where he boarded (#238, 06-09: the chain weighed
       South Kensington for a ride boarded at Victoria three minutes after a fix
       at Victoria, because 500 m/min × 3 min reaches it). Measured alone on the
-      live scoreboard 2026-10-06: stations 15 → 16, nothing else moved. -/
+      live scoreboard 2026-10-06: stations 15 → 16, nothing else moved. Inside
+      an adjacent STATIONARY segment — the decoded wait on the platform — the
+      slop carries nothing: the decoder saw him stand there, and the station's
+      own sigma is the whole spread (06-15: King's Cross came within 0.04 nats
+      of Euston Square for a ride boarded after a three-minute wait 40 m from
+      Euston Square, and the board was served as null). -/
   pace : Float := SLOP_SPEED_M_PER_MIN
   deriving Inhabited, Repr
 
 /-- The anchor's slop at walking pace when `walk` is an adjacent walking
-    segment that contains the anchor's fix, else unchanged. `fixTs` is the fix's
-    own time; the fix is the segment's when it falls inside its window. -/
+    segment that contains the anchor's fix, at no pace when it is an adjacent
+    stationary one, else unchanged. `fixTs` is the fix's own time; the fix is
+    the segment's when it falls inside its window. -/
 def Anchor.pacedBy (a : Anchor) (fixTs : Int) (walk : Option ChainSeg) : Anchor :=
   match walk with
-  | some w => if w.mode == "walking" && w.startTs ≤ fixTs && fixTs ≤ w.endTs
-      then { a with pace := TRANSFER_WALK_M_PER_MIN } else a
+  | some w =>
+    if !(w.startTs ≤ fixTs && fixTs ≤ w.endTs) then a
+    else if w.mode == "walking" then { a with pace := TRANSFER_WALK_M_PER_MIN }
+    else if w.mode == "stationary" then { a with pace := 0 }
+    else a
   | none => a
+
+private def pacedAnchor : Anchor := ⟨51.525, -0.136, 1, SLOP_SPEED_M_PER_MIN⟩
+private def pacedSeg (mode : String) : ChainSeg := { mode, lineName := none, startTs := 100, endTs := 200 }
+-- A walk beside the fix paces the slop at a walker's pace, a wait at nothing;
+-- a ride, or a segment the fix lies outside, leaves it unpaced.
+#guard (pacedAnchor.pacedBy 150 (some (pacedSeg "walking"))).pace == TRANSFER_WALK_M_PER_MIN
+#guard (pacedAnchor.pacedBy 150 (some (pacedSeg "stationary"))).pace == 0
+#guard (pacedAnchor.pacedBy 150 (some (pacedSeg "train"))).pace == SLOP_SPEED_M_PER_MIN
+#guard (pacedAnchor.pacedBy 250 (some (pacedSeg "stationary"))).pace == SLOP_SPEED_M_PER_MIN
+#guard (pacedAnchor.pacedBy 150 none).pace == SLOP_SPEED_M_PER_MIN
 
 /-- Last observed fix strictly BEFORE the leg (board side).
 
