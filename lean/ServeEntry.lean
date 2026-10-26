@@ -1496,12 +1496,24 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         | none => match o.prevGpsFix with
           | some f => if o.ts - f.ts ≤ journeyFixStaleS then some (f.lat, f.lon) else none
           | none => none
+    -- The first raw fix of the minute, not its median: a minute straddling the
+    -- arrival puts its median between the two stations.
     let fixAfter := fun (t : Nat) => match c.obs[t]? with
       | none => none
-      | some o => match o.gps with
-        | some gp => some (gp.lat, gp.lon)
-        | none => match o.nextGpsFix with
-          | some f => if f.ts - o.ts ≤ journeyFixStaleS then some (f.lat, f.lon) else none
+      | some o => match o.firstFix with
+        | some f => some (f.lat, f.lon)
+        | none => match o.gps with
+          | some gp => some (gp.lat, gp.lon)
+          | none => match o.nextGpsFix with
+            | some f => if f.ts - o.ts ≤ journeyFixStaleS then some (f.lat, f.lon) else none
+            | none => none
+    -- The last raw fix of the minute: where he was when the next minute began.
+    let fixBefore := fun (t : Nat) => match c.obs[t]? with
+      | none => none
+      | some o => match o.lastFix with
+        | some f => some (f.lat, f.lon)
+        | none => match o.gps with
+          | some gp => some (gp.lat, gp.lon)
           | none => none
     let nearFix := fun (f : Option (Float × Float)) (n : Verified.Hsmm.StationChain.ChainNode) =>
       match f with
@@ -1581,7 +1593,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           | some name => stationNodes.getD name #[n]
           | none => #[n]
         for t in [0:T] do
-          let f := if t == 0 then fixes[t]! else match fixes[t - 1]! with
+          let f := if t == 0 then fixes[t]! else match fixBefore (t - 1) with
             | some f => some f | none => fixes[t]!
           match f with
           | none => pure ()
@@ -1656,18 +1668,22 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             -- board, near no alight — so stopping there left a one-stop hop
             -- with no ride time while a line stationed nearer the midpoint kept
             -- searching and found its pair.
-            let mut m := e
-            let mut away := false
+            -- The arrival is where the run of station reaches ENDS, within the
+            -- stale window after the leg: the LAST minute whose fix is away
+            -- from the board and at a served station of the line. The first
+            -- such minute is a call on the way (07-07: Great Portland Street,
+            -- standing 08:44:29–08:45:03, then Euston Square at 08:45:42).
+            let mut m := e + 1
+            let mut found : Option Nat := none
             while m < T && m ≤ e + journeyFixStaleMin do
               match fixAfter m with
               | some (la, lo) =>
                 if Verified.Hsmm.FloatScore.haversineMeters la lo σ.lat σ.lon > journeyReachM
-                    && (alights[m]!).isSome then away := true
+                    && (alights[m]!).isSome then found := some m
               | none => pure ()
-              if away then break
               m := m + 1
-            if !away then continue
-            match alights[m]! with
+            let some mEnd := found | continue
+            match alights[mEnd]! with
             | none => pure ()
             | some a =>
               -- The same STATION is no ride: a station is several nodes (King's

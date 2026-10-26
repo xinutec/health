@@ -75,6 +75,11 @@ structure ObsRow where
   reacquireGapMin : Option Int := none
   prevGpsFix : Option Fix
   nextGpsFix : Option Fix
+  /-- The minute's own first and last raw fix. `gps` is the minute's median,
+      and on a minute straddling a ride's end that is a point between two
+      stations; a boundary is read from the fix at it. -/
+  firstFix : Option Fix := none
+  lastFix : Option Fix := none
   deriving Inhabited
 
 /-- `median` — JS `sort((a,b)=>a-b)` then middle (even length averages the two
@@ -226,7 +231,15 @@ def buildObservationTensor
       roadDistM := road, railDistM := rail,
       reacquireAgeMin := (reacq[m]?.getD none).map (·.1),
       reacquireGapMin := (reacq[m]?.getD none).map (·.2),
-      prevGpsFix := prevArr[m]?.getD none, nextGpsFix := nextArr[m]?.getD none }) #[]
+      prevGpsFix := prevArr[m]?.getD none, nextGpsFix := nextArr[m]?.getD none,
+      firstFix := (gpsB[m]?.getD #[]).foldl (fun (acc : Option Fix) p =>
+        match acc with
+        | some f => if p.ts < f.ts then some ⟨p.ts, p.lat, p.lon⟩ else acc
+        | none => some ⟨p.ts, p.lat, p.lon⟩) none,
+      lastFix := (gpsB[m]?.getD #[]).foldl (fun (acc : Option Fix) p =>
+        match acc with
+        | some f => if p.ts > f.ts then some ⟨p.ts, p.lat, p.lon⟩ else acc
+        | none => some ⟨p.ts, p.lat, p.lon⟩) none }) #[]
 
 -- Parity with the real `buildObservationTensor` (values from Node/V8).
 private def gp (relTs : Int) (lat lon spd : Float) : GpsPoint := ⟨1784156400 + relTs, lat, lon, spd, none⟩
