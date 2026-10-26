@@ -463,6 +463,21 @@ Square), journeys held, stations 67 → 74 matched and 22 → 16 missing over
 seven days, two walks re-drawn within budget (08-06, 08-07), nothing lost.
 The node-level form was the one refuted again the same evening: 05-18's hop
 lost to the Bakerloo's nearer platform.
+
+**2026-10-26, later: the journey's pair as the chain's floor — refuted.** 06-16's
+ride is the Met in the journey (Wembley Park → Baker Street, ride time 10.15) and
+the Jubilee in the served segment: the chain re-lines it off its alight anchor,
+the first fix after the leg, a tunnel reacquire 111 m from St John's Wood.
+Giving the chain the journey's pair (no re-lining of a paired ride, the chain's
+pairs filtered to the journey's stations, the journey's station on a side the
+chain cannot hold) fixed 06-16 and lost ten rows: the journey's alight is read
+at the first minute away from the board whose median lies within 400 m of a
+served station, and on every Metropolitan ride into Euston Square that is Great
+Portland Street, the stop before (05-18, 06-29, 07-01, 07-02, 07-06, 07-07 ×2,
+07-14 ×2), where the chain's anchor is right. The two readings fail in opposite
+places; neither floors the other. What would: the journey's alight read like
+the chain's anchor (the fix, not the minute's median) and the chain's anchor
+weighed by its fix's accuracy, so a reacquire in a tunnel cannot re-line a ride.
 A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
 the chain's post-hoc pick on the served day, with the same fixes.
 
