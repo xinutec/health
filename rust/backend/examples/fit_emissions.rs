@@ -306,9 +306,10 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
     struct Row {
         mode: Option<&'static str>,
         sleeping: bool,
-        /// The row names a place (a stay); a stationary row without one
-        /// after a walk and before a ride is a platform wait.
-        place: bool,
+        /// The place the row names (a stay). A stationary row before a ride
+        /// with no place, or whose place is that ride's board station, is a
+        /// platform wait.
+        place: Option<String>,
         /// A ride: the row's own mode is train or bus (the decoder's `driving`
         /// covers a bus; a wait is for a timetable, not a cab).
         ride: bool,
@@ -344,7 +345,7 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
                 Some(Row {
                     mode: decoder_mode(tm),
                     sleeping: tm == "sleeping",
-                    place: !row["truth"]["place"].is_null(),
+                    place: row["truth"]["place"].as_str().map(str::to_owned),
                     ride: matches!(tm, "train" | "bus"),
                     line: row["truth"]["lineName"].as_str().map(str::to_owned),
                     from: row["truth"]["from"].as_str().map(str::to_owned),
@@ -356,17 +357,30 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
             _ => None,
         });
     }
-    // The platform waits: a stationary row with no place after a walk, before a ride.
-    let walk = |r: &Option<Row>| -> bool { matches!(r, Some(r) if r.mode == Some("walking")) };
+    // The platform waits: a stationary row before a ride, after a walk or the
+    // ride before (a change), with no place or the ride's board station as its
+    // place (several names ` / ` apart match any).
+    let walk_or_ride =
+        |r: &Option<Row>| -> bool { matches!(r, Some(r) if r.mode == Some("walking") || r.ride) };
     let ride = |r: &Option<Row>| -> bool { matches!(r, Some(r) if r.ride) };
+    let at_board = |r: &Row, next: &Option<Row>| -> bool {
+        match (&r.place, next) {
+            (None, _) => true,
+            (Some(p), Some(n)) => n.from.as_deref().is_some_and(|f| {
+                p.split(" / ")
+                    .any(|alt| alt.trim().eq_ignore_ascii_case(f.trim()))
+            }),
+            _ => false,
+        }
+    };
     let waits: Vec<f64> = (1..rows.len().saturating_sub(1))
         .filter_map(|i| match &rows[i] {
             Some(r)
                 if r.mode == Some("stationary")
                     && !r.sleeping
-                    && !r.place
-                    && walk(&rows[i - 1])
-                    && ride(&rows[i + 1]) =>
+                    && walk_or_ride(&rows[i - 1])
+                    && ride(&rows[i + 1])
+                    && at_board(r, &rows[i + 1]) =>
             {
                 Some((r.e - r.s) as f64 / 60.0)
             }
