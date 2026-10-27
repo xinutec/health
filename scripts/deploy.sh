@@ -246,7 +246,25 @@ fi
 # left the rollout undone, reading as a CI fault. A normal build
 # is ~1 min, so anything past 15 is wedged — fail fast, before rollout.
 ci_status=0
-timeout 1800 gh run watch --exit-status "$RUN_ID" || ci_status=$?
+deadline=$(( $(date +%s) + 1800 ))
+while :; do
+	left=$(( deadline - $(date +%s) ))
+	if (( left <= 0 )); then ci_status=124; break; fi
+	ci_status=0
+	timeout "$left" gh run watch --exit-status "$RUN_ID" || ci_status=$?
+	[[ $ci_status -eq 0 || $ci_status -eq 124 ]] && break
+	# `gh run watch` also exits non-zero when one of its polls fails: an API
+	# 502 reads as "CI failed" with every job still running and leaves the
+	# rollout undone. The run's own state decides; an unfinished run is
+	# watched again, a finished one is judged by its conclusion below.
+	run_state=$(gh run view "$RUN_ID" --json status --jq .status 2>/dev/null || echo unknown)
+	[[ "$run_state" == "completed" ]] && break
+	echo "deploy: the CI watch dropped (exit $ci_status, run $run_state) — watching again" >&2
+	sleep 5
+done
+if [[ $ci_status -ne 0 && $ci_status -ne 124 ]]; then
+	[[ "$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)" == "success" ]] && ci_status=0
+fi
 if [[ $ci_status -ne 0 ]]; then
 	if [[ $ci_status -eq 124 ]]; then
 		echo "deploy: CI run $RUN_ID did not finish within 30 min — aborting before rollout." >&2
