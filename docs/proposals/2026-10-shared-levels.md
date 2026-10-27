@@ -488,6 +488,40 @@ Great Portland Street, standing 08:44:29–08:45:03, Euston Square at 08:45:42).
 Street. Floors held, one decode moved, the scoreboard unchanged: the chain
 still names the served stations. The journey-pair floor above is to be
 re-measured on this reading.
+
+**2026-10-27: the journey's pair as the chain's floor — measured on the fixed
+reading, and the reading fixed twice more.** The pair floor (no re-lining of a
+paired ride, the chain's pairs kept to the journey's stations, the journey's
+station on a side the chain cannot hold) first traded two rows for two: 05-18's
+and 07-16's first rides paired Wembley Park → Euston Square, because the LAST
+reach within the stale window after the leg is the next ride, after the change
+at Baker Street. The arrival is the FIRST reach, read from the minute's last
+fix: the minute after a leg begins at a call on the way and ends on the
+platform (07-07: Great Portland Street 08:44:29–08:45:03, Euston Square
+08:45:42), which is what the last-reach rule had been standing in for. That
+reading still gave 07-16's Jubilee leg Finchley Road: the phone repeated a
+call's position at 07:41–07:42 after St John's Wood at 07:39, so the alight is
+bounded below by the farthest station the ride's own fixes reached in the
+stale window before its end, along the line, the look-back stopping at a fix
+at the board station so a hop does not read the ride before it. Measured
+(`DECODE_BLESS` → `DAY_BLESS` → gate): every floor held, 05-15 +1 line +1
+station (Baker Street → Green Park, Jubilee), 06-16 +1 line (Metropolitan),
+07-10's Victoria ride and 08-13's Wembley Park ride gained their alight.
+
+Two things it found. 06-16's ride is split: `train Met@Wembley Park`
+10:54–11:05 then a plain `train Met` 11:06–11:08, and the chain reads the
+alight at the split, St John's Wood, which the Metropolitan does not serve
+and which is not in the chain's candidate set as Baker Street is not either
+(the candidates sit around the first fix after the leg). Two train legs of
+the same line in a row are one ride. And 07-16's Jubilee pair, Wembley Park →
+Baker Street at a 17.0-minute ride time for an 18-minute leg, loses to the
+plain Metropolitan leg by 0.07 nats: the pair density's width is
+`max 2 (0.35 × expected)` minutes, a copy of the chain's ported constants, six
+minutes at seventeen, so a perfect fit gains nothing over the generic prior.
+Both widths are to be fitted from the corpus's paired rides.
+
+The day bless shards now (`corpus_gate`: a floor-file bless is single-shard,
+a per-fixture one is not): 455 → 99 s.
 A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
 the chain's post-hoc pick on the served day, with the same fixes.
 

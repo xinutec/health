@@ -65,10 +65,10 @@
 		"legModeScorable": 10,
 		"legModeMatching": 10,
 		"legLineScorable": 3,
-		"legLineMatching": 2,
+		"legLineMatching": 3,
 		"stationsAsserted": 4,
-		"stationsMatching": 3,
-		"stationsMissing": 1,
+		"stationsMatching": 4,
+		"stationsMissing": 0,
 		"phantomRides": 0
 	},
 	"2026-05-18": {
@@ -173,7 +173,7 @@
 		"legModeScorable": 12,
 		"legModeMatching": 10,
 		"legLineScorable": 4,
-		"legLineMatching": 3,
+		"legLineMatching": 4,
 		"stationsAsserted": 5,
 		"stationsMatching": 3,
 		"stationsMissing": 1,

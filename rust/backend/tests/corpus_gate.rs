@@ -140,19 +140,15 @@ fn run(shard: usize, of: usize) {
     assert!(!all.is_empty(), "the corpus directory is empty");
     let all = corpus::restrict(all, std::env::var("CORPUS_DAYS").ok());
 
-    // ⚠ A BLESS IS SINGLE-SHARD. `truth` rewrites one floor FILE, so two shards
-    // blessing at once race on it and a floor written from half the corpus reads
-    // as complete. `day` writes per-fixture and would survive sharding, but the
-    // rule is uniform because getting it wrong is silent in exactly one
-    // direction: the half that was not measured looks blessed.
-    let blessing = [
-        "DAY_BLESS",
-        "TRUTH_BLESS",
-        "WALK_BLESS",
-        "FEASIBILITY_BLESS",
-    ]
-    .iter()
-    .any(|k| std::env::var(k).is_ok());
+    // ⚠ A FLOOR BLESS IS SINGLE-SHARD. `truth`, `walk` and `feasibility` each
+    // rewrite one floor FILE, so two shards blessing at once race on it and a
+    // floor written from half the corpus reads as complete. `day` writes per
+    // fixture and shards like a plain run: one `cargo test` runs every shard,
+    // and a day blessed by one shard alone is red on the next plain run, not
+    // silently complete.
+    let blessing = ["TRUTH_BLESS", "WALK_BLESS", "FEASIBILITY_BLESS"]
+        .iter()
+        .any(|k| std::env::var(k).is_ok());
     let names = if blessing {
         if shard != 0 {
             eprintln!("corpus: a bless is single-shard — shard {shard} stands down");

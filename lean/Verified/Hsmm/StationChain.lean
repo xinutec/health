@@ -444,6 +444,13 @@ structure ChainSeg where
   lineName : Option String
   startTs : Int
   endTs : Int
+  /-- The journey's own pair for a ride it boarded at a station: the board
+      station of its leg and the alight its fixes resolved with a ride time.
+      The chain refines a pair the decoder already priced; it does not re-line
+      it (06-16: a tunnel reacquire 111 m from St John's Wood re-lined a
+      Metropolitan ride to Baker Street as the Jubilee). -/
+  journeyBoard : Option String := none
+  journeyAlight : Option String := none
   deriving Inhabited, Repr
 
 /-- Where a side's candidates are measured from, and how stale that measurement
@@ -827,6 +834,10 @@ structure ChainLeg where
   /-- Every admitted candidate per line and side (debug only; read by nothing
       that decides). -/
   sides : Array SideDebug := #[]
+  /-- The journey's own pair (`ChainSeg`): the stations a side falls back to
+      when the chain cannot separate or hold it. -/
+  journeyBoard : Option String := none
+  journeyAlight : Option String := none
   deriving Inhabited, Repr
 
 structure ResolvedStations where
@@ -986,11 +997,20 @@ private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (S
               legScore := b.anchorPen + b.dwellPen + (b.trajPen.getD 0) + b.servedPen
                 + a.anchorPen + a.dwellPen + (a.trajPen.getD 0) + a.servedPen
                 + durPen + passPen }) acc) #[]
+  -- The journey's pair, where the chain's candidates hold it: the pairs naming
+  -- its board and its alight, each side where the journey has one. Candidates
+  -- holding neither leave the field as it was — a floor, not a veto.
+  let keep := fun (p : PairCandidate) =>
+    (match seg.journeyBoard with | some b => p.board.node.stationName == some b | none => true)
+    && (match seg.journeyAlight with | some a => p.alight.node.stationName == some a | none => true)
+  let pairs := if (seg.journeyBoard.isSome || seg.journeyAlight.isSome) && pairs.any keep
+    then pairs.filter keep else pairs
   let sideDbg := fun (tag : String) (cs : Array SideCandidate) => cs.map fun c =>
     ({ line, side := tag, name := c.node.stationName.getD "", nodeId := c.node.id,
        anchorPen := c.anchorPenalty } : SideDebug)
   { segIndex, startTs := seg.startTs, endTs := seg.endTs, pairs, decodedLine := line,
-    sides := sideDbg "board" boards ++ sideDbg "alight" alights }
+    sides := sideDbg "board" boards ++ sideDbg "alight" alights,
+    journeyBoard := seg.journeyBoard, journeyAlight := seg.journeyAlight }
 
 /-- `buildLegOn` for the decoded line, then for each alternative in order — the
     decoded line's pairs FIRST, so the first-wins argmax keeps it on a tie. -/
@@ -1001,6 +1021,8 @@ private def buildLeg (g : ChainGraph) (obs : Array ObsRow)
     (line : String) (altLines : List String) (firstIdx lastIdx : Nat)
     (prev next : Option ChainSeg := none) : ChainLeg :=
   let own := buildLegOn g obs (servedFor line) (stopsFor line) segIndex seg line firstIdx lastIdx prev next
+  -- A ride the journey paired keeps its line: the alternatives are not weighed.
+  let altLines := if seg.journeyBoard.isSome || seg.journeyAlight.isSome then [] else altLines
   altLines.foldl (fun leg alt =>
     if alt == line then leg
     else
@@ -1084,8 +1106,12 @@ private def emitLegOn (leg : ChainLeg) (through : Array Float) : Option (Nat × 
       (match through[bestP]? with | some tb => tb - alt ≥ MARGIN_NATS | none => false)
     let board := if clears bestAlt.1 && sidePlausible best.board then best.board.node.stationName else none
     let alight := if clears bestAlt.2 && sidePlausible best.alight then best.alight.node.stationName else none
-    let boardTs := if board.isSome && best.board.effTs > leg.startTs then some best.board.effTs else none
-    let alightTs := if alight.isSome && best.alight.effTs < leg.endTs then some best.alight.effTs else none
+    -- The journey's pair fills a side the chain cannot separate or hold; the
+    -- chain's own reading stands where it has one.
+    let board := match board, leg.journeyBoard with | none, some b => some b | b, _ => b
+    let alight := match alight, leg.journeyAlight with | none, some a => some a | a, _ => a
+    let boardTs := if board == best.board.node.stationName && best.board.effTs > leg.startTs then some best.board.effTs else none
+    let alightTs := if alight == best.alight.node.stationName && best.alight.effTs < leg.endTs then some best.alight.effTs else none
     if board.isNone && alight.isNone then none
     else some (leg.segIndex, { board, alight, boardTs, alightTs })
 
@@ -1402,7 +1428,7 @@ private def ob (i : Nat) (lon : Option Float) : ObsRow :=
     prevGpsFix := none, nextGpsFix := none }
 
 private def tseg (a b : Nat) : ChainSeg :=
-  ⟨"train", some "Test Line", T0 + (a : Int) * 60, T0 + (b : Int) * 60⟩
+  ⟨"train", some "Test Line", T0 + (a : Int) * 60, T0 + (b : Int) * 60, none, none⟩
 
 private def run (segs : Array ChainSeg) (obs : Array ObsRow) : Array (Nat × ResolvedStations) :=
   resolveStationChain testGraph segs obs none
@@ -1425,7 +1451,7 @@ private def cleanObs : Array ObsRow := #[
 -- Re-lining (#238). A leg decoded on a line with no track, offered the real one:
 -- the chain places it Alpha → Delta on Test Line and says so.
 private def ghost (a b : Nat) : ChainSeg :=
-  ⟨"train", some "Ghost Line", T0 + (a : Int) * 60, T0 + (b : Int) * 60⟩
+  ⟨"train", some "Ghost Line", T0 + (a : Int) * 60, T0 + (b : Int) * 60, none, none⟩
 #guard resolveStationChain testGraph #[ghost 2 11] cleanObs none ["Test Line"]
   == #[(0, ⟨some "Alpha", some "Delta", some "Test Line", none, some (T0 + 540)⟩)]
 -- Offering a leg its own line changes nothing.

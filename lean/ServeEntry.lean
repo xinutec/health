@@ -1496,24 +1496,23 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         | none => match o.prevGpsFix with
           | some f => if o.ts - f.ts ≤ journeyFixStaleS then some (f.lat, f.lon) else none
           | none => none
-    -- The first raw fix of the minute, not its median: a minute straddling the
-    -- arrival puts its median between the two stations.
-    let fixAfter := fun (t : Nat) => match c.obs[t]? with
-      | none => none
-      | some o => match o.firstFix with
-        | some f => some (f.lat, f.lon)
-        | none => match o.gps with
-          | some gp => some (gp.lat, gp.lon)
-          | none => match o.nextGpsFix with
-            | some f => if f.ts - o.ts ≤ journeyFixStaleS then some (f.lat, f.lon) else none
-            | none => none
-    -- The last raw fix of the minute: where he was when the next minute began.
+    -- The last raw fix of the minute, not its median: where he was when the
+    -- next minute began. A minute straddling an arrival puts its median between
+    -- the two stations and its first fix at the one before.
     let fixBefore := fun (t : Nat) => match c.obs[t]? with
       | none => none
       | some o => match o.lastFix with
         | some f => some (f.lat, f.lon)
         | none => match o.gps with
           | some gp => some (gp.lat, gp.lon)
+          | none => none
+    -- The same, or the next fix within the stale window for a dark minute.
+    let fixAfter := fun (t : Nat) => match fixBefore t with
+      | some f => some f
+      | none => match c.obs[t]? with
+        | none => none
+        | some o => match o.nextGpsFix with
+          | some f => if f.ts - o.ts ≤ journeyFixStaleS then some (f.lat, f.lon) else none
           | none => none
     let nearFix := fun (f : Option (Float × Float)) (n : Verified.Hsmm.StationChain.ChainNode) =>
       match f with
@@ -1658,6 +1657,12 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           footCache := fc
           let dist := Verified.Hsmm.StationChain.ssspMap
             (Verified.Hsmm.StationChain.lineSssp g line (start.toArray.map (fun id => (id, journeyZero))))
+          -- The path along the line from the board's footprint to a station's.
+          let pathTo := fun (fc : Std.HashMap String (Std.HashSet String)) (n : Verified.Hsmm.StationChain.ChainNode) =>
+            let (goal, fc2) := footOf fc n
+            (goal.fold (fun (acc : Option Float) id => match dist.get? id with
+              | none => acc
+              | some d => match acc with | none => some d | some bd => if d < bd then some d else acc) none, fc2)
           for e in [0:T] do
             -- The alight is where the fixes resume AWAY from the board station
             -- and AT a station of the line, within the stale window: a track
@@ -1668,56 +1673,73 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             -- board, near no alight — so stopping there left a one-stop hop
             -- with no ride time while a line stationed nearer the midpoint kept
             -- searching and found its pair.
-            -- The arrival is where the run of station reaches ENDS, within the
-            -- stale window after the leg: the LAST minute whose fix is away
-            -- from the board and at a served station of the line. The first
-            -- such minute is a call on the way (07-07: Great Portland Street,
-            -- standing 08:44:29–08:45:03, then Euston Square at 08:45:42).
+            -- The arrival is the FIRST minute after the leg whose END is away
+            -- from the board and at a served station of the line, within the
+            -- stale window. Read from the minute's last fix: the minute after
+            -- the leg begins at a call on the way and ends on the platform
+            -- (07-07: Great Portland Street 08:44:29–08:45:03, Euston Square
+            -- at 08:45:42). The LAST such minute was the next ride (05-18:
+            -- Baker Street at 10:48, the change, Euston Square at 10:52).
+            -- It lies at or beyond the farthest station the ride's own fixes
+            -- reached in the stale window before its end, along the line: the
+            -- phone repeats a call's position underground too (07-16: Finchley
+            -- Road at 07:41–07:42 after St John's Wood at 07:39, Baker Street
+            -- at 07:44). The look-back stops at a fix at the board station, so
+            -- a short hop does not read the ride before it.
+            let mut passedM : Float := journeyZero
+            let mut t := e
+            while true do
+              match alights[t]! with
+              | some r =>
+                if r.stationName == σ.stationName then break
+                let (pm, fc2) := pathTo footCache r
+                footCache := fc2
+                passedM := max passedM (pm.getD journeyZero)
+              | none => pure ()
+              if t == 0 || e - t ≥ journeyFixStaleMin then break
+              t := t - 1
             let mut m := e + 1
-            let mut found : Option Nat := none
+            let mut found : Option (Verified.Hsmm.StationChain.ChainNode × Option Float) := none
             while m < T && m ≤ e + journeyFixStaleMin do
-              match fixAfter m with
-              | some (la, lo) =>
+              match fixAfter m, alights[m]! with
+              | some (la, lo), some a =>
+                -- The same STATION is no ride: a station is several nodes
+                -- (King's Cross has six), and a node of the board station
+                -- within reach of the next fix priced a one-minute ride to
+                -- itself at 0.8 minutes.
                 if Verified.Hsmm.FloatScore.haversineMeters la lo σ.lat σ.lon > journeyReachM
-                    && (alights[m]!).isSome then found := some m
-              | none => pure ()
+                    && a.stationName != σ.stationName then
+                  let (pm, fc2) := pathTo footCache a
+                  footCache := fc2
+                  if pm.getD passedM ≥ passedM then
+                    found := some (a, pm)
+                    break
+              | _, _ => pure ()
               m := m + 1
-            let some mEnd := found | continue
-            match alights[mEnd]! with
+            let some (a, pm) := found | continue
+            names := names.set! (li * T + e) a.stationName
+            match pm with
+            | some pathM =>
+              -- The chain's ride-time form: with the calls between the pair
+              -- known, running time plus a stop each; else the all-stations
+              -- average.
+              let calls ← match rels?, σ.stationName, a.stationName with
+                | some rels, some sa, some sb =>
+                  match stopsCache.get? (line, sa, sb) with
+                  | some k => pure k
+                  | none =>
+                    let k := Verified.Hsmm.ServedStations.intermediateStops rels line sa sb
+                    stopsCache := stopsCache.insert (line, sa, sb) k
+                    pure k
+                | _, _, _ => pure none
+              let expected := match calls with
+                | some k => (pathM * journeyKmPerM / Verified.Hsmm.StationChain.RIDE_RUN_KMH) * journeyMinPerHour
+                    + Verified.Hsmm.StationChain.RIDE_STOP_MIN * Verified.FloatConst.natToFloat k
+                    + Verified.Hsmm.StationChain.RIDE_FIXED_MIN
+                | none => (pathM * journeyKmPerM / Verified.Hsmm.StationChain.TUBE_SPEED_KMH) * journeyMinPerHour
+                    + Verified.Hsmm.StationChain.STOP_OVERHEAD_MIN
+              out := out.set! (li * T + e) expected
             | none => pure ()
-            | some a =>
-              -- The same STATION is no ride: a station is several nodes (King's
-              -- Cross has six), and a node of the board station within reach of
-              -- the next fix priced a one-minute ride to itself at 0.8 minutes.
-              if a.stationName == σ.stationName then continue
-              names := names.set! (li * T + e) a.stationName
-              let (goal, fc2) := footOf footCache a
-              footCache := fc2
-              let pm := goal.fold (fun (acc : Option Float) id => match dist.get? id with
-                | none => acc
-                | some d => match acc with | none => some d | some bd => if d < bd then some d else acc) none
-              match pm with
-              | some pathM =>
-                -- The chain's ride-time form: with the calls between the pair
-                -- known, running time plus a stop each; else the all-stations
-                -- average.
-                let calls ← match rels?, σ.stationName, a.stationName with
-                  | some rels, some sa, some sb =>
-                    match stopsCache.get? (line, sa, sb) with
-                    | some k => pure k
-                    | none =>
-                      let k := Verified.Hsmm.ServedStations.intermediateStops rels line sa sb
-                      stopsCache := stopsCache.insert (line, sa, sb) k
-                      pure k
-                  | _, _, _ => pure none
-                let expected := match calls with
-                  | some k => (pathM * journeyKmPerM / Verified.Hsmm.StationChain.RIDE_RUN_KMH) * journeyMinPerHour
-                      + Verified.Hsmm.StationChain.RIDE_STOP_MIN * Verified.FloatConst.natToFloat k
-                      + Verified.Hsmm.StationChain.RIDE_FIXED_MIN
-                  | none => (pathM * journeyKmPerM / Verified.Hsmm.StationChain.TUBE_SPEED_KMH) * journeyMinPerHour
-                      + Verified.Hsmm.StationChain.STOP_OVERHEAD_MIN
-                out := out.set! (li * T + e) expected
-              | none => pure ()
         return (out, names)
     let firstCtxL : FloatArray := Id.run do
       let mut out := FloatArray.mk (Array.replicate (L * T) journeyZero)
@@ -2387,8 +2409,23 @@ private def assembleSegmentsResult (j : Json) : Json :=
                 , edgeById := c.model.edges.foldl (fun m e => m.insert e.id e) {} }
               let chainSegs : Array Verified.Hsmm.StationChain.ChainSeg :=
                 segs.map (fun s =>
+                  -- A ride's pair from its journey leg: the board station of
+                  -- the leg at its first minute, the alight at its last.
+                  let (jb, ja) : Option String × Option String :=
+                    if s.mode != "train" then (none, none) else
+                    match journey with
+                    | none => (none, none)
+                    | some tb =>
+                      let t := ((s.startTs - obsT0) / 60).toNat
+                      let e := ((s.endTs - obsT0) / 60).toNat - 1
+                      match legAt[t]?.bind id with
+                      | none => (none, none)
+                      | some l =>
+                        ( tb.legStation[l]?.bind id
+                        , tb.alightName[l * tb.T + e]?.bind id )
                   { mode := s.mode, lineName := s.lineName
-                  , startTs := s.startTs, endTs := s.endTs })
+                  , startTs := s.startTs, endTs := s.endTs
+                  , journeyBoard := jb, journeyAlight := ja })
               let byIdx : Std.HashMap Nat Verified.Hsmm.StationChain.ResolvedStations :=
                 (Verified.Hsmm.StationChain.resolveStationChain g chainSegs c.obs rels
                     Verified.Hsmm.Assemble.KNOWN_LINES).foldl
@@ -2406,6 +2443,7 @@ private def assembleSegmentsResult (j : Json) : Json :=
                   Json.mkObj [
                     ("segIndex", Lean.toJson leg.segIndex),
                     ("decodedLine", Json.str leg.decodedLine),
+                    ("journeyPair", Json.arr #[optStrJson leg.journeyBoard, optStrJson leg.journeyAlight]),
                     ("startTs", Lean.toJson leg.startTs), ("endTs", Lean.toJson leg.endTs),
                     ("sides", Json.arr (leg.sides.map fun sd => Json.mkObj [
                       ("line", Json.str sd.line), ("side", Json.str sd.side), ("name", Json.str sd.name),
