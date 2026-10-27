@@ -3,6 +3,7 @@ import Verified.Hsmm.RouteGraph
 import Verified.Hsmm.Observation
 import Verified.Hsmm.ServedStations
 import Verified.Geo.WalkableRoute
+import Verified.Hsmm.Journey
 /-!
 # C4.3 chained train triples — the graph layer (port of `src/hmm/station-chain.ts`, #672)
 
@@ -211,10 +212,8 @@ def STATION_SIGMA_M : Float := 200
 def SLOP_SPEED_M_PER_MIN : Float := 500
 def CAND_BASE_RADIUS_M : Float := 800
 def MAX_CANDIDATES_PER_SIDE : Nat := 12
-def TUBE_SPEED_KMH : Float := 32
-def STOP_OVERHEAD_MIN : Float := 0.8
-def DURATION_SIGMA_FRAC : Float := 0.35
-def DURATION_SIGMA_MIN : Float := 2
+def TUBE_SPEED_KMH : Float := 42.3
+def STOP_OVERHEAD_MIN : Float := 0.94
 def SAME_STATION_M : Float := 250
 def TRANSFER_WALK_M_PER_MIN : Float := 75
 def TRANSFER_Z_SCALE : Float := 40
@@ -244,15 +243,16 @@ def DWELL_DISQUALIFY : Float := -3
 def NOT_SERVED_PENALTY : Float := -3
 /-- The ride-time model when the relations know how many stations the line
     calls at between the pair (#238): `pathKm / RIDE_RUN_KMH` hours of running,
-    `RIDE_STOP_MIN` per intermediate call, `RIDE_FIXED_MIN` once. Fitted
-    2026-09-29 to the 53 confirmed tube rides of the narratives (lower quartile,
-    because a window includes the platform wait by his convention), on the
-    along-track path this module measures: Metropolitan Wembley Park → Baker
-    Street 10.1 min (observed 9–10), Jubilee over the same pair 17.0 (observed
-    17). The flat `TUBE_SPEED_KMH` gave 20.1 and 20.7 — an all-stations average,
-    twice too slow for a line that runs non-stop, which is why the chain could
-    not tell those two lines apart. `lean/experiments/ride-time-fit.py`. -/
-def RIDE_RUN_KMH : Float := 86
+    `RIDE_STOP_MIN` per intermediate call, `RIDE_FIXED_MIN` once; where the
+    calls are unknown, `TUBE_SPEED_KMH` flat plus `STOP_OVERHEAD_MIN`. Both
+    least-squares fits to the 114 paired rides the journey decodes across the
+    frozen corpus, on the along-track path this module measures — the leg
+    lengths the density is applied to, the platform wait being its own state.
+    The earlier fit to the narratives' windows at their lower quartile (the
+    window held the wait) ran 2.5 minutes short of those legs: Metropolitan
+    Wembley Park → Baker Street 10.1 min against 12–13 decoded. The width is
+    `Journey.RIDE_SIGMA_MIN`. `lean/experiments/ride-time-fit.py`. -/
+def RIDE_RUN_KMH : Float := 47.7
 /-- The pass term (#238). A minute whose mean speed is at least
     `PASS_MIN_KMH` cannot contain a call: braking from line speed, the shortest
     dwell and pulling away already hold a minute's mean under 35 km/h. A
@@ -277,15 +277,15 @@ def PASS_ACROSS_KMH_PER_M : Float := 3.6 / 120
 def PASS_SPAN_FRAC : Float := 0.6
 def PASS_PENALTY : Float := -2
 def PASS_CLAMP : Float := -6
-def RIDE_STOP_MIN : Float := 0.95
-def RIDE_FIXED_MIN : Float := 2
+def RIDE_STOP_MIN : Float := 0.6
+def RIDE_FIXED_MIN : Float := 0.74
 /-- Shortest leg (minutes) the chain may re-line (#238). Below it the duration
-    term cannot tell lines apart: its sigma floors at `DURATION_SIGMA_MIN`, so a
+    term cannot tell lines apart: its sigma is `RIDE_SIGMA_MIN`, so a
     leg shorter than two of those plus a stop fits a one- or two-stop hop on
     any line through its station. Measured 2026-09-29: 05-15's Jubilee ride,
     cut by the decoder into fragments of 3 and 2 minutes, re-lined to the
     Bakerloo on each. -/
-def RELINE_MIN_MINUTES : Float := 2 * DURATION_SIGMA_MIN + 1
+def RELINE_MIN_MINUTES : Float := 2 * Journey.RIDE_SIGMA_MIN + 1
 
 inductive Side where
   | board
@@ -338,7 +338,7 @@ def durationPenalty (observedMin pathM : Float) (boundaryUnobserved : Bool)
   let expectedMin := match stops with
     | some k => (pathM / 1000 / RIDE_RUN_KMH) * 60 + RIDE_STOP_MIN * k.toFloat + RIDE_FIXED_MIN
     | none => (pathM / 1000 / TUBE_SPEED_KMH) * 60 + STOP_OVERHEAD_MIN
-  let sigma := max DURATION_SIGMA_MIN (DURATION_SIGMA_FRAC * expectedMin)
+  let sigma := Journey.RIDE_SIGMA_MIN
   if boundaryUnobserved && expectedMin ≥ observedMin then 0
   else
     let z := (observedMin - expectedMin) / sigma
@@ -1465,11 +1465,17 @@ private def ghost (a b : Nat) : ChainSeg :=
 --    750 m from each, so the anchor term is INDIFFERENT; one minute of staleness
 --    widens σ enough that neither clamps (a clamped side fails ABS_ANCHOR_FLOOR
 --    and the margin would never be consulted). The leg is dark inside, so no
---    trajectory or dwell term exists. Duration is the only thing left, and it
---    picks Bravo.
+--    trajectory or dwell term exists. Duration is the only thing left. Under
+--    the fitted width adjacent stations lie 2.1 expected minutes apart, inside
+--    the margin: a three-minute leg goes silent. Seven minutes separates
+--    Charlie from Bravo by 1.9 nats; Delta fits the time best and is 2,250 m
+--    from the anchor, clamped.
 private def durationObs : Array ObsRow :=
+  #[ob 0 (some 0), ob 1 (some 0)] ++ dark 2 9 ++ #[ob 10 (some 0.032468315197324044)]
+#guard run #[tseg 2 9] durationObs == #[(0, ⟨some "Alpha", some "Charlie", none, none, none⟩)]
+private def durationObsShort : Array ObsRow :=
   #[ob 0 (some 0), ob 1 (some 0)] ++ dark 2 5 ++ #[ob 6 (some 0.032468315197324044)]
-#guard run #[tseg 2 5] durationObs == #[(0, ⟨some "Alpha", some "Bravo", none, none, none⟩)]
+#guard run #[tseg 2 5] durationObsShort == #[(0, ⟨some "Alpha", none, none, none, none⟩)]
 
 -- 3. Terminal dwell DISQUALIFIES. The fixes sit on Delta from minute 4 to the
 --    leg's end at 13 — the ride passed it mid-leg and stopped, which a real
@@ -1488,12 +1494,15 @@ private def dwellObs : Array ObsRow :=
 
 -- 5. The CHAIN decides the second leg's board. Both legs are dark inside; the
 --    handover penalty is what makes Charlie→Echo beat the alternatives, and it
---    is only available because the two legs are in one chain.
+--    is only available because the two legs are in one chain. The second leg
+--    is four minutes: Charlie → Echo expects 5.2 and Delta → Echo 3.1, within
+--    the margin by duration alone (at six minutes the duration names Charlie
+--    on its own).
 private def chainObs : Array ObsRow :=
   #[ob 0 (some 0), ob 1 (some 0)] ++ dark 2 8
   ++ #[ob 9 (some 0.04329108692976539), ob 10 (some 0.05411385866220674)]
-  ++ dark 11 16 ++ #[ob 17 (some 0.08658217385953078)]
-#guard run #[tseg 2 8, tseg 11 17] chainObs
+  ++ dark 11 14 ++ #[ob 15 (some 0.08658217385953078)]
+#guard run #[tseg 2 8, tseg 11 15] chainObs
   == #[(0, ⟨some "Alpha", some "Charlie", none, none, none⟩), (1, ⟨some "Charlie", some "Echo", none, none, none⟩)]
 
 -- 6. The same two legs, 13 minutes apart instead of 3: past CHAIN_GAP_MAX_S, so
@@ -1502,9 +1511,9 @@ private def chainObs : Array ObsRow :=
 private def splitObs : Array ObsRow :=
   #[ob 0 (some 0), ob 1 (some 0)] ++ dark 2 8
   ++ #[ob 9 (some 0.04329108692976539)] ++ dark 10 19
-  ++ #[ob 20 (some 0.05411385866220674)] ++ dark 21 26
-  ++ #[ob 27 (some 0.08658217385953078)]
-#guard run #[tseg 2 8, tseg 21 27] splitObs
+  ++ #[ob 20 (some 0.05411385866220674)] ++ dark 21 24
+  ++ #[ob 25 (some 0.08658217385953078)]
+#guard run #[tseg 2 8, tseg 21 25] splitObs
   == #[(0, ⟨some "Alpha", some "Charlie", none, none, none⟩), (1, ⟨none, some "Echo", none, none, none⟩)]
 
 -- 7. Three ways to be out of scope, each on its own so no case can pass by

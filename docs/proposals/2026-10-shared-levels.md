@@ -522,6 +522,42 @@ Both widths are to be fitted from the corpus's paired rides.
 
 The day bless shards now (`corpus_gate`: a floor-file bless is single-shard,
 a per-fixture one is not): 455 → 99 s.
+
+**2026-10-27, afternoon: the ride-time law and its width, fitted.** The
+journey debugger now carries each paired leg's path and calls, and
+`lean/experiments/ride-time-fit.py` collects every station leg the journey
+decodes across the frozen corpus: 114 legs, all with calls known. Against
+them the law as built ran 2.55 minutes short (rms 3.92): its 2026-09-29 fit
+took the narratives' windows at their lower quartile, since a window holds the
+platform wait by his convention, and the decoded leg is the ride with the wait
+its own state. Least squares on the legs: 47.7 km/h running, 0.60 min per
+call, 0.74 fixed (42.3 km/h and 0.94 where the calls are unknown), rms 1.84.
+The width by likelihood: a constant 1.8 min beats the proportional form by 27
+nats and a floor with a fraction gains 2.5 for its extra parameter; an
+asymmetric density, sharp below and loose above, gains 2.8 for one more and
+its residuals fall below the law more often than above, so it is not the
+shape either. The one-speed form prices Wembley Park → Baker Street at 14.4
+against a median 13 decoded (the Metropolitan's fast section), inside the
+width. Every leg's start sits at a fix at its board station by construction,
+so the population is not the old law's pull.
+
+Measured: truth, journeys and the scoreboard unchanged; 07-16's first ride is
+the Jubilee's pair in the journey itself (Wembley Park → Baker Street, 18.9
+expected for 18) where the chain had to re-line it; 06-15's ride now runs
+from 11:46 as his row has it, the decoded wait at Wembley Park having been
+ride time. The width moves ride boundaries at dark minutes toward the
+expected time, which is the term working: two platform waits went into their
+rides (08-05 Baker Street, 08-07 King's Cross) and 06-28's ride starts at
+08:39 against his 08:37, those two minutes decoded as walking rather than the
+wait state. Named trade on the walk floor: 06-28's walk is drawn to the
+platform, 1158 m against a 979 m budget (was 1025 against 956, route
+correlation 0.51 → 0.40); 08-05's three-minute walk to the platform holds
+46 m of stall (was 14). 07-17's walk improves, 832 m within its 1002 budget.
+The wait state's weakness at a platform minute is what both trades name.
+Three chain guards re-shaped: under the fitted width adjacent stations lie
+2.1 expected minutes apart, inside the margin, so the duration case runs seven
+minutes and names Charlie, and the chain's handover case runs a four-minute
+second leg, since at six the duration names its board alone.
 A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
 the chain's post-hoc pick on the served day, with the same fixes.
 

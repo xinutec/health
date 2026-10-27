@@ -1619,12 +1619,15 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         for t in [0:T] do out := out.set! (li * T + t) false
         for t in starts do out := out.set! (li * T + t) true
       return out
-    let (expectedMin, alightName) : FloatArray × Array (Option String) := Id.run do
+    let (expectedMin, alightName, pairPathM, pairCalls) :
+        FloatArray × Array (Option String) × FloatArray × FloatArray := Id.run do
       let mut out := FloatArray.mk (Array.replicate (L * T) Verified.FloatConst.negInf)
       -- The station each paired leg alights at, per end minute (`stopAlight`).
       let mut names : Array (Option String) := Array.replicate (L * T) none
+      let mut pathOut := FloatArray.mk (Array.replicate (L * T) Verified.FloatConst.negInf)
+      let mut callsOut := FloatArray.mk (Array.replicate (L * T) Verified.FloatConst.negInf)
       match g? with
-      | none => return (out, names)
+      | none => return (out, names, pathOut, callsOut)
       | some g =>
         let mut alightCache : Std.HashMap String (Array (Option Verified.Hsmm.StationChain.ChainNode)) := {}
         -- The calls between a pair, once per (line, board, alight).
@@ -1739,8 +1742,12 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
                 | none => (pathM * journeyKmPerM / Verified.Hsmm.StationChain.TUBE_SPEED_KMH) * journeyMinPerHour
                     + Verified.Hsmm.StationChain.STOP_OVERHEAD_MIN
               out := out.set! (li * T + e) expected
+              pathOut := pathOut.set! (li * T + e) pathM
+              callsOut := callsOut.set! (li * T + e) (match calls with
+                | some k => Verified.FloatConst.natToFloat k
+                | none => Verified.FloatConst.negInf)
             | none => pure ()
-        return (out, names)
+        return (out, names, pathOut, callsOut)
     let firstCtxL : FloatArray := Id.run do
       let mut out := FloatArray.mk (Array.replicate (L * T) journeyZero)
       for (bi, li) in baseOf.zipIdx do
@@ -1825,7 +1832,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
         first := legOuter.map (prior true jp.firstLeg)
         last := legOuter.map fun l => if isWaitLeg l then Verified.FloatConst.negInf else prior false jp.lastLeg l
-        firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, alightName, boardAt, durBaseF, pairOk }
+        firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, alightName, pairPathM, pairCalls, boardAt, durBaseF, pairOk }
     let tb := Verified.Hsmm.Journey.withOwn tb
     let inner := Verified.Hsmm.Journey.best tb
     let tb := { tb with cell := inner }
@@ -2262,6 +2269,10 @@ private def journeyDebugJson (c : Verified.Hsmm.Assemble.ModelContext)
         ("alight", match tb.alightName[x.leg * tb.T + (x.start + x.d - 1)]? with
           | some (some a) => Json.str a
           | _ => Json.null),
+        ("pathM", if tb.pairPathM.size == 0 then Json.null
+          else fl (tb.pairPathM.get! (x.leg * tb.T + (x.start + x.d - 1)))),
+        ("calls", if tb.pairCalls.size == 0 then Json.null
+          else fl (tb.pairCalls.get! (x.leg * tb.T + (x.start + x.d - 1)))),
         ("total", fl (x.prev + x.emit + x.entry + x.cell))]))]
   -- The alternative: segments by leg name, each over `[startTs, endTs)`.
   let alts : Array Json := ((dj.getObjVal? "alt") >>= (·.getArr?)).toOption.getD #[]

@@ -89,6 +89,10 @@ structure Tables where
   /-- `alightName[l * T + e]`: the station the fixes put the leg's end at,
       `none` where no served station of its line is within reach. -/
   alightName : Array (Option String) := #[]
+  /-- Per leg and end minute, the pair's path along the line in metres and its
+      calls between (`−∞` unknown); debug only, read by nothing that decides. -/
+  pairPathM : FloatArray := FloatArray.empty
+  pairCalls : FloatArray := FloatArray.empty
   /-- `boardAt[l * T + t]`: a board-station leg's station against the fix of
       the minute before `t`, relative to the best station of any leg at `t`
       (0), so the term separates stations and never a ride from a walk; 0 for
@@ -112,19 +116,21 @@ structure Tables where
       debugger; empty until then. -/
   cell : FloatArray := FloatArray.empty
 
-/-- The ride-time density's spread: a floor in minutes and a fraction of the
-    expected time (the station chain's `DURATION_SIGMA_MIN`/`_FRAC`). -/
-def PAIR_SIGMA_MIN : Float := 2
-def PAIR_SIGMA_FRAC : Float := 0.35
+/-- The ride-time density's width in minutes, constant, shared with the station
+    chain's duration term: fitted to the 114 paired rides the journey decodes
+    across the frozen corpus, the leg lengths the density is applied to
+    (residual rms 1.84 min). By likelihood a width proportional to the expected
+    time is 27 nats worse, and a floor with a fraction gains 2.5 for its extra
+    parameter (`lean/experiments/ride-time-fit.py`). -/
+def RIDE_SIGMA_MIN : Float := 1.8
 def HALF : Float := 0.5
 /-- `−½ log 2π`. -/
 def NEG_HALF_LOG_TWO_PI : Float := -0.9189385332046727
 
-/-- `log N(d; expected, σ)`, σ from the expected time. -/
+/-- `log N(d; expected, RIDE_SIGMA_MIN)`. -/
 def pairLogPdf (d expected : Float) : Float :=
-  let sigma := max PAIR_SIGMA_MIN (PAIR_SIGMA_FRAC * expected)
-  let z := (d - expected) / sigma
-  NEG_HALF_LOG_TWO_PI - Float.log sigma - HALF * z * z
+  let z := (d - expected) / RIDE_SIGMA_MIN
+  NEG_HALF_LOG_TWO_PI - Float.log RIDE_SIGMA_MIN - HALF * z * z
 
 /-- The leg's calling evidence: the passes whose run lies wholly inside it,
     after its first minute and before its last — a run touching its start is

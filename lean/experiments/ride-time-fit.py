@@ -1,117 +1,110 @@
 #!/usr/bin/env python3
-"""Fit the station chain's ride-time model to the confirmed tube rides (#238).
+"""Fit the ride-time law to the rides the journey decodes across the frozen corpus.
 
-    DECODE_REQUEST_OUT=/tmp/dreq cargo nextest run --release -p backend --test hsmm_decode_corpus
-    ride-time-fit.py /tmp/dreq tests/golden/ground-truth
+The law prices a pair's ride: along-track km at `RIDE_RUN_KMH`, `RIDE_STOP_MIN`
+per intermediate call, `RIDE_FIXED_MIN` once (and the flat `TUBE_SPEED_KMH` +
+`STOP_OVERHEAD_MIN` where the calls are unknown); the density around it is a
+Gaussian of width `Journey.RIDE_SIGMA_MIN`. The population is the decoded
+station legs themselves — the leg lengths the density is applied to — read
+from the journey debugger (`pathM`, `calls`, `expectedMin`, `d` per leg).
 
-Every narrative row `train A → B · L Line` with status `correct` is a ride of
-known line, stations and window. The along-track path is the shortest path on
-L's edges between the two stations' footprints (nodes within 200 m, as the
-chain's `stationFootprintNodes`); the intermediate calls come from L's stop
-relations (fewest over its relations, either direction). The model is
-`minutes = km / run_kmh * 60 + stop_min * calls + fixed_min`, fitted at the
-LOWER QUARTILE: a window includes the platform wait by the narrative
-convention, so waits only lengthen it.
+    ride-time-fit.py collect <scratch-dir>   # dump each day's request, serve, write legs.jsonl
+    ride-time-fit.py fit <scratch-dir>       # least squares + width by likelihood
+
+Run from the repo root with the decoder built (`lake build verified_cli`).
 """
-import glob
-import heapq
-import json
-import math
-import os
-import re
-import struct
-import sys
+import glob, json, math, os, subprocess, sys
 
-req_dir, truth_dir = sys.argv[1], sys.argv[2]
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CLI = f'{ROOT}/lean/.lake/build/bin/verified_cli'
 
 
-def fb(x):
-    return struct.unpack('<d', int(x).to_bytes(8, 'little'))[0] if isinstance(x, str) else float(x)
+def collect(scr):
+    out_path = f'{scr}/ride-time-legs.jsonl'
+    days = sorted(os.path.basename(p)[:-5] for p in glob.glob(f'{ROOT}/tests/golden/decoded_days/*.json'))
+    with open(out_path, 'w') as out:
+        for name in days:
+            reqp = f'{scr}/req-{name[:10]}.json'
+            if not os.path.exists(reqp):
+                r = subprocess.run(['../scripts/dev', 'cargo', 'run', '--release', '--example', 'dump_decode_request', '--', name],
+                                   cwd=f'{ROOT}/rust', capture_output=True, text=True)
+                if r.returncode != 0:
+                    print(name, 'dump failed', r.stderr[-300:], file=sys.stderr)
+                    continue
+                open(reqp, 'w').write(r.stdout)
+            req = json.load(open(reqp))
+            req['mode'] = 'assemblesegments'
+            req['journeyDebug'] = {'alt': []}
+            r = subprocess.run([CLI, 'serve'], input=json.dumps(req), capture_output=True, text=True)
+            try:
+                res = json.loads(r.stdout.strip().splitlines()[-1])['result']
+            except Exception as e:
+                print(name, 'serve failed', e, r.stderr[-300:], file=sys.stderr)
+                continue
+            n = 0
+            for j in res.get('journeys', []):
+                for leg in j['decoded']['legs']:
+                    if leg.get('alight') is None or leg.get('expectedMin') is None or leg.get('pathM') is None:
+                        continue
+                    out.write(json.dumps({'day': name[:10], 'leg': leg['leg'], 'alight': leg['alight'], 'd': leg['d'],
+                                          'expectedMin': leg['expectedMin'], 'pathM': leg['pathM'],
+                                          'calls': leg.get('calls'), 'startTs': leg['startTs']}) + '\n')
+                    n += 1
+            print(name, n, 'paired legs')
 
 
-def hav(a, b):
-    p1, p2 = math.radians(a[0]), math.radians(b[0])
-    dl, dp = math.radians(b[1] - a[1]), p2 - p1
-    return 2 * 6371000 * math.asin(math.sqrt(math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2))
+def lstsq(X, y):
+    n = len(X[0])
+    A = [[sum(x[i] * x[j] for x in X) for j in range(n)] for i in range(n)]
+    b = [sum(x[i] * yy for x, yy in zip(X, y)) for i in range(n)]
+    for i in range(n):
+        p = max(range(i, n), key=lambda r: abs(A[r][i]))
+        A[i], A[p] = A[p], A[i]
+        b[i], b[p] = b[p], b[i]
+        for r in range(n):
+            if r == i:
+                continue
+            f = A[r][i] / A[i][i]
+            for c in range(i, n):
+                A[r][c] -= f * A[i][c]
+            b[r] -= f * b[i]
+    return [b[i] / A[i][i] for i in range(n)]
 
 
-def norm(n):
-    n = n.lower().replace('st.', 'st').replace("'", '').replace('’', '')
-    n = re.sub(r'\b(underground|station|london)\b', '', n)
-    return re.sub(r'\s+', ' ', n).strip()
+def width(res, exp):
+    n = len(res)
+    print(f'  n={n} mean residual {sum(res)/n:+.2f} rms {math.sqrt(sum(x*x for x in res)/n):.2f} min')
+
+    def ll(sig):
+        return sum(-0.5 * math.log(2 * math.pi) - math.log(s) - 0.5 * (r / s) ** 2 for r, s in zip(res, sig))
+    best = max((ll([sc] * n), sc) for sc in [x / 10 for x in range(5, 60)])
+    print(f'  constant width: {best[1]:.1f} min  ll {best[0]:.1f}')
+    best = max((ll([max(0.01, fr * e) for e in exp]), fr) for fr in [x / 100 for x in range(2, 60)])
+    print(f'  proportional width: {best[1]:.2f} * expected  ll {best[0]:.1f}')
+    best = max((ll([max(fl, fr * e) for e in exp]), fl, fr)
+               for fl in [x / 10 for x in range(2, 40)] for fr in [x / 100 for x in range(2, 60)])
+    print(f'  floor + fraction: max({best[1]:.1f}, {best[2]:.2f} * expected)  ll {best[0]:.1f}')
 
 
-adj, coords, stations, rels = {}, {}, {}, {}
-for f in glob.glob(os.path.join(req_dir, '*.json')):
-    r = json.load(open(f))
-    if 'edges' not in r:
-        continue
-    for e in r['edges']:
-        g = [(fb(p['lat']), fb(p['lon'])) for p in e['geometry']]
-        length = sum(hav(g[i], g[i + 1]) for i in range(len(g) - 1))
-        for line in e['lineMemberships']:
-            adj.setdefault(line, {}).setdefault(e['startNode'], {})[e['endNode']] = length
-            adj[line].setdefault(e['endNode'], {})[e['startNode']] = length
-        coords[e['startNode']], coords[e['endNode']] = g[0], g[-1]
-    for n in r['nodes']:
-        if n['stationName']:
-            stations.setdefault(norm(n['stationName']), []).append((fb(n['lat']), fb(n['lon'])))
-    for rel in r.get('railStopRelations') or []:
-        rels[rel['osmRelationId']] = rel
+def fit(scr):
+    rows = [json.loads(l) for l in open(f'{scr}/ride-time-legs.jsonl')]
+    withc = [r for r in rows if r['calls'] is not None]
+    print(f'{len(rows)} paired legs, {len(withc)} with calls known')
+    X = [[r['pathM'] / 1000, r['calls'], 1] for r in withc]
+    y = [r['d'] for r in withc]
+    k = lstsq(X, y)
+    print(f'with calls: RIDE_RUN_KMH {60/k[0]:.1f}  RIDE_STOP_MIN {k[1]:.2f}  RIDE_FIXED_MIN {k[2]:.2f}')
+    exp = [sum(a * b for a, b in zip(x, k)) for x in X]
+    width([yy - e for yy, e in zip(y, exp)], exp)
+    X2 = [[r['pathM'] / 1000, 1] for r in rows]
+    y2 = [r['d'] for r in rows]
+    k2 = lstsq(X2, y2)
+    print(f'no calls:   TUBE_SPEED_KMH {60/k2[0]:.1f}  STOP_OVERHEAD_MIN {k2[1]:.2f}')
+    exp2 = [sum(a * b for a, b in zip(x, k2)) for x in X2]
+    width([yy - e for yy, e in zip(y2, exp2)], exp2)
+    resc = [r['d'] - r['expectedMin'] for r in rows]
+    print(f'the law as built: mean residual {sum(resc)/len(resc):+.2f} min, rms {math.sqrt(sum(x*x for x in resc)/len(resc)):.2f}')
 
 
-def calls(line, a, b):
-    best = None
-    for r in rels.values():
-        if r['lineRef'] != line:
-            continue
-        names = [norm(s['name']) for s in r['stops']]
-        if norm(a) in names and norm(b) in names:
-            hops = abs(names.index(norm(a)) - names.index(norm(b)))
-            if hops and (best is None or hops - 1 < best):
-                best = hops - 1
-    return best
-
-
-def footprint(line, st):
-    return [n for n in adj.get(line, {}) if any(hav(coords[n], s) <= 200 for s in stations.get(norm(st), []))]
-
-
-def track_m(line, a, b):
-    src, dst = footprint(line, a), set(footprint(line, b))
-    dist = {n: 0 for n in src}
-    pq = [(0, n) for n in src]
-    while pq:
-        d, n = heapq.heappop(pq)
-        if n in dst:
-            return d
-        if d > dist.get(n, 1e18):
-            continue
-        for m, w in adj[line].get(n, {}).items():
-            if d + w < dist.get(m, 1e18):
-                dist[m] = d + w
-                heapq.heappush(pq, (d + w, m))
-    return None
-
-
-rides = []
-row = re.compile(r'^\|\s*(\d\d):(\d\d)\s*[–-]\s*(\d\d):(\d\d)\s*\|\s*train (.+?) → (.+?) · (.+?) Line\s*\|\s*correct')
-for f in sorted(glob.glob(os.path.join(truth_dir, '*.md'))):
-    for text in open(f):
-        m = row.match(text)
-        if not m:
-            continue
-        h1, m1, h2, m2, a, b, line = m.groups()
-        minutes = int(h2) * 60 + int(m2) - int(h1) * 60 - int(m1)
-        k, p = calls(line, a.strip(), b.strip()), track_m(line + ' Line', a.strip(), b.strip())
-        if k is not None and p and minutes >= 4:
-            rides.append((minutes, k, p))
-
-best = None
-for v in range(30, 121, 2):
-    for s in [x / 20 for x in range(0, 41)]:
-        for c in [x / 4 for x in range(-8, 17)]:
-            loss = sum(max(0.25 * e, -0.75 * e) for e in (mn - (p / 1000 / v * 60 + s * k + c) for mn, k, p in rides))
-            if best is None or loss < best[0]:
-                best = (loss, v, s, c)
-print(f'{len(rides)} rides: run {best[1]} km/h, {best[2]} min per call, {best[3]} min fixed (q25 loss {best[0]:.1f})')
+if __name__ == '__main__':
+    {'collect': collect, 'fit': fit}[sys.argv[1]](sys.argv[2])
