@@ -558,6 +558,27 @@ Three chain guards re-shaped: under the fitted width adjacent stations lie
 2.1 expected minutes apart, inside the margin, so the duration case runs seven
 minutes and names Charlie, and the chain's handover case runs a four-minute
 second leg, since at six the duration names its board alone.
+
+**2026-10-27, late: the platform waits, read from the signal.** A census over
+the 114 paired rides: the departure is the first fast fix away from the
+station, the wait the still run before it (no walking minute, a fix within
+120 m of the station). 86 rides show one, median four minutes, and in 85 of
+them the decoded ride begins inside the wait; in one at the departure. The
+narratives shared that convention on most days, with the wait inside the ride
+window or at the end of the walk, so the emission, transition and duration
+fits all learned it; eleven days already carried a wait row. Where a confirmed
+ride row covered the wait, the narrative now has a derived `stationary @
+<station>` row over the still run and the ride from the departure minute, or
+the walk ending where the still run begins: 24 rows over 17 days
+(`lean/experiments/split-waits.py` planned them; two one-minute hops whose
+row ended at the departure were left as they were). Rows 423 → 445, the
+truth floor 549 → 552 held (three waits already hold); seven floor keys moved
+with their ride rows and were set by hand after the sharded run, as the bless
+hazard requires. 06-24's hop is now a phantom ride on the scoreboard: the
+served hop runs 09:22–09:24 while he stands on the platform until 09:24, the
+thing this corpus change exists to teach. Next: `fit_emissions` on the
+corpus so the wait's transitions, duration and the stationary emission at a
+platform come from these rows, then the decoder measured against them.
 A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
 the chain's post-hoc pick on the served day, with the same fixes.
 
