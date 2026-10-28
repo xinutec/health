@@ -108,9 +108,10 @@ structure Tables where
       (`withOwn`); empty until then, and a leg without one is scored by
       `candidate`. -/
   ownSlot : Array (Option Nat) := #[]
-  /-- `own[(slot * maxJ + (d - 1)) * T + e]`: the leg's own score over `d`
+  /-- `own[(slot * T + e) * maxJ + (d - 1)]`: the leg's own score over `d`
       minutes ending at `e` — emissions, entry and cell — which no start of the
-      journey changes; `−∞` where the leg would begin before the day. -/
+      journey changes; `−∞` where the leg would begin before the day. Laid out
+      by end minute then length, so the sweep's length loop reads it in order. -/
   own : FloatArray := FloatArray.empty
   /-- `best`'s table once computed (`cell[(d - 1) * T + e]`), for the path
       debugger; empty until then. -/
@@ -170,7 +171,7 @@ def pairLogPdf (d expected : Float) : Float :=
   let e := s0 + i
   let start := e + 1 - d
   let prev := if d == i + 1 then tb.first[l]! + tb.firstCtx.get! (l * T + s0)
-    else m.get! ((i - d) * L + l)
+    else m.get! (l * (m.size / L) + (i - d))
   if prev == negInf then negInf else
   let b := tb.baseOf[l]!
   let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
@@ -212,7 +213,7 @@ def withOwn (tb : Tables) : Tables := Id.run do
       for e in [d - 1 : T] do
         let start := e + 1 - d
         let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
-        own := own.set! ((k * tb.maxJ + (d - 1)) * T + e)
+        own := own.set! ((k * T + e) * tb.maxJ + (d - 1))
           (emit + tb.entry.get! (b * T + start) + legCell tb l d e)
   return { tb with ownSlot, own }
 
@@ -224,8 +225,9 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
   let B := tb.nBase
   let T := tb.T
   let mut v := FloatArray.mk (Array.replicate (w * L) negInf)
-  -- `m[k * L + l]`: the best path ending at `s0 + k` in a leg other than `l`,
-  -- plus the transition into `l` at `s0 + k + 1`.
+  -- `m[l * w + k]`: the best path ending at `s0 + k` in a leg other than `l`,
+  -- plus the transition into `l` at `s0 + k + 1` — by leg then minute, so a
+  -- leg's length loop walks it backwards in order.
   let mut m := FloatArray.mk (Array.replicate (w * L) negInf)
   let mut bpD := Array.replicate (w * L) 0
   -- Per paired leg, the first of its sorted starts at or after `s0`: the
@@ -249,9 +251,9 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
           -- The path before the leg, plus its own score, tabled once (`withOwn`).
           for d in [1:min tb.maxJ (i + 1) + 1] do
             let prev := if d == i + 1 then tb.first[l]! + tb.firstCtx.get! (l * T + s0)
-              else m.get! ((i - d) * L + l)
+              else m.get! (l * w + (i - d))
             if prev == negInf then continue
-            let cand := prev + tb.own.get! ((slot * tb.maxJ + (d - 1)) * T + e)
+            let cand := prev + tb.own.get! ((slot * T + e) * tb.maxJ + (d - 1))
             if cand > best then
               best := cand
               bd := d
@@ -310,7 +312,7 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
           if va == negInf then continue
           let cand := va + tb.trans.get! (((e + 1) * B + tb.baseOf[a]!) * B + bl)
           if cand > best then best := cand
-        m := m.set! (i * L + l) best
+        m := m.set! (l * w + i) best
   return (v, bpD)
 
 def sweep (tb : Tables) (s0 w : Nat) : FloatArray × Array Nat := sweepWith tb (prep tb) s0 w

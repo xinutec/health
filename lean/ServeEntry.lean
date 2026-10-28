@@ -2028,6 +2028,10 @@ private def decodeProfMain (input : String) : IO UInt32 := do
       -- The durations as the server builds them: the journey's legs with
       -- their station graph and stops.
       let (g?, rels?) := journeyInputs c j
+      -- Once without the journey's legs: the per-class cells alone, so the
+      -- journey pass is the difference.
+      let du0 ← IO.lazyPure fun _ => buildDurations c T S maxD halfOB none g? rels?
+      let p2j ← IO.monoMsNow
       let du ← IO.lazyPure fun _ => buildDurations c T S maxD halfOB
         (match tr with | .ok (_, _, _, _, lt) => lt | .error _ => none) g? rels?
       let p3 ← IO.monoMsNow
@@ -2036,6 +2040,7 @@ private def decodeProfMain (input : String) : IO UInt32 := do
         (match ee with | .ok (e, _) => e.size | .error _ => 0)
         + (match tr with | .ok (_, _, f, _, _) => f.size | .error _ => 0)
         + (match du with | .ok (_, _, d, _) => d.size | .error _ => 0)
+        + (match du0 with | .ok (_, _, d, _) => d.size | .error _ => 0)
       let t0 ← IO.monoMsNow
       let built ← IO.lazyPure fun _ => buildPData c maxD g? rels?
       let t1 ← IO.monoMsNow
@@ -2060,7 +2065,8 @@ private def decodeProfMain (input : String) : IO UInt32 := do
           ("T", Lean.toJson pd.T), ("S", Lean.toJson pd.S), ("maxD", Lean.toJson pd.maxD),
           ("buildMs", Lean.toJson (t1 - t0)),
           ("buildPhasesMs", Json.mkObj [("emitEntry", Lean.toJson (p1 - p0)),
-            ("transitions", Lean.toJson (p2 - p1)), ("durations", Lean.toJson (p3 - p2)),
+            ("transitions", Lean.toJson (p2 - p1)), ("durations", Lean.toJson (p3 - p2j)),
+            ("durationCells", Lean.toJson (p2j - p2)),
             ("phaseCells", Lean.toJson phaseCells)]),
           ("decodeMs", Json.arr (times.map Lean.toJson)),
           ("best", Json.str best)]).compress
