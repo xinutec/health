@@ -1426,7 +1426,11 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       let qRefs := (reps.zip bases).map fun (rep, base) =>
         match quant (Verified.Hsmm.Assemble.durAtFrom c rep (d0 + 1) assembleRefE base) with
           | some v => qiOf v | none => 0
-      for e in [0:T] do
+      -- A segment of `d0 + 1` minutes ends at minute `d0` at the earliest;
+      -- the cells below start before the day and neither sweep reads them
+      -- (`τ ≤ t + 1`, a leg's `start ≥ 0`), so the triangle is skipped: half
+      -- the phase, exactly.
+      for e in [d0:T] do
         -- The segment's window once per (d, e) for every class
         -- (`durAtFrom_eq_W`, #1774).
         let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
