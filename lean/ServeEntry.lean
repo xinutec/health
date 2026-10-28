@@ -2374,6 +2374,15 @@ private def assembleSegmentsResult (j : Json) : Json :=
            | none => Json.mkObj [("error", Json.str "journeyDebug needs the journey state (segEmission.journey)")]) else
         -- Under the journey state, each journey segment becomes its legs.
         let isJ := fun (i : Nat) => (c.states[i]?.map (·.mode == .unknown)).getD false
+        -- The longest decoded journey, in minutes: the decode corpus holds it
+        -- under `maxJ`, a table size that must never bind (`JourneyParams`).
+        let longestJourneyMin : Nat := Id.run do
+          let mut best := 0
+          let mut run := 0
+          for i in r.path do
+            run := if isJ i then run + 1 else 0
+            if run > best then best := run
+          return best
         let path := match journey with
           | some tb => Verified.Hsmm.Journey.expand tb r.path isJ
           | none => r.path
@@ -2577,6 +2586,7 @@ private def assembleSegmentsResult (j : Json) : Json :=
             | .ok rows =>
               Json.mkObj [
                 ("segments", Json.arr rows),
+                ("longestJourneyMin", Lean.toJson longestJourneyMin),
                 ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
 
 /-- Assemble the model from parsed inputs and emit the quantised tensors: dense

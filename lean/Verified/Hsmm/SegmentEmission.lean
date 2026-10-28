@@ -82,7 +82,12 @@ structure SleepParams where
 /-- The journey state's parameters (`Params.journey`). -/
 structure JourneyParams where
   /-- The longest journey the inner pass considers, in minutes; a longer one
-      decodes as two with a stay between. -/
+      decodes as two with a stay between. A table size, not a behaviour: a
+      journey's length is priced by its fitted duration prior, and this bound
+      is set so that no decoded journey reaches it — the decode corpus checks
+      the longest decoded journey against it, so a binding bound is a loud
+      failure there, never a trip silently scored in pieces. The sweep's cost
+      grows with its square, which is why it is not simply large. -/
   maxJ : Nat
   /-- `log P(mode)` of a journey's first leg, per leg mode. -/
   firstLeg : List (Mode × Float)

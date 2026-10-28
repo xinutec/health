@@ -110,11 +110,23 @@ fn run_corpus(shard: usize) {
             .expect("DECODE_REQUEST_OUT writes");
         }
 
-        let Some(segments) = backend::lean::assemble_segments(&req).expect("assemble answers")
-        else {
+        let Some(answer) = backend::lean::assemble_response(&req).expect("assemble answers") else {
             failures.push(format!("{name}: the decode is DEGENERATE — no viable path"));
             continue;
         };
+        // The journey bound (`segEmission.journey.maxJ`) sizes the inner
+        // sweep's tables; it is not a behaviour, so it must never bind. A
+        // decoded journey as long as the bound would be one scored in pieces.
+        if let (Some(longest), Some(max_j)) = (
+            answer["longestJourneyMin"].as_u64(),
+            req["flags"]["segEmission"]["journey"]["maxJ"].as_u64(),
+        ) && longest >= max_j
+        {
+            failures.push(format!(
+                "{name}: the journey bound binds — a decoded journey of {longest} min at maxJ {max_j}"
+            ));
+        }
+        let segments = answer["segments"].clone();
         let got = backend::row_json::render_segments(&segments).expect("segments render");
         let got = got.as_array().cloned().unwrap_or_default();
         // `DECODE_BLESS=1`: the fixture's `expected` becomes TODAY'S decode, the

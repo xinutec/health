@@ -2465,6 +2465,13 @@ pub fn rail_snap(
 /// which is distinct from an error and must not be flattened into one — a day
 /// with no decodable path is a real answer, a malformed request is not.
 pub fn assemble_segments(input: &serde_json::Value) -> Result<Option<serde_json::Value>> {
+    Ok(assemble_response(input)?.map(|v| v["segments"].clone()))
+}
+
+/// The whole `assemblesegments` answer — `segments`, `best`,
+/// `longestJourneyMin` — or `None` when the decode is degenerate. The decode
+/// corpus reads the longest journey against the journey bound.
+pub fn assemble_response(input: &serde_json::Value) -> Result<Option<serde_json::Value>> {
     let mut req = input.clone();
     req.as_object_mut()
         .context("assemblesegments input is not an object")?
@@ -2478,10 +2485,9 @@ pub fn assemble_segments(input: &serde_json::Value) -> Result<Option<serde_json:
     if v.get("degenerate").and_then(serde_json::Value::as_bool) == Some(true) {
         return Ok(None);
     }
-    let segs = v
-        .get("segments")
+    v.get("segments")
         .context("assemblesegments answer has no `segments`")?;
-    Ok(Some(segs.clone()))
+    Ok(Some(v))
 }
 
 // ---------------------------------------------------------------------------
