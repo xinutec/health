@@ -579,6 +579,51 @@ served hop runs 09:22–09:24 while he stands on the platform until 09:24, the
 thing this corpus change exists to teach. Next: `fit_emissions` on the
 corpus so the wait's transitions, duration and the stationary emission at a
 platform come from these rows, then the decoder measured against them.
+
+**2026-10-28: the refit, and the wait's own prior — both refuted held out.**
+The fitter's wait rule widened to a stationary row before a ride whose place
+is the ride's board station, after a walk or a change (9 → 41 waits, mean 5.5
+min). The full refit held out (per-day records with the journey additions
+merged): none of the 24 wait rows hold, two journey shards fall below floor,
+05-18's hop decodes as a stay, 07-02's ride splits, five walks move. Then a
+prior of the wait's own, fitted on its 205 minutes (speed 0.54 ± 1.0 km/h,
+cadence zero share 0.68, positive 15 ± 16 steps) and read by the wait state in
+place of the stay's: phantom rides on thirteen days. The shape: a desk stay
+near a station (05-12 16:04–16:33 at King's Cross, 06-15 13:52–14:27 at
+Euston) becomes a thirty-minute wait at the station and a one-minute hop of
+stopped-train minutes; the desk's few steps and half-a-km/h fixes fit the
+wait's prior better than the stay's cadence-zero 0.99, the wait's gamma does
+not refuse thirty minutes, the train's stop component carries the hop.
+Without the wait's stay entry it was worse still. A wait is not told from a
+stay by its minutes. What would tell them apart is structural: the wait's
+duration refusing a stay's length, the ride that follows having to leave the
+board station in its first minutes (the departure the census reads), and the
+wait admitted on the walk → wait → ride path only, never out of a stay. The
+model is as it was; the widened wait rule in the fitter stays.
+
+**2026-10-28, afternoon: a ride begins at the departure.** The structural
+form, in the journey's start rule for a station leg (`reachStarts`): a minute
+with a fix of its own at the board station may start a ride only when he is
+not seen still at the station at both its end and the next minute's end,
+read from the minutes' last fixes; a minute whose fix is only carried from
+before (a dark platform) may start one, the departure lying somewhere in the
+dark. The wait leg keeps every reach minute. Four iterations found the two
+carries: the stale fix running out on a dark platform pinned the departure
+to the carry's end and the plain train leg, which has no start rule, took the
+ride from the earlier minute (four days lost a station leg); the dark minute
+after a train enters the tunnel carried the station's fix and the one-minute
+hops started a minute late and shrank. Measured (DECODE_BLESS → DAY_BLESS →
+walk, ledger and truth blesses → gate): truth 552 → 556 held in every shard;
+journeys held, 05-22 +1; stations, lines and phantoms unchanged; the served
+waits appear where the departure is seen (06-28's King's Cross 09:05–09:08
+with its Victoria hop paired, 08-05's Baker Street, 07-16's two, 07-01's two,
+09-06's two), and the name-confidence station count rises 15/19 → 20/25 with
+them. The platform minutes the wait does not take go to the walk, which is
+where the walk floor moves: 09-14's evening walk is drawn 1106 m against a
+1016 m budget (was 972), 07-07's 854 (was 672) and 05-22's 421 (was 340,
+budget 453) with their route correlation down, 07-17's morning walk loses its
+176 m of stall. The wait against the walk on a paced platform is what is
+left: the wait's own prior cannot carry it (above), its entry is a stay's.
 A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
 the chain's post-hoc pick on the served day, with the same fixes.
 

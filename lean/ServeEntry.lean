@@ -1566,10 +1566,28 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     let L := legList.size
     let legOuter := legList.map (·.1)
     let baseOf := legList.map (·.2.1)
-    let reachStarts : Array (Array Nat) := legList.map fun (_, _, st?) =>
+    -- A ride begins where the fixes LEAVE its board station. The station census
+    -- over the corpus's paired rides reads 86 departures with the decoded ride
+    -- beginning inside the platform wait in 85 of them. A minute with a fix of
+    -- its own at the station starts a ride only when the next minute is away
+    -- (the departure seen); a minute whose fix is carried from before (a dark
+    -- platform, `fixAt`) may start one, the departure lying somewhere in the
+    -- dark. The wait before the ride keeps every reach minute.
+    let reachStarts : Array (Array Nat) := legList.map fun (l, _, st?) =>
       match st? with
       | none => #[]
-      | some n => (Array.range T).filter fun t => nearFix fixes[t]! n
+      | some n =>
+        let near := fun (t : Nat) => nearFix fixes[t]! n
+        let seen := fun (t : Nat) => match c.obs[t]? with | some o => o.gps.isSome | none => false
+        -- Seen at the station as the minute ENDS (its own last fix): a train
+        -- pulling away slowly leaves its first moving minute's median within
+        -- reach, and the dark minute after a train enters the tunnel says
+        -- nothing of where he is.
+        let stillHere := fun (t : Nat) => t < T && seen t
+          && nearFix (match fixBefore t with | some f => some f | none => fixes[t]!) n
+        if (c.states[l]!).mode == .train then
+          (Array.range T).filter fun t => near t && (!seen t || !stillHere t || !stillHere (t + 1))
+        else (Array.range T).filter near
     -- The board station against the fix of the minute BEFORE the leg — where
     -- he stood when the ride began (the leg's own first minute already moves):
     -- the chain's anchor form, relative to the best station at that minute.
