@@ -624,6 +624,29 @@ where the walk floor moves: 09-14's evening walk is drawn 1106 m against a
 budget 453) with their route correlation down, 07-17's morning walk loses its
 176 m of stall. The wait against the walk on a paced platform is what is
 left: the wait's own prior cannot carry it (above), its entry is a stay's.
+
+**2026-10-28, later: the cadence priors, fitted — refuted held out both
+ways.** 06-16's ride splits at 11:05, a reacquire minute with 116 steps on the
+moving train: the train's cadence prior (the form's 0.99 zero share, 5 ± 10
+positive, never fitted) prices it at −69 while the walk's reacquire
+correction forgives the 37 km/h fix, so a one-minute walk cuts the ride. The
+narrated train minutes carry steps 15 percent of the time, 25 ± 30 with a
+tail past 100. Fitting the four modes' cadence together (the fitter learning
+the zero share and the positive spread from the labelled minutes) is a net
+loss held out: two stations and two journeys gained, legs and stations lost
+on eight days, 43 walks moved; the train's alone, the others at the form's,
+is a collapse — phantom rides on nearly every day, a stay minute with a few
+steps fitting the train's prior far better than the stay's. The priors are a
+relative comparison and move together or not at all. What the case asks for
+is a tail: a train minute is a walking minute about one time in eighty.
+Built as a mixture, the share by EM against the walk's own cadence (6.8
+percent of train minutes at 89 ± 33 steps), it is refuted the same way held
+out: phantom rides on fifteen days and seven confirmed rows lost in one
+shard. A train that may carry walking minutes is a train that fits walks:
+the reacquire design widens a walk's speed on a reacquire minute because on
+the track it is steps that tell a walk from a ride, and that rests on the
+train's cadence refusing steps. 06-16's split at its 116-step minute stays a
+known row.
 A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
 the chain's post-hoc pick on the served day, with the same fixes.
 
