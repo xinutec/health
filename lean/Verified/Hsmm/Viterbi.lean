@@ -61,12 +61,23 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
   let mut backPrev : Array Nat := Array.replicate (T * S) S
   let mut backTau : Array Nat := Array.replicate (T * S) 0
 
+  -- Per state, the largest τ whose `prev` entry is finite (0: none). Every
+  -- entry above it is `−∞` by construction — `cur` starts all `−∞` and a
+  -- minute sets entries up to its own bound only — so the three τ loops run
+  -- to it instead of `maxD`, exactly: a column dies the minute its emission is
+  -- `−∞` (a place far from the fixes), and a live column reaches only as far
+  -- as its longest running segment.
+  let mut live : Array Nat := Array.replicate S 0
+
   -- t = 0: only τ = 1 is valid.
   for s in [0:S] do
-    prev := prev.set! (idx maxD s 1) (P.init s + P.entry s 0 + P.emit 0 s)
+    let v := P.init s + P.entry s 0 + P.emit 0 s
+    prev := prev.set! (idx maxD s 1) v
+    if v != Score.negInf then live := live.set! s 1
 
   for t in [1:T] do
     let mut cur : Array Score := Array.replicate size .negInf
+    let mut liveNext : Array Nat := Array.replicate S 0
 
     -- Best close-of-segment score per previous state sp:
     --   max over τ of prev[sp][τ] + dur(sp, τ, t-1).
@@ -75,7 +86,7 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
     for sp in [0:S] do
       let mut bestScore : Score := .negInf
       let mut bestTau : Nat := 0
-      for tau in [1:maxD+1] do
+      for tau in [1:(live.getD sp 0)+1] do
         let sc := (prev.getD (idx maxD sp tau) .negInf)
         if sc != Score.negInf then
           let dlp := P.dur sp tau (t - 1)
@@ -90,11 +101,14 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
     for s in [0:S] do
       let emit := P.emit t s
       if emit != Score.negInf then
-        -- Continue the running segment: τ ≥ 2.
-        for tau in [2:maxD+1] do
+        -- Continue the running segment: τ ≥ 2, up to one past the column's
+        -- longest finite τ.
+        let top := min maxD ((live.getD s 0) + 1)
+        for tau in [2:top+1] do
           let ps := (prev.getD (idx maxD s (tau - 1)) .negInf)
           if ps != Score.negInf then
             cur := cur.set! (idx maxD s tau) (ps + emit)
+            liveNext := liveNext.set! s tau
 
         -- Start a new segment (τ = 1) from the best-closing predecessor.
         let mut bestNew : Score := .negInf
@@ -115,15 +129,17 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
           cur := cur.set! (idx maxD s 1) (bestNew + P.entry s t + emit)
           backPrev := backPrev.set! (t * S + s) bestPrevState
           backTau := backTau.set! (t * S + s) bestPrevTau
+          if liveNext.getD s 0 == 0 then liveNext := liveNext.set! s 1
 
     prev := cur
+    live := liveNext
 
   -- Close the final segment at T-1.
   let mut bestFinalScore : Score := .negInf
   let mut bestFinalState : Nat := 0
   let mut bestFinalTau : Nat := 1
   for s in [0:S] do
-    for tau in [1:maxD+1] do
+    for tau in [1:(live.getD s 0)+1] do
       let sc := (prev.getD (idx maxD s tau) .negInf)
       if sc != Score.negInf then
         let dlp := P.dur s tau (T - 1)
