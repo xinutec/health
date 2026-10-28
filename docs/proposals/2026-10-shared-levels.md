@@ -647,6 +647,12 @@ the reacquire design widens a walk's speed on a reacquire minute because on
 the track it is steps that tell a walk from a ride, and that rests on the
 train's cadence refusing steps. 06-16's split at its 116-step minute stays a
 known row.
+
+06-18's return board is of the same family: he walks into Euston Square,
+boards and departs inside the one minute 11:55, so no train minute exists at
+the station and the ride's first train minute sits at Great Portland Street
+already. Reading the start from the minute's first fix did not move it and
+cost 09-14 a line and two stations. Both rows stand as the minute's grain.
 A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
 the chain's post-hoc pick on the served day, with the same fixes.
 
