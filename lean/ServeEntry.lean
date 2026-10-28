@@ -218,7 +218,7 @@ private def parseModel (j : Json) : Except String PData := do
           let mut e := 0
           for (v, len) in runs do
             for _ in [0:len] do
-              if e < T then a := a.set! ((c * maxD + d0) * T + e) v
+              if e < T then a := a.set! ((c * T + e) * maxD + d0) v
               e := e + 1
     return a
   let durOv : Std.HashMap Nat Nat ←
@@ -1443,7 +1443,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             | some v => qiOf v | none => 0
           let (packed, over) := packDelta qE qRefs[cls]! halfOB
           if over.isSome then bad := over
-          durDelta := durDelta.set! ((cls * maxD + d0) * T + e) packed
+          durDelta := durDelta.set! ((cls * T + e) * maxD + d0) packed
           -- A leg under a journey: the same cell without the level, and
           -- without the covered train's relaxed floor — a leg pays no level,
           -- so the floor is what stops a ride splitting into one-minute legs.
@@ -1876,11 +1876,11 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           let legsPart := inner.get! (d0 * T + e)
           let full := Verified.Hsmm.Assemble.durAtFromW c jI (d0 + 1) covered[e]! w sst base + legsPart
           match quant full with
-          | none => durDelta := durDelta.set! ((jc * maxD + d0) * T + e) 0
+          | none => durDelta := durDelta.set! ((jc * T + e) * maxD + d0) 0
           | some v =>
             let (packed, over) := packDelta (qiOf v) qRef halfOB
             if over.isSome then bad := over
-            durDelta := durDelta.set! ((jc * maxD + d0) * T + e) packed
+            durDelta := durDelta.set! ((jc * T + e) * maxD + d0) packed
       return (durDelta, durBaseJ, bad)
     if let some delta := bad then throw s!"journey dur delta {delta} exceeds halfOB {halfOB}"
     return (durClass, durBaseJ, durDelta, some tb)

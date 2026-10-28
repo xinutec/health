@@ -470,7 +470,7 @@ parameters `q`. -/
 def dispPosteriorScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentEvidence.Window) : Float :=
   match w with
   | none => ZERO
-  | some w' =>
+  | some w' => Id.run do
     -- A mode with no fitted displacement (a plane, a bicycle) is the flat
     -- component alone: anywhere within `uMaxKmh` over the segment's span, so
     -- a one-minute "flight" that went nowhere is not a free bridge between
@@ -478,13 +478,29 @@ def dispPosteriorScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentE
     let flat := Float.log (ONE / (p.uMaxKmh * (Verified.FloatConst.natToFloat d / MIN_PER_H) * KM_M))
     -- Each mode's score from its own entry, once; the state's is among them
     -- (the first entry of its mode).
-    let scored := p.disp.map fun (m, q) => (m, dispScoreWith p m q d w')
-    let own := match scored.find? (·.1 == mode) with
-      | some (_, v) => v
-      | none => flat
-    let all := scored.map (·.2) ++ [flat]
-    let mx := all.foldl max own
-    own - (mx + Float.log (all.foldl (fun acc v => acc + Float.exp (v - mx)) ZERO))
+    -- Each mode's score once, into one unboxed array: the lists this built
+    -- per cell (the scored pairs, their values, the flat appended) were the
+    -- duration table's allocation cost. The sum runs in the same order:
+    -- the fitted modes, then the flat component.
+    let n := p.disp.length
+    let mut vals := FloatArray.emptyWithCapacity n
+    let mut own := flat
+    let mut found := false
+    for (m, q) in p.disp do
+      let v := dispScoreWith p m q d w'
+      vals := vals.push v
+      if !found && m == mode then
+        own := v
+        found := true
+    let mut mx := own
+    for i in [0:n] do
+      mx := max mx (vals.get! i)
+    mx := max mx flat
+    let mut acc := ZERO
+    for i in [0:n] do
+      acc := acc + Float.exp (vals.get! i - mx)
+    acc := acc + Float.exp (flat - mx)
+    return own - (mx + Float.log acc)
 
 /-- Within GPS noise of a railway: 99% of fixes fall within 31 m of the truth. -/
 def RAIL_NEAR_M : Float := 30

@@ -761,7 +761,9 @@ structure PData where
   else if !d.durClass.isEmpty then
     let b := d.durBase.getD (s * d.maxD + (dd - 1)) 0
     if b == 0 then 0
-    else b + d.durDelta.getD ((d.durClass.getD s 0 * d.maxD + (dd - 1)) * d.T + e) d.halfOB - d.halfOB
+    -- `durDelta` by class, end minute, then length: the close loop walks
+    -- consecutive lengths at one end, so they sit side by side.
+    else b + d.durDelta.getD ((d.durClass.getD s 0 * d.T + e) * d.maxD + (dd - 1)) d.halfOB - d.halfOB
   else if d.hasOv.getD (s * d.maxD + (dd - 1)) false then
     d.durOv.getD ((s * d.maxD + (dd - 1)) * d.T + e) (d.durBase.getD (s * d.maxD + (dd - 1)) 0)
   else d.durBase.getD (s * d.maxD + (dd - 1)) 0
