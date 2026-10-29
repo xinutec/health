@@ -2298,7 +2298,10 @@ private def journeyDebugJson (c : Verified.Hsmm.Assemble.ModelContext)
         ("startTs", Lean.toJson (tsOf x.start)),
         ("endTs", Lean.toJson (tsOf (x.start + x.d - 1) + 60)),
         ("d", Lean.toJson x.d), ("prev", fl x.prev), ("emit", fl x.emit), ("entry", fl x.entry),
-        ("cell", fl x.cell), ("expectedMin", fl x.expectedMin),
+        ("board", fl x.board), ("cell", fl x.cell), ("expectedMin", fl x.expectedMin),
+        -- A forced leg is scored whether or not the trellis could start it
+        -- here: `false` names a path the decoder was never offered.
+        ("reach", Json.bool (tb.reachMask.getD (x.leg * tb.T + x.start) true)),
         ("alight", match tb.alightName[x.leg * tb.T + (x.start + x.d - 1)]? with
           | some (some a) => Json.str a
           | _ => Json.null),
@@ -2306,7 +2309,7 @@ private def journeyDebugJson (c : Verified.Hsmm.Assemble.ModelContext)
           else fl (tb.pairPathM.get! (x.leg * tb.T + (x.start + x.d - 1)))),
         ("calls", if tb.pairCalls.size == 0 then Json.null
           else fl (tb.pairCalls.get! (x.leg * tb.T + (x.start + x.d - 1)))),
-        ("total", fl (x.prev + x.emit + x.entry + x.cell))]))]
+        ("total", fl (x.prev + x.emit + x.entry + x.board + x.cell))]))]
   -- The alternative: segments by leg name, each over `[startTs, endTs)`.
   let alts : Array Json := ((dj.getObjVal? "alt") >>= (·.getArr?)).toOption.getD #[]
   let altLegs : Array (Nat × Nat × Nat) := alts.filterMap fun a => do

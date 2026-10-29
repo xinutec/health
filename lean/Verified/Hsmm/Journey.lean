@@ -401,6 +401,8 @@ structure LegScore where
   prev : Float
   emit : Float
   entry : Float
+  /-- The board station against the fix before the leg (`Tables.boardAt`). -/
+  board : Float
   cell : Float
   expectedMin : Float
   deriving Repr
@@ -423,8 +425,9 @@ def scoreLegs (tb : Tables) (s0 : Nat) (legs : Array (Nat × Nat)) : Array LegSc
     let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
     let entry := tb.entry.get! (b * T + start)
     let cell := legCell tb l d e
-    out := out.push { leg := l, start, d, prev, emit, entry, cell, expectedMin := tb.expectedMin.get! (l * T + e) }
-    total := total + prev + emit + entry + cell
+    let board := if tb.boardAt.size == 0 then HALF - HALF else tb.boardAt.get! (l * T + start)
+    out := out.push { leg := l, start, d, prev, emit, entry, board, cell, expectedMin := tb.expectedMin.get! (l * T + e) }
+    total := total + prev + emit + entry + board + cell
     start := e + 1
     prevLeg := some l
   match prevLeg with

@@ -671,6 +671,28 @@ notes — 07-30 19:52 has no steps at all, 06-15 and 09-15 are seven and six
 still minutes of nine — and are unmeasured; each is a journey-debugger
 reading next.
 
+**2026-10-29, afternoon: two more of the wait's stay terms, read and
+refused.** 07-30's dark two-minute wait (18:52–18:54Z, the fix held 39 m
+from the station, the train away 18:54:33) is the minute's grain: a ride
+may start only at a minute whose fix lies within 400 m of its board node,
+18:54's median is 1.4 km off, so the last legal start is 18:53 and the wait
+that remains is one minute, under the fitted floor of two. The forced path
+scored above the decoded one by half a nat and was never offered; the
+journey debugger now marks each forced leg `reach` (and carries the `board`
+term its totals had left out). Two terms were tried on it. The fix pair
+across a wait's end priced as the ride's first pair rather than by the
+boundary model: withdrawn before the chain — it let the wait take the
+ride's first still-median minute (06-28's King's Cross wait 09:05–09:08
+grew to 09:09, the ride starts 09:08); the boundary model's refusal of a
+fast pair across a boundary is what holds that edge. The unlisted-centre
+term dropped for the wait (a placeless stay's position term, −6 on 07-30's
+two carried fixes): REFUTED in the chain — without it a wait is free on
+carried fixes, and 07-30's one ride became Met to 18:55, a three-minute wait
+at Great Portland Street in the tunnel, Met again; seven decodes moved, one
+confirmed row lost, the scoreboard moved. The term is doing a wait's work
+too: a station within reach of a carried fix is not a platform he stood on.
+Both reverted; the ledger and fixtures restored.
+
 06-18's return board is of the same family: he walks into Euston Square,
 boards and departs inside the one minute 11:55, so no train minute exists at
 the station and the ride's first train minute sits at Great Portland Street
