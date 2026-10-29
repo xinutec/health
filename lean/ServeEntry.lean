@@ -1352,6 +1352,18 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   let legTrans : Option (FloatArray × FloatArray) := if !jOn then none else some (Id.run do
     let legs := Verified.Hsmm.Assemble.legIdxs c
     let L := legs.size
+    -- A ride's coverage is one fact however many legs it is cut into: the
+    -- generator's coverage evidence rides on a train leg's entry, so a train
+    -- leg straight after a train leg gives it back here — two one-minute hops
+    -- at calls earned it twice and out-scored the ride they cut (07-02's
+    -- Baker Street → Euston Square). The line share stays: a change is a
+    -- new line.
+    let coveredT : Array Bool := c.obs.map fun o => Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts
+    let coverageBack := fun (src dst : Verified.Hsmm.Emissions.State) (t : Nat) =>
+      match c.segEm.p.trainLine with
+      | some tl => if src.mode == .train && dst.mode == .train then
+          (if coveredT.getD t false then tl.covered else tl.uncovered) else journeyZero
+      | none => journeyZero
     -- A journey's first leg boards as a walk would: the fix-anchored term.
     let walkSt : Verified.Hsmm.Emissions.State := ⟨.walking, none, none⟩
     let mut firstCtx := FloatArray.mk (Array.replicate (L * T) journeyZero)
@@ -1378,10 +1390,10 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
           let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
           for ((cm, covered), t) in minutes.zipIdx do
             out := out.set! ((t * L + ai) * L + bi)
-              (base + Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine src dst covered pb cm)
+              (base - coverageBack src dst t + Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine src dst covered pb cm)
         else
           for t in [0:T] do
-            out := out.set! ((t * L + ai) * L + bi) base
+            out := out.set! ((t * L + ai) * L + bi) (base - coverageBack src dst t)
     return (out, firstCtx))
   return (transBase, transIdx, transFlat, nRows, legTrans)
 
