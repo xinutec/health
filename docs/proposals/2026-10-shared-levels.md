@@ -648,6 +648,29 @@ the track it is steps that tell a walk from a ride, and that rests on the
 train's cadence refusing steps. 06-16's split at its 116-step minute stays a
 known row.
 
+**2026-10-29: the wait's two borrowed terms.** On 06-28's platform (two
+minutes, no steps then thirty, the fixes within 10 m of the station) the
+wait beat the walk on emission by 2.4 and lost the journey by 4.2. The loss
+was two terms the wait had borrowed from the stay: its entry, the share of
+stays at no listed place (−2.3), a number fitted on place visits and
+answering a question the ride's own entry already answers (the journey from
+this station, once); and its transition into the ride, the stay row's share
+of rides (−1.9), charged on the one successor the pair rule leaves it. Both
+removed: the wait's entry is zero, the wait continues into its ride at
+certainty, the ride's entry chooses the line. Measured in the chain: ten
+frozen decodes move, each a two-minute wait carved at a board station before
+a ride (06-16, 06-23, 06-29 and 08-08 out of the ride's first minutes; 05-22,
+06-28, 07-06, 07-12, 07-17 and 10-17 out of the walk's last); truth 556 → 561
+(06-16 Victoria, 06-23, 06-28 and 06-29 Wembley Park, 10-17 Wembley Park),
+no row lost; journeys, stations, lines and phantoms unchanged; the walk floor
+re-drawn on the six trimmed walks, none regressed, 05-22's and 07-17's back
+on their paths; name-confidence station 20/25 → 25/30. Of the 28 platform
+rows 16 now hold. The twelve that do not (05-12 ×2, 05-15, 06-15, 06-24,
+06-28 11:46, 07-01, 07-06 ×2, 07-30 ×2, 09-15) are not one shape by their
+notes — 07-30 19:52 has no steps at all, 06-15 and 09-15 are seven and six
+still minutes of nine — and are unmeasured; each is a journey-debugger
+reading next.
+
 06-18's return board is of the same family: he walks into Euston Square,
 boards and departs inside the one minute 11:55, so no train minute exists at
 the station and the ride's first train minute sits at Great Portland Street

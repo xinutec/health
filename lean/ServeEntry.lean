@@ -1368,7 +1368,12 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
         if a == b then continue
         let ((src, ws), _) := weighted[a]!
         let ((dst, _), _) := weighted[b]!
-        let base := baseTransF src dst ws a
+        -- A wait continues only into a ride (`pairOk`): that successor is
+        -- certain, and the ride's entry chooses the line. The fitted stay
+        -- row would charge it the share of stays that end in a ride.
+        let base := if src.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then
+            (if dst.mode == .train then journeyZero else Verified.FloatConst.negInf)
+          else baseTransF src dst ws a
         if c.chainOn && chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
           let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
           for ((cm, covered), t) in minutes.zipIdx do

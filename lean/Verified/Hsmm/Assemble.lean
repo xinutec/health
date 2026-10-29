@@ -445,6 +445,10 @@ def entryAt (c : ModelContext) (t s : Nat) : Float :=
   | none, _ | _, none => negInf
   | some o, some st =>
   if st.mode == .unknown then SEG_ZERO else
+  -- The wait's station is the ride's: the ride's entry prices the journey
+  -- from it, once. A stay's entry (the share of stays at no listed place)
+  -- is fitted on visits, a population the platform is not in.
+  if st.lineName == some WAIT_MARK then SEG_ZERO else
   let covered := coveredAt c o.ts
   let profile := match st.placeId with | some pid => c.hourProfiles.get? pid | none => none
   let weight := match st.placeId with | some pid => c.visitWeights.get? pid | none => none
