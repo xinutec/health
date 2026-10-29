@@ -2820,7 +2820,8 @@ private def parsePoi (j : Json) : Except String Verified.Geo.BestPlace.Poi := do
 
 private def bestPlaceResult (j : Json) : Json :=
   let parsed : Except String
-      (Option Verified.Geo.SegmentMerge.ResolvedPlace × List Verified.Geo.VenuePrior.VenueCandidateScore) := do
+      (Option Verified.Geo.SegmentMerge.ResolvedPlace
+        × List (Verified.Geo.VenuePrior.VenueCandidateScore × Option (Float × Float × Float))) := do
     let pois ← (← (← j.getObjVal? "landmarks").getArr?).mapM parsePoi
     -- The geocode is a TABLE keyed by zoom, so the chain's two asks (18 then,
     -- only on one branch, 16) are answered from data rather than recomputed.
@@ -2854,14 +2855,27 @@ private def bestPlaceResult (j : Json) : Json :=
     -- what lost and by which term (#325).
     let ranked := Verified.Geo.VenuePrior.rankVenues
       (pois.toList.map (Verified.Geo.BestPlace.toLandmark samples.toList stay.isSome)) stay priors
-    return (resolved, ranked)
+    -- The shape's three log-ratios unclamped, per candidate, for a fit over
+    -- dumped namings.
+    let shapeParts : List (Option (Float × Float × Float)) := ranked.map fun c =>
+      match stay, priors, c.parts.shape with
+      | some st, some pr, some _ => some (Verified.Geo.VenuePrior.shapeParts c.landmark.subtype st pr)
+      | _, _, _ => none
+    return (resolved, ranked.zip shapeParts)
   let optF : Option Float → Json := fun o =>
     match o with | none => Json.null | some v => Lean.toJson v
-  let rankedJson := fun (ranked : List Verified.Geo.VenuePrior.VenueCandidateScore) =>
-    Json.arr ((ranked.map fun c => Json.mkObj [
+  let rankedJson := fun (ranked : List (Verified.Geo.VenuePrior.VenueCandidateScore × Option (Float × Float × Float))) =>
+    Json.arr ((ranked.map fun (c, sp) => Json.mkObj [
       ("name", Json.str c.landmark.name), ("subtype", Json.str c.landmark.subtype),
       ("distanceM", Lean.toJson c.landmark.distanceM), ("openFraction", optF c.landmark.openFraction),
       ("total", Lean.toJson c.total), ("hours", optF c.parts.hours),
+      -- Each term of the sum, so a fit over dumped namings sees what the
+      -- picker weighed.
+      ("distance", Lean.toJson c.parts.distance), ("venue", Lean.toJson c.parts.venue),
+      ("shape", optF c.parts.shape),
+      ("shapeParts", match sp with
+        | some (b, d, h) => Json.arr #[Lean.toJson b, Lean.toJson d, Lean.toJson h]
+        | none => Json.null),
       ("nearField", Json.bool c.nearField), ("enclosing", Json.bool c.landmark.enclosing)]).toArray)
   match parsed with
   | .error e => Json.mkObj [("error", Json.str e)]
