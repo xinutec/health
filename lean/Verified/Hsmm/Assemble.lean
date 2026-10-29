@@ -486,7 +486,8 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
 /-- The segment-level emission of state `s` over a segment of length `d` with
     window `w` (its net displacement) and statistics `st`. -/
 def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
-    (st : SegmentEmission.Stats) (level : Bool := true) : Float :=
+    (st : SegmentEmission.Stats) (level : Bool := true)
+    (dv : Option (FloatArray × Float) := none) : Float :=
   let q := c.segEm
   match c.states[s]? with
   | some x =>
@@ -507,7 +508,11 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
            let pr := (c.pairPref[s]?).getD #[]
            (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
              + (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO)
-      + SegmentEmission.dispPosteriorScore q.p x.mode d w
+      -- The displacement vector built once per `(d, e)` by the cells loop,
+      -- else here.
+      + (match dv with
+         | some v => SegmentEmission.dispPosteriorFrom q.p x.mode v
+         | none => SegmentEmission.dispPosteriorScore q.p x.mode d w)
   | none => SEG_ZERO
 
 /-- `segEmFrom`'s terms one by one, for the path debugger: the heart-rate and
@@ -568,12 +573,12 @@ def coveredAtE (c : ModelContext) (e : Nat) : Bool :=
     segment's window — resolved by the caller once for every state (#1774). -/
 def durAtFromW (c : ModelContext) (s d : Nat) (covered : Bool)
     (w : Option SegmentEvidence.Window) (sst : SegmentEmission.Stats) (base : Float)
-    (level : Bool := true) : Float :=
+    (level : Bool := true) (dv : Option (FloatArray × Float) := none) : Float :=
   match c.states[s]? with
   | none => negInf
   | some st =>
   Assembly.durationLogProbFrom st d covered (Duration.minDurationByMode .train) base
-    + segEmFrom c s d w sst level
+    + segEmFrom c s d w sst level dv
 
 /-- The journey state's index, when the context has one. -/
 def journeyIdx (c : ModelContext) : Option Nat := c.states.findIdx? (·.mode == .unknown)

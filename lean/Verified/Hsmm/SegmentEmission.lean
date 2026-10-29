@@ -466,6 +466,46 @@ parameters `q`. -/
     else logNormalDensity (dist / KM_M / hours) q.mu q.sigma / (hours * KM_M)
   Float.log ((ONE - q.eps) * main + q.eps / (p.uMaxKmh * hours * KM_M))
 
+/-- Every fitted mode's displacement density of a window, in `p.disp`'s
+    order, and the flat component: what `dispPosteriorScore` normalises over.
+    It depends on the window and the length alone, so the duration cells
+    build it once per `(d, e)` for every class (`dispPosteriorFrom`). -/
+def dispVector (p : Params) (d : Nat) (w : SegmentEvidence.Window) : FloatArray × Float := Id.run do
+  -- A mode with no fitted displacement (a plane, a bicycle) is the flat
+  -- component alone: anywhere within `uMaxKmh` over the segment's span, so
+  -- a one-minute "flight" that went nowhere is not a free bridge between
+  -- two stays.
+  let flat := Float.log (ONE / (p.uMaxKmh * (Verified.FloatConst.natToFloat d / MIN_PER_H) * KM_M))
+  let mut vals := FloatArray.emptyWithCapacity p.disp.length
+  for (m, q) in p.disp do
+    vals := vals.push (dispScoreWith p m q d w)
+  return (vals, flat)
+
+/-- The posterior of `mode` from a built `dispVector`: the state's own
+    density (the first entry of its mode, else the flat component) against
+    the log-sum over the fitted modes and the flat component, summed in the
+    same order every time. -/
+def dispPosteriorFrom (p : Params) (mode : Mode) (v : FloatArray × Float) : Float := Id.run do
+  let (vals, flat) := v
+  let n := vals.size
+  let mut own := flat
+  let mut found := false
+  let mut i := 0
+  for (m, _) in p.disp do
+    if !found && m == mode then
+      own := vals.get! i
+      found := true
+    i := i + 1
+  let mut mx := own
+  for k in [0:n] do
+    mx := max mx (vals.get! k)
+  mx := max mx flat
+  let mut acc := ZERO
+  for k in [0:n] do
+    acc := acc + Float.exp (vals.get! k - mx)
+  acc := acc + Float.exp (flat - mx)
+  return own - (mx + Float.log acc)
+
 /-- `log f_mode(D) − log Σ_m f_m(D)` over the modes with a fitted displacement:
     the posterior of the mode given the segment's net displacement under a flat
     prior over those modes. A density per segment is about `−log(scale)` for
@@ -475,37 +515,7 @@ parameters `q`. -/
 def dispPosteriorScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentEvidence.Window) : Float :=
   match w with
   | none => ZERO
-  | some w' => Id.run do
-    -- A mode with no fitted displacement (a plane, a bicycle) is the flat
-    -- component alone: anywhere within `uMaxKmh` over the segment's span, so
-    -- a one-minute "flight" that went nowhere is not a free bridge between
-    -- two stays.
-    let flat := Float.log (ONE / (p.uMaxKmh * (Verified.FloatConst.natToFloat d / MIN_PER_H) * KM_M))
-    -- Each mode's score from its own entry, once; the state's is among them
-    -- (the first entry of its mode).
-    -- Each mode's score once, into one unboxed array: the lists this built
-    -- per cell (the scored pairs, their values, the flat appended) were the
-    -- duration table's allocation cost. The sum runs in the same order:
-    -- the fitted modes, then the flat component.
-    let n := p.disp.length
-    let mut vals := FloatArray.emptyWithCapacity n
-    let mut own := flat
-    let mut found := false
-    for (m, q) in p.disp do
-      let v := dispScoreWith p m q d w'
-      vals := vals.push v
-      if !found && m == mode then
-        own := v
-        found := true
-    let mut mx := own
-    for i in [0:n] do
-      mx := max mx (vals.get! i)
-    mx := max mx flat
-    let mut acc := ZERO
-    for i in [0:n] do
-      acc := acc + Float.exp (vals.get! i - mx)
-    acc := acc + Float.exp (flat - mx)
-    return own - (mx + Float.log acc)
+  | some w' => dispPosteriorFrom p mode (dispVector p d w')
 
 /-- Within GPS noise of a railway: 99% of fixes fall within 31 m of the truth. -/
 def RAIL_NEAR_M : Float := 30

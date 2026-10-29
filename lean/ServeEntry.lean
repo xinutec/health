@@ -1440,11 +1440,14 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         -- (`durAtFrom_eq_W`, #1774).
         let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
         let sst := Verified.Hsmm.SegmentEmission.statsAt c.segPref (d0 + 1) e
+        -- The displacement densities once per (d, e): every class and both
+        -- cells below read the same vector (`dispPosteriorFrom`).
+        let dv := w.map (Verified.Hsmm.SegmentEmission.dispVector c.segEm.p (d0 + 1))
         let cov := covered[e]!
         for cls in [0:nC] do
           -- The journey's cell waits for the inner pass (below).
           if jCls == some cls then continue
-          let qE := match quant (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) cov w sst bases[cls]!) with
+          let qE := match quant (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) cov w sst bases[cls]! (dv := dv)) with
             | some v => qiOf v | none => 0
           let (packed, over) := packDelta qE qRefs[cls]! halfOB
           if over.isSome then bad := over
@@ -1455,7 +1458,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           if d0 < maxJ then
             if let some slot := slotOfCls cls then
               legDur := legDur.set! ((slot * maxJ + d0) * T + e)
-                (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) false w sst bases[cls]! false)
+                (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) false w sst bases[cls]! false dv)
     return (durDelta, bad, legDur)
   if let some delta := bad then throw s!"dur delta {delta} exceeds halfOB {halfOB}"
   -- The journey state: its cell is the inner pass over the legs plus its own
