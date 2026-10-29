@@ -709,6 +709,34 @@ names 25/27. The platform-wait census is right where the departure is seen
 on the surface and wrong where it is not; a derived wait on a dark platform
 has no readable end.
 
+**2026-10-29, evening: the plain line leg is an escape from the station
+structure.** A census of the journey's own legs over the 56 days
+(`lean/experiments` has the scripts beside the venue census): 110 station
+legs, 35 plain `train|L` legs, 50 waits; 23 of the plain legs are London
+rides on named lines, which the chain names a board for afterwards so the
+frozen decodes do not show it. Forced as station legs over their own window
+(the journey debugger now carries `reach`, `board` and the start rule's
+facts per forced leg), 12 of 17 out-score the plain leg and were never
+offered: the ride's first minute has its first fix 400–500 m down the line
+while the minute before ends on the platform, so a station leg may start
+only on the departing minute's walking seconds, under the train's cadence,
+while the plain leg starts a minute later where no station leg may. Two
+forms of a far-side start (the minute after one that ended at the station;
+the same restricted to a walk or wait predecessor) were refuted: each won
+08-11 and opened one-minute hops at calls on 05-18, 06-16, 07-02 and 09-14,
+because every train leg earns its entry (the vouched line's share and the
+per-leg coverage evidence, about +1.2), so a ride cut in two out-scores
+itself. A train leg straight after a train leg now gives the coverage term
+back (committed; exact on the corpus, and it closed 07-02's hop under the
+start rule). What remains is the walk-separated hop: a ride resumed after a
+one-minute walk at a station earns a fresh ride entry; its population is the
+three cross-platform changes in the corpus, and that is the next arm, before
+the far-side start is tried a third time. The place picker, read the same
+afternoon, has the same disease in another coat: a 40 m width where the 55
+named stays put it at 11, a 12 m veto, a −1.5 floor on the 40 m scale and
+unfitted clamps, each tuned to the others; one number alone makes it worse,
+and the whole form needs more stays than the corpus holds.
+
 06-18's return board is of the same family: he walks into Euston Square,
 boards and departs inside the one minute 11:55, so no train minute exists at
 the station and the ride's first train minute sits at Great Portland Street
