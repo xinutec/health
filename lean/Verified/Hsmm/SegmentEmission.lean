@@ -568,18 +568,30 @@ structure ModeTable where
   logTwoPiV : Array Float
   invTwoV : Array Float
 
+/-- A mode's slot in the per-mode arrays below. -/
+def modeSlot : Mode → Nat
+  | .stationary => 0 | .walking => 1 | .cycling => 2 | .driving => 3
+  | .train => 4 | .plane => 5 | .unknown => 6
+def MODE_SLOTS : Nat := 7
+
 structure Prepared where
   p : Params
   /-- Per heart-rate count: the within-segment term's constant part. -/
   withinConst : Array Float
   tables : List ModeTable
+  /-- `tables` by `modeSlot`: the first table of each mode, read per cell
+      without walking the list. -/
+  tableOf : Array (Option ModeTable) := Array.replicate MODE_SLOTS none
+  /-- Whether `p.obsChain` has a chain for the mode, by `modeSlot`. -/
+  chainOf : Array Bool := Array.replicate MODE_SLOTS false
 
 def prepare (p : Params) (N : Nat) : Prepared :=
   let w := (ONE - p.rho) / (ONE + p.rho)
   let s2 := p.sigmaW * p.sigmaW
   let nEffAt := fun (k : Nat) => max ONE (Verified.FloatConst.natToFloat k * w)
   let ks := Array.range (N + 1)
-  { p
+  let base : Prepared := {
+    p := p
     withinConst := ks.map fun k => -HALF * (nEffAt k - ONE) * Float.log (TWO_PI * s2)
     tables := p.byMode.map fun (mode, m) =>
       let vAt := fun (k : Nat) => m.hrTau * m.hrTau + s2 / nEffAt k
@@ -590,6 +602,11 @@ def prepare (p : Params) (N : Nat) : Prepared :=
         lbAB := logBeta m.fixA m.fixB
         logTwoPiV := ks.map fun k => Float.log (TWO_PI * vAt k)
         invTwoV := ks.map fun k => ONE / (TWO * vAt k) } }
+  { base with
+    tableOf := base.tables.foldl (fun acc t =>
+      let i := modeSlot t.mode
+      if (acc[i]!).isSome then acc else acc.set! i (some t)) (Array.replicate MODE_SLOTS none)
+    chainOf := p.obsChain.foldl (fun acc (m, _) => acc.set! (modeSlot m) true) (Array.replicate MODE_SLOTS false) }
 
 private def idx (x : Float) : Nat := (x + HALF).toUInt64.toNat
 
@@ -597,12 +614,12 @@ private def idx (x : Float) : Nat := (x + HALF).toUInt64.toNat
     the heart-rate level. A journey's legs keep the first (a ride is dark, a
     walk lit — the leg's own fact) and the journey draws the second once. -/
 def scorePreparedParts (q : Prepared) (mode : Mode) (st : Stats) : Float × Float :=
-  match q.tables.find? (·.mode == mode) with
+  match q.tableOf[modeSlot mode]! with
   | none => (ZERO, ZERO)
   | some t =>
     let n := idx st.n
     let k := idx st.fixN
-    let fix := if q.p.obsChain.any (·.1 == mode) then ZERO
+    let fix := if q.chainOf[modeSlot mode]! then ZERO
       else t.lgA.getD k ZERO + t.lgB.getD (n - k) ZERO - t.lgAB.getD n ZERO - t.lbAB
     let level := fun (hrN hrSum hrSq : Float) =>
       let hn := idx hrN
