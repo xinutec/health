@@ -1858,6 +1858,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       { T, maxJ, journey := jI, legs := legOuter, legName, baseOf, nBase := legs.size
         stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst
         legStation := legList.map fun (_, _, st?) => st?.bind (·.stationName)
+        legNode := legList.map fun (_, _, st?) => st?.map fun n => (n.lat, n.lon)
         legSlot := legOuter.map (fun l => (slotOfCls durClass[l]!).getD 0)
         nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
         first := legOuter.map (prior true jp.firstLeg)
@@ -2305,6 +2306,26 @@ private def journeyDebugJson (c : Verified.Hsmm.Assemble.ModelContext)
         -- A forced leg is scored whether or not the trellis could start it
         -- here: `false` names a path the decoder was never offered.
         ("reach", Json.bool (tb.reachMask.getD (x.leg * tb.T + x.start) true)),
+        -- The start rule's facts at the minute before, the start and the minute
+        -- after, against the leg's station node: whether the minute has a fix,
+        -- and the metres from its median, first, last and carried fix.
+        ("start", match tb.legNode.getD x.leg none with
+          | none => Json.null
+          | some (nlat, nlon) => Json.arr ((List.range 3).toArray.filterMap fun k =>
+              if x.start + k == 0 then none else
+              let t := x.start + k - 1
+              match c.obs[t]? with
+              | none => none
+              | some o =>
+                let dOf := fun (f : Option (Float × Float)) => match f with
+                  | some (la, lo) => fl (Verified.Hsmm.FloatScore.haversineMeters la lo nlat nlon)
+                  | none => Json.null
+                some (Json.mkObj [("ts", Lean.toJson o.ts), ("seen", Json.bool o.gps.isSome),
+                  ("median", dOf (o.gps.map fun g => (g.lat, g.lon))),
+                  ("first", dOf (o.firstFix.map fun f => (f.lat, f.lon))),
+                  ("last", dOf (o.lastFix.map fun f => (f.lat, f.lon))),
+                  ("carried", dOf (o.prevGpsFix.map fun f => (f.lat, f.lon))),
+                  ("carriedAgeS", match o.prevGpsFix with | some f => Lean.toJson (o.ts - f.ts) | none => Json.null)]))),
         ("alight", match tb.alightName[x.leg * tb.T + (x.start + x.d - 1)]? with
           | some (some a) => Json.str a
           | _ => Json.null),

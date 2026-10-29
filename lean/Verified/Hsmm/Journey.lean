@@ -39,6 +39,8 @@ structure Tables where
   /-- The station a leg boards at (a wait's, a `train L@σ`'s), `none` for a
       leg without one; a decoded wait leaves the assembler named after it. -/
   legStation : Array (Option String) := #[]
+  /-- Per leg, its station node's position, for the debugger's start-rule facts. -/
+  legNode : Array (Option (Float × Float)) := #[]
   /-- Per leg, its position among the base legs (itself for a base leg). -/
   baseOf : Array Nat
   nBase : Nat
