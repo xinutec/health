@@ -693,6 +693,22 @@ confirmed row lost, the scoreboard moved. The term is doing a wait's work
 too: a station within reach of a carried fix is not a platform he stood on.
 Both reverted; the ledger and fixtures restored.
 
+Reading the twelve unheld platform rows together (the journey debugger,
+decoded and forced, with `reach`): four are the minute's grain — 07-01
+10:30Z, 07-06 09:02Z, 07-30 08:38Z and 18:52Z — the ride's first legal
+start is the minute before his row's end, whose median is still at the
+station, while the end minute's is away. Three were my own rows, wrong: the
+10-27 census read a departure at the first fast fix, which on an underground
+platform is the reacquire past Finchley Road, so 06-15's Euston Square wait
+ran to 17:29 local and left an 8-minute ride for a 17-minute pair, 07-06's
+King's Cross wait a 10-minute ride for 20, 09-15's a 15-minute ride for 20.
+His original rows are back, the wait inside the ride; all three rides
+verify at once (06-15 16:22Z, 07-06 17:14Z, 09-15 15:46Z), the floor's
+three keys move with them, rows 445 → 443 on the counted days, station
+names 25/27. The platform-wait census is right where the departure is seen
+on the surface and wrong where it is not; a derived wait on a dark platform
+has no readable end.
+
 06-18's return board is of the same family: he walks into Euston Square,
 boards and departs inside the one minute 11:55, so no train minute exists at
 the station and the ride's first train minute sits at Great Portland Street

@@ -190,8 +190,8 @@ const POST_TS: &[&str] = &[
 /// enforceable +2, legs +2 (two trains), journeys unchanged. (09-14's is the
 /// mirror and outside this set.)
 const TS_FILES: usize = 31;
-const TS_ROWS: usize = 445;
-const TS_ENFORCEABLE: usize = 420;
+const TS_ROWS: usize = 443;
+const TS_ENFORCEABLE: usize = 418;
 const TS_UNPARSEABLE: usize = 4;
 /// Narratives whose `Times:` is not London: 04-29 (Amsterdam), 06-24 (UTC), and
 /// 10-02 to 10-07 (Madrid).
