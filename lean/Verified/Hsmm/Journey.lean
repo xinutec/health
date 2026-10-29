@@ -178,6 +178,21 @@ def pairLogPdf (d expected : Float) : Float :=
   let board := if tb.boardAt.size == 0 then 0 else tb.boardAt.get! (l * T + start)
   prev + emit + tb.entry.get! (b * T + start) + board + legCell tb l d e
 
+/-- The free leg `l`'s best length ending at `s0 + i`, over the tabled own
+    scores (`withOwn`): the length loop of `sweepWith` as a tail recursion
+    whose state (`best`, `bd`) travels in registers instead of a boxed pair
+    allocated per iteration. The same reads, comparisons and order as the
+    loop it replaces. `firstPrev` is the first-leg prior at `s0`; `mBase`
+    is `l * w`; `ownBase` is `(slot * T + e) * maxJ`. -/
+@[specialize] partial def bestOwn (m own : FloatArray) (firstPrev : Float) (mBase ownBase i dMax : Nat)
+    (d : Nat) (best : Float) (bd : Nat) : Float × Nat :=
+  if d > dMax then (best, bd) else
+  let prev := if d == i + 1 then firstPrev else m.get! (mBase + (i - d))
+  if prev == negInf then bestOwn m own firstPrev mBase ownBase i dMax (d + 1) best bd else
+  let cand := prev + own.get! (ownBase + (d - 1))
+  if cand > best then bestOwn m own firstPrev mBase ownBase i dMax (d + 1) cand d
+  else bestOwn m own firstPrev mBase ownBase i dMax (d + 1) best bd
+
 /-- What the hoisted transition needs from `pairOk`, once per table: a leg is
     `restricted` when some leg may not follow it (a wait, which continues only
     into a ride boarding at its station), and `into[l]` lists the restricted
@@ -249,14 +264,10 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
         match tb.ownSlot[l]?.bind id with
         | some slot =>
           -- The path before the leg, plus its own score, tabled once (`withOwn`).
-          for d in [1:min tb.maxJ (i + 1) + 1] do
-            let prev := if d == i + 1 then tb.first[l]! + tb.firstCtx.get! (l * T + s0)
-              else m.get! (l * w + (i - d))
-            if prev == negInf then continue
-            let cand := prev + tb.own.get! ((slot * T + e) * tb.maxJ + (d - 1))
-            if cand > best then
-              best := cand
-              bd := d
+          let (b, d) := bestOwn m tb.own (tb.first[l]! + tb.firstCtx.get! (l * T + s0))
+            (l * w) ((slot * T + e) * tb.maxJ) i (min tb.maxJ (i + 1)) 1 best bd
+          best := b
+          bd := d
         | none =>
           for d in [1:min tb.maxJ (i + 1) + 1] do
             let cand := candidate tb m s0 i l d
