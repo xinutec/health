@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 98] = [
+    let migrations: [&str; 100] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -786,6 +786,12 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // decode is stale once they reach further. NULL on the rows written
         // before it, which read as stale and are decoded again once.
         r#"ALTER TABLE decoded_days ADD COLUMN IF NOT EXISTS inputs_through BIGINT NULL"#,
+        // The Fitbit Web API is closed and its client is gone; nothing reads
+        // the per-user token table or the device roster it kept (the watch's
+        // battery is `device_battery_log`, written from Google). Dropped on
+        // his word, a dump taken first.
+        r#"DROP TABLE IF EXISTS tokens"#,
+        r#"DROP TABLE IF EXISTS devices"#,
     ];
 
     sqlx::query(
