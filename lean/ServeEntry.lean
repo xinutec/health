@@ -2315,6 +2315,9 @@ private def journeyDebugJson (c : Verified.Hsmm.Assemble.ModelContext)
         ("endTs", Lean.toJson (tsOf (x.start + x.d - 1) + 60)),
         ("d", Lean.toJson x.d), ("prev", fl x.prev), ("emit", fl x.emit), ("entry", fl x.entry),
         ("board", fl x.board), ("cell", fl x.cell), ("expectedMin", fl x.expectedMin),
+        -- The cell's parts: the duration term (pair density or generic prior),
+        -- the segment terms, the calling evidence.
+        ("cellParts", Json.mkObj [("dur", fl x.cellDur), ("seg", fl x.cellSeg), ("stop", fl x.cellStop)]),
         -- A forced leg is scored whether or not the trellis could start it
         -- here: `false` names a path the decoder was never offered.
         ("reach", Json.bool (tb.reachMask.getD (x.leg * tb.T + x.start) true)),

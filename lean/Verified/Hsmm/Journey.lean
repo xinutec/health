@@ -418,7 +418,22 @@ structure LegScore where
   board : Float
   cell : Float
   expectedMin : Float
+  /-- The cell's parts: the duration term (the pair's density where the leg
+      has a pair, else the slot's generic prior), the segment terms, and the
+      calling evidence (`stopTerm`). -/
+  cellDur : Float
+  cellSeg : Float
+  cellStop : Float
   deriving Repr
+
+/-- `legCell`'s parts, in its order: duration, segment terms, calling evidence. -/
+def legCellParts (tb : Tables) (l d e : Nat) : Float × Float × Float :=
+  let slot := tb.legSlot[l]!
+  let base := tb.legDur.get! ((slot * tb.maxJ + (d - 1)) * tb.T + e)
+  let generic := tb.durBaseF.get! (slot * tb.maxJ + (d - 1))
+  let exp := tb.expectedMin.get! (l * tb.T + e)
+  let dur := if exp == negInf then generic else pairLogPdf (Verified.FloatConst.natToFloat d) exp
+  (dur, base - generic, stopTerm tb l d e)
 
 /-- The legs of a path from `s0`, each with its terms, and the total with the
     last-leg prior: the debugger's view of a journey, decoded or forced. -/
@@ -438,8 +453,10 @@ def scoreLegs (tb : Tables) (s0 : Nat) (legs : Array (Nat × Nat)) : Array LegSc
     let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
     let entry := tb.entry.get! (b * T + start)
     let cell := legCell tb l d e
+    let (cellDur, cellSeg, cellStop) := legCellParts tb l d e
     let board := if tb.boardAt.size == 0 then HALF - HALF else tb.boardAt.get! (l * T + start)
-    out := out.push { leg := l, start, d, prev, emit, entry, board, cell, expectedMin := tb.expectedMin.get! (l * T + e) }
+    out := out.push { leg := l, start, d, prev, emit, entry, board, cell, expectedMin := tb.expectedMin.get! (l * T + e),
+                      cellDur, cellSeg, cellStop }
     total := total + prev + emit + entry + board + cell
     start := e + 1
     prevLeg := some l
