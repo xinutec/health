@@ -973,6 +973,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let v ← ((f.getObjVal? "speedEps") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m))).toOption
       pure (m, ← num v)
     let centreSigmaM := (f.getObjVal? "centreSigmaM").toOption >>= num
+    let placeSigmaM := (f.getObjVal? "placeSigmaM").toOption >>= num
+    let placeEps := (f.getObjVal? "placeEps").toOption >>= num
     let pairBoundaryMeanKmh := (f.getObjVal? "pairBoundaryMeanKmh").toOption >>= num
     let pairBoundaryEps := (f.getObjVal? "pairBoundaryEps").toOption >>= num
     let unlistedCentre := (f.getObjVal? "unlistedCentre").toOption >>= num
@@ -1016,7 +1018,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let tl ← (f.getObjVal? "trainLine").toOption.filter (!·.isNull)
       let g := fun (k : String) => (tl.getObjVal? k).toOption >>= num
       pure { vouchedShare := ← g "vouchedShare", covered := ← g "covered", uncovered := ← g "uncovered" }
-    pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
+    pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM, placeSigmaM, placeEps,
            obsChain, asleep, unlistedCentre, stayMove, journey, trainLine }
   let some segEm := segEm?
     | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"

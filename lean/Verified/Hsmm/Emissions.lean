@@ -157,6 +157,28 @@ def hrTerm (s : State) (o : Observation) (prior : ModePrior) : Float :=
     let hrStd := if knownPlace then (if o.inBed then ASLEEP_HR_STD else HYPER_PLACE_HR_STD) else prior.hrStd
     logNormalPdf hr hrMean hrStd
 
+/-- The place-distance term with a fitted width and outlier share: a stay's
+    minute sits about its listed place as a Gaussian of `sigmaM` (the narrated
+    stays' own minutes), and with share `eps` anywhere — the share takes the
+    hand floor's place, so a minute hundreds of metres out costs the stay
+    `log eps` rather than `PLACE_DISTANCE_FLOOR`. Relative to the place, as
+    `placeTerm` is (0 at the centre). -/
+def placeTermWith (s : State) (o : Observation) (placeCoord : Option (Float × Float))
+    (sigmaM eps : Float) : Float :=
+  if s.mode == .stationary then
+    match o.gps with
+    | none => 0.0
+    | some g =>
+      match s.placeId with
+      | none => OFF_NETWORK_LOG_PRIOR
+      | some _ =>
+        match placeCoord with
+        | none => 0.0
+        | some (plat, plon) =>
+          let z := haversineMeters g.lat g.lon plat plon / sigmaM
+          Float.log ((1.0 - eps) * Float.exp (0.0 - 0.5 * z * z) + eps)
+  else 0.0
+
 /-- Place-distance term. `placeCoord` is the resolved centroid for `s.placeId`
     (`none` if the state has no place, or its id was not in the place map). -/
 def placeTerm (s : State) (o : Observation) (placeCoord : Option (Float × Float)) : Float :=

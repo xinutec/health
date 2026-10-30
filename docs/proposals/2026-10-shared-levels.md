@@ -866,8 +866,15 @@ fixes do not see), 06-18's board station, and the classes below.
    numbers) charges the stay nothing for it — narrated stay minutes sit at
    median 3 m from the place (stepped ones 8 m, q99 92), a bordering walk's
    second minute at 53–90 m and its fourth at 203–252 m, which cost the stay
-   −0.2 and −1.2. The first arm of 10-31 is that term fitted: σ and an
-   outlier share from the narrated stays' own minutes, the floor gone.
+   −0.2 and −1.2. Fitted the same evening on 2,510 narrated stay minutes
+   (`lean/experiments/place-term-fit.py`): σ 5.8 m and a share of 4.7 %
+   anywhere, whose log is −3.06 — the hand floor's −3. So no per-minute
+   position term can charge a far minute more than three nats, because one
+   stay minute in twenty is far; the walk's ends are a sequence fact, the
+   stay's boundary minutes diverging from the place, and the first arm of
+   10-31 is a census of narrated stays' first and last minutes and, if the
+   edge is not inside that 4.7 %, an edge term on the segment's ends. The
+   fitted per-minute form stays in the tree as a switch, off.
 2. **The journey state**: built, at parity (above), behind its key. **S2
    inside it**: the first slice is built (board-station legs, the ride time
    of the pair) and decodes the three Baker Street hops; its end anchors are

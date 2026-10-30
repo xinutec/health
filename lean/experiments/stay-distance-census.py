@@ -96,6 +96,9 @@ for day in days:
                     if o and o.get("lat") is not None: add(f"walk start {k}", hav(o["lat"], o["lon"], *c))
     print(day, "done", file=sys.stderr)
 
+# The raw distances beside the table, for a fit (`STAY_DISTANCE_DUMP=<file>`).
+if os.environ.get("STAY_DISTANCE_DUMP"):
+    json.dump(groups, open(os.environ["STAY_DISTANCE_DUMP"], "w"))
 def q(xs, p):
     xs = sorted(xs); return xs[min(len(xs) - 1, int(p * len(xs)))]
 print("group                 n     q25    q50    q75    q90    q99")

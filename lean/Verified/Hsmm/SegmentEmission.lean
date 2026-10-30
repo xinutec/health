@@ -135,6 +135,11 @@ structure Params where
   /-- The spread of a stay's fixes about its centre, metres, fitted on the
       narrated stays; `none` keeps `PLACE_RADIUS_M`. -/
   centreSigmaM : Option Float := none
+  /-- A stay's minute about its LISTED place (`Emissions.placeTermWith`): the
+      width, metres, and the share of minutes anywhere, both fitted on the
+      narrated stays' minutes; `none` keeps `placeTerm`'s hand width and floor. -/
+  placeSigmaM : Option Float := none
+  placeEps : Option Float := none
   /-- The pair across a boundary as an exponential of
       this mean (km/h, fitted on the narrated boundaries) instead of uniform. -/
   pairBoundaryMeanKmh : Option Float := none

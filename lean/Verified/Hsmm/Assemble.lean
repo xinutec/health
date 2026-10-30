@@ -338,7 +338,9 @@ def segBaseAt (q : SegmentEmission.Prepared) (c : ModelContext) (st : State) (o 
   let bed := if o.inBed then Float.log (Emissions.inBedProbByMode st.mode) else SEG_ZERO
   let placeCoord := match st.placeId with | some pid => c.placeCoords.get? pid | none => none
   let place := if q.p.unlistedCentre.isSome && st.mode == .stationary && st.placeId.isNone then SEG_ZERO
-    else Emissions.placeTerm st thin placeCoord
+    else match q.p.placeSigmaM, q.p.placeEps with
+      | some sg, some eps => Emissions.placeTermWith st thin placeCoord sg eps
+      | _, _ => Emissions.placeTerm st thin placeCoord
   presence + speed + hr + cad + bed + place
 
 /-- What `SegmentEmission` adds per minute: the fix chain's class given the
