@@ -1,8 +1,8 @@
 # Google Health API — the biometric source
 
-The Fitbit Web API is decommissioned in September 2026. Every biometric stream
-that Google Health carries is read from it; the roster that says which API owns
-which stream, with the measurement behind each flip, is
+The Fitbit Web API closed on 2026-10-30 and its client is gone. Every biometric
+stream is read from Google Health; the roster that says which stream came from
+where, with the measurement behind each flip, is
 `rust/backend/src/google/source.rs` (`STREAMS`). ⚠ A stream has exactly one
 owner: the tables are `ON DUPLICATE KEY UPDATE`, so two writers would flip a
 value with whichever job ran last.

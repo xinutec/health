@@ -35,12 +35,7 @@ fn every_subcommand_says_what_it_does() {
 #[test]
 fn every_production_argv_parses_as_it_did() {
     assert!(matches!(parse(&["serve"]), Ok(Command::Serve)));
-    assert!(matches!(
-        parse(&["sync"]),
-        Ok(Command::Sync {
-            forward_only: false
-        })
-    ));
+    assert!(matches!(parse(&["sync"]), Ok(Command::Sync)));
     assert!(matches!(parse(&["freshness"]), Ok(Command::Freshness)));
     assert!(matches!(
         parse(&["refresh-bus-routes"]),

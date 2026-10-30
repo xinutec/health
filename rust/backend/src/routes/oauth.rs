@@ -1,6 +1,4 @@
-//! Signing in: Nextcloud for identity, Fitbit for data (#982).
-//!
-//! # Two providers, two different jobs
+//! Signing in: Nextcloud for identity.
 //!
 //! ⚠ Nextcloud OAuth here is IDENTITY-ONLY. The access token it returns is used
 //! exactly once, to ask "who is this", and then discarded — API access runs on a
@@ -24,33 +22,21 @@
 //! So the pending login travels in a signed cookie of ours, which binds it to
 //! the browser that started the login — the property `state` was there to prove.
 //! `state` is still sent, and still checked whenever NC returns it.
-//!
-//! Fitbit is different and keeps `state` as the carrier: it returns `state`
-//! faithfully, and its pending entry holds a PKCE verifier that has no business
-//! in a cookie.
 
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::{Extension, Json};
-use axum_extra::extract::cookie::CookieJar;
-use base64::Engine;
-use serde::Deserialize;
-use serde_json::json;
-use sha2::{Digest, Sha256};
 
-use crate::auth::session::{self, UserSession};
+use axum_extra::extract::cookie::CookieJar;
+
+use serde::Deserialize;
+
+use crate::auth::session;
 use crate::lean;
 use crate::state::AppState;
 
 /// The cookie carrying a half-finished Nextcloud login.
 const PENDING_COOKIE: &str = "oauth_pending";
-
-/// Every scope the dashboard reads. Requested once, at link time — Fitbit has no
-/// incremental consent, so a scope missing here means a silent 403 later.
-const FITBIT_SCOPES: &str = "activity heartrate sleep weight nutrition profile \
-oxygen_saturation respiratory_rate temperature cardio_fitness electrocardiogram \
-location settings";
 
 #[derive(Deserialize)]
 pub struct LoginParams {
@@ -274,8 +260,7 @@ pub async fn callback(
 }
 
 /// Proof that a callback's `state` equalled the nonce this server stored for
-/// the sign-in. [`finish_nextcloud_login`] and [`finish_fitbit_link`] take one by
-/// value and only
+/// the sign-in. [`finish_nextcloud_login`] takes one by value and only
 /// [`StateMatched::check`] makes one, so no code is redeemed on a path that
 /// skipped the comparison (RFC 6749 §10.12; dev-lint
 /// DL-RUST-OAUTH-EXCHANGE-UNPROVEN checks the shape).
@@ -384,175 +369,4 @@ pub async fn logout(State(st): State<AppState>, jar: CookieJar) -> Response {
         headers.insert(header::SET_COOKIE, v);
     }
     (headers, Redirect::to("/")).into_response()
-}
-
-/// `GET /fitbit/auth` — start the Fitbit link. Requires a session already.
-pub async fn fitbit_auth(
-    State(st): State<AppState>,
-    Extension(session): Extension<UserSession>,
-) -> Response {
-    let verifier = match session::mint_id() {
-        Ok(v) => v,
-        Err(e) => return oops(&e, "minting a PKCE verifier"),
-    };
-    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(Sha256::digest(verifier.as_bytes()));
-    // ⚠ The verifier is held server-side against the state token. It must never
-    // reach the browser: the whole point of PKCE is that whoever redeems the
-    // code proves they started the flow.
-    let state_token = match session::mint_id() {
-        Ok(s) => s,
-        Err(e) => return oops(&e, "minting a Fitbit state"),
-    };
-    st.oauth_states.put(
-        &state_token,
-        chrono::Utc::now().timestamp_millis(),
-        (session.user_id.clone(), verifier),
-    );
-
-    // ⚠ The OAuth routes genuinely need these; `Config::from_env` requires
-    // them, so absence here means the process was started with a BATCH config.
-    let Some(fb) = st.cfg.fitbit.as_ref() else {
-        return oops(
-            &anyhow::anyhow!("the Fitbit credentials are absent"),
-            "starting the Fitbit OAuth flow with a batch config",
-        );
-    };
-    let url = match reqwest::Url::parse_with_params(
-        "https://www.fitbit.com/oauth2/authorize",
-        &[
-            ("client_id", fb.client_id.clone()),
-            ("response_type", "code".to_string()),
-            ("scope", FITBIT_SCOPES.to_string()),
-            ("code_challenge", challenge),
-            ("code_challenge_method", "S256".to_string()),
-            (
-                "redirect_uri",
-                env_or(
-                    "FITBIT_REDIRECT_URI",
-                    "https://health.xinutec.org/fitbit/callback",
-                ),
-            ),
-            ("state", state_token.clone()),
-        ],
-    ) {
-        Ok(u) => u.to_string(),
-        Err(e) => return oops(&anyhow::Error::from(e), "building the Fitbit authorize URL"),
-    };
-    Redirect::to(&url).into_response()
-}
-
-/// `GET /fitbit/callback` — redeem the code and store the tokens.
-pub async fn fitbit_callback(
-    State(st): State<AppState>,
-    Extension(session): Extension<UserSession>,
-    Query(p): Query<CallbackParams>,
-) -> Response {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let Some(state_token) = p.state.as_deref().filter(|s| !s.is_empty()) else {
-        return sign_in_problem(
-            StatusCode::FORBIDDEN,
-            "Invalid or expired OAuth state. Please try again from /fitbit/auth.",
-        );
-    };
-    let Some((state_user, verifier)) = st.oauth_states.take(state_token, now_ms) else {
-        return sign_in_problem(
-            StatusCode::FORBIDDEN,
-            "Invalid or expired OAuth state. Please try again from /fitbit/auth.",
-        );
-    };
-    // ⚠ The state's user must be THIS session's user. Without this check a
-    // stolen callback URL would link the attacker's Fitbit to whoever opened it.
-    // That comparison is the binding, so it is the proof the exchange demands.
-    let Some(proof) = StateMatched::check(&state_user, &session.user_id) else {
-        return sign_in_problem(
-            StatusCode::FORBIDDEN,
-            "Session user does not match OAuth state. Please try again.",
-        );
-    };
-    let Some(code) = p.code.as_deref().filter(|c| !c.is_empty()) else {
-        return sign_in_problem(StatusCode::BAD_REQUEST, "Missing authorization code.");
-    };
-    match finish_fitbit_link(&st, &state_user, &verifier, code, proof).await {
-        Ok(scopes) => Json(json!({
-            "success": true,
-            "linkedTo": state_user,
-            "scopes": scopes,
-            "message": "Fitbit authorization successful. You can close this page.",
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::error!(error = %format!("{e:#}"), "Fitbit token exchange failed");
-            sign_in_problem(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Fitbit authorization failed. Please try again.",
-            )
-        }
-    }
-}
-
-async fn finish_fitbit_link(
-    st: &AppState,
-    user_id: &str,
-    verifier: &str,
-    code: &str,
-    _proof: StateMatched,
-) -> anyhow::Result<String> {
-    #[derive(Deserialize)]
-    struct Tokens {
-        access_token: String,
-        refresh_token: String,
-        expires_in: i64,
-        scope: String,
-    }
-
-    // ⚠ The OAuth routes genuinely need these; `Config::from_env` requires
-    // them, so absence here means the process was started with a BATCH config.
-    let Some(fb) = st.cfg.fitbit.as_ref() else {
-        anyhow::bail!(
-            "the Fitbit credentials are absent — this process was started with a batch config"
-        );
-    };
-    let basic = base64::engine::general_purpose::STANDARD
-        .encode(format!("{}:{}", fb.client_id, fb.client_secret));
-    let redirect = env_or(
-        "FITBIT_REDIRECT_URI",
-        "https://health.xinutec.org/fitbit/callback",
-    );
-    let res = st
-        .http
-        .post("https://api.fitbit.com/oauth2/token")
-        .header(header::AUTHORIZATION, format!("Basic {basic}"))
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("client_id", fb.client_id.as_str()),
-            ("code_verifier", verifier),
-            ("redirect_uri", &redirect),
-        ])
-        .send()
-        .await?;
-    if !res.status().is_success() {
-        let status = res.status();
-        let body = res.text().await.unwrap_or_default();
-        anyhow::bail!("Fitbit token exchange: {status} {body}");
-    }
-    let t: Tokens = res.json().await?;
-
-    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(t.expires_in);
-    sqlx::query(
-        "INSERT INTO tokens (user_id, access_token, refresh_token, expires_at, scopes, status) \
-         VALUES (?, ?, ?, ?, ?, 'active') \
-         ON DUPLICATE KEY UPDATE access_token = VALUES(access_token), \
-         refresh_token = VALUES(refresh_token), expires_at = VALUES(expires_at), \
-         scopes = VALUES(scopes), status = 'active'",
-    )
-    .bind(user_id)
-    .bind(&t.access_token)
-    .bind(&t.refresh_token)
-    .bind(expires_at.format("%Y-%m-%d %H:%M:%S").to_string())
-    .bind(&t.scope)
-    .execute(&st.pool)
-    .await?;
-    Ok(t.scope)
 }

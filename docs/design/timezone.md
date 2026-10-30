@@ -9,6 +9,10 @@ record of why each decision was taken; **"Where these things live now" at the
 foot maps every one of those names to the Rust or Lean symbol that does the work
 today.** Read that section before following any path above it (#919).
 
+**2026-10-30:** the Fitbit Web API closed and its wall-clock inference left the
+code; the model below is kept as the record of the columns it stamped
+(`ts_utc`, `tz`, `tz_source`), which stand as written.
+
 The model itself did not change with the port, and it is the one thing here to
 carry away: **PhoneTrack stores true UTC; Fitbit returns wall-clock strings in
 whatever zone the watch was in at recording time.**
@@ -106,7 +110,8 @@ split is therefore plumbed via an explicit `tzSource` parameter on
 each:
 
 ```ts
-// the shape as first sketched; today rust/backend/src/fitbit/tz_source.rs
+// the shape as first sketched; its Rust port went with the Fitbit Web API on
+// 2026-10-30 — only the polygon lookup survives (rust/backend/src/tz_lookup.rs)
 export interface TzSource {
     /** Given a Fitbit wall-clock row, return the inferred recording tz
      *  or null if no signal is available. */
@@ -400,8 +405,9 @@ filesystem-lazy-load is brittle under our build.
 
 ## Tests
 
-`rust/backend/tests/suite/{timezone,tz_source,backfill,backfill_walk}.rs`.
-The test plan this section carried was written for the TypeScript and is in
+`rust/backend/tests/suite/{timezone,polygon_lookup}.rs`. The wall-clock
+inference's tests (`tz_source`, the backfill walks) went with it on 2026-10-30;
+the test plan this section carried was written for the TypeScript and is in
 git history.
 
 ## Risks and known limitations
@@ -466,10 +472,10 @@ a move, a line number does not (#919, #1205).
 | the document says | today |
 | --- | --- |
 | `src/geo/timezone.ts` — `dateBoundsUtc`, `fitbitTsToUnix` | `rust/backend/src/timezone.rs` — `date_bounds_utc`, `wall_clock_to_unix`, `wall_clock_to_utc_string`, `local_date_at`, `local_hour_of` |
-| `src/geo/fitbit-tz.ts` — the proposed `TzSource` | `rust/backend/src/fitbit/tz_source.rs` — `ForwardTzSource`, `nearest_fix`, `PolygonLookup`; the DECISION itself is `lean/Verified/FitbitTz.lean` (`decideTz`, `nearestFix`, `FIX_SEARCH_WINDOW_S`) |
-| `src/fitbit/sync/{steps,heartrate,sleep}.ts` | `rust/backend/src/fitbit/sync/{steps,heartrate,sleep}.rs` |
-| `src/sync.ts` — orchestration | `rust/backend/src/fitbit/{mod,run}.rs` |
-| `src/cli/backfill-fitbit-tz.ts` — the one-shot CLI | `rust/backend/src/fitbit/backfill_runner.rs` — `run_intraday_backfill`, `run_range_backfill` |
+| `src/geo/fitbit-tz.ts` — the proposed `TzSource` | GONE with the Fitbit Web API (2026-10-30): the wall-clock inference (`ForwardTzSource`, `nearest_fix`, `Verified.FitbitTz`) had nothing left to stamp; `PolygonLookup` lives on in `rust/backend/src/tz_lookup.rs` (`decideTz`, `nearestFix`, `FIX_SEARCH_WINDOW_S`) |
+| `src/fitbit/sync/{steps,heartrate,sleep}.ts` | GONE with the Fitbit Web API (2026-10-30); the Google writers are `rust/backend/src/google/` |
+| `src/sync.ts` — orchestration | GONE with the Fitbit Web API (2026-10-30); the Google writers are `rust/backend/src/google/` |
+| `src/cli/backfill-fitbit-tz.ts` — the one-shot CLI | GONE with the Fitbit Web API (2026-10-30); the Google writers are `rust/backend/src/google/` |
 | `src/db/{schema,tables}.ts` | `rust/backend/src/schema.rs` |
 | `src/routes/api.ts` | `rust/backend/src/routes/tables.rs` |
 | `src/geo/focus-places.ts` — `assignDisplayNames` | `lean/Verified/Geo/FocusPlaces.lean` — `assignDisplayNames` |

@@ -8,12 +8,6 @@
 		<mat-spinner diameter="48"></mat-spinner>
 		<p>Loading your health data...</p>
 	</div>
-} @else if (!fitbitLinked()) {
-	<div class="prompt">
-		<h2>Link your Fitbit account</h2>
-		<p>Connect your Fitbit to start tracking your health data.</p>
-		<a mat-flat-button href="/fitbit/auth">Link Fitbit</a>
-	</div>
 } @else {
 	<app-pull-to-refresh
 		[busy]="dataLoading()"

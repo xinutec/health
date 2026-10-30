@@ -143,29 +143,17 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
     };
     failures += emit("sleep/stages", row_json::rows_to_json(&stages))?;
 
-    // The two whole-table reads bind only the user.
-    let whole: [(&str, &str); 2] = [
-        ("devices", "SELECT * FROM devices WHERE user_id = ?"),
-        ("sync-state", "SELECT * FROM sync_state WHERE user_id = ?"),
-    ];
-    let whole_serving: [&str; 2] = [
-        crate::routes::tables::SQL_DEVICES,
-        crate::routes::tables::SQL_SYNC_STATE,
-    ];
-    for (i, (name, sql)) in whole.iter().enumerate() {
-        anyhow::ensure!(
-            *sql == whole_serving[i],
-            "{name}: rows-check would query something the route does not serve"
-        );
-    }
-    for (name, sql) in whole {
-        let rows = sqlx::query(sql)
-            .bind(user)
-            .fetch_all(pool)
-            .await
-            .with_context(|| format!("{name}: query"))?;
-        failures += emit(name, row_json::rows_to_json(&rows))?;
-    }
+    // The one whole-table read binds only the user.
+    anyhow::ensure!(
+        "SELECT * FROM sync_state WHERE user_id = ?" == crate::routes::tables::SQL_SYNC_STATE,
+        "sync-state: rows-check would query something the route does not serve"
+    );
+    let rows = sqlx::query("SELECT * FROM sync_state WHERE user_id = ?")
+        .bind(user)
+        .fetch_all(pool)
+        .await
+        .context("sync-state: query")?;
+    failures += emit("sync-state", row_json::rows_to_json(&rows))?;
 
     let next = lean::next_day(date)?;
     let hr = sqlx::query(sql_heartrate_intraday!())
@@ -177,16 +165,13 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
         .context("heartrate/intraday: query")?;
     failures += emit("heartrate/intraday", row_json::rows_to_json(&hr))?;
 
-    // ⚠ `/me`'s two status reads, which are `fetch_optional` and therefore
-    // answer `not_linked` by ABSENCE. Included here so the parity diff covers
-    // the one endpoint whose answer is computed from a missing row.
-    let statuses: [(&str, &str); 2] = [
-        (
-            "me/nextcloud",
-            "SELECT status FROM nc_credentials WHERE user_id = ?",
-        ),
-        ("me/fitbit", "SELECT status FROM tokens WHERE user_id = ?"),
-    ];
+    // ⚠ `/me`'s status read, which is `fetch_optional` and therefore answers
+    // `not_linked` by ABSENCE. Included here so the parity diff covers the one
+    // endpoint whose answer is computed from a missing row.
+    let statuses: [(&str, &str); 1] = [(
+        "me/nextcloud",
+        "SELECT status FROM nc_credentials WHERE user_id = ?",
+    )];
     for (name, sql) in statuses {
         let row: Option<Option<String>> = sqlx::query_scalar(sql)
             .bind(user)

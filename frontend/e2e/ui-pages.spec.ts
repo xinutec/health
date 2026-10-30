@@ -49,9 +49,8 @@ const day = (offset: number): string => {
 const ME = {
 	userId: "u_test_1",
 	displayName: "Test User",
-	fitbitLinked: true,
 	nextcloudLinked: true,
-	connections: { nextcloud: { status: "active" }, fitbit: { status: "active" } },
+	connections: { nextcloud: { status: "active" } },
 	shareWindow: null,
 } satisfies UserInfo;
 

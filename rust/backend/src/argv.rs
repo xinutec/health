@@ -40,12 +40,8 @@ pub enum Command {
     Check,
     /// the HTTP server — health-auth runs this
     Serve,
-    /// Fitbit + Google ingestion for every linked user
-    Sync {
-        /// the forward pass alone; touches NO backfill state, safe beside the cron
-        #[arg(long)]
-        forward_only: bool,
-    },
+    /// the Google Health ingestion: weight, then every stream of the roster
+    Sync,
     /// has each stream actually arrived? exits non-zero naming the stale ones
     Freshness,
     /// rows and date span per biometric table

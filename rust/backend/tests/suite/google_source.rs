@@ -1,6 +1,6 @@
 //! The per-stream ownership roster (#260).
 
-use backend::google::source::{Owner, STREAMS, at_risk, fitbit_still_owns};
+use backend::google::source::{Owner, STREAMS};
 
 /// ⚠ EXACTLY ONE OWNER PER STREAM. The biometric tables are
 /// `ON DUPLICATE KEY UPDATE`, so two writers means the last job to run wins and
@@ -14,36 +14,6 @@ fn no_stream_is_listed_twice() {
     }
 }
 
-/// ⚠ A stream Google does NOT own must still be fetched from Fitbit — including
-/// the Health Connect ones, whose reader does not exist yet. "Not Fitbit's job
-/// any more" and "nobody's job yet" are different, and conflating them switches
-/// a stream off while the old API still works.
-#[test]
-fn health_connect_streams_are_still_fetched_from_fitbit() {
-    for s in STREAMS.iter().filter(|s| s.owner == Owner::HealthConnect) {
-        assert!(
-            fitbit_still_owns(s.name),
-            "{} would stop being fetched before its replacement exists",
-            s.name
-        );
-    }
-}
-
-/// Only a proven Google stream is dropped from the Fitbit run.
-#[test]
-fn google_owned_streams_are_dropped_from_fitbit() {
-    for s in STREAMS.iter().filter(|s| s.owner == Owner::Google) {
-        assert!(!fitbit_still_owns(s.name), "{} is fetched twice", s.name);
-    }
-}
-
-/// ⚠ An unlisted stream defaults to Fitbit, never to silence. A new table added
-/// without a roster entry must keep being fetched, not vanish.
-#[test]
-fn an_unknown_stream_defaults_to_fitbit() {
-    assert!(fitbit_still_owns("a_table_nobody_has_classified_yet"));
-}
-
 /// Every entry says WHY, because the verdict alone cannot be re-judged later:
 /// "Google returns nothing" and "we have not written the client" are the same
 /// owner today and different decisions tomorrow.
@@ -54,21 +24,9 @@ fn every_stream_records_its_evidence() {
     }
 }
 
-/// The at-risk list is what the September shutdown actually costs.
-#[test]
-fn at_risk_is_everything_google_does_not_own() {
-    let risky = at_risk();
-    // Every once-at-risk stream flipped on 2026-09-02; what September still
-    // costs is daily_activity's two Fitbit-only columns (minutes_sedentary,
-    // active_score), which no flip can save — the roster keeps that visible.
-    assert!(risky.iter().any(|s| s.name == "daily_activity"));
-    assert!(!risky.iter().any(|s| s.name == "body"));
-    assert!(!risky.iter().any(|s| s.name == "steps_intraday"));
-}
-
-/// ⚠ THE FLIP AND THE WRITER ARE INSEPARABLE. `Owner::Google` makes
-/// `fitbit::run` skip a stream; if nothing in `google::sync` writes it, the
-/// stream stops dead — silently, from what reads as a one-line config change.
+/// ⚠ THE ROSTER AND THE WRITER ARE INSEPARABLE. A stream in the roster that
+/// nothing in `google::sync` writes is served by nobody — silently, from what
+/// reads as a one-line table edit.
 #[test]
 fn every_google_owned_stream_has_a_writer() {
     use backend::google::source::has_writer;
@@ -116,27 +74,12 @@ fn skin_temperature_is_google_owned_and_written() {
 // below (`every_google_owner_has_a_writer` and its converse) assert the
 // invariant such a pin would be standing in for.
 
-/// ⚠ `daily_activity` STAYS ON FITBIT while a Google writer also exists — the
-/// one deliberate exception to the roster's model, because its columns need
-/// different owners. `minutes_sedentary` and `active_score` have no Google
-/// source at all, so flipping the owner would stop them while Fitbit still
-/// works. The two writers are separated by a DATE, not by the roster.
+/// ⚠ THE CUTOVER IS HISTORY NOW, AND PINNED. The Fitbit writer assigned every
+/// column up to it and Google from it; moving it would put the two writers'
+/// rows on the same days after the fact, where the stored values' provenance
+/// no longer matches the roster's record.
 #[test]
-fn daily_activity_stays_on_fitbit_despite_having_a_google_writer() {
-    let s = STREAMS
-        .iter()
-        .find(|s| s.name == "daily_activity")
-        .expect("daily_activity is in the roster");
-    assert_eq!(s.owner, Owner::Fitbit);
-    assert!(fitbit_still_owns("daily_activity"));
-}
-
-/// ⚠ AND THE CUTOVER MUST NOT PREDATE THE FITBIT SHUTDOWN. The whole safety of
-/// two writers on one table rests on their date ranges not overlapping; a
-/// cutover earlier than the shutdown puts both on the same days, where the last
-/// job to run wins and step counts flip with scheduling.
-#[test]
-fn the_cutover_is_not_before_the_fitbit_shutdown() {
+fn the_cutover_is_pinned() {
     assert!(backend::google::sync::DAILY_ACTIVITY_CUTOVER >= "2026-09-01");
 }
 
@@ -237,9 +180,11 @@ mod the_string_filter_is_sound_because_the_producer_pads {
 ///     NULL for ever without an error;
 ///   * a column in BOTH is assigned by both writers again, and the last job to
 ///     run wins — the overlap the cutover exists to prevent.
+///
+/// The Fitbit writer is gone with the Web API; its half of the
+/// contract is now `ENDED_COLUMNS`, the columns that end with it, by decision.
 mod the_two_writers_partition_daily_activity {
-    use backend::fitbit::sync::activity::FITBIT_ONLY_COLUMNS;
-    use backend::google::sync::GOOGLE_OWNED_COLUMNS;
+    use backend::google::sync::{ENDED_COLUMNS, GOOGLE_OWNED_COLUMNS};
 
     /// Every data column of `daily_activity` — the schema's, minus the
     /// `(user_id, date)` key. Written out so a column ADDED to the table and to
@@ -263,7 +208,7 @@ mod the_two_writers_partition_daily_activity {
     fn no_column_is_claimed_by_both() {
         let both: Vec<_> = GOOGLE_OWNED_COLUMNS
             .iter()
-            .filter(|c| FITBIT_ONLY_COLUMNS.contains(c))
+            .filter(|c| ENDED_COLUMNS.contains(c))
             .collect();
         assert!(
             both.is_empty(),
@@ -275,7 +220,7 @@ mod the_two_writers_partition_daily_activity {
     fn no_column_is_left_to_nobody() {
         let orphaned: Vec<_> = EVERY_DATA_COLUMN
             .iter()
-            .filter(|c| !GOOGLE_OWNED_COLUMNS.contains(c) && !FITBIT_ONLY_COLUMNS.contains(c))
+            .filter(|c| !GOOGLE_OWNED_COLUMNS.contains(c) && !ENDED_COLUMNS.contains(c))
             .collect();
         assert!(
             orphaned.is_empty(),
@@ -287,7 +232,7 @@ mod the_two_writers_partition_daily_activity {
     /// RENAME turns into a writer that quietly stops writing.
     #[test]
     fn neither_writer_claims_a_column_that_does_not_exist() {
-        for c in GOOGLE_OWNED_COLUMNS.iter().chain(FITBIT_ONLY_COLUMNS) {
+        for c in GOOGLE_OWNED_COLUMNS.iter().chain(ENDED_COLUMNS) {
             assert!(
                 EVERY_DATA_COLUMN.contains(c),
                 "{c} is claimed by a writer but is not a column of daily_activity"

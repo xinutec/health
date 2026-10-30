@@ -99,7 +99,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let Args { write } = backend::argv::parse_or_exit();
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url()).await.context("connecting")?;
 
     // ⚠ PROVE `CONVERT_TZ` WORKS BEFORE TRUSTING ANY COUNT. It returns NULL when

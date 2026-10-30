@@ -42,7 +42,6 @@ pub struct ConnectionState {
 #[derive(Serialize)]
 pub struct Connections {
     pub nextcloud: ConnectionState,
-    pub fitbit: ConnectionState,
 }
 
 /// The bounds a share recipient may navigate within. See the header.
@@ -69,7 +68,6 @@ pub struct ShareWindow {
 pub struct MeResponse {
     pub user_id: String,
     pub display_name: String,
-    pub fitbit_linked: bool,
     pub nextcloud_linked: bool,
     pub connections: Connections,
     pub share_window: Option<ShareWindow>,
@@ -89,16 +87,11 @@ pub async fn handler(
 }
 
 async fn run(st: &AppState, session: &UserSession) -> Result<Json<MeResponse>, AppError> {
-    // ⚠ `fetch_optional`, and NO row is the `not_linked` answer. Both reads are
-    // deliberately cheap — `/api/me` is on the SPA's critical path and neither
-    // status makes a round trip to the provider.
+    // ⚠ `fetch_optional`, and NO row is the `not_linked` answer. The read is
+    // deliberately cheap — `/api/me` is on the SPA's critical path and the
+    // status makes no round trip to the provider.
     let nc: Option<Option<String>> =
         sqlx::query_scalar("SELECT status FROM nc_credentials WHERE user_id = ?")
-            .bind(&session.user_id)
-            .fetch_optional(&st.pool)
-            .await?;
-    let fb: Option<Option<String>> =
-        sqlx::query_scalar("SELECT status FROM tokens WHERE user_id = ?")
             .bind(&session.user_id)
             .fetch_optional(&st.pool)
             .await?;
@@ -109,8 +102,6 @@ async fn run(st: &AppState, session: &UserSession) -> Result<Json<MeResponse>, A
     // apart until this line, which is the only place the distinction is made.
     let (nc_status, nc_linked) =
         lean::connection_status(nc.as_ref().map(|s| s.as_deref().unwrap_or("")))?;
-    let (fb_status, fb_linked) =
-        lean::connection_status(fb.as_ref().map(|s| s.as_deref().unwrap_or("")))?;
 
     let share_window = session.share_viewer.as_ref().map(|(from, to)| ShareWindow {
         from: from.clone(),
@@ -121,11 +112,9 @@ async fn run(st: &AppState, session: &UserSession) -> Result<Json<MeResponse>, A
     Ok(Json(MeResponse {
         user_id: session.user_id.clone(),
         display_name: session.display_name.clone(),
-        fitbit_linked: fb_linked,
         nextcloud_linked: nc_linked,
         connections: Connections {
             nextcloud: ConnectionState { status: nc_status },
-            fitbit: ConnectionState { status: fb_status },
         },
         share_window,
     }))

@@ -197,12 +197,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	 *  Drives the `windowData` resource, so changing it refetches. */
 	readonly trendDays = signal(DEFAULT_TREND_DAYS);
 
-	// Auth / linkage gates. `dataReady` flips true once we know the user
-	// is signed in with a linked Fitbit — only then do the resources load.
+	// The auth gate. `dataReady` flips true once we know the user is signed
+	// in — only then do the resources load.
 	readonly authReady = signal(false);
 	readonly authenticated = signal(false);
-	readonly fitbitLinked = signal(false);
-	private readonly dataReady = computed(() => this.authenticated() && this.fitbitLinked());
+	private readonly dataReady = computed(() => this.authenticated());
 
 	readonly health = inject(HealthService);
 	private readonly route = inject(ActivatedRoute);
@@ -389,7 +388,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	 *  (the in-body overlay), never this. */
 	readonly loading = computed(() => {
 		if (!this.authReady()) return true;
-		if (!this.authenticated() || !this.fitbitLinked()) return false;
+		if (!this.authenticated()) return false;
 		return !this.hasLoadedOnce() && this.dayData.isLoading();
 	});
 
@@ -555,40 +554,36 @@ export class DashboardComponent implements OnInit, OnDestroy {
 			// 403 and the diagnostics are about the OWNER's environment.
 			if (!this.isShareView) logBootContext(this.health);
 
-			this.fitbitLinked.set(this.health.user()?.fitbitLinked ?? false);
+			// Restore day + tab from the URL on first paint so reload —
+			// and share links like `/share/<token>?tab=map` — open on
+			// the right day and tab. Setting these before the data
+			// resources first run means a single load for the right day.
+			const initial = this.parseDateParam(this.route.snapshot.queryParamMap.get("date"));
+			if (initial !== null) this.selectedDate.set(initial);
+			const initialTab = this.parseTabParam(this.route.snapshot.queryParamMap.get("tab"));
+			if (initialTab !== null) this.view.set(initialTab);
+			const initialDays = this.parseTrendDaysParam(this.route.snapshot.queryParamMap.get("trendDays"));
+			if (initialDays !== null) this.trendDays.set(initialDays);
 
-			if (this.fitbitLinked()) {
-				// Restore day + tab from the URL on first paint so reload —
-				// and share links like `/share/<token>?tab=map` — open on
-				// the right day and tab. Setting these before the data
-				// resources first run means a single load for the right day.
-				const initial = this.parseDateParam(this.route.snapshot.queryParamMap.get("date"));
-				if (initial !== null) this.selectedDate.set(initial);
-				const initialTab = this.parseTabParam(this.route.snapshot.queryParamMap.get("tab"));
-				if (initialTab !== null) this.view.set(initialTab);
-				const initialDays = this.parseTrendDaysParam(this.route.snapshot.queryParamMap.get("trendDays"));
-				if (initialDays !== null) this.trendDays.set(initialDays);
+			// Adopt query-param changes the app did not initiate itself:
+			// browser back/forward and direct URL edits. Navigation the
+			// app triggers updates the signals first, so the equality
+			// guards below make this a no-op for those.
+			this.querySub = this.route.queryParamMap.subscribe((params) => {
+				const tab = this.parseTabParam(params.get("tab"));
+				if (tab !== null && tab !== this.view()) this.view.set(tab);
+				const next = this.parseDateParam(params.get("date")) ?? todayLocal();
+				if (next !== this.selectedDate()) this.selectedDate.set(next);
+				const days = this.parseTrendDaysParam(params.get("trendDays")) ?? DEFAULT_TREND_DAYS;
+				if (days !== this.trendDays()) this.trendDays.set(days);
+			});
 
-				// Adopt query-param changes the app did not initiate itself:
-				// browser back/forward and direct URL edits. Navigation the
-				// app triggers updates the signals first, so the equality
-				// guards below make this a no-op for those.
-				this.querySub = this.route.queryParamMap.subscribe((params) => {
-					const tab = this.parseTabParam(params.get("tab"));
-					if (tab !== null && tab !== this.view()) this.view.set(tab);
-					const next = this.parseDateParam(params.get("date")) ?? todayLocal();
-					if (next !== this.selectedDate()) this.selectedDate.set(next);
-					const days = this.parseTrendDaysParam(params.get("trendDays")) ?? DEFAULT_TREND_DAYS;
-					if (days !== this.trendDays()) this.trendDays.set(days);
-				});
-
-				// Fire-and-forget: keep PhoneTrack's visualisation filter
-				// aligned with "today from 00:00 (or yesterday after
-				// midnight before 06:00)". Skip in share mode — the backend
-				// 403s, and the recipient has no business touching the
-				// owner's PhoneTrack prefs.
-				if (!this.isShareView) void this.health.syncPhoneTrackFilter();
-			}
+			// Fire-and-forget: keep PhoneTrack's visualisation filter
+			// aligned with "today from 00:00 (or yesterday after
+			// midnight before 06:00)". Skip in share mode — the backend
+			// 403s, and the recipient has no business touching the
+			// owner's PhoneTrack prefs.
+			if (!this.isShareView) void this.health.syncPhoneTrackFilter();
 		}
 
 		// Data now flows reactively from the resources — no explicit load.

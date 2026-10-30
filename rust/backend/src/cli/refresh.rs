@@ -244,7 +244,7 @@ pub(crate) async fn refresh_focus_places_one(
     //
     // So: resolve the timezones first (pure CPU, no IO), hand a plain data
     // structure across, and bring the labels back out.
-    let zones = backend::fitbit::tz_source::PolygonLookup::new();
+    let zones = backend::tz_lookup::PolygonLookup::new();
 
     struct PendingStay {
         lat: f64,
@@ -718,11 +718,10 @@ pub(crate) const FOCUS_DEFAULT_LOOKBACK_DAYS: i64 = 180;
 /// Rust would put the vertex fusion and the corridor weighting back on this
 /// side of the boundary, which is the half that drifts (#1003).
 pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
-    // ⚠ `from_env_batch`, NOT `from_env`: this pod sets DB_* and NC_* and no
-    // FITBIT_*, and the day pipeline never touches Fitbit. The strict config
-    // here is what failed `refresh-presence-log` and `refresh-focus-places` in
+    // This pod sets DB_* and NC_* and nothing else. A config that demanded
+    // more is what failed `refresh-presence-log` and `refresh-focus-places` in
     // production, both times AFTER the job had done real work.
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -1391,7 +1390,7 @@ pub(crate) async fn refresh_presence_log(
 /// gone stale (`Verified.Geo.OsmMirrorRefresh`).
 // dev-lint: allow-sqlx the retirement is its own decision, taken before the mirrors answer
 pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -1608,7 +1607,7 @@ pub(crate) async fn retire_unplannable(
 /// failure when most of the area has gone stale.
 // dev-lint: allow-sqlx the retirement is its own decision, taken before the mirrors answer
 pub(crate) async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;

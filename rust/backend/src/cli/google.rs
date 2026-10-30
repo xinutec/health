@@ -65,7 +65,7 @@ pub(crate) struct Pair {
 /// comparing those without establishing the semantics first would produce a
 /// disagreement that means nothing. Add them when someone has checked.
 pub(crate) async fn google_compare() -> Result<()> {
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -681,7 +681,7 @@ pub(crate) fn report_pair(
 pub(crate) async fn google_compare_intraday(days: i64) -> Result<()> {
     use std::collections::BTreeMap;
 
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -887,7 +887,7 @@ pub(crate) async fn google_backfill_sleep(
 
     // ⚠ READ AFTER THE DRY-RUN BRANCH ON PURPOSE: previewing a plan must not
     // require credentials for a database the preview never opens.
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -931,7 +931,7 @@ pub(crate) async fn google_backfill_steps(
         );
         return Ok(());
     }
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -980,7 +980,7 @@ pub(crate) async fn google_archive_points(
         );
         return Ok(());
     }
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -1012,7 +1012,7 @@ pub(crate) async fn google_archive_points(
 pub(crate) async fn google_sync_exercise() -> Result<()> {
     let user_id = std::env::var("GH_USER_ID")
         .context("GH_USER_ID names the Google-configured user and must be set")?;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -1035,7 +1035,7 @@ pub(crate) async fn google_sync_exercise() -> Result<()> {
 pub(crate) async fn google_sync_exercise_routes(limit: Option<usize>) -> Result<()> {
     let user_id = std::env::var("GH_USER_ID")
         .context("GH_USER_ID names the Google-configured user and must be set")?;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -1077,7 +1077,7 @@ pub(crate) async fn google_archive_spo2(
         );
         return Ok(());
     }
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -1104,7 +1104,7 @@ pub(crate) async fn google_archive_spo2(
 pub(crate) async fn google_compare_sleep(days: i64) -> Result<()> {
     use std::collections::BTreeMap;
 
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -1290,7 +1290,7 @@ pub(crate) async fn google_compare_sleep(days: i64) -> Result<()> {
 /// ⚠ READ-ONLY.
 pub(crate) async fn google_compare_hrv(days: i64) -> Result<()> {
     use std::collections::BTreeMap;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -1389,7 +1389,7 @@ pub(crate) async fn google_compare_hrv(days: i64) -> Result<()> {
 /// ⚠ READ-ONLY.
 pub(crate) async fn google_compare_zones(days: i64) -> Result<()> {
     use std::collections::{BTreeMap, BTreeSet};
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -1581,7 +1581,7 @@ pub(crate) async fn google_compare_zones(days: i64) -> Result<()> {
 /// ⚠ READ-ONLY.
 pub(crate) async fn google_compare_steps(days: i64) -> Result<()> {
     use std::collections::BTreeMap;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;

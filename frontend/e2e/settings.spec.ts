@@ -15,9 +15,8 @@ import type { LatestFix, ShareStatus, UserInfo } from "../src/app/services/healt
 const USER = {
 	userId: "owner",
 	displayName: "Owner",
-	fitbitLinked: true,
 	nextcloudLinked: true,
-	connections: { nextcloud: { status: "active" }, fitbit: { status: "active" } },
+	connections: { nextcloud: { status: "active" } },
 	shareWindow: null,
 } satisfies UserInfo;
 

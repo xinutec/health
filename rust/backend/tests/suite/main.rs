@@ -45,12 +45,9 @@
 //! Adding a test file here is free; adding one as a sibling costs ~4.3 s on
 //! every Rust change in the repo, so do that only when a caller must name it.
 
-mod activity_parse;
 mod api_window;
 mod assemble_observation;
 mod auth_middleware;
-mod backfill;
-mod backfill_walk;
 mod battery;
 mod bio_labels;
 mod bus_route_reach;
@@ -115,16 +112,11 @@ mod session_crypto;
 mod session_rules;
 mod share_route;
 mod share_wire_shape;
-mod sleep_parse;
 mod sleep_stub_guard;
 mod static_serving;
 mod station_chain;
 mod stations_on_line;
-mod steps_parse;
-mod stream_parse;
-mod sync_without_fitbit;
 mod timezone;
-mod tz_source;
 mod usage;
 mod velocity_cache;
 mod velocity_cache_store;

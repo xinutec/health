@@ -2,8 +2,7 @@
 //!
 //! The Rust backend is a DROP-IN for the TypeScript one, so it reads the
 //! variables `config.ts` reads and the k8s manifests already set —
-//! `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`, and the
-//! Fitbit client pair.
+//! `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`.
 //!
 //! It deliberately does NOT adopt `life`'s single `DATABASE_URL`, which is the
 //! house shape elsewhere: adopting it would mean changing the Deployment and
@@ -29,21 +28,6 @@ use anyhow::{Context, Result};
 #[derive(Clone, Debug)]
 pub struct Config {
     pub db: DbConfig,
-    /// ⚠ OPTIONAL, and for the same reason `DbConfig::from_env` exists: a
-    /// command should ask for what it USES. The batch CronJobs set `DB_*` and
-    /// `NC_*` and nothing else — they have no business with Fitbit — but they
-    /// DO need the day pipeline, which needs an `AppState`, which held a
-    /// `Config` that demanded credentials nothing on that path reads.
-    ///
-    /// Making it required cost two production failures on 2026-08-24:
-    /// `refresh-presence-log` (after `decode-day` had spent twelve minutes
-    /// working) and `refresh-focus-places`. Only ten sites read it, all on the
-    /// sync/serve/oauth paths, and each now says so when it is absent.
-    ///
-    /// ⚠ Do NOT "fix" a missing credential by defaulting these to empty
-    /// strings. An empty client id reaches Fitbit and fails there, far from the
-    /// configuration that caused it.
-    pub fitbit: Option<FitbitConfig>,
     /// Base URL of the Nextcloud instance, no trailing slash.
     ///
     /// OPTIONAL, and the option is load-bearing rather than lenience: the TS
@@ -95,12 +79,6 @@ pub struct DbConfig {
     pub database: String,
 }
 
-#[derive(Clone, Debug)]
-pub struct FitbitConfig {
-    pub client_id: String,
-    pub client_secret: String,
-}
-
 /// The Nextcloud base URL the FOCUS cron uses.
 ///
 /// ⚠ NOT `Config::nextcloud_base_url`, which is `Option` and is `None` in
@@ -126,16 +104,11 @@ pub const FOCUS_DEFAULT_NC_BASE_URL: &str = "https://dash.xinutec.org";
 impl DbConfig {
     /// The database settings ALONE, for a command that touches nothing else.
     ///
-    /// ⚠ Exists because `Config::from_env` requires `FITBIT_CLIENT_ID` and
-    /// `FITBIT_CLIENT_SECRET`, and the batch CronJobs do not set them — they
-    /// have no business with Fitbit. `refresh-presence-log` used the full
-    /// config and died in production with "missing required env var
-    /// FITBIT_CLIENT_ID" AFTER `decode-day` had done twelve minutes of work
-    /// (#982 Tier 2, 2026-08-24).
-    ///
-    /// ⚠ A command should ask for what it uses. Demanding a credential it never
+    /// ⚠ A command should ask for what it uses. Demanding a setting it never
     /// touches turns an unrelated deployment detail into a runtime failure, and
-    /// does it at the END of the job rather than the start.
+    /// does it at the END of the job rather than the start — `refresh-presence-log`
+    /// once died that way on a credential the full config required, AFTER
+    /// `decode-day` had done twelve minutes of work.
     pub fn from_env() -> Result<Self> {
         let port_raw = std::env::var("DB_PORT").unwrap_or_else(|_| "3306".into());
         Ok(DbConfig {
@@ -248,7 +221,6 @@ impl Config {
                 password: String::new(),
                 database: "nowhere".into(),
             },
-            fitbit: None,
             nextcloud_base_url: None,
             service_tokens: Vec::new(),
             owntracks_tokens: Vec::new(),
@@ -257,7 +229,10 @@ impl Config {
         }
     }
 
-    fn from_env_relaxed() -> Result<Self> {
+    /// Read every setting from the environment. Every command reads this one:
+    /// a credential only one path used is not here, so a CronJob that sets
+    /// `DB_*` and `NC_*` alone builds the same `Config` the server does.
+    pub fn from_env() -> Result<Self> {
         let port_raw = with_default("DB_PORT", "3306");
         // ⚠ PARSED, not `unwrap_or(3306)`. `mirror.rs` falls back to the
         // default on an unparseable value, which is right for an optional
@@ -277,58 +252,11 @@ impl Config {
                 password: required("DB_PASSWORD")?,
                 database: with_default("DB_NAME", "health"),
             },
-            fitbit: Some(FitbitConfig {
-                client_id: std::env::var("FITBIT_CLIENT_ID").unwrap_or_default(),
-                client_secret: std::env::var("FITBIT_CLIENT_SECRET").unwrap_or_default(),
-            }),
             nextcloud_base_url: optional("NC_BASE_URL"),
             service_tokens: token_list("SERVICE_TOKEN"),
             owntracks_tokens: token_list("OWNTRACKS_ALLOWED_TOKENS"),
             public_base_url: with_default("PUBLIC_BASE_URL", "https://health.xinutec.org"),
             session_secret: optional("SESSION_SECRET"),
         })
-    }
-
-    /// Read every setting from the environment, REQUIRING the Fitbit
-    /// credentials. The serve path uses them; a test pins the refusal. (`sync`
-    /// reads `from_env_batch` since 2026-10-01: without Fitbit it is Google-only.)
-    pub fn from_env() -> Result<Self> {
-        let c = Self::from_env_relaxed()?;
-        let fb = c.fitbit.as_ref();
-        if fb.is_none_or(|f| f.client_id.is_empty()) {
-            anyhow::bail!("missing required env var FITBIT_CLIENT_ID");
-        }
-        if fb.is_some_and(|f| f.client_secret.is_empty()) {
-            anyhow::bail!("missing required env var FITBIT_CLIENT_SECRET");
-        }
-        Ok(c)
-    }
-
-    /// The same configuration for a BATCH job, with the Fitbit credentials
-    /// absent rather than required.
-    ///
-    /// ⚠ `from_env` still REFUSES without them, and that is deliberate — the
-    /// serve path genuinely uses them, and a test pins the refusal.
-    /// This is for the CronJobs that need the day pipeline (and therefore an
-    /// `AppState`, and therefore a `Config`) while touching no Fitbit API:
-    /// `refresh-rail-routes`, `refresh-rail-stops`, `refresh-bus-routes`,
-    /// `decode-day`. Their pods set `DB_*` and `NC_*` only.
-    ///
-    /// ⚠ It is NOT a lenient `from_env`. Everything else is required exactly as
-    /// before; only the credentials this class of job never reads become
-    /// `None`, and the ten sites that do read them say so when they are absent.
-    pub fn from_env_batch() -> Result<Self> {
-        // ⚠ It reads the credentials when they ARE set, so a pod that has them
-        // behaves identically. Only their ABSENCE is tolerated.
-        //
-        // ⚠ NOT `from_env().or_else(...)`. That was the first version, and it
-        // would swallow an unrelated failure — a missing DB_PASSWORD — and
-        // re-fail down a second path, reporting the wrong cause. A fallback
-        // keyed on "any error" cannot tell which error it is forgiving.
-        let mut c = Self::from_env_relaxed()?;
-        if c.fitbit.as_ref().is_some_and(|f| f.client_id.is_empty()) {
-            c.fitbit = None;
-        }
-        Ok(c)
     }
 }

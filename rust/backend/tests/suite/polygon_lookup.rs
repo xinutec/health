@@ -8,7 +8,7 @@
 //! What these guard is not the polygon data — that is `tzf-rs`'s problem — but
 //! the three ways the wrapper around it can be wrong while looking right.
 
-use backend::fitbit::tz_source::PolygonLookup;
+use backend::tz_lookup::PolygonLookup;
 
 /// ⚠ THE ARGUMENT ORDER. `tzf` takes longitude first and every other signature
 /// in this codebase takes latitude first, so the swap lives in exactly one

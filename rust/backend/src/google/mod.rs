@@ -9,9 +9,9 @@
 //! in Apr 2026 when that path died — leaving a flat line in the `body` table
 //! that looks exactly like a stable weight rather than like missing data.
 //!
-//! ⚠ This is why `fitbit::run`'s forward pass deliberately does not sync body.
-//! Re-adding it would overwrite these real measurements nightly with Fitbit's
-//! stale carry-forward, and the result would still look like data.
+//! ⚠ This is why the Fitbit sync, while it ran, never wrote body: it would have
+//! overwritten these real measurements nightly with Fitbit's stale
+//! carry-forward, and the result would still have looked like data.
 
 pub mod archive;
 pub mod body;
@@ -20,5 +20,6 @@ pub mod health;
 pub mod oauth;
 pub mod probe;
 pub mod routes;
+pub mod run;
 pub mod source;
 pub mod sync;

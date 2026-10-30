@@ -35,8 +35,6 @@ unsafe fn set_all() {
         std::env::set_var("DB_USER", "syncer");
         std::env::set_var("DB_PASSWORD", "pw");
         std::env::set_var("DB_NAME", "healthdb");
-        std::env::set_var("FITBIT_CLIENT_ID", "cid");
-        std::env::set_var("FITBIT_CLIENT_SECRET", "csecret");
     }
 }
 
@@ -50,8 +48,6 @@ unsafe fn clear_all() {
             "DB_USER",
             "DB_PASSWORD",
             "DB_NAME",
-            "FITBIT_CLIENT_ID",
-            "FITBIT_CLIENT_SECRET",
             "NC_BASE_URL",
         ] {
             std::env::remove_var(k);
@@ -79,8 +75,6 @@ fn the_config_layer_refuses_rather_than_defaults() {
     assert_eq!(c.db.port, 3307);
     assert_eq!(c.db.user, "syncer");
     assert_eq!(c.db.database, "healthdb");
-    assert_eq!(c.fitbit.as_ref().unwrap().client_id, "cid");
-    assert_eq!(c.fitbit.as_ref().unwrap().client_secret, "csecret");
     assert_eq!(
         c.nextcloud_base_url, None,
         "NC_BASE_URL is optional and unset here"
@@ -101,12 +95,7 @@ fn the_config_layer_refuses_rather_than_defaults() {
     // ---- ⚠ THE POINT OF THE FILE -------------------------------------------
     // Each required variable, when absent, is an error that NAMES it. Not a
     // default, and not a generic failure an operator has to guess at.
-    for key in [
-        "DB_USER",
-        "DB_PASSWORD",
-        "FITBIT_CLIENT_ID",
-        "FITBIT_CLIENT_SECRET",
-    ] {
+    for key in ["DB_USER", "DB_PASSWORD"] {
         unsafe { fresh() };
         unsafe { std::env::remove_var(key) };
         match Config::from_env() {
@@ -186,17 +175,16 @@ fn the_config_layer_refuses_rather_than_defaults() {
         Some("https://dash.example")
     );
 
-    // ---- a DB-only command must not require the Fitbit credentials ---------
+    // ---- a DB-only command asks for the database alone ---------------------
     //
     // ⚠ The batch CronJobs set DB_* and nothing else. `refresh-presence-log`
-    // used `Config::from_env`, which requires FITBIT_CLIENT_ID, and died in
-    // production with "missing required env var FITBIT_CLIENT_ID" — AFTER
-    // `decode-day` had spent twelve minutes decoding seven days, because the
-    // config was read at the start of the step rather than the start of the job
-    // (#982 Tier 2, 2026-08-24).
+    // once used the full config, which then required a credential it never
+    // read, and died in production on it — AFTER `decode-day` had spent twelve
+    // minutes decoding seven days, because the config was read at the start of
+    // the step rather than the start of the job.
     //
     // A command should ask for what it USES. This pins that `DbConfig::from_env`
-    // does, so the next DB-only subcommand cannot quietly reintroduce the
+    // does, so the next DB-only subcommand cannot quietly reintroduce a
     // requirement.
     unsafe { clear_all() };
     unsafe {
@@ -204,66 +192,31 @@ fn the_config_layer_refuses_rather_than_defaults() {
         std::env::set_var("DB_PASSWORD", "s3cret");
     }
     let d = backend::config::DbConfig::from_env()
-        .expect("a database-only command must not need the Fitbit credentials");
+        .expect("a database-only command needs the database settings alone");
     assert_eq!(d.user, "syncer", "DB_USER");
     assert_eq!(d.host, "health-db", "DB_HOST defaults");
     assert_eq!(d.port, 3306, "DB_PORT defaults");
     assert_eq!(d.database, "health", "DB_NAME defaults");
-    // And the full config, with the same environment, must still REFUSE — the
-    // point is that the two ask for different things, not that either is lax.
+    // The full config asks for nothing more at the REQUIRED level since the
+    // Fitbit pair went with the Web API: the same environment parses it too.
     assert!(
-        Config::from_env().is_err(),
-        "the full config must still require the Fitbit credentials"
-    );
-
-    // ---- a BATCH config drops Fitbit and keeps everything else strict -----
-    //
-    // ⚠ The rail/bus/decode CronJobs need the DAY PIPELINE, which needs an
-    // `AppState`, which holds a `Config`. Requiring the Fitbit credentials
-    // there would demand a secret those pods do not set for a code path that
-    // never reads it — the third instance of the same mistake in one day.
-    unsafe { clear_all() };
-    unsafe {
-        std::env::set_var("DB_USER", "syncer");
-        std::env::set_var("DB_PASSWORD", "s3cret");
-    }
-    let b = Config::from_env_batch().expect("a batch job must not need the Fitbit credentials");
-    assert!(b.fitbit.is_none(), "absent, not defaulted to empty strings");
-    assert_eq!(b.db.user, "syncer");
-    // ⚠ And it is NOT a lenient `from_env`: everything else is still required.
-    unsafe { std::env::remove_var("DB_PASSWORD") };
-    assert!(
-        Config::from_env_batch().is_err(),
-        "a batch config must still refuse a missing DB_PASSWORD — tolerating \
-         Fitbit's absence must not tolerate anything else"
-    );
-    // With the credentials present a batch config reads them, so a pod that
-    // has them behaves identically to the strict path.
-    unsafe {
-        std::env::set_var("DB_PASSWORD", "s3cret");
-        std::env::set_var("FITBIT_CLIENT_ID", "cid");
-        std::env::set_var("FITBIT_CLIENT_SECRET", "csecret");
-    }
-    assert_eq!(
-        Config::from_env_batch().unwrap().fitbit.unwrap().client_id,
-        "cid",
-        "a batch config still READS the credentials when they are set"
+        Config::from_env().is_ok(),
+        "the full config requires only what a DB-only command does"
     );
 
     // ---- the FOCUS cron's env is DB_* + NC_*, and that must be enough ------
     //
-    // ⚠ THIS IS THE SECOND TIME. `refresh-presence-log` died on
-    // FITBIT_CLIENT_ID (above); on 2026-08-24 `refresh-focus-places` did the
-    // same thing in production, because it was written to call
-    // `Config::from_env` on the reasoning that it "needs Nextcloud too". It
-    // does not: the NC credentials come from the DATABASE, and the only extra
-    // it wants is a base URL.
+    // ⚠ THIS IS THE SECOND TIME. `refresh-presence-log` died on a credential
+    // it never read (above); `refresh-focus-places` did the same thing in
+    // production, because it was written to call `Config::from_env` on the
+    // reasoning that it "needs Nextcloud too". It does not: the NC credentials
+    // come from the DATABASE, and the only extra it wants is a base URL.
     //
     // The test above could not catch that — it pins the config LAYER, not which
     // config a subcommand reaches for. This pins the focus cron's actual
-    // requirement: its pod sets DB_* and NC_CLIENT_ID/NC_CLIENT_SECRET, no
-    // FITBIT_* and no NC_BASE_URL, and everything the command reads at startup
-    // must resolve under exactly that.
+    // requirement: its pod sets DB_* and NC_CLIENT_ID/NC_CLIENT_SECRET and no
+    // NC_BASE_URL, and everything the command reads at startup must resolve
+    // under exactly that.
     unsafe { clear_all() };
     unsafe {
         std::env::set_var("DB_USER", "syncer");

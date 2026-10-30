@@ -1,8 +1,5 @@
 import Lean.Data.Json
-import Verified.Backfill
 import Verified.Civil
-import Verified.FitbitTz
-import Verified.Token
 import Verified.Weight
 import Verified.ApiWindow
 import Verified.RowShape
@@ -81,49 +78,10 @@ private def bool? (j : Json) (k : String) : Option Bool :=
   | .ok v => match v.getBool? with | .ok b => some b | .error _ => none
   | .error _ => none
 
-private def rateLimitJson : Verified.Sync.RateLimitAction → Json
-  | .proceed => Json.mkObj [("kind", Json.str "proceed")]
-  | .sleep ms => Json.mkObj [("kind", Json.str "sleep"), ("ms", Json.num (.fromNat ms.toNat))]
-  | .exhausted s =>
-    Json.mkObj [("kind", Json.str "exhausted"), ("resumeInSec", Json.num (.fromNat s.toNat))]
-
-/-- `none` is a first-class answer here, not an error: every caller of
-`prevDayBounded` and `prevWindowBounded` treats it as "stop the walk". -/
+/-- `none` is a first-class answer here, not an error. -/
 private def optStr : Option String → Json
   | none => Json.null
   | some s => Json.str s
-
-private def reasonStr : Verified.Backfill.CompleteReason → String
-  | .reachedFloor => "reachedFloor"
-  | .cursorUnusable => "cursorUnusable"
-  | .emptyStreak => "emptyStreak"
-
-private def stepJson : Verified.Backfill.Step → Json
-  | .fetch d => Json.mkObj [("kind", Json.str "fetch"), ("date", Json.str d)]
-  | .pause => Json.mkObj [("kind", Json.str "pause")]
-  | .complete r =>
-    Json.mkObj [("kind", Json.str "complete"), ("reason", Json.str (reasonStr r))]
-
-private def rangeStepJson : Verified.Backfill.RangeStep → Json
-  | .fetch s e =>
-    Json.mkObj [("kind", Json.str "fetch"), ("start", Json.str s), ("end", Json.str e)]
-  | .pause => Json.mkObj [("kind", Json.str "pause")]
-  | .complete r =>
-    Json.mkObj [("kind", Json.str "complete"), ("reason", Json.str (reasonStr r))]
-
-/-- `[{"name": …, "cursor": … | null}, …]`. A stream whose cursor is absent or
-`null` takes the fallback, which is the whole point of the ordering — an
-unstarted stream must not queue behind a deep backfill. -/
-private def streams? (j : Json) : Option (List (String × Option String)) :=
-  match j.getObjVal? "streams" with
-  | .error _ => none
-  | .ok v =>
-    match v.getArr? with
-    | .error _ => none
-    | .ok arr => arr.toList.mapM fun e =>
-      match str? e "name" with
-      | none => none
-      | some n => some (n, str? e "cursor")
 
 /-- `[{"date": …, "grams": …, "ts": …}, …]`.
 
@@ -190,36 +148,9 @@ private def optInt? (j : Json) (k : String) : Option Int :=
   | .error _ => none
   | .ok v => match v.getInt? with | .ok i => some i | .error _ => none
 
-private def tzChoiceJson : Verified.FitbitTz.TzChoice → Json
-  | .profile => Json.mkObj [("kind", Json.str "profile")]
-  | .fix i => Json.mkObj [("kind", Json.str "fix"), ("index", Json.num (.fromNat i))]
-
 def dispatch (j : Json) : Json :=
   match str? j "op" with
   | none => err "missing op"
-  | some "decideRateLimitWait" =>
-    match int? j "remaining", int? j "msUntilReset", int? j "maxWaitMs" with
-    | some r, some u, some m => rateLimitJson (Verified.Sync.decideRateLimitWait r u m)
-    | _, _, _ => err "decideRateLimitWait: remaining, msUntilReset, maxWaitMs required"
-  | some "prevDayBounded" =>
-    match str? j "date", str? j "floor" with
-    | some d, some f => Json.mkObj [("value", optStr (Verified.Sync.prevDayBounded d f))]
-    | _, _ => err "prevDayBounded: date, floor required"
-  | some "prevWindowBounded" =>
-    match str? j "end", int? j "windowDays", str? j "floor" with
-    | some e, some w, some f =>
-      match Verified.Sync.prevWindowBounded e w f with
-      | none => Json.mkObj [("value", Json.null)]
-      | some (s, e') =>
-        Json.mkObj [("value", Json.mkObj [("start", Json.str s), ("end", Json.str e')])]
-    | _, _, _ => err "prevWindowBounded: end, windowDays, floor required"
-  | some "dateRangeInclusive" =>
-    match str? j "start", str? j "end", int? j "maxDays" with
-    | some s, some e, some m =>
-      match Verified.Sync.dateRangeInclusive s e m with
-      | none => Json.mkObj [("value", Json.null)]
-      | some ds => Json.mkObj [("value", Json.arr (ds.map Json.str).toArray)]
-    | _, _, _ => err "dateRangeInclusive: start, end, maxDays required"
   | some "chunkRange" =>
     match str? j "start", str? j "end", int? j "days", int? j "maxChunks" with
     | some s, some e, some d, some m =>
@@ -247,70 +178,6 @@ def dispatch (j : Json) : Json :=
         | none => Json.null
         | some s => Json.num s)]
     | none => err "midnightUtc: date required"
-  | some "decideBackfillStep" =>
-    match int? j "remaining", int? j "emptyStreak", int? j "maxEmpty",
-          str? j "cursor", str? j "floor" with
-    | some r, some s, some m, some c, some f =>
-      stepJson (Verified.Backfill.decideStep r s m c f)
-    | _, _, _, _, _ =>
-      err "decideBackfillStep: remaining, emptyStreak, maxEmpty, cursor, floor required"
-  | some "decideRangeBackfillStep" =>
-    match int? j "remaining", int? j "emptyStreak", int? j "maxEmpty", int? j "windowDays",
-          str? j "cursor", str? j "floor" with
-    | some r, some s, some m, some w, some c, some f =>
-      rangeStepJson (Verified.Backfill.decideRangeStep r s m w c f)
-    | _, _, _, _, _, _ =>
-      err "decideRangeBackfillStep: remaining, emptyStreak, maxEmpty, windowDays, cursor, floor required"
-  | some "orderByCursorRecency" =>
-    match streams? j, str? j "fallback" with
-    | some ss, some f =>
-      Json.mkObj [("value",
-        Json.arr ((Verified.Backfill.orderByCursorRecency ss f).map Json.str).toArray)]
-    | _, _ => err "orderByCursorRecency: streams, fallback required"
-  -- ⚠ These two are the SPECIFICATION side of a differential test, not the
-  -- production path. The backend binary-searches its own sorted fixes; a JSON
-  -- round trip per row would be 86 400 of them for one day of 1-second heart
-  -- rate. See `Verified/FitbitTz.lean`'s header.
-  | some "nearestFix" =>
-    match ints? j "times", int? j "target" with
-    | some ts, some t =>
-      Json.mkObj [("value",
-        match Verified.FitbitTz.nearestFix ts t with
-        | none => Json.null
-        | some i => Json.num (.fromNat i))]
-    | _, _ => err "nearestFix: times, target required"
-  | some "decideTz" =>
-    match ints? j "times" with
-    | some ts => tzChoiceJson (Verified.FitbitTz.decideTz ts (optInt? j "seedUtc"))
-    | none => err "decideTz: times required"
-  | some "forwardWindow" =>
-    match str? j "today" with
-    | some t =>
-      (match Verified.Sync.forwardWindow t (str? j "storedCursor") with
-       | none => Json.mkObj [("value", Json.null)]
-       | some (s, e) =>
-         Json.mkObj [("value", Json.mkObj [("start", Json.str s), ("end", Json.str e)])])
-    | none => err "forwardWindow: today required"
-  | some "decideTokenUse" =>
-    match int? j "nowMs", int? j "expiresAtMs" with
-    | some n, some e =>
-      Json.mkObj [("kind", Json.str
-        (match Verified.Token.decideTokenUse n e with | .use => "use" | .refresh => "refresh"))]
-    | _, _ => err "decideTokenUse: nowMs, expiresAtMs required"
-  | some "classifyRefreshStatus" =>
-    match int? j "status" with
-    | some s =>
-      Json.mkObj [("kind", Json.str
-        (match Verified.Token.classifyRefreshStatus s with
-         | .rotated => "rotated"
-         | .reauthRequired => "reauthRequired"
-         | .transient => "transient"))]
-    | none => err "classifyRefreshStatus: status required"
-  | some "expiryFromNow" =>
-    match int? j "nowMs" with
-    | some n =>
-      Json.mkObj [("value", Json.num (Verified.Token.expiryFromNow n (optInt? j "expiresInS")))]
-    | none => err "expiryFromNow: nowMs required"
   -- `/velocity`'s cache policy (#982). The map and the in-flight dedup stay in
   -- the host; what crosses here is how long a result may be reused.
   --

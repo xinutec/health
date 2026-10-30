@@ -91,8 +91,8 @@ pub async fn load(
         // malformed row is a reading whose instant is unknown, and Lean drops
         // it; that is a fact about the data, where a failed decode is a fact
         // about this code.
-        // A row that carries its INSTANT (Google's, since 2026-10-01) needs no
-        // zone; only Fitbit's wall clock does.
+        // A row that carries its INSTANT (Google's) needs no zone; only
+        // Fitbit's wall clock, in the rows it left, does.
         let utc: Option<chrono::NaiveDateTime> = r
             .try_get("ts_utc")
             .context("device_battery_log.ts_utc does not decode")?;

@@ -65,7 +65,7 @@ pub(crate) async fn decode_day(
     days: Option<i64>,
     dry_run: bool,
 ) -> Result<()> {
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -993,7 +993,7 @@ pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
 pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Result<()> {
     use backend::decode_freshness as fresh;
     use backend::fetch_queue as queue;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;

@@ -45,7 +45,7 @@ use backend::db;
 /// should be read as "these streams are now gone" rather than muted (#260).
 pub(crate) async fn freshness() -> Result<()> {
     use sqlx::Row as _;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -130,7 +130,7 @@ pub(crate) async fn freshness() -> Result<()> {
 /// has no travel days in it for the inference to have got right.
 pub(crate) async fn tz_census() -> Result<()> {
     use sqlx::Row as _;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -245,7 +245,7 @@ pub(crate) async fn tz_census() -> Result<()> {
 /// and a large one says "look at the shape", not "rows were lost".
 pub(crate) async fn focus_audit() -> Result<()> {
     use sqlx::Row as _;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -368,7 +368,7 @@ pub(crate) async fn focus_audit() -> Result<()> {
 /// dev-lint's DL-SQLX-SCHEMA-TRUTH refuses even a `const` held in a variable.
 pub(crate) async fn zones_census() -> Result<()> {
     use sqlx::Row as _;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -496,7 +496,7 @@ pub(crate) async fn zones_census() -> Result<()> {
 /// every column as full.
 pub(crate) async fn column_fill() -> Result<()> {
     use sqlx::Row as _;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -548,7 +548,7 @@ pub(crate) async fn column_fill() -> Result<()> {
 }
 
 pub(crate) async fn coverage() -> Result<()> {
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -646,7 +646,7 @@ pub(crate) async fn hr_trend(since: &str, json: bool) -> Result<()> {
     if !is_iso_date(since) {
         anyhow::bail!("SINCE must be YYYY-MM-DD, got {since:?}");
     }
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -720,7 +720,7 @@ pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> 
     if !is_iso_date(from) || !is_iso_date(boundary) {
         anyhow::bail!("windows are YYYY-MM-DD, got {from:?} and {boundary:?}");
     }
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -811,7 +811,7 @@ pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> 
 /// here and not at ingest — `hrv_daily` keeps what Fitbit recorded, verbatim.
 pub(crate) async fn hrv_history() -> Result<()> {
     use sqlx::Row as _;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -857,7 +857,7 @@ pub(crate) async fn hrv_history() -> Result<()> {
 /// never shows.
 pub(crate) async fn owntracks_log(user: &str, limit: i64) -> Result<()> {
     use sqlx::Row as _;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -912,7 +912,7 @@ pub(crate) async fn owntracks_log(user: &str, limit: i64) -> Result<()> {
 /// A prior is subtype statistics — no place, no coordinate.
 pub(crate) async fn venue_prior_snapshots(user: &str, out_dir: &str) -> Result<()> {
     use sqlx::Row as _;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -972,7 +972,7 @@ pub(crate) async fn rest_hr(
     if !is_iso_date(since) || until.is_some_and(|u| !is_iso_date(u)) {
         anyhow::bail!("dates must be YYYY-MM-DD");
     }
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;

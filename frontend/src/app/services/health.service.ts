@@ -299,7 +299,6 @@ export interface TrackTailPoint {
 export interface UserInfo {
   userId: string;
   displayName: string;
-  fitbitLinked: boolean;
   /** ⚠ LEGACY, and NOT the same question as `connections.nextcloud.status`.
    *  A revoked credential is `needs_reauth` AND linked, so this stays true for
    *  an account that cannot fetch anything — see `routes/me.rs`, which keeps
@@ -315,7 +314,6 @@ export interface UserInfo {
    *  cannot arise — the SPA and the backend ship from this repo together. */
   connections: {
     nextcloud: { status: "active" | "needs_reauth" | "not_linked" };
-    fitbit: { status: "active" | "not_linked" };
   };
   /** The recipient's bounds, or `null` for the owner. The SPA clamps its
    *  day arrows to [from, to].

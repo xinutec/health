@@ -57,7 +57,7 @@ fn count(r: &sqlx::mysql::MySqlRow, col: &str) -> Result<i64> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url()).await.context("connecting")?;
 
     // Intraday: does the derived instant match the zone stored on the same row?

@@ -719,8 +719,7 @@ pub(crate) async fn capture_day(
     out: &str,
 ) -> Result<()> {
     backend::lean::init().context("starting the Lean runtime")?;
-    // `from_env_batch`: the database and nothing else, as `velocity-many`.
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -808,12 +807,11 @@ pub(crate) async fn capture_day(
 
 pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
     backend::lean::init().context("starting the Lean runtime")?;
-    // ⚠ `from_env_batch`, NOT `from_env`. The fold needs the DATABASE and
-    // nothing else; `from_env` demands the Fitbit credentials and this died in
-    // its first Job on `missing required env var FITBIT_CLIENT_ID`. Carrying
-    // them would also hand a MEASUREMENT job the ability to write to a health
-    // stream, which is the posture every other batch verb refuses.
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    // The fold needs the DATABASE and nothing else. The config once demanded
+    // a credential this never read, and the first Job died on it; a
+    // MEASUREMENT job must also never hold what could write a health stream,
+    // which is the posture every other batch verb refuses.
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -871,7 +869,7 @@ pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
 /// blessing; never bless a `wayName` move unread.
 pub(crate) async fn recapture_walkable(user: &str, fixture_path: &str) -> Result<()> {
     backend::lean::init().context("starting the Lean runtime")?;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -940,7 +938,7 @@ pub(crate) async fn recapture_walkable(user: &str, fixture_path: &str) -> Result
 /// day was blessed on changes; see [`backend::mirror_source::rerecord_unanswered`].
 pub(crate) async fn recapture_asks(user: &str, fixture_path: &str) -> Result<()> {
     backend::lean::init().context("starting the Lean runtime")?;
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;

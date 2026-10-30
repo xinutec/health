@@ -1,7 +1,7 @@
 # health-sync — Design
 
-Health-and-location aggregation and visualization service. Pulls Fitbit
-biometrics on a schedule, fetches GPS history live from Nextcloud
+Health-and-location aggregation and visualization service. Pulls the watch's
+biometrics from Google Health on a schedule, fetches GPS history live from Nextcloud
 PhoneTrack, joins them per "Your Day" timeline segment, and serves a
 web dashboard authenticated through Nextcloud SSO. All running on
 isis's k3s cluster behind `health.xinutec.org`.
@@ -55,15 +55,15 @@ to the Rust or Lean symbol that does the work (#919).
 
 One Rust binary, `bin/backend`, and one Lean binary, `verified_cli`, which it
 spawns and drives over a pipe (`lean-and-rust.md`). Rust does the IO: HTTP
-(axum), MariaDB (sqlx), OAuth, and the Fitbit, Google Health, Nextcloud,
-Overpass and Nominatim clients. Lean makes every decision the timeline
+(axum), MariaDB (sqlx), OAuth, and the Google Health, Nextcloud, Overpass
+and Nominatim clients. Lean makes every decision the timeline
 depends on. The entry points are subcommands of `bin/backend`; the list is
 `rust/backend/src/main.rs`:
 
 - **`serve`** — the dashboard: the Angular build, the `/api/*` endpoints,
-  Nextcloud SSO, Fitbit OAuth, the OwnTracks proxy.
-- **`sync`** — the CronJob: every user with a linked account, every stream,
-  each written by the one API that owns it (`google/source.rs`).
+  Nextcloud SSO, the OwnTracks proxy.
+- **`sync`** — the CronJob: every stream of the roster (`google/source.rs`)
+  for the user the Google account belongs to.
 - **`watch-fetch-queue`** — the `health-fetch` sidecar beside `serve`: the
   map and name lookups a fold declined, fetched within seconds, and the ground
   around fixes as they arrive (`fetch_drain.rs`).
@@ -94,25 +94,21 @@ on Docker Hub.
 
 ## Authentication
 
-Two OAuth2 flows:
+One OAuth2 flow: **Nextcloud SSO** — users log in via Nextcloud
+(`dash.xinutec.org`). The callback creates a signed, HttpOnly session
+cookie. All API endpoints require a valid session. The pending login
+rides in a signed cookie (Nextcloud drops `state`; see `routes/oauth.rs`).
 
-1. **Nextcloud SSO** — users log in via Nextcloud (`dash.xinutec.org`).
-   The callback creates a signed, HttpOnly session cookie. All API
-   endpoints require a valid session.
-
-2. **Fitbit linking** — authenticated users link their Fitbit account
-   via `/fitbit/auth`. Tokens are stored in MariaDB keyed by the
-   Nextcloud user ID.
-
-Both flows use CSRF-protected `state` parameters stored in a
-time-limited pending map (10 minute expiry). Fitbit's flow also uses
-PKCE (S256 code challenge).
+The biometric data comes from Google Health under one refresh token the
+sync job holds (`google::oauth`); there is no per-user linking step. The
+Fitbit Web API, which the service was built on, closed on 2026-10-30.
 
 ## Multi-user data model
 
 Every data table includes `user_id` as part of the primary key.
 API queries filter by the session's user ID — users can only see their
-own data. The sync job iterates over all users in the `tokens` table.
+own data. The sync job runs for the one user the Google account belongs
+to (`GH_USER_ID`).
 
 ## Module structure
 
@@ -122,7 +118,7 @@ rust/backend/src/
 ├── routes/                 # axum handlers: velocity, tables, locations, share,
 │                             owntracks, oauth, nextcloud_connect, me, site, …
 ├── auth/                   # sessions, cookie signing
-├── fitbit/  google/  nextcloud/   # the clients and the sync writers
+├── google/  nextcloud/     # the clients and the sync writers
 ├── classification_inputs.rs, head.rs, fold.rs, fold_payload.rs
 │                           # a day: load the inputs, run the head, drive the fold
 ├── lean.rs, lean_worker.rs # the pipe to verified_cli and the worker pool
@@ -204,14 +200,13 @@ red gate as "this needs looking at", not as "this cannot ship".
 
 - [x] Session cookies: HttpOnly, Secure, SameSite=Lax, HMAC-signed
 - [x] Sessions persisted in MariaDB (`sessions` table), TTL 7 days, swept at server startup and every 6 hours so the table doesn't grow unbounded
-- [x] CSRF: state parameter on both OAuth flows, validated on callback
-- [x] PKCE: Fitbit OAuth uses S256 code challenge
+- [x] CSRF: state parameter on the OAuth flow, validated on callback
 - [x] User isolation: all DB queries filtered by session user_id
 - [x] No credentials in Docker image or git (git-crypt for secret.sh)
 - [x] Input validation: query parameters validated with zod
 - [x] Connection pool: no per-request connect/disconnect
 - [x] OAuth `state` is in-memory only — depends on `replicas: 1` for `health-auth`. Scaling out would silently break login flows; revisit before that happens.
-- [x] Fitbit + Nextcloud OAuth tokens stored as plaintext TEXT columns. Acceptable in the current trust model (single-tenant cluster, MariaDB on the same node, PVC at rest); revisit if/when the data leaves this boundary.
+- [x] Nextcloud OAuth tokens stored as plaintext TEXT columns. Acceptable in the current trust model (single-tenant cluster, MariaDB on the same node, PVC at rest); revisit if/when the data leaves this boundary.
 - [ ] Rate limiting on login endpoint (future)
 - [ ] CSP headers (future)
 
@@ -237,7 +232,7 @@ Three deliberate exceptions, each justified:
 
 - **Mirror third-party data we don't own.** The watch's biometrics (HR,
   sleep, activity, ...) — an API may sunset, accounts may close, history
-  disappears; Fitbit's Web API does so on 2026-10-30. So we sync them into
+  disappears; Fitbit's Web API did so on 2026-10-30. So we sync them into
   MariaDB (from Google's Health API since 2026-09, `google/source.rs` says
   which stream from where) and treat *our* tables as the source of truth
   henceforth; `google_points` archives the types with no table of their own.
@@ -429,12 +424,6 @@ so it owns the day — lives in one place:
 - Altitude-aware features (e.g. distinguish flat walk from stairs).
 - "Patterns" tab — health × location correlations (largest product win).
 - Off-site backup of `health` PVC (tracked under fleet-wide odin work).
-- `daily_activity`'s Fitbit-only columns. ⚠ NOT the Google migration, which is
-  done — ten of eleven streams are Google-owned and `daily_activity` cut over on
-  `DAILY_ACTIVITY_CUTOVER` (2026-09-01), Fitbit keeping the history before it.
-  What has no Google equivalent is `minutes_sedentary` and `active_score`: they
-  stop when the Web API does. `google::source::STREAMS` is the roster and each
-  entry carries the measurement that moved it.
 
 ## Where these things live now
 

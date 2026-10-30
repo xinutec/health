@@ -2,15 +2,15 @@
 //!
 //! # Why this is a table and not a set of call sites
 //!
-//! The Fitbit Web API ends on 2026-10-30; Google Health carries most of the
-//! same data and NOT all of it. The migration is therefore per stream and
-//! staged, which means that for a while the honest answer to "where does
-//! resting heart rate come from?" is different from the answer for sleep.
+//! The Fitbit Web API is closed; Google Health carries most of the
+//! same data and NOT all of it. The migration was per stream and staged, and
+//! each stream's `why` is the measurement that moved it — the durable record
+//! of where a column's history changes source.
 //!
 //! Spread across call sites that becomes unanswerable — a reader has to find
 //! every `if` to reconstruct it, and a stream quietly served by neither, or by
 //! both, looks exactly like one served correctly. Here it is one list, and the
-//! compiler makes `fitbit::run` consult it.
+//! test pairs it with the writers `google::sync` has.
 //!
 //! ⚠ **A STREAM MUST HAVE EXACTLY ONE OWNER.** Two writers on one table is not
 //! redundancy: the tables are `ON DUPLICATE KEY UPDATE`, so the last run wins
@@ -22,19 +22,12 @@
 pub enum Owner {
     /// Google Health carries it and we have proven so against the live account.
     Google,
-    /// Still the Fitbit Web API. ⚠ Every one of these stops on 2026-10-30.
-    Fitbit,
-    /// Google does not carry it at all. Needs Health Connect on the phone,
-    /// which is native Android work and not this task's port.
-    HealthConnect,
 }
 
 /// One biometric stream and its current owner.
 ///
-/// ⚠ THE `why` IS NOT DECORATION. A future reader deciding whether a stream can
-/// move needs the measurement, not the verdict — "Google returns 200 with no
-/// dataPoints" and "we have not written the client yet" are the same `Fitbit`
-/// today and completely different tomorrow.
+/// ⚠ THE `why` IS NOT DECORATION. A reader asking why a column's history
+/// changes shape on a date needs the measurement, not the verdict.
 pub struct Stream {
     pub name: &'static str,
     pub owner: Owner,
@@ -104,15 +97,15 @@ pub const STREAMS: &[Stream] = &[
     },
     Stream {
         name: "daily_activity",
-        owner: Owner::Fitbit,
-        why: "⚠ THE ONE TABLE WHOSE COLUMNS NEED DIFFERENT OWNERS, so this stays Fitbit and \
-              google::sync::sync_daily_activity gates itself on a DATE instead. Fitbit is the only \
-              source there has ever been for minutes_sedentary and active_score; flipping would stop \
-              them while they still work. Measured: distance 1193/1226, calories_total 968/1246, \
-              steps 587/1229 with google LOWER on 570 (history NOT rewritten, by decision), \
-              calories_active 111 days of 1246. floors and elevation_m are 0 rows in BOTH. \
-              Active minutes (lightly/fairly/very) moved to Google 2026-10-02 from the \
-              active-minutes rollup: moderate+vigorous = fairly+very on all 1,253 days, light 91 %",
+        owner: Owner::Google,
+        why: "Google from the 2026-09-01 cutover (sync_daily_activity gates on the DATE, so the two \
+              writers' ranges never overlapped). Measured: distance 1193/1226, calories_total \
+              968/1246, steps 587/1229 with google LOWER on 570 (history NOT rewritten, by \
+              decision), calories_active 111 days of 1246. Active minutes (lightly/fairly/very) \
+              from the active-minutes rollup since 2026-10-02: moderate+vigorous = fairly+very on \
+              all 1,253 days, light 91 %. minutes_sedentary and active_score ENDED with the Fitbit \
+              Web API on 2026-10-30 (no Google source; deriving them would be invention), their \
+              history kept; floors and elevation_m were 0 rows in both",
     },
     Stream {
         name: "sleep",
@@ -161,41 +154,17 @@ pub const STREAMS: &[Stream] = &[
     },
 ];
 
-/// True when the Fitbit sync should still fetch this stream.
-///
-/// ⚠ `HealthConnect` streams answer TRUE. Google does not carry them and the
-/// phone-side reader does not exist, so Fitbit is the only source there is —
-/// right up until September, when they stop. Treating "not Fitbit's job any
-/// more" and "nobody's job yet" as the same thing would switch them off early
-/// and lose data while the old API still worked.
-pub fn fitbit_still_owns(name: &str) -> bool {
-    STREAMS
-        .iter()
-        .find(|s| s.name == name)
-        .is_none_or(|s| s.owner != Owner::Google)
-}
-
-/// The streams that stop when the Web API is decommissioned and have nowhere
-/// else to go yet.
-pub fn at_risk() -> Vec<&'static Stream> {
-    STREAMS
-        .iter()
-        .filter(|s| s.owner != Owner::Google)
-        .collect()
-}
-
 /// The streams something in `google::sync` actually writes.
 ///
-/// ⚠ **THIS EXISTS BECAUSE `Owner::Google` MAKES `fitbit::run` SKIP A STREAM.**
-/// Flipping an owner without a writer does not fall back — it stops the stream
-/// dead, silently, and looks like a one-line config change. The test pairing
-/// this with `STREAMS` is what makes the two inseparable.
+/// ⚠ A stream in the roster without a writer is served by nobody, silently.
+/// The test pairing this with `STREAMS` is what makes the two inseparable.
 ///
 /// ⚠ Not derived from `STREAMS`. A list generated from the thing it checks
 /// agrees with it by construction and proves nothing; this is written by hand
 /// and the test compares them.
 pub const HAS_WRITER: &[&str] = &[
     "body",
+    "daily_activity",
     "exercise_sessions",
     "google_points",
     "breathing_rate",

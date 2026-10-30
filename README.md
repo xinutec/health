@@ -1,6 +1,6 @@
 # health-sync
 
-Fitbit + Owntracks/PhoneTrack data ingestion, classification, and dashboard.
+Google Health + Owntracks/PhoneTrack data ingestion, classification, and dashboard.
 Lives at https://health.xinutec.org.
 
 ## Android app

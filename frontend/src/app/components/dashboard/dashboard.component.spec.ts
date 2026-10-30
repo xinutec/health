@@ -78,7 +78,7 @@ function makeHealthMock(
 	const pending = new Map<string, Deferred<VelocityData>>();
 	const activityDaysSeen: number[] = [];
 	const health = {
-		user: signal({ fitbitLinked: true, shareWindow: opts.shareWindow ?? null }),
+		user: signal({ shareWindow: opts.shareWindow ?? null }),
 		shareToken: signal(null),
 		// The real service is async; these stubs only have to satisfy that
 		// signature, so they return a settled promise rather than pretending to

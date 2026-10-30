@@ -457,12 +457,11 @@ pub fn cutover_window(
 
 /// The `daily_activity` columns the Google writer owns from the cutover.
 ///
-/// ⚠ THIS LIST IS HALF OF A CONTRACT. `fitbit::sync::activity::FITBIT_ONLY_COLUMNS`
-/// is the other half, and a test holds them disjoint and exhaustive. If a column
-/// leaves this list without joining that one it is written by NOBODY and goes
-/// silently NULL from the cutover; if it is in both, both writers keep assigning
-/// it and the last job to run wins — which is exactly the overlap the cutover
-/// exists to prevent.
+/// ⚠ THIS LIST IS HALF OF A CONTRACT. [`ENDED_COLUMNS`] is the other half, and
+/// a test holds them disjoint and exhaustive over the table's data columns. A
+/// column in neither is written by NOBODY and goes silently NULL from the
+/// cutover; a column in both was, while the Fitbit writer ran, assigned by both
+/// with the last job winning — the overlap the cutover exists to prevent.
 pub const GOOGLE_OWNED_COLUMNS: &[&str] = &[
     "steps",
     "distance_km",
@@ -476,6 +475,15 @@ pub const GOOGLE_OWNED_COLUMNS: &[&str] = &[
     "minutes_fairly_active",
     "minutes_very_active",
 ];
+
+/// The `daily_activity` columns that ENDED with the Fitbit Web API.
+///
+/// The other half of the contract above. Google has no source for them and
+/// deriving them would be invention (three derivations of sedentary minutes
+/// were measured, the best 26–38 min/day off), so no writer assigns them and
+/// their history stands as Fitbit left it. `floors` and `elevation_m` were 0
+/// rows in both.
+pub const ENDED_COLUMNS: &[&str] = &["floors", "elevation_m", "minutes_sedentary", "active_score"];
 
 /// Is this day the Google writer's to write?
 ///

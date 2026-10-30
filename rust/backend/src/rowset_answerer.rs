@@ -31,9 +31,9 @@
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
-use crate::fitbit::tz_source::PolygonLookup;
 use crate::fold_payload::{bits, default_radius_m};
 use crate::lean::{self, Ask};
+use crate::tz_lookup::PolygonLookup;
 
 /// Where candidate rows come from, in the positional form `osmspatial` reads.
 ///

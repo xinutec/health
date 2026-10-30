@@ -3,12 +3,11 @@
 //! Basic Auth with the stored app password on every request, plus the
 //! `OCS-APIRequest` header Nextcloud requires for its OCS endpoints.
 //!
-//! # It holds a user, unlike the Fitbit client
+//! # It holds a user, unlike the Fitbit client did
 //!
-//! [`crate::fitbit::client::FitbitClient`] is per-PROCESS and takes an access
-//! token per call, because Fitbit's rate budget is charged against the
-//! application and a client that reached for a user's token would quietly
-//! acquire a current user. Nextcloud has no such shared budget and its
+//! The Fitbit client was per-PROCESS and took an access token per call, because
+//! Fitbit's rate budget was charged against the application and a client that
+//! reached for a user's token would quietly acquire a current user. Nextcloud has no such shared budget and its
 //! credentials are per-user by construction, so binding the user here is honest
 //! rather than a shortcut — and it is what lets [`super::phonetrack`] resolve
 //! the credentials ONCE for a multi-week walk instead of per chunk.

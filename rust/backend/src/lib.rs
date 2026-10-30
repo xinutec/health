@@ -45,7 +45,6 @@
 
 pub mod argv;
 pub mod auth;
-pub mod backfill;
 pub mod classification_inputs;
 pub mod config;
 pub mod db;
@@ -55,7 +54,6 @@ pub mod decoder_params;
 pub mod error;
 pub mod fetch_drain;
 pub mod fetch_queue;
-pub mod fitbit;
 pub mod fold;
 pub mod fold_payload;
 pub mod freshness;
@@ -80,5 +78,7 @@ pub mod schema;
 pub mod state;
 pub mod sync_state;
 pub mod timezone;
+pub mod tz_lookup;
 pub mod velocity_cache;
 pub mod walk_memo;
+pub mod watch_battery;

@@ -456,7 +456,7 @@ pub(crate) fn mirror_coverage_line(succeeded: usize, total: usize) -> String {
 /// and its tally.
 pub(crate) async fn fetch_geocodes(dry_run: bool, limit: i64) -> Result<()> {
     init_tracing();
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -482,7 +482,7 @@ pub(crate) async fn fetch_geocodes(dry_run: bool, limit: i64) -> Result<()> {
 /// its tally.
 pub(crate) async fn fetch_osm(dry_run: bool, limit: i64, only: Option<&str>) -> Result<()> {
     init_tracing();
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
@@ -512,7 +512,7 @@ pub(crate) async fn fetch_osm(dry_run: bool, limit: i64, only: Option<&str>) -> 
 /// starts in the same pod at the same moment.
 pub(crate) async fn watch_fetch_queue(interval_s: u64) -> Result<()> {
     init_tracing();
-    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;

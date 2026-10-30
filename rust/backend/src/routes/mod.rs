@@ -77,7 +77,6 @@ pub fn router(state: AppState) -> Router {
         .route("/hrv", get(tables::hrv))
         .route("/breathing", get(tables::breathing))
         .route("/temperature", get(tables::temperature))
-        .route("/devices", get(tables::devices))
         .route("/sync-state", get(tables::sync_state))
         // ⚠ The live-map group. All three check the share window against TODAY
         // rather than a requested date — see `routes::locations`.
@@ -115,20 +114,6 @@ pub fn router(state: AppState) -> Router {
             crate::auth::middleware::require_session,
         ));
 
-    // ⚠ Linking Fitbit needs a session ALREADY — it attaches an account to a
-    // known user. `require_may_proceed` runs too, so a share recipient cannot
-    // link their own Fitbit to the owner's account.
-    let fitbit = Router::new()
-        .route("/fitbit/auth", get(oauth::fitbit_auth))
-        .route("/fitbit/callback", get(oauth::fitbit_callback))
-        .layer(axum::middleware::from_fn(
-            crate::auth::middleware::require_may_proceed,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            crate::auth::middleware::require_session,
-        ));
-
     Router::new()
         // ⚠ Liveness and readiness are OUTSIDE the authenticated group. A probe
         // that needs a session cannot report a pod whose session table is
@@ -141,7 +126,6 @@ pub fn router(state: AppState) -> Router {
         .route("/login", get(oauth::login))
         .route("/auth/callback", get(oauth::callback))
         .route("/logout", axum::routing::post(oauth::logout))
-        .merge(fitbit)
         // ⚠ Service-to-service, gated by a shared secret rather than a session.
         // An empty token list rejects everything, which is the default.
         //

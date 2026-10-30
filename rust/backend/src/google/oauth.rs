@@ -5,13 +5,13 @@
 //! The refresh token is obtained once through user consent and stored as a
 //! secret; this mints access tokens server-side with no phone in the loop.
 //!
-//! # ⚠ Google does NOT rotate the refresh token, and Fitbit does
+//! # ⚠ Google does NOT rotate the refresh token, and Fitbit did
 //!
-//! So this needs none of [`crate::fitbit::tokens`]'s machinery — no per-user
+//! So this needs none of the machinery the Fitbit token store had — no per-user
 //! mutex, no cached expiry, no persistence. Two concurrent refreshes here are
-//! merely wasteful; the same two against Fitbit leave one caller holding a token
-//! that is already dead. Copying that structure over would suggest a hazard that
-//! does not exist here.
+//! merely wasteful; the same two against Fitbit left one caller holding a token
+//! that was already dead. Copying that structure over would suggest a hazard
+//! that does not exist here.
 
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;

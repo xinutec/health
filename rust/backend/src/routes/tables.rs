@@ -459,14 +459,9 @@ macro_rules! whole_table_handler {
     };
 }
 
-// ⚠ No ORDER BY in either, matching the TypeScript. Row order is whatever the
-// storage engine returns; adding a sort here would be a nicer API and a
-// different response.
-whole_table_handler!(
-    devices,
-    SQL_DEVICES,
-    "SELECT * FROM devices WHERE user_id = ?"
-);
+// ⚠ No ORDER BY, matching the TypeScript. Row order is whatever the storage
+// engine returns; adding a sort here would be a nicer API and a different
+// response.
 whole_table_handler!(
     sync_state,
     SQL_SYNC_STATE,

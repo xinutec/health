@@ -419,7 +419,7 @@ pub async fn compute_with(
 
     // The watch trace rides alongside rather than inside: a database hiccup
     // should cost the second line on a chart, not the day.
-    let watch_battery = crate::fitbit::watch_battery::load(
+    let watch_battery = crate::watch_battery::load(
         &st.pool,
         user_id,
         display_tz,

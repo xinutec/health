@@ -13,9 +13,6 @@
 # which ACCURACY_CEILING_M was the same name for two DIFFERENT rules (200.0 in
 # Rust, 80 in Lean) and was renamed rather than listed.
 
-# Fitbit tz inference: how far either way to look for a PhoneTrack fix.
-FIX_SEARCH_WINDOW_S
-
 # Calendar arithmetic. Genuinely constants of the world rather than decisions,
 # but still two declarations that could disagree.
 HOUR_BUCKETS

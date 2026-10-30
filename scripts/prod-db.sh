@@ -91,7 +91,7 @@ workload_env() {
 # EVERY variable the workloads define is exported, not a chosen few: a curated
 # list is how a new pipeline flag went missing and a Mac run silently tested a
 # different cascade from prod (2026-05-23). The serving Deployment carries the
-# database, Nextcloud and Fitbit credentials and the flags; the sync CronJob adds
+# database and Nextcloud credentials and the flags; the sync CronJob adds
 # Google's (#260). The Deployment's value wins where both define a name, so it is
 # applied last.
 #

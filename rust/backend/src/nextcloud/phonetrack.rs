@@ -6,9 +6,9 @@
 //!
 //! # What this feeds, and why that raises the stakes on a partial failure
 //!
-//! These fixes are the evidence [`crate::fitbit::tz_source`] uses to decide
-//! which zone a Fitbit wall clock was recorded in. That decision is written into
-//! `tz` and `ts_utc` columns and is not revisited.
+//! These fixes were the evidence the Fitbit wall-clock inference used to decide
+//! which zone a row was recorded in — a decision written into `tz` and
+//! `ts_utc` columns and never revisited. They are still the day's track.
 //!
 //! ⚠ **A DEVICE WHOSE FETCH FAILS CONTRIBUTES ZERO POINTS, WHICH IS EXACTLY
 //! WHAT A DEVICE THAT WAS SWITCHED OFF CONTRIBUTES.** The TypeScript logs each

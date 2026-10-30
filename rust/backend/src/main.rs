@@ -6,26 +6,19 @@
 //!
 //!   check  — read the config, open the pool, and prove both against the real
 //!            database. READ-ONLY, so it is safe to point at production.
-//!   sync   — Fitbit + Google ingestion, forward then backward, for every linked
-//!            user. `--forward-only` runs the forward pass alone and touches NO
-//!            backfill state, which is the form that is safe to run beside the
-//!            live cron.
+//!   sync   — the Google Health ingestion: weight, then every stream of the
+//!            roster, for the one user the Google account belongs to.
 //!   serve  — the HTTP server. THE server: `health-auth` runs this and nothing
 //!            else does.
 //!
-//! ⚠ `sync` FAILS LOUDLY rather than exiting 0 having done nothing — a silent
-//! success shows as a healthy scheduled run while data stops. It errors when it
-//! cannot read its users or reach Lean, and reports a spent rate budget as the
-//! ordinary ending it is.
-//!
-//! ⚠ AND IT IS NOT ENOUGH ON ITS OWN (#1231): a run that reads its users and
-//! reaches Lean can still write no rows, so `daily_activity` can stop while
-//! every run exits 0. `backend freshness` asks the outcome question instead, on
-//! its own schedule.
+//! ⚠ `sync` logs every stream's outcome and FAILS SOFT per stream: one
+//! unreachable endpoint must not stop the rest. So a run can exit 0 having
+//! written no rows, and `backend freshness` asks the outcome question
+//! instead, on its own schedule.
 
 use anyhow::{Context, Result};
 use backend::{
-    classification_inputs, config::Config, db, fitbit, lean, routes, state::AppState, sync_state,
+    classification_inputs, config::Config, db, lean, routes, state::AppState, sync_state,
 };
 
 mod cli;
@@ -52,14 +45,7 @@ async fn main() -> Result<()> {
         C::Serve => serve().await,
         // ⚠ An unrecognised flag is refused (clap), never ignored: this one
         // selects whether durable backfill state is written.
-        C::Sync { forward_only } => {
-            sync(if forward_only {
-                fitbit::run::Passes::Forward
-            } else {
-                fitbit::run::Passes::All
-            })
-            .await
-        }
+        C::Sync => sync().await,
         // ⚠ The tz is the DISPLAY tz and it is a separate thing from `home_tz`:
         // it bounds the local day, and a fixture captured for a trip abroad
         // carries the zone the day was LIVED in, not the one the profile stores.
@@ -280,31 +266,17 @@ async fn main() -> Result<()> {
 /// expensive part; the finder is then queried per fix. Building it per user, or
 /// per row, is how a lookup that costs microseconds becomes one that costs
 /// hundreds of milliseconds.
-async fn sync(passes: fitbit::run::Passes) -> Result<()> {
+async fn sync() -> Result<()> {
     cli::init_tracing();
 
-    // ⚠ `from_env_batch`: the Fitbit credentials are OPTIONAL here. Without
-    // them the run is Google-only, which is what it becomes when the Fitbit Web
-    // API ends (2026-10-30, #260).
-    let cfg = Config::from_env_batch()?;
+    let cfg = Config::from_env()?;
     let pool = db::connect(&cfg.db.url()).await?;
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .context("building the HTTP client")?;
-
-    let polygons = fitbit::tz_source::PolygonLookup::new();
-    let lookup = |lat: f64, lon: f64| polygons.zone(lat, lon);
-
-    fitbit::run::run(
-        &pool,
-        &http,
-        cfg.fitbit.as_ref(),
-        cfg.nextcloud_base_url.as_deref(),
-        &lookup,
-        passes,
-    )
-    .await
+    backend::google::run::run(&pool, &http).await;
+    Ok(())
 }
 
 /// Serve the HTTP surface.
@@ -419,28 +391,13 @@ async fn serve() -> Result<()> {
 /// and the decode path works without putting anyone's data on a terminal.
 async fn check() -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;
-    let fb = cfg.fitbit.clone().unwrap_or(backend::config::FitbitConfig {
-        client_id: "<absent: batch config>".into(),
-        client_secret: String::new(),
-    });
     println!(
-        "config: db {}:{}/{} user={} fitbit_client={} nextcloud={}",
+        "config: db {}:{}/{} user={} nextcloud={}",
         cfg.db.host,
         cfg.db.port,
         cfg.db.database,
         cfg.db.user,
-        // The client ID is not a secret (it ships in the OAuth redirect); the
-        // SECRET is never printed, and its presence is reported as a boolean.
-        fb.client_id,
         cfg.nextcloud_base_url.as_deref().unwrap_or("<unset>")
-    );
-    println!(
-        "config: fitbit client secret {}",
-        if fb.client_secret.is_empty() {
-            "EMPTY"
-        } else {
-            "present"
-        }
     );
 
     let pool = db::connect(&cfg.db.url()).await?;
@@ -570,14 +527,9 @@ async fn check() -> Result<()> {
         Some(newest) => {
             let date = newest.format("%Y-%m-%d").to_string();
             let b = backend::timezone::date_bounds_utc(&date, Some(&home_tz))?;
-            let series = backend::fitbit::watch_battery::load(
-                &pool,
-                &user,
-                &home_tz,
-                b.start_utc,
-                b.end_utc,
-            )
-            .await?;
+            let series =
+                backend::watch_battery::load(&pool, &user, &home_tz, b.start_utc, b.end_utc)
+                    .await?;
             let levels: std::collections::BTreeSet<i64> = series.iter().map(|(_, l)| *l).collect();
             println!(
                 "watch_battery[{user}]: {} sample(s) on its newest day, {} distinct level(s)",
