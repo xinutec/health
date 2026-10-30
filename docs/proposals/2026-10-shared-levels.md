@@ -837,7 +837,16 @@ fixes do not see), 06-18's board station, and the classes below.
    real ten-minute excursion 100 m out and back, which the narrative counts
    as the stay; 07-16's UCH is two buildings. What separates a walk out from
    a spell is what follows it: the journey's single level (stage 2) and the
-   stay's ending, not the spell itself.
+   stay's ending, not the spell itself. **2026-10-30:** this is now the term
+   every reading points at — the duration floor's −10 is what holds a single
+   stepped minute inside a stay (the fitted one-minute share lets eight out),
+   and the census above says single stepped minutes inside narrated stays
+   outnumber all longer runs (177 of 227 at 60 steps). The next arm is the
+   stay-move pass priced for that population: a spell that starts at the
+   fitted rate and continues at the census's 0.225, so a one-minute stepped
+   minute is the stay's and a four-minute walk to a taxi is not; judged on
+   the flip rows and the corpus, with the floor's fitted share in the same
+   measurement.
 2. **The journey state**: built, at parity (above), behind its key. **S2
    inside it**: the first slice is built (board-station legs, the ride time
    of the pair) and decodes the three Baker Street hops; its end anchors are
