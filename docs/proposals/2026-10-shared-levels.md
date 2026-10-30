@@ -745,6 +745,38 @@ cost 09-14 a line and two stations. Both rows stand as the minute's grain.
 A genuine tie at the two-nat level; the narrated line (Met/Circle/H&C) is
 the chain's post-hoc pick on the served day, with the same fixes.
 
+**2026-10-30: three forms measured, none shipped; the readings stand.** The
+coverage evidence once per *journey* (the sweep carrying a train-seen bit, a
+train leg after any earlier one giving its coverage term back whatever lies
+between) moved two frozen decodes, both phantoms at minutes the generator
+refuses: 07-15's radiotherapy stay became an eighteen-minute wait at Warren
+Street and a Victoria hop, 06-09 grew a Piccadilly hop inside the bus ride.
+The generator's refusal is each leg's own fact; only its vouching is shared,
+and only by legs cut from one candidate — the committed train-after-train
+give-back is that subset. The bit also doubled the journey build (the sweep
+from every start is the durations phase); the form that costs a tenth
+(train legs one state, walks and waits two) was not built because its
+population is thin: 06-16's hop is cross-line and keeps a 1.2-nat margin.
+The far-side start's three losers, read with the journey debugger (which now
+prints a leg's cell in its parts): 06-16's committed decode already splits
+the Met ride at the 116-step reacquire minute and the clause only re-lines
+the two-minute hop as Jubilee@St John's Wood by the pair law; 09-14's change
+moves from Finchley Road to Baker Street on identical emissions, 1.3 nats of
+ride-time and calling terms, while the station structure gains 7.9 over the
+plain legs; 05-18's hop alights at Great Portland Street from a 50 km/h fix
+64 m off — the signal has the train calling there at 10:51 and arriving at
+Euston Square at 10:52 — and the committed three-minute hop is right, by
+0.05 nats, because the one-minute change walk pays the duration floor's −10
+where its gamma says −3.7. That floor, switched off under today's model
+(`durationNoFloor`, measured once on 10-15 and never shipped), cuts
+one-minute walks into stays on eight days, one-minute stays into the
+stepless ends of walks on six, and a one-minute train into 09-15's walk: the
+fitted gammas carry no refusal at one minute because the corpus holds four
+rows of a minute or less, and the hand floor stands in for a duration form
+that would. The lever is that form, fitted with those rows in it, not the
+switch; and the alight at a call — a station named from a passing fix — is
+the term the far-side start needs before it is tried again.
+
 ### S2 inside the journey state, costed before building
 
 A `train L from σ` leg per line and candidate board station: the candidates
