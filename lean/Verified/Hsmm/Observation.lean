@@ -4,8 +4,8 @@ import Verified.Fix
 
 Stitches the GPS / HR / step / sleep streams into one 1440-row day: per-minute
 median lat/lon + mean speed, mean HR, summed cadence, sleep-overlap `inBed`,
-watch-liveness cadence imputation, reacquire-age after GPS gaps, and the
-forward/backward nearest-fix scans.
+watch-liveness cadence imputation, and the forward/backward nearest-fix
+scans.
 
 The one thing Lean cannot do — IANA-timezone resolution (`Intl.DateTimeFormat`
 for hour/day-of-week, and the day's UTC bounds) — stays in the thin caller: this
@@ -20,11 +20,6 @@ namespace Verified.Hsmm.Observation
 def MINUTES_PER_DAY : Nat := 1440
 def SECONDS_PER_MINUTE : Int := 60
 def WATCH_LIVENESS_WINDOW_MIN : Nat := 5
-/-- Fix-less minutes before a fix counts as a reacquisition. One: the smoother's
-speed runs through a gap of up to 45 s unchanged and then carries the gap's own
-speed until it settles (`examples/reacquire_speed`), so a fix that ends a dark
-minute is already one the speed term must not take at face value. -/
-def REACQUIRE_GAP_MIN : Nat := 1
 
 structure GpsPoint where
   ts : Int
@@ -70,9 +65,6 @@ structure ObsRow where
   inBed : Bool
   roadDistM : Option Float
   railDistM : Option Float
-  reacquireAgeMin : Option Int
-  /-- The fix-less minutes before the run `reacquireAgeMin` counts into. -/
-  reacquireGapMin : Option Int := none
   prevGpsFix : Option Fix
   nextGpsFix : Option Fix
   /-- The minute's own first and last raw fix. `gps` is the minute's median,
@@ -145,23 +137,6 @@ private def nextAliveDist (alive : Array Bool) : Array (Option Nat) :=
       (next, st.2.push (next.map (fun nx => nx - m))))
     (none, #[]) |>.2).reverse
 
-/-- Reacquire age per minute: a bright run following a ≥`REACQUIRE_GAP_MIN`
-    fixless gap gets 0,1,2,… from its first fix; shorter-gap runs and fixless
-    minutes stay none. Day start counts as being in a gap. -/
-def reacquireAgesAndGaps (gpsPresent : Array Bool) : Array (Option (Int × Int)) :=
-  (List.range MINUTES_PER_DAY).foldl
-    (fun (st : (Nat × Option Nat × Nat) × Array (Option (Int × Int))) m =>
-      let (gapLen, runGap, ageInRun) := st.1
-      if !(gpsPresent[m]?.getD false) then
-        ((gapLen + 1, runGap, ageInRun), st.2.push none)
-      else if gapLen > 0 then
-        let q := if gapLen ≥ REACQUIRE_GAP_MIN then some gapLen else none
-        ((0, q, 0), st.2.push (q.map fun g => (0, Int.ofNat g)))
-      else
-        let age := ageInRun + 1
-        ((0, runGap, age), st.2.push (runGap.map fun g => (Int.ofNat age, Int.ofNat g))))
-    ((REACQUIRE_GAP_MIN, none, 0), #[]) |>.2
-
 /-- Build the observation tensor. `localCtx m = (hourLocal, dayOfWeek)` and
     `proximityAt ts = (roadDistM?, railDistM?)` are caller-resolved (tz / OSM);
     everything else is computed here. -/
@@ -206,10 +181,7 @@ def buildObservationTensor
           && (match nd[m]?.getD none with | some d => d ≤ WATCH_LIVENESS_WINDOW_MIN | none => false)
         a.push (if impute then some 0 else c0)) #[]
     else cad0
-  -- Pass 3: reacquire age.
-  let gpsPresent : Array Bool := gpsArr.map Option.isSome
-  let reacq := reacquireAgesAndGaps gpsPresent
-  -- Pass 4: forward prev-fix, backward next-fix.
+  -- Pass 3: forward prev-fix, backward next-fix.
   let prevArr : Array (Option Fix) := (List.range MINUTES_PER_DAY).foldl
     (fun (st : (Option Fix) × Array (Option Fix)) m =>
       let ts := startUtc + (Int.ofNat m) * SECONDS_PER_MINUTE
@@ -229,8 +201,6 @@ def buildObservationTensor
       ts, gps := gpsArr[m]?.getD none, hr := hrArr[m]?.getD none, cadence := cad[m]?.getD none,
       hourLocal := hour, dayOfWeekLocal := dow, inBed := inBed[m]?.getD false,
       roadDistM := road, railDistM := rail,
-      reacquireAgeMin := (reacq[m]?.getD none).map (·.1),
-      reacquireGapMin := (reacq[m]?.getD none).map (·.2),
       prevGpsFix := prevArr[m]?.getD none, nextGpsFix := nextArr[m]?.getD none,
       firstFix := (gpsB[m]?.getD #[]).foldl (fun (acc : Option Fix) p =>
         match acc with
@@ -258,29 +228,29 @@ private def tensor : Array ObsRow :=
 /-- Project a minute to the fields the reference pins (fix ts shown relative to
     startUtc). -/
 private def proj (o : ObsRow) :
-    Option (Float × Float × Float) × Option Float × Option Float × Option Int
+    Option (Float × Float × Float) × Option Float × Option Float
       × Option (Int × Float × Float) × Option (Int × Float × Float) :=
-  (o.gps.map (fun g => (g.lat, g.lon, g.speedKmh)), o.hr, o.cadence, o.reacquireAgeMin,
+  (o.gps.map (fun g => (g.lat, g.lon, g.speedKmh)), o.hr, o.cadence,
    o.prevGpsFix.map (fun f => (f.ts - 1784156400, f.lat, f.lon)),
    o.nextGpsFix.map (fun f => (f.ts - 1784156400, f.lat, f.lon)))
 
 #guard proj tensor[0]! ==
-  (some (51.510000000000005, -0.11, 5), some 65, some 0, some 0,
+  (some (51.510000000000005, -0.11, 5), some 65, some 0,
    some (0, 51.510000000000005, -0.11), some (0, 51.510000000000005, -0.11))
 #guard proj tensor[1]! ==
-  (some (51.53, -0.13, 5), none, some 50, some 1, some (60, 51.53, -0.13), some (60, 51.53, -0.13))
+  (some (51.53, -0.13, 5), none, some 50, some (60, 51.53, -0.13), some (60, 51.53, -0.13))
 #guard proj tensor[2]! ==
-  (none, none, some 0, none, some (60, 51.53, -0.13), some (420, 51.6, -0.2))
+  (none, none, some 0, some (60, 51.53, -0.13), some (420, 51.6, -0.2))
 #guard proj tensor[3]! ==
-  (none, some 80, some 0, none, some (60, 51.53, -0.13), some (420, 51.6, -0.2))
+  (none, some 80, some 0, some (60, 51.53, -0.13), some (420, 51.6, -0.2))
 #guard proj tensor[6]! ==
-  (none, none, some 0, none, some (60, 51.53, -0.13), some (420, 51.6, -0.2))
+  (none, none, some 0, some (60, 51.53, -0.13), some (420, 51.6, -0.2))
 #guard proj tensor[7]! ==
-  (some (51.6, -0.2, 3), some 72, some 0, some 0, some (420, 51.6, -0.2), some (420, 51.6, -0.2))
+  (some (51.6, -0.2, 3), some 72, some 0, some (420, 51.6, -0.2), some (420, 51.6, -0.2))
 #guard proj tensor[8]! ==
-  (some (51.61, -0.21, 2), none, some 30, some 1, some (480, 51.61, -0.21), some (480, 51.61, -0.21))
+  (some (51.61, -0.21, 2), none, some 30, some (480, 51.61, -0.21), some (480, 51.61, -0.21))
 #guard proj tensor[9]! ==
-  (none, none, none, none, some (480, 51.61, -0.21), none)
+  (none, none, none, some (480, 51.61, -0.21), none)
 
 -- inBed marking: a record covering [start+90s, start+150s] marks minutes 1 and 2.
 #guard (markInBed 1784156400 [⟨1784156400 + 90, 1784156400 + 150⟩])[1]! == true

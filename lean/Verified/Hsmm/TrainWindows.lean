@@ -219,7 +219,7 @@ def findTrainWindows (obs : Array ObsRow) : Array (Nat × Nat) := Id.run do
 private def mk (i : Nat) (lat lon : Float) (spd : Option Float) : ObsRow :=
   { ts := 1000 + (i : Int) * 60, gps := spd.map (fun s => ⟨lat, lon, s, none⟩), hr := none, cadence := none,
     hourLocal := 0, dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none,
-    reacquireAgeMin := none, prevGpsFix := none, nextGpsFix := none }
+    prevGpsFix := none, nextGpsFix := none }
 
 private def obsA : Array ObsRow := #[
   mk 0 51.50 (-0.10) (some 3), mk 1 51.50 (-0.10) (some 4), mk 2 51.50 (-0.10) (some 5),

@@ -623,7 +623,7 @@ coverage map, continuity, and the C4 flags. Output is the dense quantised
 
   { "maxD": n,
     "obs": [{ts, gps:{lat,lon,speedKmh}|null, hr, cadence, hourLocal, dayOfWeekLocal,
-              inBed, roadDistM, railDistM, reacquireAgeMin, prevGpsFix, nextGpsFix}],
+              inBed, roadDistM, railDistM, prevGpsFix, nextGpsFix}],
     "edges": [{id, geometry:[{lat,lon}], lineMemberships:[str], underground, startNode, endNode}],
     "places": [{id, name, lat, lon, hourProfile:[num]|null, dwell}],
     "coverage": [[ts, [lines]]],                         // ts → generator-vouched lines
@@ -647,7 +647,6 @@ private def parseObsRow (j : Json) : Except String Verified.Hsmm.Observation.Obs
     dayOfWeekLocal := ← (← j.getObjVal? "dayOfWeekLocal").getNat?
     inBed := ← (← j.getObjVal? "inBed").getBool?
     roadDistM := ← jOptFloat j "roadDistM", railDistM := ← jOptFloat j "railDistM"
-    reacquireAgeMin := ← jOptInt j "reacquireAgeMin"
     prevGpsFix := ← parseOptFix j "prevGpsFix", nextGpsFix := ← parseOptFix j "nextGpsFix" }
 
 /-- A station node for the chained-triple resolver. Same five fields as
@@ -2167,10 +2166,6 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
     Json.mkObj [("ts", Lean.toJson o.ts),
                 ("speedKmh", optF (o.gps.map (·.speedKmh))),
                 ("cadence", optF o.cadence), ("hr", optF o.hr),
-                -- The reacquire correction's inputs: the minute's age in its
-                -- bright run after a gap, the gap's length, the rail distance.
-                ("reacquireAgeMin", match o.reacquireAgeMin with | some a => Lean.toJson a | none => Json.null),
-                ("reacquireGapMin", match o.reacquireGapMin with | some g => Lean.toJson g | none => Json.null),
                 ("railDistM", optF o.railDistM),
                 ("prevFixTs", match o.prevGpsFix with | some f => Lean.toJson f.ts | none => Json.null),
                 ("nextFixTs", match o.nextGpsFix with | some f => Lean.toJson f.ts | none => Json.null),

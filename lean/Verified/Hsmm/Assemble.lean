@@ -656,8 +656,7 @@ private def jm : RouteGraphModel := RouteModel.buildRouteGraphModel #[
   jEdge "way:2" [⟨51.525, -0.075⟩, ⟨51.55, -0.05⟩] "nMid" "nB"]
 private def obsTrain : ObsRow :=
   { ts := 1600, gps := none, hr := none, cadence := none, hourLocal := 9, dayOfWeekLocal := 0,
-    inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
-    prevGpsFix := some ⟨1000, 51.50, -0.10⟩, nextGpsFix := some ⟨1600, 51.55, -0.05⟩ }
+    inBed := false, roadDistM := none, railDistM := none, prevGpsFix := some ⟨1000, 51.50, -0.10⟩, nextGpsFix := some ⟨1600, 51.55, -0.05⟩ }
 private def places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float) :=
   [(⟨5, some "Home"⟩, 51.52, -0.13, none, 100.0)]
 -- A record with no fitted mode: every base term stays per minute.

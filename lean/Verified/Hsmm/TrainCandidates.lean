@@ -228,7 +228,7 @@ private def sg : StationGraph := {
 private def mk (i : Nat) (lat lon : Float) (spd : Option Float) : ObsRow :=
   { ts := 1000 + (i : Int) * 60, gps := spd.map (fun s => ⟨lat, lon, s, none⟩), hr := none, cadence := none,
     hourLocal := 0, dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none,
-    reacquireAgeMin := none, prevGpsFix := none, nextGpsFix := none }
+    prevGpsFix := none, nextGpsFix := none }
 private def obs : Array ObsRow := #[
   mk 0 51.50 (-0.10) (some 2), mk 1 0 0 none, mk 2 0 0 none, mk 3 0 0 none, mk 4 0 0 none,
   mk 5 51.55 (-0.05) (some 2), mk 6 51.55 (-0.05) (some 3)]

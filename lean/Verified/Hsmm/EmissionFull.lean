@@ -126,22 +126,18 @@ private def approxF (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 
 private def obsTrain : ObsRow :=
   { ts := 1600, gps := none, hr := none, cadence := none, hourLocal := 0, dayOfWeekLocal := 0,
-    inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
-    prevGpsFix := some ⟨1000, 51.50, -0.10⟩, nextGpsFix := some ⟨1600, 51.55, -0.05⟩ }
+    inBed := false, roadDistM := none, railDistM := none, prevGpsFix := some ⟨1000, 51.50, -0.10⟩, nextGpsFix := some ⟨1600, 51.55, -0.05⟩ }
 private def obsStat : ObsRow :=
   { ts := 1000, gps := some ⟨51.5201, -0.1301, 0, none⟩, hr := some 70, cadence := some 0, hourLocal := 0,
-    dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
-    prevGpsFix := some ⟨940, 51.60, -0.30⟩, nextGpsFix := some ⟨1000, 51.5201, -0.1301⟩ }
+    dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none, prevGpsFix := some ⟨940, 51.60, -0.30⟩, nextGpsFix := some ⟨1000, 51.5201, -0.1301⟩ }
 private def obsWalk : ObsRow :=
   { ts := 1000, gps := some ⟨51.53, -0.12, 5, none⟩, hr := some 100, cadence := some 100, hourLocal := 0,
-    dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
-    prevGpsFix := none, nextGpsFix := none }
+    dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none, prevGpsFix := none, nextGpsFix := none }
 -- Stationary no-fix minute whose most-recent fix is near the prior place → continuity fires.
 private def contCtx : Continuity.ContinuityContext := ⟨some 5, some (51.52, -0.13), 3, 0.95⟩
 private def obsCont : ObsRow :=
   { ts := 1000, gps := none, hr := none, cadence := none, hourLocal := 0, dayOfWeekLocal := 0,
-    inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
-    prevGpsFix := some ⟨900, 51.521, -0.131⟩, nextGpsFix := some ⟨900, 51.521, -0.131⟩ }
+    inBed := false, roadDistM := none, railDistM := none, prevGpsFix := some ⟨900, 51.521, -0.131⟩, nextGpsFix := some ⟨900, 51.521, -0.131⟩ }
 
 -- The train pays its share of a 40 km/h gap, which its speed prior almost always covers.
 #guard approxF (emissionLogProbFull m cg ml pc none ⟨.train, none, some "Test Line"⟩ obsTrain)

@@ -1424,7 +1424,7 @@ private def ob (i : Nat) (lon : Option Float) : ObsRow :=
   { ts := T0 + (i : Int) * 60
     gps := lon.map (fun l => ⟨51.5, l, 0, none⟩)
     hr := none, cadence := none, hourLocal := 9, dayOfWeekLocal := 3, inBed := false
-    roadDistM := none, railDistM := none, reacquireAgeMin := none
+    roadDistM := none, railDistM := none
     prevGpsFix := none, nextGpsFix := none }
 
 private def tseg (a b : Nat) : ChainSeg :=

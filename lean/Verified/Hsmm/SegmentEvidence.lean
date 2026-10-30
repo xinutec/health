@@ -75,7 +75,7 @@ def windowAt (obs : Array ObsRow) (pref : Array Float) (d segEnd : Nat) : Option
 private def sev (i : Nat) (prev next : Option Fix) : ObsRow :=
   { ts := 1000 + (i : Int) * 60, gps := none, hr := none, cadence := some 100,
     hourLocal := 0, dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none,
-    reacquireAgeMin := none, prevGpsFix := prev, nextGpsFix := next }
+    prevGpsFix := prev, nextGpsFix := next }
 private def sevObs : Array ObsRow := #[
   sev 0 none none,
   sev 1 (some ⟨1060, 51.5, -0.1⟩) none,          -- segStart bracket (slop 0 left)

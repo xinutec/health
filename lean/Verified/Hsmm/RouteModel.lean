@@ -185,8 +185,7 @@ private def surfCg : RouteConnectivity.Graph := toConnGraph surfModel
 
 private def obs : ObsRow :=
   { ts := 1600, gps := none, hr := none, cadence := none, hourLocal := 0, dayOfWeekLocal := 0,
-    inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
-    prevGpsFix := some ⟨1000, 51.50, -0.10⟩, nextGpsFix := some ⟨1600, 51.55, -0.05⟩ }
+    inBed := false, roadDistM := none, railDistM := none, prevGpsFix := some ⟨1000, 51.50, -0.10⟩, nextGpsFix := some ⟨1600, 51.55, -0.05⟩ }
 private def shortObs : ObsRow := { obs with nextGpsFix := some ⟨1200, 51.55, -0.05⟩ }
 private def train : State := ⟨.train, none, some "Test Line"⟩
 
@@ -261,7 +260,7 @@ private def lpLines : List String := linesInGraph lpModel
 private def lpObs (lat lon : Float) (road rail : Option Float) : ObsRow :=
   { ts := 100, gps := some ⟨lat, lon, 30, none⟩, hr := none, cadence := none, hourLocal := 0,
     dayOfWeekLocal := 0, inBed := false, roadDistM := road, railDistM := rail,
-    reacquireAgeMin := none, prevGpsFix := none, nextGpsFix := none }
+    prevGpsFix := none, nextGpsFix := none }
 private def lpNullObs : ObsRow := { lpObs 51.50 (-0.10) none none with gps := none }
 
 #guard lineProximityFactor lpModel lpLines train (lpObs 51.50 (-0.10) (some 300) (some 100)) false == 1.5   -- rail nearer
@@ -441,8 +440,7 @@ private def cmFix : Observation.Fix := ⟨1000, 51.504, -0.1003⟩
 private def cmOther : Observation.Fix := ⟨900, 51.52, -0.13⟩
 private def cmRow (ts : Int) (fx : Option Observation.Fix) : ObsRow :=
   { ts, gps := none, hr := none, cadence := none, hourLocal := 0, dayOfWeekLocal := 0,
-    inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
-    prevGpsFix := fx, nextGpsFix := none }
+    inBed := false, roadDistM := none, railDistM := none, prevGpsFix := fx, nextGpsFix := none }
 private def cmSame (a b : ChainMinute) : Bool :=
   a.stayAt 7 == b.stayAt 7 && a.stayAt 8 == b.stayAt 8
     && a.boardFixAt "Victoria Line" == b.boardFixAt "Victoria Line"
@@ -513,8 +511,7 @@ private def ccPlaces : Std.HashMap Int (Float × Float) :=
   (({} : Std.HashMap Int (Float × Float)).insert 1 (51.50, -0.10)).insert 2 (51.60, -0.20)
 private def ccObs : ObsRow :=
   { ts := 1000, gps := none, hr := none, cadence := none, hourLocal := 0, dayOfWeekLocal := 0,
-    inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
-    prevGpsFix := some ⟨940, 51.505, -0.10⟩, nextGpsFix := none }
+    inBed := false, roadDistM := none, railDistM := none, prevGpsFix := some ⟨940, 51.505, -0.10⟩, nextGpsFix := none }
 private def st (m : Mode) (pid : Option Int) (ln : Option String) : State := ⟨m, pid, ln⟩
 private def approxC (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 

@@ -28,7 +28,7 @@ fn obs_row(i: i64) -> Value {
         "gps": { "lat": (i as f64 / 10.0) * 0.02, "lon": 0.0, "speedKmh": 60.0 },
         "hr": null, "cadence": null, "hourLocal": 9, "dayOfWeekLocal": 1,
         "inBed": false, "roadDistM": null, "railDistM": 5.0,
-        "reacquireAgeMin": null, "prevGpsFix": null, "nextGpsFix": null
+        "prevGpsFix": null, "nextGpsFix": null
     })
 }
 
