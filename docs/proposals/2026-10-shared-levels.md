@@ -846,7 +846,19 @@ fixes do not see), 06-18's board station, and the classes below.
    fitted rate and continues at the census's 0.225, so a one-minute stepped
    minute is the stay's and a four-minute walk to a taxi is not; judged on
    the flip rows and the corpus, with the floor's fitted share in the same
-   measurement.
+   measurement. **Measured the same afternoon**, the pass refitted on its
+   own likelihood (EM over 203 narrated stays, 23,904 minutes: a still
+   minute starts moving 0.95 %, a moving one continues 66 %): refuted — 37
+   decodes move, every one a walk's ends eaten into the stay it leaves or
+   reaches (05-18's walks lose five to ten minutes at each end, 07-06's Work
+   swallows every lunch excursion, 09-30's walk to St Pancras loses seven);
+   flip rows lost 8, gained 0. A moving minute pays nothing for where it is,
+   so a walk's first and last minutes, hundreds of metres out at a walk's
+   pace, are cheaper as the stay's spell than as the walk's structure. The
+   term is therefore the stay's ENDING, not its inside: a stay may not run
+   through minutes whose fixes leave its footprint at a walk's pace — the
+   pair speeds and the displacement away from the place, which the spell
+   never sees. That is the next form; the switch stays in the code, off.
 2. **The journey state**: built, at parity (above), behind its key. **S2
    inside it**: the first slice is built (board-station legs, the ride time
    of the pair) and decodes the three Baker Street hops; its end anchors are

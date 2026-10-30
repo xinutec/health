@@ -976,6 +976,11 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let pairBoundaryMeanKmh := (f.getObjVal? "pairBoundaryMeanKmh").toOption >>= num
     let pairBoundaryEps := (f.getObjVal? "pairBoundaryEps").toOption >>= num
     let unlistedCentre := (f.getObjVal? "unlistedCentre").toOption >>= num
+    let stayMove : Option (Float × Float) := do
+      let arr ← ((f.getObjVal? "stayMove") >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [aIn, pStay] => some (aIn, pStay)
+      | _ => none
     let asleep : Option Verified.Hsmm.SegmentEmission.SleepParams := do
       let arr ← ((f.getObjVal? "asleep") >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
@@ -1012,7 +1017,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let g := fun (k : String) => (tl.getObjVal? k).toOption >>= num
       pure { vouchedShare := ← g "vouchedShare", covered := ← g "covered", uncovered := ← g "uncovered" }
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM,
-           obsChain, asleep, unlistedCentre, journey, trainLine }
+           obsChain, asleep, unlistedCentre, stayMove, journey, trainLine }
   let some segEm := segEm?
     | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
   if segEm.trainLine.isNone then
@@ -1093,7 +1098,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
                         oneMinuteLog, visitCounts, entryTable }
   let lineProxBest := Verified.Hsmm.Assemble.lineProxBestTable ctx
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx
-  return ({ ctx with lineProxBest, pairPref, pairBoundary }, maxD)
+  let stayMoveCorr := Verified.Hsmm.Assemble.stayMoveTable ctx maxD
+  return ({ ctx with lineProxBest, pairPref, pairBoundary, stayMoveCorr }, maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json

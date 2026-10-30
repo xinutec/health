@@ -138,6 +138,10 @@ structure ModelContext where
   /-- Per local hour, `log P(place | a stay begins)` for each place and for a
       place not on the list (`entryCountsTable`); empty without the arm. -/
   entryTable : Array (Std.HashMap Int Float × Float) := #[]
+  /-- Per stay segment `(d, e)` at `(d − 1) · T + e`, what moving about inside
+      the place adds to its all-still reading (`stayMoveTable`); empty without
+      `stayMove`. -/
+  stayMoveCorr : FloatArray := FloatArray.empty
 
 /-- The journey's wait state: stationary, no place, this in `lineName`. A leg
     of the journey state only; the outer trellis never holds it. -/
@@ -487,6 +491,44 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
       (if c.durationNoFloor then MIN_ONE else if isWait then c.waitMin else Duration.minDurationByMode st.mode)
       (match c.oneMinuteLog st.mode with | some v => v | none => Duration.HARD_FLOOR_LOG_PROB)
 
+/-- `ModelContext.stayMoveCorr`: for every stay segment of length `d ≤ maxD`
+    ending at `e`, the best reading of its minutes as still or moving about the
+    place (a two-state pass: `stayMove`'s rates, a moving minute's steps scored
+    as a walk's) less the all-still reading the stay's minutes already carry.
+    One sweep forward from each start. -/
+def stayMoveTable (c : ModelContext) (maxD : Nat) : FloatArray := Id.run do
+  let some (aIn, pStay) := c.segEm.p.stayMove | return FloatArray.empty
+  let T := c.obs.size
+  let still := Emissions.priorOf c.priors ⟨.stationary, none, none⟩
+  let walk := Emissions.priorOf c.priors ⟨.walking, none, none⟩
+  let gain : Array Float := c.obs.map fun o => match o.cadence with
+    | some k => c.weights.base * (Emissions.logCadencePdf k walk - Emissions.logCadencePdf k still)
+    | none => SEG_ZERO
+  let stay0 := Float.log (MIN_ONE - aIn)
+  let enter := Float.log aIn - stay0
+  let keep := Float.log pStay - stay0
+  let leave := Float.log (MIN_ONE - pStay) - stay0
+  let mut out := FloatArray.mk (Array.replicate (maxD * T) SEG_ZERO)
+  for s0 in [0:T] do
+    let mut vs := SEG_ZERO
+    let mut vm := enter + gain.getD s0 SEG_ZERO
+    out := out.set! s0 (max vs vm)
+    for d in [2:maxD + 1] do
+      let e := s0 + d - 1
+      if e ≥ T then break
+      let g := gain.getD e SEG_ZERO
+      let vs' := max vs (vm + leave)
+      let vm' := max (vs + enter) (vm + keep) + g
+      vs := vs'
+      vm := vm'
+      out := out.set! ((d - 1) * T + e) (max vs vm)
+  return out
+
+/-- What moving about adds to stay `x` over minutes `[lo, hi)`. -/
+def stayMoveAt (c : ModelContext) (x : State) (lo hi : Nat) : Float :=
+  if x.mode != .stationary || c.stayMoveCorr.size == 0 || hi ≤ lo then SEG_ZERO
+  else c.stayMoveCorr.get! ((hi - lo - 1) * c.obs.size + (hi - 1))
+
 /-- The segment-level emission of state `s` over a segment of length `d` with
     window `w` (its net displacement) and statistics `st`. -/
 def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
@@ -517,6 +559,7 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
       + (match dv with
          | some v => SegmentEmission.dispPosteriorFrom q.p x.mode v
          | none => SegmentEmission.dispPosteriorScore q.p x.mode d w)
+      + stayMoveAt c x st.lo st.hi
   | none => SEG_ZERO
 
 /-- `segEmFrom`'s terms one by one, for the path debugger: the heart-rate and
@@ -539,7 +582,8 @@ def segEmParts (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window
        let pr := (c.pairPref[s]?).getD #[]
        (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO),
      ("pairBoundary", if st.hi == 0 then SEG_ZERO else (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO),
-     ("disp", SegmentEmission.dispPosteriorScore q.p x.mode d w)]
+     ("disp", SegmentEmission.dispPosteriorScore q.p x.mode d w),
+     ("stayMove", stayMoveAt c x st.lo st.hi)]
   | none => []
 
 /-- Per minute, the best line-proximity term over the train states. -/

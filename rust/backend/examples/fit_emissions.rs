@@ -114,6 +114,8 @@ struct Minute {
     /// The route model covers the minute: a train here can be a named line;
     /// elsewhere only `unknown_rail`, which takes the mainline speed.
     covered: bool,
+    /// The minute's steps, as the decoder scores them; `None` without step data.
+    cadence: Option<f64>,
 }
 
 #[derive(Clone)]
@@ -431,6 +433,7 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
         },
         cls: r["obsClass"].as_u64().unwrap_or(0) as usize,
         covered: r["covered"].as_bool() == Some(true),
+        cadence: r["cadence"].as_f64(),
     };
     let inner = |s: i64, e: i64| -> Vec<Minute> {
         (1..)
@@ -1271,6 +1274,108 @@ fn write_fit(
     // The one record (`backend::decoder_params`): the four, the form's settings,
     // and which days the numbers came from.
     let mut record = form.decoder.clone();
+    // With `fitStayMove`, moving about inside a stay's place: a two-state
+    // chain over each narrated stay's minutes (still / moving), the moving
+    // minute's steps scored under walking's cadence and the still minute's
+    // under the stay's (the form's own priors), its two rates by maximum
+    // likelihood (EM, forward–backward), a pseudo-count each side. The decoder
+    // scores the same chain (`Assemble.stayMoveTable`), so the rates are
+    // fitted on the term's own likelihood, not on a step threshold.
+    if form.decoder["fitStayMove"].as_bool() == Some(true) {
+        let cad = |m: &str, c: f64| -> Option<f64> {
+            let row = sp["modePriors"][m].as_array()?;
+            let z = row.get(5)?.as_f64()?;
+            let mu = row.get(6)?.as_f64()?;
+            let sd = row.get(7)?.as_f64()?;
+            Some(if c == 0.0 {
+                z.ln()
+            } else {
+                (1.0 - z).ln() + normal_pdf(c, mu, sd).ln()
+            })
+        };
+        // Per stay run, the minutes' (still, moving) log-likelihoods.
+        let seqs: Vec<Vec<(f64, f64)>> = of("stationary")
+            .iter()
+            .map(|r| {
+                r.inner
+                    .iter()
+                    .filter_map(|m| {
+                        let c = m.cadence?;
+                        Some((cad("stationary", c)?, cad("walking", c)?))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| v.len() >= 2)
+            .collect();
+        let n_min: usize = seqs.iter().map(|v| v.len()).sum();
+        if n_min >= MIN_N {
+            let (mut a_in, mut p_stay) = (0.05f64, 0.5f64);
+            for _ in 0..50 {
+                // Expected transition counts under the current rates.
+                let (mut ss, mut sm, mut ms, mut mm) = (0.5f64, 0.5f64, 0.5f64, 0.5f64);
+                let t = [[1.0 - a_in, a_in], [1.0 - p_stay, p_stay]];
+                for v in &seqs {
+                    let n = v.len();
+                    // Forward in probability space with per-step scaling.
+                    let mut fwd = vec![[0.0f64; 2]; n];
+                    let mut scale = vec![0.0f64; n];
+                    let e = |k: usize, j: usize| if j == 0 { v[k].0.exp() } else { v[k].1.exp() };
+                    fwd[0] = [(1.0 - a_in) * e(0, 0), a_in * e(0, 1)];
+                    scale[0] = fwd[0][0] + fwd[0][1];
+                    fwd[0][0] /= scale[0];
+                    fwd[0][1] /= scale[0];
+                    for k in 1..n {
+                        for j in 0..2 {
+                            fwd[k][j] =
+                                (fwd[k - 1][0] * t[0][j] + fwd[k - 1][1] * t[1][j]) * e(k, j);
+                        }
+                        scale[k] = fwd[k][0] + fwd[k][1];
+                        fwd[k][0] /= scale[k];
+                        fwd[k][1] /= scale[k];
+                    }
+                    let mut bwd = vec![[1.0f64; 2]; n];
+                    for k in (0..n - 1).rev() {
+                        for i in 0..2 {
+                            bwd[k][i] = (0..2)
+                                .map(|j| t[i][j] * e(k + 1, j) * bwd[k + 1][j])
+                                .sum::<f64>()
+                                / scale[k + 1];
+                        }
+                    }
+                    for k in 0..n - 1 {
+                        let mut xi = [[0.0f64; 2]; 2];
+                        let mut z = 0.0;
+                        for i in 0..2 {
+                            for j in 0..2 {
+                                xi[i][j] = fwd[k][i] * t[i][j] * e(k + 1, j) * bwd[k + 1][j];
+                                z += xi[i][j];
+                            }
+                        }
+                        if z > 0.0 {
+                            ss += xi[0][0] / z;
+                            sm += xi[0][1] / z;
+                            ms += xi[1][0] / z;
+                            mm += xi[1][1] / z;
+                        }
+                    }
+                }
+                let (na, np) = (sm / (ss + sm), mm / (ms + mm));
+                let done = (na - a_in).abs() < 1e-6 && (np - p_stay).abs() < 1e-6;
+                a_in = na;
+                p_stay = np;
+                if done {
+                    break;
+                }
+            }
+            se["stayMove"] = json!([round4(a_in), round4(p_stay)]);
+            log.push(format!(
+                "stay move: EM over {} narrated stay runs, {n_min} minutes: a still minute starts moving {:.2}%, a moving one continues {:.1}%",
+                seqs.len(),
+                100.0 * a_in,
+                100.0 * p_stay
+            ));
+        }
+    }
     record["segEmission"] = se.clone();
     record["transFit"] = tf.clone();
     record["entryCounts"] = ec.clone();
