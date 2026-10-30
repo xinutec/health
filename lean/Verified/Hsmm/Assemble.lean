@@ -72,7 +72,6 @@ structure ModelContext where
   coverage : Std.HashMap Int (List String)
   placeNearLine : Std.HashSet String
   continuity : Option Continuity.ContinuityContext
-  reacquireRobust : Bool
   /-- No floor under the duration prior: a segment as short as the decoder's
       minute is scored by its mode's fitted duration, not by
       `Duration.minDurationByMode`'s hand-set two minutes. -/
@@ -169,7 +168,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float))
     (coverage : Std.HashMap Int (List String)) (placeNearLine : Std.HashSet String)
     (continuity : Option Continuity.ContinuityContext)
-    (reacquireRobust chainOn : Bool) (segEm : SegmentEmission.Params) : ModelContext :=
+    (chainOn : Bool) (segEm : SegmentEmission.Params) : ModelContext :=
   -- A line is a state only where the day's route graph has its track: abroad
   -- a London line had no evidence against it and named a TGV (10-01).
   let lines := KNOWN_LINES.filter (RouteModel.linesInGraph model).contains
@@ -197,7 +196,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     modeledLines := RouteModel.linesInGraph model
     edgesByLine := RouteModel.buildEdgesByLine model
     placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
-    reacquireRobust, chainOn
+    chainOn
     segEm := SegmentEmission.prepare segEm obs.size
     stepPref := SegmentEvidence.stepPrefix obs
     minuteLines := obs.map (RouteModel.minuteLines model)
@@ -664,10 +663,10 @@ private def places : List (FocusPlaceRef × Float × Float × Option (Array Floa
 -- A record with no fitted mode: every base term stays per minute.
 private def segNone : SegmentEmission.Params := { sigmaW := 8, rho := 0.8, byMode := [] }
 -- Uncovered day, and a day where the generator vouches "Jubilee Line" at ts 1600.
-private def ctxU : ModelContext := buildContext #[obsTrain] jm places {} {} none false false segNone
+private def ctxU : ModelContext := buildContext #[obsTrain] jm places {} {} none false segNone
 private def ctxC : ModelContext :=
   buildContext #[obsTrain] jm places (({} : Std.HashMap Int (List String)).insert 1600 ["Jubilee Line"])
-    {} none false false segNone
+    {} none false segNone
 private def jubIdx : Nat := (ctxU.states.findIdx? (fun s => s.lineName == some "Jubilee Line")).getD 0
 private def statIdx : Nat := (ctxU.states.findIdx? (fun s => s.placeId == some 5)).getD 0
 private def noneIdx : Nat := (ctxU.states.findIdx? (fun s => s.mode == .stationary && s.placeId == none)).getD 0
@@ -684,7 +683,7 @@ private def approxG (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 -- duration terms (below).
 #guard approxG (emitAt ctxU 0 jubIdx)
   (EmissionFull.emissionLogProbFull jm (RouteModel.toConnGraph jm) (RouteModel.linesInGraph jm)
-    ctxU.placeCoords false none jub obsTrain)
+    ctxU.placeCoords none jub obsTrain)
 #guard (emitAt ctxU 0 jubIdx) == (emitAt ctxC 0 jubIdx)
 
 -- entryAt: a train's entry is the generator's, under a record that carries it.

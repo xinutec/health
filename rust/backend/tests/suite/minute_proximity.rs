@@ -144,7 +144,7 @@ fn the_table_feeds_assemblesegments_unread() {
             "imputeCadence": true,
         },
         "edges": [], "places": [], "nodes": null, "continuity": null,
-        "flags": { "reacquireRobust": true, "chainContext": true },
+        "flags": { "chainContext": true },
         "maxD": 30,
     })))
     .expect("the decoder must accept the table this pipeline produces")

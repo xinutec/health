@@ -14,8 +14,8 @@ compose end-to-end: base emission (+ the reacquire-robust speed correction),
 geometric feasibility, and the two route-graph factors all consume one `ObsRow`
 and the shared model.
 
-Mirrors `buildHsmmModel`'s parameterisation (the caller passes `reacquireRobust`),
-so it is faithful for whatever flag combination the served decode runs. The
+Mirrors `buildHsmmModel`'s parameterisation, so it is faithful to the served
+decode. The
 TypeScript also passed the generator's per-minute `isCovered` here and switched
 the two line factors OFF on a covered minute, leaving the entry prior as the
 only line signal. Since 2026-09-29 (#238) the factors stay live there: measured
@@ -33,7 +33,7 @@ ULP-close (`approx`), the accepted near-tie class.
 
 namespace Verified.Hsmm.EmissionFull
 
-open Verified.Hsmm.Emissions (Mode State modePriors emissionLogProb reacquireWidenedSpeedStd Observation)
+open Verified.Hsmm.Emissions (Mode State modePriors emissionLogProb Observation)
 open Verified.Hsmm.Observation (ObsRow Fix)
 open Verified.Hsmm.RouteModel (RouteGraphModel routeRailEvidence lineProximityFactor buildRouteGraphModel
   toConnGraph linesInGraph RouteEdge)
@@ -46,48 +46,6 @@ private def toGeoFix (f : Fix) : Geometric.GpsFix := ⟨f.ts.toNat.toFloat, f.la
 /-- `ObsRow` → the thin `Observation` the base emission consumes. -/
 def toThin (o : ObsRow) : Observation :=
   ⟨o.gps.map (fun g => ⟨g.lat, g.lon, g.speedKmh⟩), o.hr, o.cadence, o.inBed⟩
-
-/-- No correction — hoisted so the branch below does not rebuild a literal per call. -/
-private def NO_CORRECTION : Float := 0
-
-/-- The reacquire-robust correction on its own: what `baseEmissionWithReacquire`
-    adds to the base speed term, so a caller that replaces that term (the
-    segment-emission arm's windowed speed) can take the whole of it out. -/
-def reacquireCorrection (s : State) (o : ObsRow) (reacquireRobust : Bool)
-    (priors : Mode → Emissions.ModePrior := modePriors) : Float :=
-  -- A walk is widened too, and not scaled away on the track: the fix that
-  -- ends a dark minute carries the gap's speed whatever it lands on, and on
-  -- the track it is steps, not speed, that tell a walk from a ride.
-  if reacquireRobust && (s.mode == .stationary || s.mode == .walking) then
-    match o.gps, o.reacquireAgeMin with
-    | some g, some age =>
-      let prior := priors s.mode
-      let rail := if s.mode == .walking then none else o.railDistM
-      let gap := o.reacquireGapMin.map fun g => Verified.FloatConst.natToFloat g.toNat
-      -- After a short gap the artefact is momentum: a speed above the
-      -- prior. A speed below it is a measurement, and keeps the base.
-      let momentumOnly := match gap with
-        | some gm => gm < Emissions.REACQ_RESET_GAP_MIN
-        | none => false
-      if momentumOnly && g.speedKmh ≤ prior.speedMean then NO_CORRECTION else
-      let widened := reacquireWidenedSpeedStd prior.speedStd
-        (some (Verified.FloatConst.natToFloat age.toNat)) rail gap
-      -- The wider density is a second component, not a replacement: a
-      -- minute the base fits keeps the base (a wider σ is lower near the
-      -- mean), and only a minute the base rejects takes the wider one.
-      max NO_CORRECTION (logNormalPdf g.speedKmh prior.speedMean widened
-        - logNormalPdf g.speedKmh prior.speedMean prior.speedStd)
-    | _, _ => NO_CORRECTION
-  else NO_CORRECTION
-
-/-- Base emission + the reacquire-robust correction. The correction replaces the
-    stationary speed term's σ with the reacquire-widened σ — expressed additively
-    as `(widened − base)` so the committed `emissionLogProb` is reused untouched.
-    Fires only under the flag, for a stationary GPS-present minute with a resolved
-    reacquire age. -/
-def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Float × Float))
-    (reacquireRobust : Bool) (priors : Mode → Emissions.ModePrior := modePriors) : Float :=
-  emissionLogProb s (toThin o) placeCoord priors + reacquireCorrection s o reacquireRobust priors
 
 /-- One weight per family of decoder terms (`flags.termWeights` sets them for
     the harness, `examples/tune_weights` learns them). A product by `1.0` is
@@ -131,19 +89,18 @@ def emissionRestWith
 
 /-- Full per-cell emission log-probability over the model — the TS
     `buildEmissionFn` closure plus the geometric/rail/line-proximity terms the
-    model sums onto it. `placeCoords` resolves `s.placeId`; `reacquireRobust`
-    (train-generator) and `reacquireRobust` are caller flags, matching the TS
-    `buildHsmmModel`. `continuity` is the presence-continuity seed; the
+    model sums onto it. `placeCoords` resolves `s.placeId`. `continuity` is
+    the presence-continuity seed; the
     production caller always supplies it, and the `none` arm is the chain-start
     and test shape rather than a flag being off (see `Continuity`). -/
 def emissionLogProbFullWith
     (modeledLines : List String) (minute : RouteModel.MinuteLines) (railEv : Float)
     (placeCoords : Std.HashMap Int (Float × Float))
-    (reacquireRobust : Bool) (continuity : Option Continuity.ContinuityContext)
+    (continuity : Option Continuity.ContinuityContext)
     (s : State) (o : ObsRow) (priors : Mode → Emissions.ModePrior := modePriors)
     (w : TermWeights := {}) : Float :=
   let placeCoord := match s.placeId with | some pid => placeCoords.get? pid | none => none
-  w.base * baseEmissionWithReacquire s o placeCoord reacquireRobust priors
+  w.base * emissionLogProb s (toThin o) placeCoord priors
     + emissionRestWith modeledLines minute railEv placeCoords continuity s o priors w
 
 /-- The per-cell emission with its per-minute facts computed in place — what
@@ -153,10 +110,10 @@ def emissionLogProbFullWith
 def emissionLogProbFull
     (model : RouteGraphModel) (connGraph : RouteConnectivity.Graph) (modeledLines : List String)
     (placeCoords : Std.HashMap Int (Float × Float))
-    (reacquireRobust : Bool) (continuity : Option Continuity.ContinuityContext)
+    (continuity : Option Continuity.ContinuityContext)
     (s : State) (o : ObsRow) : Float :=
   emissionLogProbFullWith modeledLines (RouteModel.minuteLines model o)
-    (routeRailEvidence model connGraph s o false) placeCoords reacquireRobust continuity s o
+    (routeRailEvidence model connGraph s o false) placeCoords continuity s o
 
 -- Parity with `buildHsmmModel`'s emission (base+geo+routeRail+lineProx; Node/V8).
 private def m : RouteGraphModel := buildRouteGraphModel #[
@@ -179,10 +136,6 @@ private def obsWalk : ObsRow :=
   { ts := 1000, gps := some ⟨51.53, -0.12, 5, none⟩, hr := some 100, cadence := some 100, hourLocal := 0,
     dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
     prevGpsFix := none, nextGpsFix := none }
-private def obsReacq : ObsRow :=
-  { ts := 1000, gps := some ⟨51.5201, -0.1301, 8, none⟩, hr := some 70, cadence := some 0, hourLocal := 0,
-    dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := some 1,
-    prevGpsFix := some ⟨1000, 51.5201, -0.1301⟩, nextGpsFix := some ⟨1000, 51.5201, -0.1301⟩ }
 -- Stationary no-fix minute whose most-recent fix is near the prior place → continuity fires.
 private def contCtx : Continuity.ContinuityContext := ⟨some 5, some (51.52, -0.13), 3, 0.95⟩
 private def obsCont : ObsRow :=
@@ -191,16 +144,15 @@ private def obsCont : ObsRow :=
     prevGpsFix := some ⟨900, 51.521, -0.131⟩, nextGpsFix := some ⟨900, 51.521, -0.131⟩ }
 
 -- The train pays its share of a 40 km/h gap, which its speed prior almost always covers.
-#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.train, none, some "Test Line"⟩ obsTrain)
+#guard approxF (emissionLogProbFull m cg ml pc none ⟨.train, none, some "Test Line"⟩ obsTrain)
   (1.6028800151141191 + Geometric.gapTerm ⟨.train, none, some "Test Line"⟩ false
     (obsTrain.prevGpsFix.map toGeoFix) (obsTrain.nextGpsFix.map toGeoFix))
 #guard Geometric.gapTerm ⟨.train, none, some "Test Line"⟩ false
     (obsTrain.prevGpsFix.map toGeoFix) (obsTrain.nextGpsFix.map toGeoFix) > -0.05
 -- 14 km in the minute before (840 km/h): beyond every ground mode, the
 -- mainline's tail included, and no outlier explains 14 km.
-#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.stationary, some 5, none⟩ obsStat) (-73.73917387697927)
-#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.walking, none, none⟩ obsWalk) (-9.87838310248148)
-#guard approxF (emissionLogProbFull m cg ml pc true none ⟨.stationary, some 5, none⟩ obsReacq) (-7.468730886116079)
-#guard approxF (emissionLogProbFull m cg ml pc false (some contCtx) ⟨.stationary, some 5, none⟩ obsCont) (-1.8289768771642674)
+#guard approxF (emissionLogProbFull m cg ml pc none ⟨.stationary, some 5, none⟩ obsStat) (-73.73917387697927)
+#guard approxF (emissionLogProbFull m cg ml pc none ⟨.walking, none, none⟩ obsWalk) (-9.87838310248148)
+#guard approxF (emissionLogProbFull m cg ml pc (some contCtx) ⟨.stationary, some 5, none⟩ obsCont) (-1.8289768771642674)
 
 end Verified.Hsmm.EmissionFull

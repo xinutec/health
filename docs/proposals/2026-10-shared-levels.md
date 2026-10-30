@@ -784,7 +784,18 @@ a call turned out not to be one: fifty of the 110 decoded alights end on a
 moving fix, the arriving train's, so a passing fix at a station is the normal
 signature of a correct alight; what was wrong on 05-18 is a walk taking a
 minute a stopped train and its departure fill, by 0.05 nats, with the floor
-deciding.
+deciding. The reacquire widening — four hand constants widening a walk's or
+stay's speed σ after a GPS gap — turned out to be DEAD on the served path:
+the per-minute speed term applies only to a fixless minute, and the widening
+only to a minute with a fix, so since the segment emission took the fixed
+minutes' speed through the pair term nothing read it; the debugger printed
+its `corr` part anyway, which is where the "+142 forgiveness" read on 06-16
+came from. A census of 12,304 post-gap narrated minutes (the decoder's own
+rows, `lean/experiments/reacquire-fit.py`) says the form fit the stays it was
+written for (empirical sd 3.7 → 1.2 over six minutes against 3.5 → 1.3) and
+never the walks (residuals of 5–20 km/h at every age, no decay). Removed with
+its flag and env; exact on the corpus. 06-16's 116-step minute is carried by
+the pair term and the cadence prior, not by a forgiveness.
 
 ### S2 inside the journey state, costed before building
 

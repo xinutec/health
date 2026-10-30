@@ -120,7 +120,6 @@ the Tube: measured on the narrated rides, fix speeds on Tube lines run
 42 ± 33 km/h (99th percentile 100), on other rail 74 ± 71 (99th percentile 294,
 a TGV at 250–300). One distribution for both read a TGV minute as `unknown`. -/
 
-
 /-- A metro the day's route graph has no line for — abroad, the Paris Métro —
     rides in `unknown_metro` at the train's own (Tube) speeds, beside the
     mainline. -/
@@ -191,49 +190,6 @@ def emissionLogProb (s : State) (o : Observation) (placeCoord : Option (Float ×
     + pCad
     + pBed
     + placeTerm s o placeCoord
-
-/-- C4.2 reacquire-robust speed widening (`USE_REACQUIRE_ROBUST_SPEED`): widen the
-    STATIONARY speed-emission σ on minutes shortly after GPS reacquisition, decaying
-    as the Kalman filter settles (`exp(−age/τ)`), and scaled down near rail track
-    (`1 − exp(−railDist²/2σ²)` — a reacquire fix ON the line is a real ride, not
-    indoor scatter). `none` age → base σ (the widening only fires when the caller
-    has resolved a reacquire age for a stationary state). ULP-close via `exp`. -/
-def REACQ_WIDEN : Float := 2.5
-def REACQ_TAU_MIN : Float := 3
-def REACQ_RAIL_SIGMA_M : Float := 100
-/-- The shortest gap after which the smoother RESETS (`Kalman`: 600 s with a
-displacement), so its first fix reads near zero whatever the motion. Under it
-the artefact is the gap's momentum — speed ABOVE the prior, never below. -/
-def REACQ_RESET_GAP_MIN : Float := 10
-
-/-- The widening decays over the gap's own length, at most `REACQ_TAU_MIN`: after a
-one-minute gap the smoother's speed settles within a minute (the four fixes
-after it read 29, 16, 9, 7 km/h), after a long blackout it takes the full
-three. `none` is the long-gap decay. -/
-def reacquireWidenedSpeedStd (baseSpeedStd : Float) (reacquireAgeMin railDistM : Option Float)
-    (gapMin : Option Float := none) : Float :=
-  match reacquireAgeMin with
-  | none => baseSpeedStd
-  | some age =>
-    let railScale := match railDistM with
-      | none => 1.0
-      | some rd => 1.0 - Float.exp (-(rd * rd) / (2 * REACQ_RAIL_SIGMA_M * REACQ_RAIL_SIGMA_M))
-    let tau := match gapMin with
-      | some g => min REACQ_TAU_MIN (max 1.0 g)
-      | none => REACQ_TAU_MIN
-    baseSpeedStd * (1 + REACQ_WIDEN * railScale * Float.exp (-age / tau))
-
-private def approxE (a b : Float) : Bool := Float.abs (a - b) < 1e-6
-
-#guard reacquireWidenedSpeedStd 15 none none == 15               -- no reacquire → base σ
-#guard reacquireWidenedSpeedStd 15 (some 0) none == 52.5         -- fresh reacquire, no rail info → ×3.5
-#guard reacquireWidenedSpeedStd 15 (some 0) (some 0) == 15       -- on the track → no widening
-#guard approxE (reacquireWidenedSpeedStd 15 (some 3) none) 28.795479043929088
-#guard approxE (reacquireWidenedSpeedStd 15 (some 0) (some 100)) 29.75510026077625
-#guard approxE (reacquireWidenedSpeedStd 15 (some 2) (some 50)) 17.262303815715864
--- After a one-minute gap the widening is gone two minutes later; a long gap keeps the slow decay.
-#guard approxE (reacquireWidenedSpeedStd 2 (some 2) none (some 1)) (2 * (1 + 2.5 * Float.exp (-2)))
-#guard approxE (reacquireWidenedSpeedStd 2 (some 2) none (some 58)) (2 * (1 + 2.5 * Float.exp (-2 / 3)))
 
 -- Parity with the real `buildEmissionFn` (base path; values from Node/V8):
 private def g (lat lon spd : Float) : Gps := ⟨lat, lon, spd⟩

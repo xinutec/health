@@ -44,7 +44,7 @@ fn request(places: serde_json::Value, place_near_line: serde_json::Value) -> ser
         "edges": [], "nodes": null, "continuity": null,
         "places": places,
         "placeNearLine": place_near_line,
-        "flags": { "reacquireRobust": true, "chainContext": true },
+        "flags": { "chainContext": true },
     }))
 }
 

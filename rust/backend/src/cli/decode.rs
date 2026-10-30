@@ -312,7 +312,6 @@ pub(crate) async fn decode_one(
         // decoder parameters (`DECODER_PARAMS`, below) carry their own, with
         // the form it belongs to.
         "flags": {
-            "reacquireRobust": flag("USE_REACQUIRE_ROBUST_SPEED"),
             "chainContext": flag("USE_CHAIN_CONTEXT"),
         },
         "date": date,

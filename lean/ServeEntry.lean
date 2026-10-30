@@ -628,7 +628,7 @@ coverage map, continuity, and the C4 flags. Output is the dense quantised
     "places": [{id, name, lat, lon, hourProfile:[num]|null, dwell}],
     "coverage": [[ts, [lines]]],                         // ts → generator-vouched lines
     "continuity": {priorPlaceId, priorPlaceCoord:[lat,lon]|null, hoursSince, priorPosterior}|null,
-    "flags": {reacquireRobust, chainContext, segEmission, …} }
+    "flags": {chainContext, segEmission, …} }
 
 Output: { T, S, maxD, emit[t][s], entry[t][s], init[s], trans[t][a][b], dur[s][d-1][e] }
 (all quantised ints, `null` = -∞). -/
@@ -1022,7 +1022,6 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let segEm := { segEm with journey := segEm.journey.map fun jp => { jp with wait := waitFit.isSome } }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
-    (← (← flags.getObjVal? "reacquireRobust").getBool?)
     (← (← flags.getObjVal? "chainContext").getBool?) segEm
   let posRef := Verified.Hsmm.SegmentEmission.refOf obs
   let segPref := Verified.Hsmm.SegmentEmission.withPositions
@@ -2143,12 +2142,12 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
                   -- its base remainder and minute terms against the whole base.
                   ("seg", Lean.toJson (c.weights.base
                       * (Verified.Hsmm.Assemble.segBaseAt c.segEm c st o
-                        - Verified.Hsmm.EmissionFull.baseEmissionWithReacquire st o
-                            (st.placeId.bind (c.placeCoords.get? ·)) c.reacquireRobust c.priors)
+                        - Verified.Hsmm.Emissions.emissionLogProb st (Verified.Hsmm.EmissionFull.toThin o)
+                            (st.placeId.bind (c.placeCoords.get? ·)) c.priors)
                     + Verified.Hsmm.Assemble.segMinuteAt c.segEm c t st o)),
                   -- The base's parts, for the state a reader asks about: the
-                  -- speed Gaussian, the reacquire correction, the place term,
-                  -- the geometric reach, the gap share, the cadence, the heart rate.
+                  -- speed Gaussian, the place term, the geometric reach, the
+                  -- gap share, the cadence, the heart rate.
                   ("parts", let prior := Verified.Hsmm.Emissions.priorOf c.priors st
                     let thin := Verified.Hsmm.EmissionFull.toThin o
                     let placeCoord := st.placeId.bind (c.placeCoords.get? ·)
@@ -2156,7 +2155,6 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
                       (⟨Verified.FloatConst.natToFloat f.ts.toNat, f.lat, f.lon⟩ : Verified.Hsmm.Geometric.GpsFix)
                     Json.mkObj [
                       ("speed", Lean.toJson (Verified.Hsmm.Emissions.speedTerm st thin prior)),
-                      ("corr", Lean.toJson (Verified.Hsmm.EmissionFull.reacquireCorrection st o c.reacquireRobust c.priors)),
                       ("place", Lean.toJson (Verified.Hsmm.Emissions.placeTerm st thin placeCoord)),
                       ("geom", Lean.toJson (Verified.Hsmm.Geometric.geometricFeasibility st (Verified.FloatConst.natToFloat o.ts.toNat)
                         (o.prevGpsFix.map geo) (o.nextGpsFix.map geo) placeCoord c.priors)),
@@ -2169,6 +2167,11 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
     Json.mkObj [("ts", Lean.toJson o.ts),
                 ("speedKmh", optF (o.gps.map (·.speedKmh))),
                 ("cadence", optF o.cadence), ("hr", optF o.hr),
+                -- The reacquire correction's inputs: the minute's age in its
+                -- bright run after a gap, the gap's length, the rail distance.
+                ("reacquireAgeMin", match o.reacquireAgeMin with | some a => Lean.toJson a | none => Json.null),
+                ("reacquireGapMin", match o.reacquireGapMin with | some g => Lean.toJson g | none => Json.null),
+                ("railDistM", optF o.railDistM),
                 ("prevFixTs", match o.prevGpsFix with | some f => Lean.toJson f.ts | none => Json.null),
                 ("nextFixTs", match o.nextGpsFix with | some f => Lean.toJson f.ts | none => Json.null),
                 ("decoded", match decoded with | some k => Json.str k | none => Json.null),

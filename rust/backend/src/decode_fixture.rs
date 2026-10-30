@@ -389,7 +389,6 @@ pub fn request(fx: &Value) -> Result<Value> {
         "railStopRelations": inputs.get("railStopRelations").cloned().unwrap_or(Value::Null),
         "continuity": continuity,
         "flags": {
-            "reacquireRobust": flags["reacquireRobustSpeed"],
             "chainContext": flags["chainContext"],
             // ⚠ ARM KNOB, harness-only: absent unless the environment sets
             // it, and production never builds its request here.
