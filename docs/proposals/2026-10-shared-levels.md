@@ -859,6 +859,15 @@ fixes do not see), 06-18's board station, and the classes below.
    through minutes whose fixes leave its footprint at a walk's pace — the
    pair speeds and the displacement away from the place, which the spell
    never sees. That is the next form; the switch stays in the code, off.
+   Measured the same evening with the decoder's own rows: a walk's last
+   minute before a stay has a median pair of 1.6 km/h (81 % under 4), so by
+   its pair it is a stay's minute and only its steps say walk; and the
+   stay's position term (`placeTerm`, σ 150 m floored at −3, two hand
+   numbers) charges the stay nothing for it — narrated stay minutes sit at
+   median 3 m from the place (stepped ones 8 m, q99 92), a bordering walk's
+   second minute at 53–90 m and its fourth at 203–252 m, which cost the stay
+   −0.2 and −1.2. The first arm of 10-31 is that term fitted: σ and an
+   outlier share from the narrated stays' own minutes, the floor gone.
 2. **The journey state**: built, at parity (above), behind its key. **S2
    inside it**: the first slice is built (board-station legs, the ride time
    of the pair) and decodes the three Baker Street hops; its end anchors are
