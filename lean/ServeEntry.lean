@@ -892,6 +892,12 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     match m, stop "mainline" with
     | .train, some (sh, sd) => { base with mainlineStopShare := sh, mainlineStopStd := sd }
     | _, _ => base
+  -- `oneMinuteLog: {mode: log share}` beside `modePriors`: what a mode's
+  -- narrated rows say a one-minute segment is worth, in place of the floor.
+  let oneMinuteLog := fun (m : Verified.Hsmm.Emissions.Mode) => (do
+    let f ← fitted
+    ((f.getObjVal? "oneMinuteLog") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)) >>= (·.getNum?)).toOption.map (·.toFloat)
+    : Option Float)
   -- Per-family term weights (harness-only): a name absent keeps the model's own.
   let d : Verified.Hsmm.EmissionFull.TermWeights := {}
   let tw (k : String) (dflt : Float) : Float :=
@@ -1086,7 +1092,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     | none => #[]
   let durationNoFloor := ((flags.getObjVal? "durationNoFloor") >>= (·.getBool?)).toOption.getD false
   let ctx := { ctx with priors, fits, mainlineFit, waitFit, waitMin, weights, segPref, placePrior, transWeight, stayEntryLog, trainEntryLog, durationNoFloor,
-                        visitCounts, entryTable }
+                        oneMinuteLog, visitCounts, entryTable }
   let lineProxBest := Verified.Hsmm.Assemble.lineProxBestTable ctx
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx
   return ({ ctx with lineProxBest, pairPref, pairBoundary }, maxD)

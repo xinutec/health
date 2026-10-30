@@ -774,8 +774,17 @@ stepless ends of walks on six, and a one-minute train into 09-15's walk: the
 fitted gammas carry no refusal at one minute because the corpus holds four
 rows of a minute or less, and the hand floor stands in for a duration form
 that would. The lever is that form, fitted with those rows in it, not the
-switch; and the alight at a call — a station named from a passing fix — is
-the term the far-side start needs before it is tried again.
+switch. The fitted share itself, measured the same afternoon in place of the
+−10 (walking −4.5, stay −6.1, train −4.2, driving −2.5 from the graded rows),
+moves eight days, each a one-minute walk cut into a stay at the same place —
+the "movement inside a visit" class of 10-19 — with every reached truth floor
+held: the floor is masking the stay's inside, a stepped minute's emission
+under the stay's cadence prior, and that is the term under it. The alight at
+a call turned out not to be one: fifty of the 110 decoded alights end on a
+moving fix, the arriving train's, so a passing fix at a station is the normal
+signature of a correct alight; what was wrong on 05-18 is a walk taking a
+minute a stopped train and its departure fill, by 0.05 nats, with the floor
+deciding.
 
 ### S2 inside the journey state, costed before building
 

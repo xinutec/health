@@ -77,6 +77,10 @@ structure ModelContext where
       minute is scored by its mode's fitted duration, not by
       `Duration.minDurationByMode`'s hand-set two minutes. -/
   durationNoFloor : Bool := false
+  /-- Per mode, the fitted log-share of narrated rows a minute long, in place
+      of the floor's hand −10 under `minDurationByMode`; `none` keeps the hand
+      number (`flags.fittedPriors.oneMinuteLog`, the harness's arm). -/
+  oneMinuteLog : Mode → Option Float := fun _ => none
   chainOn : Bool
   stepPref : Array Float
   /-- Per minute, what the line-proximity term asks of the graph
@@ -480,8 +484,9 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
       | none => c.fits st.mode
     let isWait := st.lineName == some WAIT_MARK
     let fit := if isWait then c.waitFit.getD fit else fit
-    c.weights.duration * Duration.logDurationProb d.toFloat fit
+    c.weights.duration * Duration.logDurationProbWith d.toFloat fit
       (if c.durationNoFloor then MIN_ONE else if isWait then c.waitMin else Duration.minDurationByMode st.mode)
+      (match c.oneMinuteLog st.mode with | some v => v | none => Duration.HARD_FLOOR_LOG_PROB)
 
 /-- The segment-level emission of state `s` over a segment of length `d` with
     window `w` (its net displacement) and statistics `st`. -/

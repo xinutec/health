@@ -14,7 +14,13 @@ namespace Verified.Hsmm.Duration
 
 open Verified.Hsmm.Emissions (Mode)
 
-/-- `HARD_FLOOR_LOG_PROB`: floor for physically-implausible durations. -/
+/-- `HARD_FLOOR_LOG_PROB`: what a segment shorter than its mode's
+    `minDurationByMode` scores. A hand number, and it stands in for a term:
+    the fitted one-minute share of each mode's narrated rows is −4.5 (walk) to
+    −6.1 (stay), and under those a stepped minute inside a stay at the same
+    place becomes a one-minute walk on eight corpus days — the stay's inside is
+    what this floor is masking, not a duration fact
+    (`Assemble.ModelContext.oneMinuteLog` is the measured switch). -/
 def HARD_FLOOR_LOG_PROB : Float := -10
 
 /-- `DEFAULT_MIN_DURATION_BY_MODE` (minutes). -/
@@ -60,11 +66,16 @@ def logGammaPdf (d alpha beta : Float) : Float :=
   if alpha <= 0 || beta <= 0 || d <= 0 then HARD_FLOOR_LOG_PROB
   else alpha * Float.log beta - logGamma alpha + (alpha - 1) * Float.log d - beta * d
 
-/-- Duration log-probability, with the physical floor below `minDuration`. -/
-def logDurationProb (d : Float) (fit : GammaFit) (minDuration : Float) : Float :=
-  if d < minDuration then HARD_FLOOR_LOG_PROB
+/-- Duration log-probability, with `floorLog` below `minDuration`: the hand
+    floor, or a mode's fitted log-share of narrated rows a minute long. -/
+def logDurationProbWith (d : Float) (fit : GammaFit) (minDuration floorLog : Float) : Float :=
+  if d < minDuration then floorLog
   else if d <= 0 then HARD_FLOOR_LOG_PROB
   else logGammaPdf d fit.alpha fit.beta
+
+/-- Duration log-probability, with the physical floor below `minDuration`. -/
+def logDurationProb (d : Float) (fit : GammaFit) (minDuration : Float) : Float :=
+  logDurationProbWith d fit minDuration HARD_FLOOR_LOG_PROB
 
 -- Parity with the real `logDurationProb` (Node/V8):
 private def gf (a b : Float) : GammaFit := ⟨a, b, 10⟩
