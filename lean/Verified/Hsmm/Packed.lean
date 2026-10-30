@@ -215,6 +215,33 @@ runs 50M+ times per day-scale decode. -/
   | 0 => 0
   | n + 1 => max (pRangeMax f n) (f n)
 
+/-- `pRangeMax` as a loop: the maximum so far travels in the accumulator, so
+the fold is one tail call per element where `pRangeMax` is one stack frame per
+element, `maxD` deep, for every state at every minute (the decode phase's
+hottest symbol). `pRangeMaxL_eq` is the exactness: the same maximum. -/
+@[specialize] def pRangeMaxGo (f : Nat → Nat) (n : Nat) (i acc : Nat) : Nat :=
+  if h : i < n then pRangeMaxGo f n (i + 1) (max acc (f i)) else acc
+termination_by n - i
+
+theorem pRangeMaxGo_eq (f : Nat → Nat) (n : Nat) :
+    ∀ k i, n - i = k → i ≤ n → pRangeMaxGo f n i (pRangeMax f i) = pRangeMax f n
+  | 0, i, hk, hi => by
+    have hin : i = n := by omega
+    subst hin
+    unfold pRangeMaxGo
+    simp
+  | k + 1, i, hk, hi => by
+    have hlt : i < n := by omega
+    unfold pRangeMaxGo
+    rw [dif_pos hlt]
+    exact pRangeMaxGo_eq f n k (i + 1) (by omega) (by omega)
+
+/-- The loop form of `pRangeMax`, for the fast columns. -/
+@[inline] def pRangeMaxL (f : Nat → Nat) (n : Nat) : Nat := pRangeMaxGo f n 0 0
+
+theorem pRangeMaxL_eq (f : Nat → Nat) (n : Nat) : pRangeMaxL f n = pRangeMax f n :=
+  pRangeMaxGo_eq f n n 0 (by omega) (by omega)
+
 theorem enc_rangeMax {f : Nat → Score} {g : Nat → Nat} :
     ∀ {n}, (∀ i, i < n → g i = enc (f i)) → pRangeMax g n = enc (rangeMax f n)
   | 0, _ => rfl
@@ -788,10 +815,10 @@ def pCol0D (d : PData) : Array Nat :=
         (d.emitAt 0 (i.val / d.maxD))
     else 0
 
-/-- Fast `pCloseRow`. -/
+/-- Fast `pCloseRow`: the loop form of the range maximum. -/
 def pCloseRowD (d : PData) (t : Nat) (prev : Array Nat) : Array Nat :=
   Array.ofFn (n := d.S) fun sp =>
-    pRangeMax (fun τ0 => pAdd (prev.getD (sp.val * d.maxD + τ0) 0) (d.durAt sp.val (τ0 + 1) t)) d.maxD
+    pRangeMaxL (fun τ0 => pAdd (prev.getD (sp.val * d.maxD + τ0) 0) (d.durAt sp.val (τ0 + 1) t)) d.maxD
 
 /-- Fast `pColStep`. -/
 def pColStepD (d : PData) (t : Nat) (prev : Array Nat) : Array Nat :=
@@ -802,7 +829,7 @@ def pColStepD (d : PData) (t : Nat) (prev : Array Nat) : Array Nat :=
     let s := i.val / d.maxD
     if i.val % d.maxD = 0 then
       pAdd (pAdd
-        (pRangeMax (fun sp => if sp == s then 0 else pAdd (closeA.getD sp 0) (d.transAt sp s (t + 1)))
+        (pRangeMaxL (fun sp => if sp == s then 0 else pAdd (closeA.getD sp 0) (d.transAt sp s (t + 1)))
           d.S)
         (entryR.getD s 0)) (emitR.getD s 0)
     else pAdd (prev.getD (i.val - 1) 0) (emitR.getD s 0)
@@ -819,9 +846,15 @@ def pBuildCkptD (d : PData) (K : Nat) : Nat → Array (Nat × Array Nat) × Arra
 
 theorem pCol0D_eq (d : PData) : pCol0D d = pCol0 (toModel d) := rfl
 theorem pCloseRowD_eq (d : PData) (t : Nat) (prev : Array Nat) :
-    pCloseRowD d t prev = pCloseRow (toModel d) t prev := rfl
+    pCloseRowD d t prev = pCloseRow (toModel d) t prev := by
+  unfold pCloseRowD pCloseRow
+  simp only [pRangeMaxL_eq]
+  rfl
 theorem pColStepD_eq (d : PData) (t : Nat) (prev : Array Nat) :
-    pColStepD d t prev = pColStep (toModel d) t prev := rfl
+    pColStepD d t prev = pColStep (toModel d) t prev := by
+  unfold pColStepD pColStep
+  simp only [pRangeMaxL_eq, pCloseRowD_eq]
+  rfl
 
 theorem pBuildCkptD_eq (d : PData) (K : Nat) :
     ∀ t, pBuildCkptD d K t = pBuildCkpt (toModel d) K t
