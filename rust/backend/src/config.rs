@@ -110,16 +110,22 @@ impl DbConfig {
     /// once died that way on a credential the full config required, AFTER
     /// `decode-day` had done twelve minutes of work.
     pub fn from_env() -> Result<Self> {
-        let port_raw = std::env::var("DB_PORT").unwrap_or_else(|_| "3306".into());
+        let port_raw = with_default("DB_PORT", "3306");
+        // ⚠ PARSED, not `unwrap_or(3306)`. `mirror.rs` falls back to the
+        // default on an unparseable value, which is right for an optional
+        // read-only mirror that may not be configured at all; it is wrong here.
+        // `DB_PORT=3306 ` or `DB_PORT=three` would silently connect somewhere
+        // other than where the manifest says, and the manifest would keep
+        // claiming otherwise.
+        let port: u16 = port_raw
+            .parse()
+            .with_context(|| format!("DB_PORT is not a port number: {port_raw:?}"))?;
         Ok(DbConfig {
-            host: std::env::var("DB_HOST").unwrap_or_else(|_| "health-db".into()),
-            port: port_raw
-                .parse()
-                .with_context(|| format!("DB_PORT is not a port number: {port_raw:?}"))?,
-            user: std::env::var("DB_USER").context("missing required env var DB_USER")?,
-            password: std::env::var("DB_PASSWORD")
-                .context("missing required env var DB_PASSWORD")?,
-            database: std::env::var("DB_NAME").unwrap_or_else(|_| "health".into()),
+            host: with_default("DB_HOST", "health-db"),
+            port,
+            user: required("DB_USER")?,
+            password: required("DB_PASSWORD")?,
+            database: with_default("DB_NAME", "health"),
         })
     }
 
@@ -233,25 +239,8 @@ impl Config {
     /// a credential only one path used is not here, so a CronJob that sets
     /// `DB_*` and `NC_*` alone builds the same `Config` the server does.
     pub fn from_env() -> Result<Self> {
-        let port_raw = with_default("DB_PORT", "3306");
-        // ⚠ PARSED, not `unwrap_or(3306)`. `mirror.rs` falls back to the
-        // default on an unparseable value, which is right for an optional
-        // read-only mirror that may not be configured at all; it is wrong here.
-        // `DB_PORT=3306 ` or `DB_PORT=three` would silently connect somewhere
-        // other than where the manifest says, and the manifest would keep
-        // claiming otherwise.
-        let port: u16 = port_raw
-            .parse()
-            .with_context(|| format!("DB_PORT is not a port number: {port_raw:?}"))?;
-
         Ok(Config {
-            db: DbConfig {
-                host: with_default("DB_HOST", "health-db"),
-                port,
-                user: required("DB_USER")?,
-                password: required("DB_PASSWORD")?,
-                database: with_default("DB_NAME", "health"),
-            },
+            db: DbConfig::from_env()?,
             nextcloud_base_url: optional("NC_BASE_URL"),
             service_tokens: token_list("SERVICE_TOKEN"),
             owntracks_tokens: token_list("OWNTRACKS_ALLOWED_TOKENS"),

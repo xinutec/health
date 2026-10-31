@@ -197,8 +197,8 @@ fn the_config_layer_refuses_rather_than_defaults() {
     assert_eq!(d.host, "health-db", "DB_HOST defaults");
     assert_eq!(d.port, 3306, "DB_PORT defaults");
     assert_eq!(d.database, "health", "DB_NAME defaults");
-    // The full config asks for nothing more at the REQUIRED level since the
-    // Fitbit pair went with the Web API: the same environment parses it too.
+    // The full config reads its database part through `DbConfig::from_env`,
+    // so the same environment parses it too.
     assert!(
         Config::from_env().is_ok(),
         "the full config requires only what a DB-only command does"

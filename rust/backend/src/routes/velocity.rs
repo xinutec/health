@@ -174,7 +174,7 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
     let states = cached
         .get("states")
         .and_then(Value::as_array)
-        .map(|s| lean::clip_inferred_future(s, now_s))
+        .map(|s| lean::clip_future(s, now_s))
         .transpose()?
         .unwrap_or_default();
 

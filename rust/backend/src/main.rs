@@ -68,8 +68,7 @@ async fn main() -> Result<()> {
         // anyone running it by hand.
         C::RefreshPresenceLog { lookback_days } => {
             // ⚠ `DbConfig::from_env`, NOT `Config::from_env`: this touches only
-            // the database, and the batch CronJobs do not set the Fitbit
-            // credentials the full config requires.
+            // the database, so it asks for nothing else.
             let dbcfg =
                 backend::config::DbConfig::from_env().context("reading database configuration")?;
             let pool = db::connect(&dbcfg.url())
@@ -101,10 +100,8 @@ async fn main() -> Result<()> {
                         .and_utc()
                 }),
             };
-            // ⚠ `DbConfig::from_env`, NOT `Config::from_env`. The focus
-            // CronJob's env is DB_* plus NC_CLIENT_ID/NC_CLIENT_SECRET; the full
-            // config failed in production on 2026-08-24 demanding
-            // FITBIT_CLIENT_ID, the second time that happened.
+            // ⚠ `DbConfig::from_env`, NOT `Config::from_env`: the Nextcloud
+            // credentials come from the database, so this asks for DB_* alone.
             let dbcfg =
                 backend::config::DbConfig::from_env().context("reading database configuration")?;
             let pool = db::connect(&dbcfg.url())
@@ -247,7 +244,7 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Run one Fitbit ingestion pass over every linked user.
+/// Run one Google Health ingestion pass: weight, then every stream.
 ///
 /// # It does NOT migrate the schema
 ///
@@ -311,7 +308,7 @@ async fn serve() -> Result<()> {
         .transpose()?
         .unwrap_or(8081);
 
-    // Bounded, for the same reason the pool is: a hung Nextcloud or Fitbit must
+    // Bounded, for the same reason the pool is: a hung Nextcloud or Google must
     // not tie up a pod.
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -700,7 +697,7 @@ async fn check() -> Result<()> {
     if len(&bio["hr"]) == 0 {
         anyhow::bail!(
             "no heart rate for {user} on {check_date}, a day that HAS a decode — the window \
-             bounds or the ts_utc filter, not a missing Fitbit"
+             bounds or the ts_utc filter, not a missing watch"
         );
     }
     // ⚠ A bpm of 0 is what a DECIMAL that did not decode looks like, and

@@ -216,7 +216,7 @@ pub(crate) async fn velocity(
     let states = body
         .get("states")
         .and_then(serde_json::Value::as_array)
-        .map(|s| lean::clip_inferred_future(s, now_s))
+        .map(|s| lean::clip_future(s, now_s))
         .transpose()?
         .unwrap_or_default();
     let clipped = states.len();

@@ -6,8 +6,8 @@ import Verified.PlaceSource
 Port of the Tier-5 day-assembly cluster:
 
 * `src/sleep/day-state.ts` — `segmentsToDayStates` (the boundary sweep that
-  turns segments + Fitbit sleep windows into the day's non-overlapping state
-  sequence) and `clipInferredFuture`.
+  turns segments + watch sleep windows into the day's non-overlapping state
+  sequence) and `clipFuture`.
 * `src/sleep/load.ts` — `derivePlaceForSleepAt`, the side-ranked choice of
   which stay names a sleep window.
 * `src/sleep/known-place-stays.ts` — `detectKnownPlaceStays`, dwell clustering
@@ -291,25 +291,25 @@ def segmentsToDayStates (segments : List Seg) (sleeps : List SleepWindow) : List
     stateForInterval start finish seg sleep)
   stripPartialMinutesAsleep (mergeAdjacent states) sleeps
 
-/-- The least an inferred stay may have behind `now` to be shown at all: one
-    whole minute, the timeline's unit. Under it there are zero minutes of no
-    data to infer anything from, and the row would read `0m · no data
-    (inferred)` — asserting a stay that has not yet had a minute to exist. -/
-def MIN_INFERRED_SHOWN_S : Int := 60
+/-- The least a state may have behind `now` to be shown at all: one whole
+    minute, the timeline's unit. Under it the row would read `0m`, asserting a
+    state that has not yet had a minute to exist. -/
+def MIN_SHOWN_S : Int := 60
 
-/-- Never assert the future. An inferred state may run to a survival horizon or
-    the day end that lies ahead of now; clip it. Observed states are untouched
-    (real data cannot be in the future). Presentation-layer only — the pipeline
-    still fills to the horizon, so goldens replaying past days are unaffected.
+/-- Never assert the future. The pipeline fills a day to its end: the decoder's
+    last stay runs to midnight and an inferred stay to a survival horizon, so on
+    TODAY either can end ahead of now. Observed or not, nothing past now was
+    measured. Presentation-layer only — the pipeline still fills to the end, so
+    goldens replaying past days are unaffected.
 
-    A stay that straddles `now` is truncated to it — unless less than
-    `MIN_INFERRED_SHOWN_S` of it has happened, in which case it is dropped like a
+    A state that straddles `now` is truncated to it — unless less than
+    `MIN_SHOWN_S` of it has happened, in which case it is dropped like a
     wholly-future one: it will appear once a minute of it has. -/
-def clipInferredFuture (states : List DayState) (nowTs : Int) : List DayState :=
+def clipFuture (states : List DayState) (nowTs : Int) : List DayState :=
   states.filterMap (fun s =>
-    if s.inferred != some true || s.endTs ≤ nowTs then some s
-    else if s.startTs + MIN_INFERRED_SHOWN_S > nowTs then none  -- nothing yet: drop
-    else some { s with endTs := nowTs })                        -- straddles now: truncate
+    if s.endTs ≤ nowTs then some s
+    else if s.startTs + MIN_SHOWN_S > nowTs then none  -- nothing yet: drop
+    else some { s with endTs := nowTs })               -- straddles now: truncate
 
 /-! ## Sleep-place attribution -/
 
@@ -571,7 +571,7 @@ private def upAndOut : List Seg :=
       { startTs := T0+5400, endTs := T0+7200, mode := "stationary", place := some "Home",
         tz := some "Europe/London" }]
 
-/-! ### `clipInferredFuture` -/
+/-! ### `clipFuture` -/
 
 private def NOW : Int := T0 + 3600
 private def obs : DayState :=
@@ -579,19 +579,19 @@ private def obs : DayState :=
 private def inf (a b : Int) : DayState :=
   { startTs := a, endTs := b, mode := "stationary", place := some "Home", inferred := some true }
 
--- Observed states are never clipped: real data cannot be in the future.
-#guard clipInferredFuture [obs] NOW == [obs]
-#guard clipInferredFuture [inf T0 (T0+1800)] NOW == [inf T0 (T0+1800)]
+-- Observed states are clipped too: the decoder fills today's last stay to midnight.
+#guard clipFuture [obs] NOW == [{ obs with endTs := NOW }]
+#guard clipFuture [inf T0 (T0+1800)] NOW == [inf T0 (T0+1800)]
 -- Ending exactly at now is not future.
-#guard clipInferredFuture [inf T0 NOW] NOW == [inf T0 NOW]
-#guard clipInferredFuture [inf T0 (T0+7200)] NOW == [inf T0 NOW]
+#guard clipFuture [inf T0 NOW] NOW == [inf T0 NOW]
+#guard clipFuture [inf T0 (T0+7200)] NOW == [inf T0 NOW]
 -- Starting exactly at now is wholly future.
-#guard clipInferredFuture [inf NOW (T0+7200)] NOW == []
-#guard clipInferredFuture [inf (NOW+60) (T0+7200)] NOW == []
+#guard clipFuture [inf NOW (T0+7200)] NOW == []
+#guard clipFuture [inf (NOW+60) (T0+7200)] NOW == []
 -- Under a minute behind now is nothing yet: dropped rather than shown as `0m`.
-#guard clipInferredFuture [inf (NOW-59) (T0+7200)] NOW == []
+#guard clipFuture [inf (NOW-59) (T0+7200)] NOW == []
 -- A whole minute behind now is the first thing worth showing.
-#guard clipInferredFuture [inf (NOW-60) (T0+7200)] NOW == [inf (NOW-60) NOW]
+#guard clipFuture [inf (NOW-60) (T0+7200)] NOW == [inf (NOW-60) NOW]
 
 /-! ### `derivePlaceForSleepAt` -/
 

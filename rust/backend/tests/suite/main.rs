@@ -53,7 +53,7 @@ mod bio_labels;
 mod bus_route_reach;
 mod capture_inputs_stamp;
 mod classification_inputs;
-mod clip_inferred;
+mod clip_future;
 mod compression;
 mod config;
 mod connection_status;

@@ -763,7 +763,7 @@ private def segJson (s : Seg) : Json :=
 
 /-- One `DayState` on the wire.
 
-⚠ PUBLIC (as `Day.stateJson`) because `ServeEntry`'s `clipinferred` mode re-emits states with this
+⚠ PUBLIC (as `Day.stateJson`) because `ServeEntry`'s `clipfuture` mode re-emits states with this
 same encoder. Two encoders for one record would drift, and the drift would show
 as a field quietly missing from a clipped day but present in an unclipped one. -/
 def stateJson (s : Verified.Geo.DayState.DayState) : Json :=

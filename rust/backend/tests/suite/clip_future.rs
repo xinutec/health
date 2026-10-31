@@ -1,6 +1,6 @@
-//! `clipinferred` through the linked Lean host (#982).
+//! `clipfuture` through the linked Lean host.
 //!
-//! `Verified.Geo.DayState.clipInferredFuture` decides what to drop and what to
+//! `Verified.Geo.DayState.clipFuture` decides what to drop and what to
 //! truncate. What this covers is the WIRE around it, which has a failure the
 //! decision cannot have: the mode parses the day mode's own state objects and
 //! re-emits them, so a field `parseDayState` does not read is a field the
@@ -64,7 +64,7 @@ fn a_settled_day_round_trips_through_the_clip_unchanged() {
     // A `nowTs` past any plausible day end, so nothing is clipped and the only
     // thing under test is the encode/parse pair.
     let far_future = 4_102_444_800; // 2100-01-01
-    let got = lean::clip_inferred_future(&states, far_future).expect("clipinferred answers");
+    let got = lean::clip_future(&states, far_future).expect("clipfuture answers");
 
     assert_eq!(
         got, states,
@@ -79,7 +79,7 @@ fn state(start: i64, end: i64, inferred: Option<bool>) -> Value {
     json!({
         "startTs": start, "endTs": end, "mode": "stationary",
         // A source no naming rule produces: the table reads it as unknown, 0.5,
-        // so this fixture does not move when a measured rate does (#325).
+        // so this fixture does not move when a measured rate does.
         "place": "somewhere", "city": null, "placeSource": "unmeasured", "placeConfidence": 0.5,
         // Off any map, and exact in binary, so the round trip is byte-equal.
         "placeAt": [0.5, 0.25],
@@ -90,37 +90,37 @@ fn state(start: i64, end: i64, inferred: Option<bool>) -> Value {
 }
 
 #[test]
-fn an_inferred_state_is_truncated_or_dropped_and_an_observed_one_is_not() {
+fn a_state_past_now_is_truncated_or_dropped_observed_or_not() {
     lean::init().expect("the Lean runtime must start");
     let now = 1_000;
 
     // Wholly future and inferred: dropped.
-    let got = lean::clip_inferred_future(&[state(2_000, 3_000, Some(true))], now).unwrap();
+    let got = lean::clip_future(&[state(2_000, 3_000, Some(true))], now).unwrap();
     assert!(got.is_empty());
 
     // Straddles now by under a minute: nothing has happened yet, so it is
     // dropped rather than shown as a zero-minute inferred stay.
-    let got = lean::clip_inferred_future(&[state(950, 3_000, Some(true))], now).unwrap();
+    let got = lean::clip_future(&[state(950, 3_000, Some(true))], now).unwrap();
     assert!(got.is_empty());
 
     // Straddles now: truncated to now, everything else intact.
-    let got = lean::clip_inferred_future(&[state(500, 3_000, Some(true))], now).unwrap();
+    let got = lean::clip_future(&[state(500, 3_000, Some(true))], now).unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0]["endTs"], json!(now));
     assert_eq!(got[0]["startTs"], json!(500));
     assert_eq!(got[0]["place"], json!("somewhere"));
     assert_eq!(got[0]["minutesAsleep"], json!(42));
 
-    // ⚠ OBSERVED states are untouched even when they end after `now`. Real data
-    // cannot be in the future, so a timestamp past it is not a claim about what
-    // has yet to happen — clipping it would delete measured minutes.
-    let observed = state(500, 3_000, None);
-    let got = lean::clip_inferred_future(std::slice::from_ref(&observed), now).unwrap();
-    assert_eq!(got, vec![observed]);
+    // ⚠ OBSERVED states are clipped too. The decoder fills a stay to the day's
+    // end, so today's last stay ends after `now` with no minute measured there.
+    let got = lean::clip_future(&[state(500, 3_000, None)], now).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0]["endTs"], json!(now));
+    assert_eq!(got[0]["inferred"], json!(null));
 
-    // Inferred but already ended: untouched.
+    // Already ended: untouched.
     let past = state(100, 900, Some(true));
-    let got = lean::clip_inferred_future(std::slice::from_ref(&past), now).unwrap();
+    let got = lean::clip_future(std::slice::from_ref(&past), now).unwrap();
     assert_eq!(got, vec![past]);
 }
 
@@ -137,12 +137,12 @@ fn absent_optional_fields_survive_as_null_rather_than_vanishing() {
         "placeAt": null, "wayName": null, "roads": [], "asleep": null,
         "tz": null, "minutesAsleep": null, "inferred": null,
     });
-    let got = lean::clip_inferred_future(std::slice::from_ref(&bare), 1_000).unwrap();
+    let got = lean::clip_future(std::slice::from_ref(&bare), 1_000).unwrap();
     assert_eq!(got, vec![bare]);
 }
 
 #[test]
 fn an_empty_timeline_clips_to_an_empty_timeline() {
     lean::init().expect("the Lean runtime must start");
-    assert!(lean::clip_inferred_future(&[], 1_000).unwrap().is_empty());
+    assert!(lean::clip_future(&[], 1_000).unwrap().is_empty());
 }

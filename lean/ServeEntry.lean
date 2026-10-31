@@ -3630,28 +3630,24 @@ private def railFillResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
-/-! ## `clipinferred` — never assert the future (#982)
+/-! ## `clipfuture` — never assert the future (#982)
 
-`Verified.Geo.DayState.clipInferredFuture`. Inferred states — a dwell-prior
-continuation, an empty-day inference — extend to a survival horizon or the day
-end, which for TODAY lies ahead of the current moment and would claim presence
-at a place hours before it happened.
+`Verified.Geo.DayState.clipFuture`. The pipeline fills a day to its end — the
+decoder's last stay to midnight, an inferred stay to a survival horizon — which
+for TODAY lies ahead of the current moment and would claim presence at a place
+hours before it happened.
 
   { "states": [ <the day mode's own state objects> ], "nowTs": int }
 → { "states": [ … ] }
 
 ⚠ PRESENTATION ONLY, and that is why it is a separate mode rather than a step of
-`day`. The pipeline stays deterministic — it fills to the horizon — so the golden
+`day`. The pipeline stays deterministic — it fills to the end — so the golden
 corpus, which replays past days where `nowTs` is already past the day end, is
 unaffected. A caller applies this PER REQUEST, after the cache, because `now`
 advances while a cached result does not.
 
-A stay that straddles `now` by less than a minute is dropped rather than
-truncated: the timeline would show it as `0m · no data (inferred)`, a stay
-asserted before a minute of it has happened (`MIN_INFERRED_SHOWN_S`).
-
-⚠ Observed states are untouched. Real data cannot be in the future, so a state
-without `inferred` is passed through whatever its timestamps say. -/
+A state that straddles `now` by less than a minute is dropped rather than
+truncated: the timeline would show it as `0m` (`MIN_SHOWN_S`). -/
 private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DayState := do
   let optS (k : String) : Except String (Option String) :=
     match j.getObjVal? k with
@@ -3678,11 +3674,11 @@ private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DaySt
          , minutesAsleep := ← jOptInt j "minutesAsleep"
          , inferred := ← optB "inferred" }
 
-private def clipInferredResult (j : Json) : Json :=
+private def clipFutureResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let states ← (← optArr j "states").mapM parseDayState
     let nowTs ← (← j.getObjVal? "nowTs").getInt?
-    let out := Verified.Geo.DayState.clipInferredFuture states.toList nowTs
+    let out := Verified.Geo.DayState.clipFuture states.toList nowTs
     return Json.mkObj [("states", Json.arr ((out.map Day.stateJson).toArray))]
   match parsed with
   | .error e => Json.mkObj [("error", Json.str e)]
@@ -3898,7 +3894,7 @@ def dispatch (j : Json) : Json :=
   | .ok "railsnap" => railSnapResult j
   | .ok "relationroute" => relationRouteResult j
   | .ok "railfill" => railFillResult j
-  | .ok "clipinferred" => clipInferredResult j
+  | .ok "clipfuture" => clipFutureResult j
   | .ok "watchbattery" => watchBatteryResult j
   | .ok "stationchain" => StationChain.stationChainResult j
   -- The walk referee (#1048 Group B). Nothing serves it; it is here rather
