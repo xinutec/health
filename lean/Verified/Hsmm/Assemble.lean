@@ -270,7 +270,7 @@ private def SECONDS_PER_MINUTE_F : Float := 60
     the moving Gaussian, the fixes' accuracy in quadrature with its spread
     and beside it a standstill component for a vehicle that
     stops (`ModePrior.stopShare`). -/
-def spanScore (p : SegmentEmission.Params) (prior : Emissions.ModePrior) (v noise : Float) : Float :=
+def spanScore (prior : Emissions.ModePrior) (v noise : Float) : Float :=
   let extra := noise
   let sd := Float.sqrt (prior.speedStd * prior.speedStd + extra)
   let moving := FloatScore.logNormalPdf v prior.speedMean sd
@@ -306,7 +306,7 @@ def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
     spans.foldl (fun acc sp =>
       let x := match sp with
         | some (v, noise) =>
-          let g := spanScore q.p prior v noise
+          let g := spanScore prior v noise
           c.weights.base * (g + SegmentEmission.speedRobust q.p st.mode g)
         | none => SEG_ZERO
       acc.push (acc.back! + x)) #[SEG_ZERO]
