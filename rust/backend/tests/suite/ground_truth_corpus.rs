@@ -113,6 +113,8 @@ const POST_TS: &[&str] = &[
     // By tube to a hospital and the night there; the night before is served
     // only since the loader reads every main sleep of a date.
     "2026-10-17.md",
+    // A café served by its place's amenity label; one row, known-wrong.
+    "2026-10-25.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note

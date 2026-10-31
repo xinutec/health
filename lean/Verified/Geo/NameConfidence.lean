@@ -28,7 +28,7 @@ namespace Verified.Geo.NameConfidence
 def COUNTS : List (String × Nat × Nat) :=
   [("home", 81, 81), ("sleep", 21, 21), ("enclosing", 22, 22), ("work", 18, 18),
    ("nearField", 14, 16), ("ranked", 10, 14), ("lodging", 30, 30), ("station", 25, 27),
-   ("geocodeVenue", 20, 23), ("openSpace", 3, 3), ("residential", 0, 1),
+   ("geocodeVenue", 20, 24), ("openSpace", 3, 3), ("residential", 0, 1),
    ("address", 0, 1)]
 
 /-- The chance a name from `source` is right: the rule of succession over its
