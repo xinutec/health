@@ -5,8 +5,8 @@ fitted from, and the one it must refuse.
 
 For every narrated stay at a named place (matched to the request's places by
 name), the decoder's own minute fixes: distance from the place for the stay's
-minutes (still, and stepped at 30+ steps), and for the first/last four minutes
-of a narrated walk bordering that stay. Quartiles, q90, q99 per group.
+minutes (still, and stepped at 30+ steps), the stay's own first/last four
+minutes beside a bordering walk, and the walk's first/last four minutes. Quartiles, q90, q99 per group.
 
 Run from the repo root:
   python3 lean/experiments/stay-distance-census.py <dir of req-<date>.json dumps>
@@ -86,6 +86,16 @@ for day in days:
             add("stay still" if (o.get("cadence") or 0) < 30 else "stay stepped 30+", d)
         for a2, b2, mode2, _ in rows:
             if mode2 != "walking": continue
+            # The stay's own EDGE beside the walk: its first minutes after an
+            # arrival, its last before a departure.
+            if b2 == a:
+                for k in range(1, 5):
+                    o = by_ts.get(ts_of(day, tz, a + k - 1))
+                    if o and o.get("lat") is not None and a + k - 1 < b: add(f"stay first {k}", hav(o["lat"], o["lon"], *c))
+            if a2 == b:
+                for k in range(1, 5):
+                    o = by_ts.get(ts_of(day, tz, b - k))
+                    if o and o.get("lat") is not None and b - k >= a: add(f"stay last {k}", hav(o["lat"], o["lon"], *c))
             if b2 == a:   # walk arriving at this stay
                 for k in range(1, 5):
                     o = by_ts.get(ts_of(day, tz, b2 - k))
@@ -101,7 +111,9 @@ if os.environ.get("STAY_DISTANCE_DUMP"):
     json.dump(groups, open(os.environ["STAY_DISTANCE_DUMP"], "w"))
 def q(xs, p):
     xs = sorted(xs); return xs[min(len(xs) - 1, int(p * len(xs)))]
-print("group                 n     q25    q50    q75    q90    q99")
-for g in ["stay still", "stay stepped 30+"] + [f"walk start {k}" for k in range(1, 5)] + [f"walk end {k}" for k in range(1, 5)]:
+print("group                 n     q25    q50    q75    q90    q99  >35m")
+order = ["stay still", "stay stepped 30+"] + [f"stay first {k}" for k in range(1, 5)] + [f"stay last {k}" for k in range(1, 5)]
+for g in order + [f"walk start {k}" for k in range(1, 5)] + [f"walk end {k}" for k in range(1, 5)]:
     xs = groups.get(g, [])
-    if xs: print(f"{g:20s} {len(xs):5d}  {q(xs,.25):6.0f} {q(xs,.5):6.0f} {q(xs,.75):6.0f} {q(xs,.9):6.0f} {q(xs,.99):6.0f}")
+    far = sum(x > 35 for x in xs) / len(xs) if xs else 0
+    if xs: print(f"{g:20s} {len(xs):5d}  {q(xs,.25):6.0f} {q(xs,.5):6.0f} {q(xs,.75):6.0f} {q(xs,.9):6.0f} {q(xs,.99):6.0f}  {far:4.0%}")
