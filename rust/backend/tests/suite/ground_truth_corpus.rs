@@ -115,6 +115,10 @@ const POST_TS: &[&str] = &[
     "2026-10-17.md",
     // A café served by its place's amenity label; one row, known-wrong.
     "2026-10-25.md",
+    // The same café on two earlier days, by his "always Urban Social Coffee
+    // there"; one row each, known-wrong.
+    "2026-07-12.md",
+    "2026-08-08.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
