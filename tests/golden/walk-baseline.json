@@ -291,6 +291,88 @@
       "stallM": 20.343960382692572
     }
   ],
+  "2026-05-17": [
+    {
+      "startTs": 1779007080,
+      "budgetM": 1411.5,
+      "lenM": 1023.6573032863155,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 3.0082990137393764,
+      "stallM": 37.07963896287072
+    },
+    {
+      "startTs": 1779009413,
+      "budgetM": 136.5,
+      "lenM": 142.55716884381056,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.7444160846936794,
+      "stallM": 15.07870063907896
+    },
+    {
+      "startTs": 1779009960,
+      "budgetM": 347.25,
+      "lenM": 254.54443063257426,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.545444306325743,
+      "stallM": 18.783107768871794
+    },
+    {
+      "startTs": 1779014820,
+      "budgetM": 2519.25,
+      "lenM": 2519.307455136304,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.318812780233664,
+      "stallM": 22.090182399029953
+    },
+    {
+      "startTs": 1779018360,
+      "budgetM": 1307.25,
+      "lenM": 1363.4492187241892,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.8121737131441975,
+      "stallM": 37.787635316913054
+    },
+    {
+      "startTs": 1779020856,
+      "budgetM": 387.75,
+      "lenM": 445.83700051793204,
+      "offPathM": 1.9281815269802385,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 3.6148945987940433,
+      "stallM": 28.364069010113255
+    },
+    {
+      "startTs": 1779021540,
+      "budgetM": 388.5,
+      "lenM": 156.58357943468798,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 1.0438905295645866,
+      "stallM": 13.82309979692964
+    },
+    {
+      "startTs": 1779022700,
+      "budgetM": 895.5,
+      "lenM": 912.1922372143175,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.292669351596788,
+      "stallM": 18.975385460001917
+    }
+  ],
   "2026-05-18": [
     {
       "startTs": 1779099540,
@@ -2243,6 +2325,68 @@
       "stallM": 19.823243985207057
     }
   ],
+  "2026-07-19": [
+    {
+      "startTs": 1784450820,
+      "budgetM": 982.5,
+      "lenM": 967.9480678612485,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.410902587722146,
+      "stallM": 17.19543016131456
+    },
+    {
+      "startTs": 1784452869,
+      "budgetM": 729.0,
+      "lenM": 817.845029321331,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.242423783223043,
+      "stallM": 26.16494959956256
+    },
+    {
+      "startTs": 1784458860,
+      "budgetM": 509.25,
+      "lenM": 461.26233296428177,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 3.4594674972321133,
+      "stallM": 20.85394213041309
+    },
+    {
+      "startTs": 1784460950,
+      "budgetM": 378.0,
+      "lenM": 358.45382758568,
+      "offPathM": 27.419050746799513,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.359573578744757,
+      "stallM": 16.747842381614703
+    },
+    {
+      "startTs": 1784461505,
+      "budgetM": 219.0,
+      "lenM": 318.8626395052052,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.8847042647605905,
+      "stallM": 25.505971898988832
+    },
+    {
+      "startTs": 1784464260,
+      "budgetM": 1227.0,
+      "lenM": 1284.6964275078276,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 5.359104448468343,
+      "stallM": 20.01581423499215
+    }
+  ],
   "2026-07-30": [
     {
       "startTs": 1785399840,
@@ -2323,6 +2467,88 @@
       "routeCorr": 0.4702361680851178,
       "speedKmh": 5.055952177008674,
       "stallM": 14.744755333529952
+    }
+  ],
+  "2026-07-31": [
+    {
+      "startTs": 1785481920,
+      "budgetM": 864.75,
+      "lenM": 944.2369775173019,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.828484544122566,
+      "stallM": 17.20031095314198
+    },
+    {
+      "startTs": 1785483074,
+      "budgetM": 69.0,
+      "lenM": 132.83419905532162,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.9518710901182583,
+      "stallM": 14.22522619438076
+    },
+    {
+      "startTs": 1785483735,
+      "budgetM": 116.25,
+      "lenM": 78.99180388321298,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 1.7234575392701013,
+      "stallM": 0.0
+    },
+    {
+      "startTs": 1785487380,
+      "budgetM": 392.25,
+      "lenM": 351.2300170657555,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 3.602359149392364,
+      "stallM": 81.60608256060542
+    },
+    {
+      "startTs": 1785487839,
+      "budgetM": 452.25,
+      "lenM": 471.07545226723033,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.583436832870349,
+      "stallM": 26.764866857440182
+    },
+    {
+      "startTs": 1785505920,
+      "budgetM": 465.75,
+      "lenM": 440.9080128200267,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.9285403065536832,
+      "stallM": 10.997565109170978
+    },
+    {
+      "startTs": 1785506726,
+      "budgetM": 75.75,
+      "lenM": 78.72345827765363,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 1.840288635062033,
+      "stallM": 17.125996231141116
+    },
+    {
+      "startTs": 1785507991,
+      "budgetM": 972.0,
+      "lenM": 936.0271752398187,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 3.816192333933576,
+      "stallM": 18.550633138716535
     }
   ],
   "2026-08-05": [
@@ -2850,6 +3076,100 @@
       "routeCorr": null,
       "speedKmh": 5.545406545067337,
       "stallM": 14.745838836108248
+    }
+  ],
+  "2026-08-14": [
+    {
+      "startTs": 1786694700,
+      "budgetM": 994.5,
+      "lenM": 919.0000690473784,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 3.9385717244887646,
+      "stallM": 12.626045615298494
+    },
+    {
+      "startTs": 1786697128,
+      "budgetM": 516.0,
+      "lenM": 613.2978695709212,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.31225064542054,
+      "stallM": 56.38499815929305
+    },
+    {
+      "startTs": 1786703400,
+      "budgetM": 888.75,
+      "lenM": 188.26693625576357,
+      "offPathM": 58.63609510007477,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 0.3643876185595424,
+      "stallM": 87.90335707926533
+    },
+    {
+      "startTs": 1786732020,
+      "budgetM": 548.25,
+      "lenM": 387.5570257638717,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.906677693229038,
+      "stallM": 10.011636313979352
+    },
+    {
+      "startTs": 1786733904,
+      "budgetM": 864.0,
+      "lenM": 892.1485567690492,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 5.041969865570764,
+      "stallM": 13.864964417774615
+    }
+  ],
+  "2026-08-25": [
+    {
+      "startTs": 1787645040,
+      "budgetM": 1101.75,
+      "lenM": 938.7661396373097,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.9645246514862413,
+      "stallM": 12.626045615298494
+    },
+    {
+      "startTs": 1787647687,
+      "budgetM": 403.5,
+      "lenM": 495.37825609156147,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 5.052016209432355,
+      "stallM": 33.49337675019609
+    },
+    {
+      "startTs": 1787684580,
+      "budgetM": 493.5,
+      "lenM": 429.1510905301642,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 3.2186331789762317,
+      "stallM": 21.722953559809582
+    },
+    {
+      "startTs": 1787686284,
+      "budgetM": 800.25,
+      "lenM": 938.8302361389655,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 5.5315693127664085,
+      "stallM": 25.277790106056614
     }
   ],
   "2026-09-06": [
@@ -3884,6 +4204,58 @@
       "stallM": 15.781529639217695
     }
   ],
+  "2026-10-20": [
+    {
+      "startTs": 1792489560,
+      "budgetM": 927.75,
+      "lenM": 937.3570182349827,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.4754446493977955,
+      "stallM": 23.363471054966
+    },
+    {
+      "startTs": 1792491512,
+      "budgetM": 514.5,
+      "lenM": 448.4984340204996,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 3.604005273379015,
+      "stallM": 23.738119366123072
+    },
+    {
+      "startTs": 1792509000,
+      "budgetM": 558.0,
+      "lenM": 187.87783982968313,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 1.1992202542320198,
+      "stallM": 65.34701657590172
+    },
+    {
+      "startTs": 1792520100,
+      "budgetM": 520.5,
+      "lenM": 344.4409364141493,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.7555274913131944,
+      "stallM": 16.226968239265204
+    },
+    {
+      "startTs": 1792521936,
+      "budgetM": 762.0,
+      "lenM": 906.068729046352,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 5.528554956892996,
+      "stallM": 0.0
+    }
+  ],
   "2026-10-25": [
     {
       "startTs": 1792925220,
@@ -3944,6 +4316,98 @@
       "routeCorr": null,
       "speedKmh": 3.805736802916702,
       "stallM": 27.619326324247595
+    }
+  ],
+  "2026-10-27": [
+    {
+      "startTs": 1793100660,
+      "budgetM": 915.0,
+      "lenM": 894.4035582032124,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.154648786492341,
+      "stallM": 15.20756905278597
+    },
+    {
+      "startTs": 1793102514,
+      "budgetM": 485.25,
+      "lenM": 446.7949103180686,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 3.775731636490721,
+      "stallM": 37.67053720773245
+    },
+    {
+      "startTs": 1793104320,
+      "budgetM": 212.25,
+      "lenM": 68.1867333438961,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 1.0228010001584413,
+      "stallM": 11.45275299089491
+    },
+    {
+      "startTs": 1793105100,
+      "budgetM": 123.75,
+      "lenM": 38.4792628492836,
+      "offPathM": null,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.2342797783454995,
+      "stallM": 0.0
+    },
+    {
+      "startTs": 1793105520,
+      "budgetM": 114.75,
+      "lenM": 71.21976573195924,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.1365929719587773,
+      "stallM": 20.39497095618926
+    },
+    {
+      "startTs": 1793116020,
+      "budgetM": 261.75,
+      "lenM": 50.608492122692525,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 0.4337870753373645,
+      "stallM": 18.90156131191302
+    },
+    {
+      "startTs": 1793127300,
+      "budgetM": 87.0,
+      "lenM": 37.592364954584966,
+      "offPathM": null,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.1145705286954044,
+      "stallM": 1.789994242322186
+    },
+    {
+      "startTs": 1793128260,
+      "budgetM": 710.25,
+      "lenM": 591.648542225118,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 2.403989562088516,
+      "stallM": 98.8787377343317
+    },
+    {
+      "startTs": 1793130141,
+      "budgetM": 909.75,
+      "lenM": 829.0219926720677,
+      "offPathM": 0.0,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 3.932120123345775,
+      "stallM": 19.406115414018586
     }
   ],
   "2026-11-01": [
