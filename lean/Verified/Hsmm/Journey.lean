@@ -350,44 +350,22 @@ def argFrom (tb : Tables) (v : FloatArray) (s0 k l : Nat) : Nat := Id.run do
       arg := a
   return arg
 
-/-- The sweeps from the starts `s0 ≡ k (mod n)`, in order: each start's best
-    path to each of its ends, with the last-leg prior. -/
-def bestStripe (tb : Tables) (pre : Pre) (k n : Nat) : FloatArray := Id.run do
+/-- `best[(d - 1) * T + e]`: the best leg path over the journey of `d` minutes
+    ending at `e`, with the last-leg prior; `−∞` where none fits. -/
+def best (tb : Tables) : FloatArray := Id.run do
   let L := tb.legs.size
-  let mut out := FloatArray.empty
-  for s0 in [0:tb.T] do
-    if s0 % n != k then continue
-    let (v, _) := sweepWith tb pre s0 (min tb.maxJ (tb.T - s0))
-    for i in [0:min tb.maxJ (tb.T - s0)] do
+  let T := tb.T
+  let mut out := FloatArray.mk (Array.replicate (tb.maxJ * T) negInf)
+  let pre := prep tb
+  for s0 in [0:T] do
+    let w := min tb.maxJ (T - s0)
+    let (v, _) := sweepWith tb pre s0 w
+    for i in [0:w] do
       let mut b := negInf
       for l in [0:L] do
         let c := v.get! (i * L + l) + tb.last[l]!
         if c > b then b := c
-      out := out.push b
-  return out
-
-/-- How many stripes `best` splits the starts into. Starts interleave, so each
-    stripe gets early and late ones alike; the runtime's pool sets how many
-    run at once. -/
-def stripes : Nat := 32
-
-/-- `best[(d - 1) * T + e]`: the best leg path over the journey of `d` minutes
-    ending at `e`, with the last-leg prior; `−∞` where none fits. The sweeps are
-    independent and each writes its own entries, so they run as tasks. -/
-def best (tb : Tables) : FloatArray := Id.run do
-  let T := tb.T
-  let pre := prep tb
-  let tasks := (Array.range stripes).map fun k =>
-    Task.spawn fun _ => bestStripe tb pre k stripes
-  let mut out := FloatArray.mk (Array.replicate (tb.maxJ * T) negInf)
-  for (t, k) in tasks.zipIdx do
-    let part := t.get
-    let mut j := 0
-    for s0 in [0:T] do
-      if s0 % stripes != k then continue
-      for i in [0:min tb.maxJ (T - s0)] do
-        out := out.set! (i * T + (s0 + i)) (part.get! j)
-        j := j + 1
+      out := out.set! (i * T + (s0 + i)) b
   return out
 
 /-- The decoded journey over `[s0, e]` as its legs, first to last: `(leg,

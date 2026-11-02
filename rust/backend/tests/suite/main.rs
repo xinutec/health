@@ -79,7 +79,6 @@ mod ground_truth_corpus;
 mod js_number_wire;
 mod landmark_shaping;
 mod lean_ffi;
-mod lean_threads;
 mod local_time;
 mod location_tail;
 mod log_line;

@@ -178,25 +178,6 @@ fn recycle_after() -> u64 {
         .unwrap_or(500)
 }
 
-/// The worker's task pool, from the container's CPU quota. The Lean runtime
-/// sizes its pool by the machine's cores, and past a container's quota the
-/// extra threads only contend for it. An explicit `LEAN_NUM_THREADS` wins, and
-/// with no quota (`max`, or no cgroup) the runtime's own default stands.
-fn lean_threads() -> Option<u64> {
-    if std::env::var_os("LEAN_NUM_THREADS").is_some() {
-        return None;
-    }
-    cpu_max_threads(&std::fs::read_to_string("/sys/fs/cgroup/cpu.max").ok()?)
-}
-
-/// Whole CPUs in a cgroup v2 `cpu.max` (`<quota> <period>`), rounded up.
-pub fn cpu_max_threads(raw: &str) -> Option<u64> {
-    let mut it = raw.split_whitespace();
-    let quota: u64 = it.next()?.parse().ok()?;
-    let period: u64 = it.next()?.parse().ok()?;
-    (period > 0).then(|| quota.div_ceil(period).max(1))
-}
-
 struct Worker {
     child: Child,
     stdin: BufWriter<ChildStdin>,
@@ -218,11 +199,7 @@ impl Drop for Worker {
 impl Worker {
     fn spawn() -> Result<Self> {
         let path = verified_cli_path()?;
-        let mut cmd = Command::new(path);
-        if let Some(n) = lean_threads() {
-            cmd.env("LEAN_NUM_THREADS", n.to_string());
-        }
-        let mut child = cmd
+        let mut child = Command::new(path)
             .arg("serve")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

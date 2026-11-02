@@ -1442,73 +1442,47 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   let slotOfCls := fun (cls : Nat) => legSlots.findIdx? (· == cls)
   let legDur0 := FloatArray.mk (Array.replicate (legSlots.size * maxJ * T) Verified.FloatConst.negInf)
   -- A pure loop: in `Except` each of the ~2.4M cells paid for the monad, which
-  -- was half the phase. An out-of-range delta is recorded and thrown
+  -- was half the phase (#1774). An out-of-range delta is recorded and thrown
   -- after the loop instead.
-  --
-  -- One length `d0`'s cells, by `(e, cls)` from `e = d0`: its deltas, its
-  -- level-free leg cells (−∞ where the class has no slot), and the last
-  -- out-of-range delta. Each length writes only its own entries, so the
-  -- lengths run as striped tasks and merge in order.
-  let row := fun (d0 : Nat) => Id.run do
-    let mut deltas : Array Nat := Array.mkEmpty ((T - d0) * nC)
-    let mut legCells := FloatArray.emptyWithCapacity ((T - d0) * nC)
-    let mut bad : Option Int := none
-    -- The gamma prior once per (class, d) (`durAt_eq_durAtFrom`), and the
-    -- reference cell each delta is taken against.
-    let bases := reps.map fun rep => Verified.Hsmm.Assemble.durPriorBase c rep (d0 + 1)
-    let qRefs := (reps.zip bases).map fun (rep, base) =>
-      match quant (Verified.Hsmm.Assemble.durAtFrom c rep (d0 + 1) assembleRefE base) with
-        | some v => qiOf v | none => 0
-    -- A segment of `d0 + 1` minutes ends at minute `d0` at the earliest;
-    -- the cells below start before the day and neither sweep reads them
-    -- (`τ ≤ t + 1`, a leg's `start ≥ 0`), so the triangle is skipped: half
-    -- the phase, exactly.
-    for e in [d0:T] do
-      -- The segment's window once per (d, e) for every class
-      -- (`durAtFrom_eq_W`).
-      let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
-      let sst := Verified.Hsmm.SegmentEmission.statsAt c.segPref (d0 + 1) e
-      -- The displacement densities once per (d, e): every class and both
-      -- cells below read the same vector (`dispPosteriorFrom`).
-      let dv := w.map (Verified.Hsmm.SegmentEmission.dispVector c.segEm.p (d0 + 1))
-      let cov := covered[e]!
-      for cls in [0:nC] do
-        -- The journey's cell waits for the inner pass (below).
-        if jCls == some cls then
-          deltas := deltas.push halfOB
-          legCells := legCells.push Verified.FloatConst.negInf
-          continue
-        let qE := match quant (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) cov w sst bases[cls]! (dv := dv)) with
-          | some v => qiOf v | none => 0
-        let (packed, over) := packDelta qE qRefs[cls]! halfOB
-        if over.isSome then bad := over
-        deltas := deltas.push packed
-        -- A leg under a journey: the same cell without the level, and
-        -- without the covered train's relaxed floor — a leg pays no level,
-        -- so the floor is what stops a ride splitting into one-minute legs.
-        legCells := legCells.push (if d0 < maxJ && (slotOfCls cls).isSome then
-          Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) false w sst bases[cls]! false dv
-          else Verified.FloatConst.negInf)
-    return (deltas, legCells, bad)
-  let stripes := Verified.Hsmm.Journey.stripes
-  let tasks := (Array.range stripes).map fun k => Task.spawn fun _ =>
-    ((Array.range maxD).filter (· % stripes == k)).map row
   let (durDelta, bad, legDur) : Array Nat × Option Int × FloatArray := Id.run do
     let mut durDelta : Array Nat := Array.replicate (nC * maxD * T) halfOB
     let mut bad : Option Int := none
     let mut legDur := legDur0
-    let parts := tasks.map Task.get
     for d0 in [0:maxD] do
-      let (deltas, legCells, b) := parts[d0 % stripes]![d0 / stripes]!
-      if b.isSome then bad := b
+      -- The gamma prior once per (class, d) (`durAt_eq_durAtFrom`), and the
+      -- reference cell each delta is taken against.
+      let bases := reps.map fun rep => Verified.Hsmm.Assemble.durPriorBase c rep (d0 + 1)
+      let qRefs := (reps.zip bases).map fun (rep, base) =>
+        match quant (Verified.Hsmm.Assemble.durAtFrom c rep (d0 + 1) assembleRefE base) with
+          | some v => qiOf v | none => 0
+      -- A segment of `d0 + 1` minutes ends at minute `d0` at the earliest;
+      -- the cells below start before the day and neither sweep reads them
+      -- (`τ ≤ t + 1`, a leg's `start ≥ 0`), so the triangle is skipped: half
+      -- the phase, exactly.
       for e in [d0:T] do
+        -- The segment's window once per (d, e) for every class
+        -- (`durAtFrom_eq_W`, #1774).
+        let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
+        let sst := Verified.Hsmm.SegmentEmission.statsAt c.segPref (d0 + 1) e
+        -- The displacement densities once per (d, e): every class and both
+        -- cells below read the same vector (`dispPosteriorFrom`).
+        let dv := w.map (Verified.Hsmm.SegmentEmission.dispVector c.segEm.p (d0 + 1))
+        let cov := covered[e]!
         for cls in [0:nC] do
+          -- The journey's cell waits for the inner pass (below).
           if jCls == some cls then continue
-          let j := (e - d0) * nC + cls
-          durDelta := durDelta.set! ((cls * T + e) * maxD + d0) deltas[j]!
+          let qE := match quant (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) cov w sst bases[cls]! (dv := dv)) with
+            | some v => qiOf v | none => 0
+          let (packed, over) := packDelta qE qRefs[cls]! halfOB
+          if over.isSome then bad := over
+          durDelta := durDelta.set! ((cls * T + e) * maxD + d0) packed
+          -- A leg under a journey: the same cell without the level, and
+          -- without the covered train's relaxed floor — a leg pays no level,
+          -- so the floor is what stops a ride splitting into one-minute legs.
           if d0 < maxJ then
             if let some slot := slotOfCls cls then
-              legDur := legDur.set! ((slot * maxJ + d0) * T + e) (legCells.get! j)
+              legDur := legDur.set! ((slot * maxJ + d0) * T + e)
+                (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) false w sst bases[cls]! false dv)
     return (durDelta, bad, legDur)
   if let some delta := bad then throw s!"dur delta {delta} exceeds halfOB {halfOB}"
   -- The journey state: its cell is the inner pass over the legs plus its own
