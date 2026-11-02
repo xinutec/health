@@ -48,25 +48,49 @@ def stripQualifier (s : String) : String :=
 def dedup (xs : List String) : List String :=
   xs.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) []
 
+/-- A name's head before a dash or a colon qualifier: OSM names the Central
+    line's tracks "Central Line - Eastbound" and "Central Line: West Ruislip →
+    Epping", and the line is the part before. -/
+def stripTail (s : String) : String :=
+  let head := fun (sep : String) (x : String) => match x.splitOn sep with
+    | h :: _ :: _ => h.trimAscii.toString
+    | _ => x
+  head ":" (head " - " s)
+
+/-- The lines a cleaned name carries by its "Line"/"Lines" suffix. -/
+private def linesOfCleaned (cleaned : String) : List String :=
+  let stripped? : Option String :=
+    if cleaned.endsWith " Lines" then some (cleaned.dropEnd " Lines".length).toString
+    else if cleaned.endsWith " Line" then some (cleaned.dropEnd " Line".length).toString
+    else none
+  match stripped? with
+  | none => []
+  | some stripped =>
+    let parts := (stripped.splitOn " and ").flatMap (fun andPart => andPart.splitOn ", ")
+    dedup (parts.filterMap (fun commaPart =>
+      let trimmed := commaPart.trimAscii.toString
+      if trimmed.isEmpty then none else some (trimmed ++ " Line")))
+
+/-- The whole name first — every name read before the tail rule reads the same
+    — and its head before a dash or colon only when the whole carries none. -/
+private def linesOfName (n : String) : List String :=
+  let clean := fun (x : String) => stripDirectional (stripQualifier (stripDirectional x))
+  let n0 := n.trimAscii.toString
+  match linesOfCleaned (clean n0) with
+  | [] => linesOfCleaned (clean (stripTail n0))
+  | ls => ls
+
 /-- OSM way `name` → the tube lines it carries. Empty for names not ending in
-    "Line"/"Lines". -/
+    "Line"/"Lines". A name that joins a line with something else ("District
+    Line and Overground (North London Line)") keeps the parts that are lines. -/
 def parseLineMemberships (name : Option String) : List String :=
   match name with
   | none => []
   | some n =>
     if n == "" then [] else
-    let cleaned := stripDirectional (stripQualifier (stripDirectional n.trimAscii.toString))
-    let stripped? : Option String :=
-      if cleaned.endsWith " Lines" then some (cleaned.dropEnd " Lines".length).toString
-      else if cleaned.endsWith " Line" then some (cleaned.dropEnd " Line".length).toString
-      else none
-    match stripped? with
-    | none => []
-    | some stripped =>
-      let parts := (stripped.splitOn " and ").flatMap (fun andPart => andPart.splitOn ", ")
-      dedup (parts.filterMap (fun commaPart =>
-        let trimmed := commaPart.trimAscii.toString
-        if trimmed.isEmpty then none else some (trimmed ++ " Line")))
+    match linesOfName n with
+    | [] => dedup ((n.splitOn " and ").flatMap linesOfName)
+    | ls => ls
 
 -- Parity with the real `parseLineMemberships` (Node/V8; Set → insertion-ordered list).
 #guard parseLineMemberships (some "Metropolitan Line") == ["Metropolitan Line"]
@@ -89,6 +113,13 @@ def parseLineMemberships (name : Option String) : List String :=
 #guard parseLineMemberships (some "Northern Line (Edgware Branch)") == ["Northern Line"]
 -- A name not ending in "Line" carries no line, qualifier or not.
 #guard parseLineMemberships (some "Northern line extension") == []
+-- A dash or colon tail.
+#guard parseLineMemberships (some "Central Line - Eastbound") == ["Central Line"]
+#guard parseLineMemberships (some "Central Line - Ealing branch - Westbound") == ["Central Line"]
+#guard parseLineMemberships (some "Central Line: West Ruislip → Epping") == ["Central Line"]
+#guard parseLineMemberships (some "Elizabeth Line - Liverpool Street Station") == ["Elizabeth Line"]
+-- A line joined to something that is not one.
+#guard parseLineMemberships (some "District Line and Overground (North London Line)") == ["District Line"]
 
 /-- A lon/lat vertex of a track polyline. -/
 structure LatLon where
