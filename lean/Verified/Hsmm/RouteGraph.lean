@@ -35,6 +35,15 @@ def stripDirectional (s : String) : String :=
   | some d => (s.dropEnd d.length).trimAscii.toString
   | none => s
 
+/-- Strip a trailing parenthetical qualifier, re-trimming after: OSM names the
+    Northern line's tunnels by branch, "Northern Line (Edgware Branch)", and
+    the name's line is the part before it. -/
+def stripQualifier (s : String) : String :=
+  if !s.endsWith ")" then s else
+  match s.splitOn " (" with
+  | [] | [_] => s
+  | parts => (" (".intercalate parts.dropLast).trimAscii.toString
+
 /-- Append-preserving dedup (mirrors JS `Set` insertion-order iteration). -/
 def dedup (xs : List String) : List String :=
   xs.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) []
@@ -46,7 +55,7 @@ def parseLineMemberships (name : Option String) : List String :=
   | none => []
   | some n =>
     if n == "" then [] else
-    let cleaned := stripDirectional n.trimAscii.toString
+    let cleaned := stripDirectional (stripQualifier (stripDirectional n.trimAscii.toString))
     let stripped? : Option String :=
       if cleaned.endsWith " Lines" then some (cleaned.dropEnd " Lines".length).toString
       else if cleaned.endsWith " Line" then some (cleaned.dropEnd " Line".length).toString
@@ -74,6 +83,12 @@ def parseLineMemberships (name : Option String) : List String :=
 #guard parseLineMemberships none == []
 #guard parseLineMemberships (some "Bakerloo Lines") == ["Bakerloo Line"]
 #guard parseLineMemberships (some "A, B and C Lines") == ["A Line", "B Line", "C Line"]
+-- A branch qualifier, with and without a direction after it.
+#guard parseLineMemberships (some "Northern Line (Charing Cross Branch)") == ["Northern Line"]
+#guard parseLineMemberships (some "Northern Line (Charing Cross Branch) Southbound") == ["Northern Line"]
+#guard parseLineMemberships (some "Northern Line (Edgware Branch)") == ["Northern Line"]
+-- A name not ending in "Line" carries no line, qualifier or not.
+#guard parseLineMemberships (some "Northern line extension") == []
 
 /-- A lon/lat vertex of a track polyline. -/
 structure LatLon where
