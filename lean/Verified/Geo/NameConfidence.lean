@@ -27,8 +27,8 @@ namespace Verified.Geo.NameConfidence
 /-- `(source, right, graded)` over the corpus's graded stay rows. -/
 def COUNTS : List (String × Nat × Nat) :=
   [("home", 82, 82), ("sleep", 21, 21), ("enclosing", 23, 23), ("work", 23, 23),
-   ("nearField", 17, 23), ("ranked", 10, 14), ("lodging", 30, 30), ("station", 25, 27),
-   ("geocodeVenue", 20, 26), ("openSpace", 3, 3), ("residential", 0, 1),
+   ("nearField", 17, 23), ("ranked", 10, 14), ("lodging", 30, 30), ("station", 25, 28),
+   ("geocodeVenue", 20, 27), ("openSpace", 3, 3), ("residential", 0, 1),
    ("address", 0, 1)]
 
 /-- The chance a name from `source` is right: the rule of succession over its

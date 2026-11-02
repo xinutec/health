@@ -135,6 +135,10 @@ const POST_TS: &[&str] = &[
     "2026-08-25.md",
     "2026-10-20.md",
     "2026-10-27.md",
+    // Two days from what he wrote within a week: the Eurostar home through
+    // Brussels, and a restaurant by Liverpool Street.
+    "2026-05-10.md",
+    "2026-05-16.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
@@ -215,9 +219,9 @@ const TS_FILES: usize = 31;
 const TS_ROWS: usize = 443;
 const TS_ENFORCEABLE: usize = 418;
 const TS_UNPARSEABLE: usize = 4;
-/// Narratives whose `Times:` is not London: 04-29 (Amsterdam), 06-24 (UTC), and
-/// 10-02 to 10-07 (Madrid).
-const TS_DECLARED_TZ: usize = 8;
+/// Narratives whose `Times:` is not London: 04-29 (Amsterdam), 05-10
+/// (Brussels), 06-24 (UTC), and 10-02 to 10-07 (Madrid).
+const TS_DECLARED_TZ: usize = 9;
 /// `groundTruthJourneys` over the same corpus, same source, same day. A stay
 /// the day boards a ride from is its wait, so the waits before rides belong to
 /// their trips; the platform waits on 06-15, 06-17 and 06-18 are rows of their
