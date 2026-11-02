@@ -122,6 +122,10 @@ const POST_TS: &[&str] = &[
     // Narrated live: the café, Drury, the Vue and Chinatown; the three venues
     // the picker misnames are known-wrong.
     "2026-11-01.md",
+    // Drury 188-189 on two afternoons he named it in writing that morning; one
+    // row each, served right.
+    "2026-09-27.md",
+    "2026-10-11.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
