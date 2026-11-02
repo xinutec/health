@@ -119,6 +119,9 @@ const POST_TS: &[&str] = &[
     // there"; one row each, known-wrong.
     "2026-07-12.md",
     "2026-08-08.md",
+    // Narrated live: the café, Drury, the Vue and Chinatown; the three venues
+    // the picker misnames are known-wrong.
+    "2026-11-01.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
