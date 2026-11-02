@@ -334,13 +334,13 @@
     },
     {
       "startTs": 1779018360,
-      "budgetM": 1307.25,
-      "lenM": 1363.4492187241892,
-      "offPathM": 0.0,
+      "budgetM": 1310.25,
+      "lenM": 1404.594531619059,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": null,
-      "speedKmh": 4.8121737131441975,
-      "stallM": 37.787635316913054
+      "speedKmh": 3.251794414037693,
+      "stallM": 14.990336206401935
     },
     {
       "startTs": 1779020856,
