@@ -126,6 +126,15 @@ const POST_TS: &[&str] = &[
     // row each, served right.
     "2026-09-27.md",
     "2026-10-11.md",
+    // One row each from what he wrote that day in another session: a café,
+    // a hospital, the office.
+    "2026-05-17.md",
+    "2026-07-19.md",
+    "2026-07-31.md",
+    "2026-08-14.md",
+    "2026-08-25.md",
+    "2026-10-20.md",
+    "2026-10-27.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
