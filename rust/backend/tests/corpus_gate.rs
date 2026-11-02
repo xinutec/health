@@ -324,3 +324,23 @@ fn the_name_confidence_table_is_its_measurement() {
         "Verified.Geo.NameConfidence.COUNTS must equal the sum of tests/golden/name-confidence.jsonl"
     );
 }
+
+/// A stay row graded at a walk's midpoint judged no name: the stay that grazes
+/// its first minute is not charged for it.
+#[test]
+fn a_name_is_graded_by_the_state_its_verdict_read() {
+    use serde_json::json;
+    let states = [
+        json!({"mode": "stationary", "startTs": 0, "endTs": 600, "placeSource": "station"}),
+        json!({"mode": "walking", "startTs": 600, "endTs": 1200}),
+    ];
+    let row = |a: i64, b: i64| json!({"startTs": a, "endTs": b, "truth": {"mode": "stationary", "place": "Somewhere"}});
+    let rows = [row(0, 600), row(540, 1140)];
+    let verdicts = [json!("verified"), json!("regressed")];
+    let covering = [json!(0), json!(1)];
+    let counts = corpus::truth::name_confidence_counts(&rows, &verdicts, &covering, &states);
+    assert_eq!(
+        counts,
+        std::collections::BTreeMap::from([("station".to_string(), (1, 1))])
+    );
+}

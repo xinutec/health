@@ -80,20 +80,18 @@ pub const NAME_CONFIDENCE: &str = concat!(
 
 /// Per naming rule, `(right, graded)` over one day's graded stay rows: each row
 /// that asserts a stationary or sleeping PLACE and carries a clean verdict is
-/// read against the stay state overlapping it most, and counted under the rule
-/// that named that state. A state with no rule, or no overlapping stay, counts
-/// nowhere — it shows no percentage, so it has no hit rate to keep.
+/// counted under the rule that named the state its verdict was read from
+/// (`covering`, the truth check's own midpoint lookup), when that state is a
+/// stay. A row whose verdict came from no stay judged no name, and a state with
+/// no rule shows no percentage, so neither has a hit rate to keep.
 pub fn name_confidence_counts(
     rows: &[Value],
     verdicts: &[Value],
+    covering: &[Value],
     states: &[Value],
 ) -> BTreeMap<String, (u64, u64)> {
     let mut out: BTreeMap<String, (u64, u64)> = BTreeMap::new();
-    let stays: Vec<&Value> = states
-        .iter()
-        .filter(|s| matches!(s["mode"].as_str(), Some("stationary" | "sleeping")))
-        .collect();
-    for (row, v) in rows.iter().zip(verdicts) {
+    for (i, (row, v)) in rows.iter().zip(verdicts).enumerate() {
         let t = &row["truth"];
         if !matches!(t["mode"].as_str(), Some("stationary" | "sleeping"))
             || t["place"].as_str().is_none()
@@ -105,21 +103,17 @@ pub fn name_confidence_counts(
             Some("regressed" | "known-error") => false,
             _ => continue,
         };
-        let (a, b) = (
-            row["startTs"].as_i64().unwrap_or(0),
-            row["endTs"].as_i64().unwrap_or(0),
-        );
-        let overlap = |s: &Value| {
-            (b.min(s["endTs"].as_i64().unwrap_or(0)) - a.max(s["startTs"].as_i64().unwrap_or(0)))
-                .max(0)
-        };
-        let Some(best) = stays.iter().copied().max_by_key(|s| overlap(s)) else {
+        let Some(st) = covering
+            .get(i)
+            .and_then(Value::as_u64)
+            .and_then(|k| states.get(usize::try_from(k).ok()?))
+        else {
             continue;
         };
-        if overlap(best) == 0 {
+        if !matches!(st["mode"].as_str(), Some("stationary" | "sleeping")) {
             continue;
         }
-        let Some(src) = best["placeSource"].as_str() else {
+        let Some(src) = st["placeSource"].as_str() else {
             continue;
         };
         let e = out.entry(src.to_string()).or_default();
@@ -346,7 +340,13 @@ impl Truth {
         // The name-confidence counts: re-measured every run, day by day, against
         // their blessed values — the percentage the app shows is this
         // measurement, and a naming change that moves it must say so (#325).
-        let counts = name_confidence_counts(&narrative.rows, verdicts, &states);
+        let covering = tr["covering"].as_array().map_or(&[][..], Vec::as_slice);
+        assert_eq!(
+            covering.len(),
+            narrative.rows.len(),
+            "{name}: the covering list must be positional"
+        );
+        let counts = name_confidence_counts(&narrative.rows, verdicts, covering, &states);
         if std::env::var("NAME_CONFIDENCE_BLESS").is_ok() {
             use std::io::Write;
             let obj: serde_json::Map<String, Value> = counts
@@ -418,7 +418,6 @@ impl Truth {
         // produced the verdict, so this cannot explain a verdict with a state
         // the check did not use. Off by default: it prints places.
         if std::env::var("TRUTH_DEBUG").is_ok() {
-            let covering = tr["covering"].as_array().map_or(&[][..], Vec::as_slice);
             for (i, verdict) in verdicts.iter().enumerate() {
                 if verdict.as_str() != Some("regressed") {
                     continue;
