@@ -1577,7 +1577,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         | some served => Verified.Hsmm.ServedStations.stationNameServed served name
         | none => true
       | _, _ => true
-    let legList : Array (Nat × Nat × Option Verified.Hsmm.StationChain.ChainNode) := Id.run do
+    let legListAll : Array (Nat × Nat × Option Verified.Hsmm.StationChain.ChainNode) := Id.run do
       let mut out := legs.zipIdx.map fun (l, li) => (l, li, none)
       match g? with
       | none => return out
@@ -1599,6 +1599,18 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
               if fixes.any (fun f => nearFix f n) then out := out.push (l, li, some n)
           | _, _ => pure ()
         return out
+    -- A wait continues only into a ride boarding at its node (`pairOk`) and
+    -- never ends a journey, so a wait where no ride leg boards lies on no
+    -- path: it is not built. It still counts in `boardAt`'s best station.
+    let boards : Std.HashSet String := legListAll.foldl (fun acc (l, _, st?) =>
+      match (c.states[l]!).mode, st? with
+      | .train, some n => acc.insert n.id
+      | _, _ => acc) {}
+    let keptIdx : Array Nat := (Array.range legListAll.size).filter fun i =>
+      match legListAll[i]! with
+      | (l, _, some n) => (c.states[l]!).lineName != some Verified.Hsmm.Assemble.WAIT_MARK || boards.contains n.id
+      | _ => true
+    let legList := keptIdx.map (legListAll[·]!)
     let L := legList.size
     let legOuter := legList.map (·.1)
     let baseOf := legList.map (·.2.1)
@@ -1628,8 +1640,9 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     -- he stood when the ride began (the leg's own first minute already moves):
     -- the chain's anchor form, relative to the best station at that minute.
     let boardAt : FloatArray := Id.run do
-      let mut raw := FloatArray.mk (Array.replicate (L * T) journeyZero)
-      let mut has := Array.replicate (L * T) false
+      let LA := legListAll.size
+      let mut raw := FloatArray.mk (Array.replicate (LA * T) journeyZero)
+      let mut has := Array.replicate (LA * T) false
       -- A station is a complex of nodes (one per line's platforms); the leg's
       -- distance is its NAME's nearest node, so two lines boarded at the same
       -- station tie here and their pairs decide.
@@ -1639,7 +1652,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         | some g => g.nodes.foldl (fun m n => match n.stationName with
             | some name => m.insert name ((m.getD name #[]).push n)
             | none => m) {}
-      for (entry, li) in legList.zipIdx do
+      for (entry, li) in legListAll.zipIdx do
         let (_, _, st?) := entry
         let some n := st? | continue
         let nodes := match n.stationName with
@@ -1660,11 +1673,11 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       let mut out := FloatArray.mk (Array.replicate (L * T) journeyZero)
       for t in [0:T] do
         let mut mx := Verified.FloatConst.negInf
-        for li in [0:L] do
-          if has[li * T + t]! then mx := max mx (raw.get! (li * T + t))
+        for ai in [0:LA] do
+          if has[ai * T + t]! then mx := max mx (raw.get! (ai * T + t))
         if mx == Verified.FloatConst.negInf then continue
-        for li in [0:L] do
-          if has[li * T + t]! then out := out.set! (li * T + t) (raw.get! (li * T + t) - mx)
+        for (ai, li) in keptIdx.zipIdx do
+          if has[ai * T + t]! then out := out.set! (li * T + t) (raw.get! (ai * T + t) - mx)
       return out
     let reachMask : Array Bool := Id.run do
       let mut out := Array.replicate (L * T) true

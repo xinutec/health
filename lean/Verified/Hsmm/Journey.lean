@@ -115,6 +115,11 @@ structure Tables where
       journey changes; `−∞` where the leg would begin before the day. Laid out
       by end minute then length, so the sweep's length loop reads it in order. -/
   own : FloatArray := FloatArray.empty
+  /-- Per board-station leg `l`, `pairOwn[l][k * maxJ + (d - 1)]`: its own score
+      over `d` minutes from its `k`-th start (`reachStarts`) — emissions, entry,
+      board term and cell, which no start of the journey changes; `−∞` past the
+      day. Empty for a free leg (`withOwn`). -/
+  pairOwn : Array FloatArray := #[]
   /-- `best`'s table once computed (`cell[(d - 1) * T + e]`), for the path
       debugger; empty until then. -/
   cell : FloatArray := FloatArray.empty
@@ -232,7 +237,20 @@ def withOwn (tb : Tables) : Tables := Id.run do
         let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
         own := own.set! ((k * T + e) * tb.maxJ + (d - 1))
           (emit + tb.entry.get! (b * T + start) + legCell tb l d e)
-  return { tb with ownSlot, own }
+  let pairOwn := (Array.range L).map fun l => Id.run do
+    let starts := tb.reachStarts[l]!
+    let b := tb.baseOf[l]!
+    let mut po := FloatArray.mk (Array.replicate (starts.size * tb.maxJ) negInf)
+    for (start, k) in starts.zipIdx do
+      for d in [1 : tb.maxJ + 1] do
+        let e := start + d - 1
+        if e ≥ T then break
+        let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
+        let board := if tb.boardAt.size == 0 then 0 else tb.boardAt.get! (l * T + start)
+        po := po.set! (k * tb.maxJ + (d - 1))
+          (emit + tb.entry.get! (b * T + start) + board + legCell tb l d e)
+    return po
+  return { tb with ownSlot, own, pairOwn }
 
 /-- The sweep from `s0` over `w` minutes: `V[i * L + l]`, the best path over
     `[s0, s0 + i]` ending in leg `l`, and its back-pointers (the leg's length;
@@ -278,16 +296,21 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
               bd := d
       else
         -- A paired leg begins only within reach of its station.
+        let po := tb.pairOwn[l]?.getD FloatArray.empty
         let mut k := firstAt[l]!
         while k < starts.size && starts[k]! ≤ e do
           let s := starts[k]!
-          k := k + 1
           let d := e + 1 - s
-          if d > tb.maxJ then continue
-          let cand := candidate tb m s0 i l d
-          if cand > best then
-            best := cand
-            bd := d
+          if d ≤ tb.maxJ then
+            -- The path before the leg, plus its own score, tabled once (`withOwn`).
+            let prev := if d == i + 1 then tb.first[l]! + tb.firstCtx.get! (l * T + s0)
+              else m.get! (l * w + (i - d))
+            let cand := if po.size == 0 then candidate tb m s0 i l d
+              else if prev == negInf then negInf else prev + po.get! (k * tb.maxJ + (d - 1))
+            if cand > best then
+              best := cand
+              bd := d
+          k := k + 1
       v := v.set! (i * L + l) best
       bpD := bpD.set! (i * L + l) bd
     -- The hoisted transition into every leg that may begin at `e + 1`: the
@@ -538,5 +561,8 @@ private def paired : Tables :=
     pairOk := Array.replicate 4 true }
 #guard (legsOf paired 0 2) == #[4, 4, 4]
 #guard Float.abs ((best paired).get! (1 * 3 + 2) - (-1 + 2 - 2 + 5 + pairLogPdf 2 2)) < 1e-9
+-- The same with the own scores tabled, as the server runs it.
+#guard (legsOf (withOwn paired) 0 2) == #[4, 4, 4]
+#guard Float.abs ((best (withOwn paired)).get! (1 * 3 + 2) - (-1 + 2 - 2 + 5 + pairLogPdf 2 2)) < 1e-9
 
 end Verified.Hsmm.Journey
