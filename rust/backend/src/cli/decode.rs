@@ -184,7 +184,15 @@ pub(crate) async fn decode_one(
 ) -> Result<usize> {
     let bounds = backend::timezone::date_bounds_utc(date, Some(tz))?;
     let loaded_at = chrono::Utc::now().timestamp();
-    let inputs = backend::classification_inputs::load(
+    // Where building the request goes, one line a decode: the loader's reads,
+    // then each step below.
+    let mut clock = std::time::Instant::now();
+    let mut steps: Vec<(&'static str, u128)> = Vec::new();
+    let mut step = |name: &'static str, steps: &mut Vec<(&'static str, u128)>| {
+        steps.push((name, clock.elapsed().as_millis()));
+        clock = std::time::Instant::now();
+    };
+    let (inputs, reads) = backend::classification_inputs::load_timed(
         pool,
         &st.http,
         &backend::config::focus_nc_base_url(),
@@ -197,6 +205,7 @@ pub(crate) async fn decode_one(
         Some(tz),
     )
     .await?;
+    step("load", &mut steps);
     // A day that observes nothing has nothing to decode. Where its bracket
     // agrees — the day before ended at a place and the day after was mostly
     // there (`empty_day_bracket`) — it is one stay there, written as its
@@ -233,10 +242,12 @@ pub(crate) async fn decode_one(
     // `head::capture` owns the observation tensor; nothing here rebuilds it.
     let cap = backend::head::capture(&inputs, date, user_id)?;
     let obs = cap.get("obs").context("capture has no obs")?.clone();
+    step("capture", &mut steps);
 
     // ── the route graph, from the mirror ────────────────────────────────────
     let (ways, stops) = route_graph_rows(pool, user_id, &obs).await?;
     let (edges, nodes) = backend::lean::build_wire_graph(&ways, &stops)?;
+    step("graph", &mut steps);
     // ⚠ THE GRAPH'S SIZE IS EVIDENCE, not chatter. `emitLeg` is a MARGIN test —
     // a side names a station only when every alternative naming a different one
     // trails by `MARGIN_NATS` — so the number of competing stations in range
@@ -263,6 +274,7 @@ pub(crate) async fn decode_one(
     // only because they clean the same input; doing it once is the same result
     // with one fewer way to disagree.
     let cleaned = backend::lean::drop_gps_outliers(&gps_fixes(&obs)?)?;
+    step("outliers", &mut steps);
     // ⚠ THE DECODER'S PLACES ARE NOT `focus_places` ROWS. `knownPlaces` names
     // the columns (`centroidLat`, `totalDwellSec`, `displayName`); the decode
     // wire names the concepts (`lat`, `dwell`, `name`). Sending the row shape is
@@ -271,12 +283,29 @@ pub(crate) async fn decode_one(
     let places = backend::classification_inputs::decode_places(inputs.get("knownPlaces"))?;
     let osm = day_osm(pool, bounds.start_utc, bounds.end_utc, &cleaned, &places).await?;
     println!("osm {date}: {}", osm.note);
+    step("osm", &mut steps);
 
     // ⚠ THE CHAIN SEED, AND IT IS FOUR FIELDS RATHER THAN ONE. Sending only
     // `priorPlaceId` is refused with `property not found: hoursSince` — the
     // third field-shape defect on this request, and the third found by probing
     // the parser instead of reading the struct.
     let continuity = load_continuity(pool, user_id, date, &places).await?;
+    step("continuity", &mut steps);
+    let mut slow = reads.clone();
+    slow.sort_by_key(|(_, ms)| std::cmp::Reverse(*ms));
+    println!(
+        "request {date}: {} · load's slowest reads {}",
+        steps
+            .iter()
+            .map(|(n, ms)| format!("{n} {ms} ms"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        slow.iter()
+            .take(4)
+            .map(|(n, ms)| format!("{n} {ms} ms"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     let mut req = serde_json::json!({
         "observation": {
