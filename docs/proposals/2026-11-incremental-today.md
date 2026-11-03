@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-status: step 1 live (the frontier logged, unchanged runs skipped); step 2 lemma proved, the build next
+status: live 2026-11-03 (assemblesegmentsinc on the decode watch's own worker); refinements open
 references:
   - decoder-roadmap.md
   - ../design/lean-and-rust.md
@@ -102,6 +102,16 @@ the checkpoints alone are ~90 columns of `S × maxD`).
    held by the watch loop (today's decodes run as child processes now, which
    is why nothing survives a run); every other decode stays full. In memory,
    his choice 2026-11-03, about 140 MB by that day's measurements.
+
+**Live 2026-11-03.** First runs in production: a full decode 45 s (7 s the
+request, 38 s Lean), the next incremental 33 s (8 + 26), its frontier at minute
+833 set by `journey.stopPre`. Open: (a) a station pass still under way
+changes its calling evidence from its start every minute, though no leg ending
+before the pass ends reads it; placing a pass's evidence at its end (the same
+values) moves such a frontier to the present; (b) the tables pass and the
+build each rebuild emissions, transitions and the journey's tables; (c) the
+Rust-side comparison and skip (`decode_frontier`) is superseded by the
+frontier Lean reports.
 
 The incremental state is a stopgap (his word, 2026-11-03): the direction is a
 decoder fast enough to compute any day on read, past days included, so that no
