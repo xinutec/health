@@ -570,6 +570,203 @@ theorem pBuildCkpt_fst {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBo
           (by rw [hag.maxD]; omega), hag.maxD]
         exact hsnd s τ hs h1 hm
 
+/-! ## Two models that agree up to a minute
+
+Column `t + 1` reads the emissions, entries and transitions at `t + 1` and the
+duration cells ending at `t` (`pColStep`), and nothing later. So two models that
+agree up to minute `f` build the same columns and checkpoints up to `f`
+(`pBuildCkpt_agree`): what an incremental decode of a day whose inputs changed
+from `f` on reuses (docs/proposals/2026-11-incremental-today.md). -/
+
+/-- `m₁` and `m₂` agree on everything a column up to `f` reads. -/
+structure AgreeTo (m₁ m₂ : PModel) (f : Nat) : Prop where
+  S : m₁.S = m₂.S
+  maxD : m₁.maxD = m₂.maxD
+  init : ∀ s, m₁.init s = m₂.init s
+  emit : ∀ t s, t ≤ f → m₁.emit t s = m₂.emit t s
+  entry : ∀ s t, t ≤ f → m₁.entry s t = m₂.entry s t
+  trans : ∀ sp s t, t ≤ f → m₁.trans sp s t = m₂.trans sp s t
+  dur : ∀ s d e, e < f → m₁.dur s d e = m₂.dur s d e
+
+theorem pCol0_agree {m₁ m₂ : PModel} {f : Nat} (h : AgreeTo m₁ m₂ f) :
+    pCol0 m₁ = pCol0 m₂ := by
+  obtain ⟨T₁, S₁, D₁, e₁, tr₁, du₁, i₁, en₁⟩ := m₁
+  obtain ⟨T₂, S₂, D₂, e₂, tr₂, du₂, i₂, en₂⟩ := m₂
+  obtain ⟨hS, hD, hinit, hemit, hentry, _, _⟩ := h
+  simp only at hS hD hinit hemit hentry
+  subst hS; subst hD
+  have he : ∀ s, e₁ 0 s = e₂ 0 s := fun s => hemit 0 s (Nat.zero_le _)
+  have hen : ∀ s, en₁ s 0 = en₂ s 0 := fun s => hentry s 0 (Nat.zero_le _)
+  simp only [pCol0, he, hen, hinit]
+
+theorem pColStep_agree {m₁ m₂ : PModel} {f t : Nat} (h : AgreeTo m₁ m₂ f) (ht : t + 1 ≤ f)
+    (prev : Array Nat) : pColStep m₁ t prev = pColStep m₂ t prev := by
+  obtain ⟨T₁, S₁, D₁, e₁, tr₁, du₁, i₁, en₁⟩ := m₁
+  obtain ⟨T₂, S₂, D₂, e₂, tr₂, du₂, i₂, en₂⟩ := m₂
+  obtain ⟨hS, hD, _, hemit, hentry, htrans, hdur⟩ := h
+  simp only at hS hD hemit hentry htrans hdur
+  subst hS; subst hD
+  have he : ∀ s, e₁ (t + 1) s = e₂ (t + 1) s := fun s => hemit (t + 1) s ht
+  have hen : ∀ s, en₁ s (t + 1) = en₂ s (t + 1) := fun s => hentry s (t + 1) ht
+  have htr : ∀ sp s, tr₁ sp s (t + 1) = tr₂ sp s (t + 1) := fun sp s => htrans sp s (t + 1) ht
+  have hdu : ∀ s d, du₁ s d t = du₂ s d t := fun s d => hdur s d t (by omega)
+  simp only [pColStep, pCloseRow, he, hen, htr, hdu]
+
+/-- Up to `f`, two agreeing models build the same checkpoints and column. -/
+theorem pBuildCkpt_agree {m₁ m₂ : PModel} {f : Nat} (h : AgreeTo m₁ m₂ f) (K : Nat) :
+    ∀ t, t ≤ f → pBuildCkpt m₁ K t = pBuildCkpt m₂ K t
+  | 0 => fun _ => by simp only [pBuildCkpt, pCol0_agree h, h.S, h.maxD]
+  | t + 1 => fun ht => by
+    simp only [pBuildCkpt, pBuildCkpt_agree h K t (by omega), pColStep_agree h ht, h.S, h.maxD]
+
+/-- With a positive stride, the build holds one checkpoint per stride passed. -/
+theorem pBuildCkpt_size (m : PModel) {K : Nat} (hK : 0 < K) :
+    ∀ t, ((pBuildCkpt m K t).1).size = t / K + 1
+  | 0 => by simp [pBuildCkpt]
+  | t + 1 => by
+    simp only [pBuildCkpt]
+    split
+    · rename_i hc
+      rw [Array.size_push, pBuildCkpt_size m hK t, Nat.succ_div_of_mod_eq_zero hc]
+    · rename_i hc
+      rw [pBuildCkpt_size m hK t, Nat.succ_div_of_mod_ne_zero hc]
+
+/-- A later build's checkpoints begin with an earlier build's. -/
+theorem pBuildCkpt_prefix (m : PModel) (K : Nat) (t : Nat) :
+    ∀ n, ((pBuildCkpt m K t).1).size ≤ ((pBuildCkpt m K (t + n)).1).size ∧
+      ((pBuildCkpt m K (t + n)).1).extract 0 ((pBuildCkpt m K t).1).size = (pBuildCkpt m K t).1
+  | 0 => ⟨Nat.le_refl _, Array.extract_size⟩
+  | n + 1 => by
+    obtain ⟨hle, hpre⟩ := pBuildCkpt_prefix m K t n
+    have hstep : t + (n + 1) = (t + n) + 1 := by omega
+    rw [hstep]
+    simp only [pBuildCkpt]
+    split
+    · refine ⟨by rw [Array.size_push]; omega, ?_⟩
+      rw [Array.extract_push_of_le hle]
+      exact hpre
+    · exact ⟨hle, hpre⟩
+
+/-- The last checkpoint of a build at a stride boundary is that minute's column. -/
+theorem pBuildCkpt_last (m : PModel) {K : Nat} (hK : 0 < K) :
+    ∀ t, t % K = 0 →
+      ((pBuildCkpt m K t).1).getD (t / K) (0, #[]) = (t, packCol m.S m.maxD (pBuildCkpt m K t).2)
+  | 0 => fun _ => by simp [pBuildCkpt]
+  | t + 1 => fun hc => by
+    have hsz := pBuildCkpt_size m hK t
+    simp only [pBuildCkpt, if_pos hc]
+    rw [Nat.succ_div_of_mod_eq_zero hc, ← hsz,
+      getD_of_lt _ _ (by rw [Array.size_push]; omega), Array.getElem_push_eq]
+
+theorem pRangeMax_congr {f g : Nat → Nat} : ∀ n, (∀ i, i < n → f i = g i) →
+    pRangeMax f n = pRangeMax g n
+  | 0 => fun _ => rfl
+  | n + 1 => fun h => by
+    simp only [pRangeMax, pRangeMax_congr n (fun i hi => h i (by omega)), h n (by omega)]
+
+/-- A column step reads its previous column only inside `S × maxD`. -/
+theorem pColStep_congr (m : PModel) (t : Nat) {a b : Array Nat}
+    (h : ∀ i, i < m.S * m.maxD → a.getD i 0 = b.getD i 0) :
+    pColStep m t a = pColStep m t b := by
+  have hrow : ∀ sp, sp < m.S → ∀ τ0, τ0 < m.maxD →
+      a.getD (sp * m.maxD + τ0) 0 = b.getD (sp * m.maxD + τ0) 0 :=
+    fun sp hsp τ0 hτ => h _ (idx_lt hsp hτ)
+  have hclose : pCloseRow m t a = pCloseRow m t b := by
+    unfold pCloseRow
+    congr 1
+    funext sp
+    exact pRangeMax_congr _ fun τ0 hτ => by rw [hrow sp.val sp.isLt τ0 hτ]
+  unfold pColStep
+  dsimp only
+  rw [hclose]
+  congr 1
+  funext i
+  by_cases hm : i.val % m.maxD = 0
+  · simp only [hm, if_true]
+  · simp only [hm, if_false]
+    rw [h (i.val - 1) (by have := i.isLt; omega)]
+
+/-- The build continued from a state at `t0`: `n` more columns. -/
+def pResume (m : PModel) (K t0 : Nat) (st : Array (Nat × Array (Array Nat)) × Array Nat) :
+    Nat → Array (Nat × Array (Array Nat)) × Array Nat
+  | 0 => st
+  | n + 1 =>
+    let prev := pResume m K t0 st n
+    let next := pColStep m (t0 + n) prev.2
+    (if (t0 + n + 1) % K = 0 then prev.1.push (t0 + n + 1, packCol m.S m.maxD next) else prev.1, next)
+
+/-- Resumed from the build's own checkpoints and a column that reads like its
+    column at `t0`, the build reaches the same checkpoints and column. -/
+theorem pResume_eq (m : PModel) (K t0 : Nat) (st : Array (Nat × Array (Array Nat)) × Array Nat)
+    (h1 : st.1 = (pBuildCkpt m K t0).1)
+    (h2 : ∀ i, i < m.S * m.maxD → st.2.getD i 0 = (pBuildCkpt m K t0).2.getD i 0) :
+    ∀ n, (pResume m K t0 st n).1 = (pBuildCkpt m K (t0 + n)).1 ∧
+      ∀ i, i < m.S * m.maxD →
+        (pResume m K t0 st n).2.getD i 0 = (pBuildCkpt m K (t0 + n)).2.getD i 0
+  | 0 => ⟨h1, h2⟩
+  | n + 1 => by
+    obtain ⟨e1, e2⟩ := pResume_eq m K t0 st h1 h2 n
+    have hc : pColStep m (t0 + n) (pResume m K t0 st n).2
+        = pColStep m (t0 + n) (pBuildCkpt m K (t0 + n)).2 := pColStep_congr m _ e2
+    have hstep : t0 + (n + 1) = (t0 + n) + 1 := by omega
+    rw [hstep]
+    simp only [pResume, pBuildCkpt, hc, e1]
+    exact ⟨trivial, fun _ _ => trivial⟩
+
+/-- An unpacked checkpoint reads like the column it was cut from. -/
+theorem unpack_pack_all (S maxD : Nat) (c : Array Nat) :
+    ∀ i, i < S * maxD → (unpackCol maxD (packCol S maxD c)).getD i 0 = c.getD i 0 := by
+  intro i hi
+  have hD : 0 < maxD := by
+    rcases Nat.eq_zero_or_pos maxD with h | h
+    · subst h; simp at hi
+    · exact h
+  have hs : i / maxD < S := by
+    rw [Nat.div_lt_iff_lt_mul hD]; exact hi
+  have hk : i % maxD < maxD := Nat.mod_lt _ hD
+  have hidx : i / maxD * maxD + i % maxD = i := by
+    rw [Nat.mul_comm]; exact Nat.div_add_mod i maxD
+  have := unpack_pack S maxD c hs hk
+  rwa [hidx] at this
+
+/-- The state an incremental run starts from: an earlier run's checkpoints up
+    to the stride boundary `t0`, and the column there read back. -/
+def resumeState (maxD K t0 : Nat) (cks : Array (Nat × Array (Array Nat))) :
+    Array (Nat × Array (Array Nat)) × Array Nat :=
+  (cks.extract 0 (t0 / K + 1), unpackCol maxD (cks.getD (t0 / K) (0, #[])).2)
+
+/-- Cut from a run of `m₁` that reached `t1 ≥ t0`, with `m₁` agreeing with `m₂`
+    up to `f ≥ t0`, the state is `m₂`'s own build at `t0`. -/
+theorem resumeState_eq {m₁ m₂ : PModel} {f : Nat} (h : AgreeTo m₁ m₂ f) {K : Nat} (hK : 0 < K)
+    {t0 t1 : Nat} (hc : t0 % K = 0) (hf : t0 ≤ f) (h01 : t0 ≤ t1) :
+    (resumeState m₂.maxD K t0 (pBuildCkpt m₁ K t1).1).1 = (pBuildCkpt m₂ K t0).1 ∧
+      ∀ i, i < m₂.S * m₂.maxD →
+        (resumeState m₂.maxD K t0 (pBuildCkpt m₁ K t1).1).2.getD i 0
+          = (pBuildCkpt m₂ K t0).2.getD i 0 := by
+  have hag := pBuildCkpt_agree h K t0 hf
+  obtain ⟨_, hpre⟩ := pBuildCkpt_prefix m₁ K t0 (t1 - t0)
+  have ht1 : t0 + (t1 - t0) = t1 := by omega
+  rw [ht1, pBuildCkpt_size m₁ hK t0] at hpre
+  have hsz := pBuildCkpt_size m₁ hK t0
+  have hel : ((pBuildCkpt m₁ K t1).1).getD (t0 / K) (0, #[])
+      = (t0, packCol m₁.S m₁.maxD (pBuildCkpt m₁ K t0).2) := by
+    have hlt : t0 / K < (((pBuildCkpt m₁ K t1).1).extract 0 (t0 / K + 1)).size := by
+      rw [hpre, hsz]; omega
+    have hx : (((pBuildCkpt m₁ K t1).1).extract 0 (t0 / K + 1)).getD (t0 / K) (0, #[])
+        = ((pBuildCkpt m₁ K t1).1).getD (t0 / K) (0, #[]) := by
+      rw [getD_of_lt _ _ hlt, Array.getElem_extract]
+      have hlt' : t0 / K < ((pBuildCkpt m₁ K t1).1).size := by
+        have := Array.size_extract (xs := (pBuildCkpt m₁ K t1).1) (start := 0) (stop := t0 / K + 1)
+        rw [hpre, hsz] at this; omega
+      rw [getD_of_lt _ _ hlt']
+      simp
+    rw [← hx, hpre, pBuildCkpt_last m₁ hK t0 hc]
+  refine ⟨?_, ?_⟩
+  · simp only [resumeState]; rw [hpre, hag]
+  · intro i hi
+    simp only [resumeState]
+    rw [hel, h.S, h.maxD, unpack_pack_all m₂.S m₂.maxD _ i hi, hag]
+
 /-- Packed `colFrom`. -/
 def pColFrom (m : PModel) (b : Nat) (c : Array Nat) : Nat → Array Nat
   | 0 => c
@@ -782,6 +979,66 @@ theorem pDecode_eq {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds
       dsimp only
       rw [pWalk_eq hag hin (pBuildCkpt m K (P.T - 1)).1 hcols (P.T - 1) s τ hT1]
       rfl
+
+/-- `pDecode` from a given build: the final column's best end, then the walk. -/
+def pDecodeWith (m : PModel) (bc : Array (Nat × Array (Array Nat)) × Array Nat) :
+    Option DecodeResult :=
+  match pickBest
+      (fun p : Nat × Nat =>
+        dec ((bc.2).getD (p.1 * m.maxD + (p.2 - 1)) 0) + dec (m.dur p.1 p.2 (m.T - 1)))
+      ((List.range m.S).flatMap fun s =>
+        (List.range m.maxD).map fun τ0 => (s, τ0 + 1)) with
+  | none => none
+  | some ((s, τ), best) =>
+    match pWalk m bc.1 (m.T - 1) s τ with
+    | none => none
+    | some rsegs => some ⟨(toPath rsegs.reverse).toArray, best⟩
+
+theorem pDecode_with (m : PModel) (K : Nat) (hT : m.T ≠ 0) :
+    pDecode m K = pDecodeWith m (pBuildCkpt m K (m.T - 1)) := by
+  simp only [pDecode, pDecodeWith, if_neg hT]
+
+/-- The decode reads its build's final column only inside `S × maxD`. -/
+theorem pDecodeWith_congr (m : PModel) {bc bc' : Array (Nat × Array (Array Nat)) × Array Nat}
+    (h1 : bc.1 = bc'.1)
+    (h2 : ∀ i, i < m.S * m.maxD → bc.2.getD i 0 = bc'.2.getD i 0) :
+    pDecodeWith m bc = pDecodeWith m bc' := by
+  have hpick :
+      pickBest
+          (fun p : Nat × Nat =>
+            dec ((bc.2).getD (p.1 * m.maxD + (p.2 - 1)) 0) + dec (m.dur p.1 p.2 (m.T - 1)))
+          ((List.range m.S).flatMap fun s =>
+            (List.range m.maxD).map fun τ0 => (s, τ0 + 1))
+        = pickBest
+          (fun p : Nat × Nat =>
+            dec ((bc'.2).getD (p.1 * m.maxD + (p.2 - 1)) 0) + dec (m.dur p.1 p.2 (m.T - 1)))
+          ((List.range m.S).flatMap fun s =>
+            (List.range m.maxD).map fun τ0 => (s, τ0 + 1)) := by
+    apply pickBest_congr
+    intro p hp
+    simp only [List.mem_flatMap, List.mem_range, List.mem_map] at hp
+    obtain ⟨s, hs, τ0, hτ, hEq⟩ := hp
+    subst hEq
+    simp only [Nat.add_sub_cancel]
+    rw [h2 _ (idx_lt hs hτ)]
+  unfold pDecodeWith
+  rw [hpick, h1]
+
+/-- The incremental decode is the full decode. A run of `m₁` that reached `t1`,
+    a model `m₂` agreeing with it up to `f`, and a stride boundary `t0 ≤ f`:
+    resuming `m₂` from `m₁`'s checkpoints at `t0` decodes exactly as `m₂` from
+    scratch, so `pDecode_correct` covers it. -/
+theorem pDecodeInc_eq {m₁ m₂ : PModel} {f : Nat} (h : AgreeTo m₁ m₂ f) {K : Nat} (hK : 0 < K)
+    {t0 t1 : Nat} (hc : t0 % K = 0) (hf : t0 ≤ f) (h01 : t0 ≤ t1)
+    (hT : m₂.T ≠ 0) (h0T : t0 ≤ m₂.T - 1) :
+    pDecodeWith m₂ (pResume m₂ K t0 (resumeState m₂.maxD K t0 (pBuildCkpt m₁ K t1).1)
+      (m₂.T - 1 - t0)) = pDecode m₂ K := by
+  obtain ⟨r1, r2⟩ := resumeState_eq h hK hc hf h01
+  obtain ⟨e1, e2⟩ := pResume_eq m₂ K t0 _ r1 r2 (m₂.T - 1 - t0)
+  have hend : t0 + (m₂.T - 1 - t0) = m₂.T - 1 := by omega
+  rw [hend] at e1 e2
+  rw [pDecode_with m₂ K hT]
+  exact pDecodeWith_congr m₂ e1 e2
 
 theorem pDecode_eq_decodeCk {m : PModel} {P : Problem} (hag : Agrees m P)
     (hin : InBounds P) (K K' : Nat) (hT : P.T ≤ pTMax) :
