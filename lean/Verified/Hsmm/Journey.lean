@@ -228,7 +228,7 @@ def withOwn (tb : Tables) : Tables := Id.run do
   let free := (Array.range L).filter fun l => tb.reachStarts[l]!.isEmpty
   let mut ownSlot : Array (Option Nat) := Array.replicate L none
   for (l, k) in free.zipIdx do ownSlot := ownSlot.set! l (some k)
-  let mut own := FloatArray.mk (Array.replicate (free.size * tb.maxJ * T) negInf)
+  let mut own := Verified.FloatConst.floats (free.size * tb.maxJ * T) negInf
   for (l, k) in free.zipIdx do
     let b := tb.baseOf[l]!
     for d in [1 : tb.maxJ + 1] do
@@ -240,7 +240,7 @@ def withOwn (tb : Tables) : Tables := Id.run do
   let pairOwn := (Array.range L).map fun l => Id.run do
     let starts := tb.reachStarts[l]!
     let b := tb.baseOf[l]!
-    let mut po := FloatArray.mk (Array.replicate (starts.size * tb.maxJ) negInf)
+    let mut po := Verified.FloatConst.floats (starts.size * tb.maxJ) negInf
     for (start, k) in starts.zipIdx do
       for d in [1 : tb.maxJ + 1] do
         let e := start + d - 1
@@ -259,11 +259,11 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
   let L := tb.legs.size
   let B := tb.nBase
   let T := tb.T
-  let mut v := FloatArray.mk (Array.replicate (w * L) negInf)
+  let mut v := Verified.FloatConst.floats (w * L) negInf
   -- `m[l * w + k]`: the best path ending at `s0 + k` in a leg other than `l`,
   -- plus the transition into `l` at `s0 + k + 1` — by leg then minute, so a
   -- leg's length loop walks it backwards in order.
-  let mut m := FloatArray.mk (Array.replicate (w * L) negInf)
+  let mut m := Verified.FloatConst.floats (w * L) negInf
   let mut bpD := Array.replicate (w * L) 0
   -- Per paired leg, the first of its sorted starts at or after `s0`: the
   -- sweep reads only the starts inside its window, in the same order.
@@ -320,9 +320,9 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
     -- the leg itself); a restricted leg is weighed only where it may precede.
     -- The same maximum as over every pair: `x ↦ x + t` is monotone.
     if i + 1 < w then
-      let mut b1 := FloatArray.mk (Array.replicate B negInf)
+      let mut b1 := Verified.FloatConst.floats B negInf
       let mut b1i : Array Nat := Array.replicate B L
-      let mut b2 := FloatArray.mk (Array.replicate B negInf)
+      let mut b2 := Verified.FloatConst.floats B negInf
       for a in [0:L] do
         if pre.restricted[a]! then continue
         let va := v.get! (i * L + a)
@@ -378,7 +378,7 @@ def argFrom (tb : Tables) (v : FloatArray) (s0 k l : Nat) : Nat := Id.run do
 def best (tb : Tables) : FloatArray := Id.run do
   let L := tb.legs.size
   let T := tb.T
-  let mut out := FloatArray.mk (Array.replicate (tb.maxJ * T) negInf)
+  let mut out := Verified.FloatConst.floats (tb.maxJ * T) negInf
   let pre := prep tb
   for s0 in [0:T] do
     let w := min tb.maxJ (T - s0)
@@ -531,12 +531,12 @@ private def one : Tables :=
     legSlot := #[0], nSlots := 1
     emitPre := FloatArray.mk #[0, 1, 2, 3]
     entry := FloatArray.mk #[0, 0, 0]
-    legDur := FloatArray.mk (Array.replicate 9 0)
-    trans := FloatArray.mk (Array.replicate 3 negInf)
+    legDur := Verified.FloatConst.floats 9 0
+    trans := Verified.FloatConst.floats 3 negInf
     first := #[-1], last := #[-2], firstCtx := FloatArray.mk #[0, 0, 0]
     reachStarts := #[#[]], reachMask := Array.replicate 3 true
-    expectedMin := FloatArray.mk (Array.replicate 3 negInf)
-    durBaseF := FloatArray.mk (Array.replicate 3 0)
+    expectedMin := Verified.FloatConst.floats 3 negInf
+    durBaseF := Verified.FloatConst.floats 3 0
     pairOk := #[true] }
 #guard (best one).get! (2 * 3 + 2) == 0
 #guard legsOf one 0 2 == #[4, 4, 4]
@@ -553,7 +553,7 @@ private def paired : Tables :=
     legSlot := #[0, 0]
     first := #[-1, -1]
     last := #[-2, -2]
-    firstCtx := FloatArray.mk (Array.replicate 6 0)
+    firstCtx := Verified.FloatConst.floats 6 0
     reachStarts := #[#[], #[1]]
     reachMask := #[true, true, true, false, true, false]
     expectedMin := FloatArray.mk #[negInf, negInf, negInf, negInf, negInf, 2]

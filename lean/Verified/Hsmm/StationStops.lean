@@ -113,7 +113,7 @@ def passes (g : StationChain.ChainGraph) (obs : Array Observation.ObsRow) : Arra
     station): `calls` answers whether the line calls at a station. -/
 def lineEvidence (p : StopCalls.Params) (ps : Array Pass) (T : Nat)
     (calls : String → Bool) (skip : Option String := none) : FloatArray := Id.run do
-  let mut out := FloatArray.mk (Array.replicate T 0)
+  let mut out := Verified.FloatConst.floats T 0
   for q in ps do
     if skip == some q.station then continue
     if q.first < T && calls q.station then
@@ -125,7 +125,7 @@ def lineEvidence (p : StopCalls.Params) (ps : Array Pass) (T : Nat)
     what a leg ending at `e` takes back from `lineEvidence`'s sum. -/
 def activeEvidence (p : StopCalls.Params) (ps : Array Pass) (T : Nat)
     (calls : String → Bool) (skip : Option String := none) : FloatArray × Array Nat := Id.run do
-  let mut sum := FloatArray.mk (Array.replicate T 0)
+  let mut sum := Verified.FloatConst.floats T 0
   let mut first := Array.replicate T T
   for q in ps do
     if skip == some q.station || !calls q.station then continue
@@ -136,7 +136,7 @@ def activeEvidence (p : StopCalls.Params) (ps : Array Pass) (T : Nat)
 
 /-- A prefix sum: `pre[t]` sums the minutes before `t`. -/
 def prefixSum (xs : FloatArray) : FloatArray := Id.run do
-  let mut out := FloatArray.mk (Array.replicate (xs.size + 1) 0)
+  let mut out := Verified.FloatConst.floats (xs.size + 1) 0
   let mut acc : Float := 0
   for t in [0:xs.size] do
     acc := acc + xs.get! t

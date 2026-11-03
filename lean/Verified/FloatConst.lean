@@ -18,6 +18,17 @@ def posInf : Float := 1.0 / 0.0
 /-- IEEE −∞, matching TS `Number.NEGATIVE_INFINITY`. -/
 def negInf : Float := (-1.0) / 0.0
 
+/-- `n` copies of `x`, filled in place. `FloatArray.mk (Array.replicate n x)`
+first builds an `n`-pointer `Array` and then copies it, twice the table's size
+while it lives. -/
+def floats (n : Nat) (x : Float) : FloatArray := Id.run do
+  let mut a := FloatArray.emptyWithCapacity n
+  for _ in [0:n] do a := a.push x
+  return a
+
+#guard (floats 3 1.5).data == #[1.5, 1.5, 1.5]
+#guard (floats 0 1.5).size == 0
+
 /-- `Math.floor` into an `Int`, the JS grid-cell index. -/
 def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
 

@@ -510,7 +510,7 @@ def stayMoveTable (c : ModelContext) (maxD : Nat) : FloatArray := Id.run do
   let enter := Float.log aIn - stay0
   let keep := Float.log pStay - stay0
   let leave := Float.log (MIN_ONE - pStay) - stay0
-  let mut out := FloatArray.mk (Array.replicate (maxD * T) SEG_ZERO)
+  let mut out := Verified.FloatConst.floats (maxD * T) SEG_ZERO
   for s0 in [0:T] do
     let mut vs := SEG_ZERO
     let mut vm := enter + gain.getD s0 SEG_ZERO

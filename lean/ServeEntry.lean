@@ -1380,7 +1380,7 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
       | none => journeyZero
     -- A journey's first leg boards as a walk would: the fix-anchored term.
     let walkSt : Verified.Hsmm.Emissions.State := ⟨.walking, none, none⟩
-    let mut firstCtx := FloatArray.mk (Array.replicate (L * T) journeyZero)
+    let mut firstCtx := Verified.FloatConst.floats (L * T) journeyZero
     if c.chainOn then
       for (b, bi) in legs.zipIdx do
         let dst := c.states[b]!
@@ -1388,7 +1388,7 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
           for ((cm, covered), t) in minutes.zipIdx do
             firstCtx := firstCtx.set! (bi * T + t)
               (Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine walkSt dst covered none cm)
-    let mut out := FloatArray.mk (Array.replicate (T * L * L) Verified.FloatConst.negInf)
+    let mut out := Verified.FloatConst.floats (T * L * L) Verified.FloatConst.negInf
     for (a, ai) in legs.zipIdx do
       for (b, bi) in legs.zipIdx do
         if a == b then continue
@@ -1442,7 +1442,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   let legs := if jIdx.isSome then Verified.Hsmm.Assemble.legIdxs c else #[]
   let legSlots : Array Nat := legs.foldl (fun acc l => let k := durClass[l]!; if acc.contains k then acc else acc.push k) #[]
   let slotOfCls := fun (cls : Nat) => legSlots.findIdx? (· == cls)
-  let legDur0 := FloatArray.mk (Array.replicate (legSlots.size * maxJ * T) Verified.FloatConst.negInf)
+  let legDur0 := Verified.FloatConst.floats (legSlots.size * maxJ * T) Verified.FloatConst.negInf
   -- A pure loop: in `Except` each of the ~2.4M cells paid for the monad, which
   -- was half the phase (#1774). An out-of-range delta is recorded and thrown
   -- after the loop instead.
@@ -1494,7 +1494,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   | some jI, some jc, some (trans, firstCtx) =>
     let L := legs.size
     let emitPre : FloatArray := Id.run do
-      let mut out := FloatArray.mk (Array.replicate (L * (T + 1)) journeyZero)
+      let mut out := Verified.FloatConst.floats (L * (T + 1)) journeyZero
       -- A minute a leg cannot emit is −∞ per cell in the outer trellis; in a
       -- prefix sum it would poison every later minute, so it is floored
       -- here: still far beyond any leg that spans it.
@@ -1506,7 +1506,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           out := out.set! (li * (T + 1) + t + 1) acc
       return out
     let entryF : FloatArray := Id.run do
-      let mut out := FloatArray.mk (Array.replicate (L * T) journeyZero)
+      let mut out := Verified.FloatConst.floats (L * T) journeyZero
       for (l, li) in legs.zipIdx do
         for t in [0:T] do
           out := out.set! (li * T + t) (Verified.Hsmm.Assemble.entryAt c t l)
@@ -1644,7 +1644,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     -- the chain's anchor form, relative to the best station at that minute.
     let boardAt : FloatArray := Id.run do
       let LA := legListAll.size
-      let mut raw := FloatArray.mk (Array.replicate (LA * T) journeyZero)
+      let mut raw := Verified.FloatConst.floats (LA * T) journeyZero
       let mut has := Array.replicate (LA * T) false
       -- A station is a complex of nodes (one per line's platforms); the leg's
       -- distance is its NAME's nearest node, so two lines boarded at the same
@@ -1673,7 +1673,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             let z := dM / Verified.Hsmm.StationChain.STATION_SIGMA_M
             raw := raw.set! (li * T + t) (max Verified.Hsmm.StationChain.ANCHOR_CLAMP (-(Verified.Hsmm.Journey.HALF * z * z)))
             has := has.set! (li * T + t) true
-      let mut out := FloatArray.mk (Array.replicate (L * T) journeyZero)
+      let mut out := Verified.FloatConst.floats (L * T) journeyZero
       for t in [0:T] do
         let mut mx := Verified.FloatConst.negInf
         for ai in [0:LA] do
@@ -1691,11 +1691,11 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       return out
     let (expectedMin, alightName, pairPathM, pairCalls) :
         FloatArray × Array (Option String) × FloatArray × FloatArray := Id.run do
-      let mut out := FloatArray.mk (Array.replicate (L * T) Verified.FloatConst.negInf)
+      let mut out := Verified.FloatConst.floats (L * T) Verified.FloatConst.negInf
       -- The station each paired leg alights at, per end minute (`stopAlight`).
       let mut names : Array (Option String) := Array.replicate (L * T) none
-      let mut pathOut := FloatArray.mk (Array.replicate (L * T) Verified.FloatConst.negInf)
-      let mut callsOut := FloatArray.mk (Array.replicate (L * T) Verified.FloatConst.negInf)
+      let mut pathOut := Verified.FloatConst.floats (L * T) Verified.FloatConst.negInf
+      let mut callsOut := Verified.FloatConst.floats (L * T) Verified.FloatConst.negInf
       match g? with
       | none => return (out, names, pathOut, callsOut)
       | some g =>
@@ -1819,13 +1819,13 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             | none => pure ()
         return (out, names, pathOut, callsOut)
     let firstCtxL : FloatArray := Id.run do
-      let mut out := FloatArray.mk (Array.replicate (L * T) journeyZero)
+      let mut out := Verified.FloatConst.floats (L * T) journeyZero
       for (bi, li) in baseOf.zipIdx do
         for t in [0:T] do
           out := out.set! (li * T + t) (firstCtx.get! (bi * T + t))
       return out
     let durBaseF : FloatArray := Id.run do
-      let mut out := FloatArray.mk (Array.replicate (legSlots.size * maxJ) journeyZero)
+      let mut out := Verified.FloatConst.floats (legSlots.size * maxJ) journeyZero
       for (cls, slot) in legSlots.zipIdx do
         for d0 in [0:maxJ] do
           out := out.set! (slot * maxJ + d0) (Verified.Hsmm.Assemble.durPriorBase c reps[cls]! (d0 + 1))
@@ -1864,8 +1864,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           let st := c.states[l]!
           if st.mode != .train then none else
           st.lineName.filter fun n => !Verified.Hsmm.Emissions.isPlaceholderLine n
-        let mut pre := FloatArray.mk (Array.replicate (L * (T + 1)) journeyZero)
-        let mut active := FloatArray.mk (Array.replicate (L * T) journeyZero)
+        let mut pre := Verified.FloatConst.floats (L * (T + 1)) journeyZero
+        let mut active := Verified.FloatConst.floats (L * T) journeyZero
         let mut activeFirst : Array Nat := Array.replicate (L * T) T
         let mut alightIdx : Array (Option Nat) := Array.replicate (L * T) none
         let mut alightPre : Array FloatArray := #[]
