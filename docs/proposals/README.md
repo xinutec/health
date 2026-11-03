@@ -23,6 +23,7 @@ will find it.
 |---|---|---|
 | `decoder-roadmap.md` | active | **The single forward plan for the decoder line of work.** One joint probabilistic decoder owning a continuous map-matched worldline; Phases 0–5 |
 | `geometry-roadmap.md` | active | **The single forward plan for the positioning/geometry line of work.** A moving leg as the MAP estimate of one robust energy; Phases G0–G4, the measured landmines |
+| `2026-11-incremental-today.md` | design; step 1 next | Today decoded from the earliest minute whose per-minute tables changed, the rest reused exactly; no extra CPUs |
 | `2026-10-posterior-confidence.md` | phase A built; phase B refuted (two cuts and a 720-minute cap) | Decoder step 3: forward–backward confidence; `unknown` as an output, not a state; the station chain's gates as posteriors |
 | `2026-10-segment-emissions.md` | built behind a harness flag; three arms, not at the gate | Correlated evidence: heart rate per segment, fix presence as a chain, fitted net displacement — the per-minute independence the hand-set numbers compensated for |
 | `2026-10-station-states.md` | S1 refuted (three arms) | Decoder step 2: platform states per station; the 22-journey gap to the cutover, measured; why S1 failed |
