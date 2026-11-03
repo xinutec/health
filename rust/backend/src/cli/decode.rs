@@ -341,29 +341,6 @@ pub(crate) async fn decode_one(
             .with_context(|| format!("writing {path}"))?;
         return Ok(0);
     }
-    // What an incremental decode could reuse, logged; a failure here never
-    // stops the decode. The same request under the same code decodes to the
-    // stored result, so that one is not decoded again. A build without a
-    // `GIT_SHA` never skips.
-    let frontier_dir = std::env::temp_dir().join("decode-frontier");
-    let code = format!(
-        "{}+v{CLASSIFIER_VERSION}",
-        std::env::var("GIT_SHA").unwrap_or_else(|_| "dev".into())
-    );
-    if !dry_run {
-        match backend::decode_frontier::compare(&frontier_dir, user_id, date, &code, &req) {
-            Ok(f) => {
-                println!("frontier {date}: {f}");
-                if f == backend::decode_frontier::Frontier::Unchanged
-                    && !code.starts_with("dev+")
-                    && let Some(n) = mark_current(pool, user_id, date, inputs_through).await?
-                {
-                    return Ok(n);
-                }
-            }
-            Err(e) => eprintln!("frontier {date}: {e:#}"),
-        }
-    }
 
     // ⚠ `None` is DEGENERATE — Lean found no viable path. That is a real answer
     // about the day, not a fault, and it must not be written as zero segments:
@@ -412,46 +389,7 @@ pub(crate) async fn decode_one(
         return Ok(n);
     }
     save_decode(pool, user_id, date, &segments, inputs_through).await?;
-    if let Err(e) = backend::decode_frontier::keep(&frontier_dir, user_id, date, &code, &req) {
-        eprintln!("frontier {date}: keeping the request: {e:#}");
-    }
     Ok(n)
-}
-
-/// The stored decode stands for inputs checked through `inputs_through`: only
-/// that moves. Its segment count, or `None` when no row of this classifier
-/// holds the day.
-async fn mark_current(
-    pool: &sqlx::MySqlPool,
-    user_id: &str,
-    date: &str,
-    inputs_through: i64,
-) -> Result<Option<usize>> {
-    let n: Option<Option<i64>> = sqlx::query_scalar(
-        "SELECT JSON_LENGTH(segments_json) FROM decoded_days \
-         WHERE user_id = ? AND date = ? AND classifier_version = ?",
-    )
-    .bind(user_id)
-    .bind(date)
-    .bind(CLASSIFIER_VERSION)
-    .fetch_optional(pool)
-    .await
-    .with_context(|| format!("reading the stored decode for {user_id} {date}"))?;
-    let Some(Some(n)) = n else {
-        return Ok(None);
-    };
-    sqlx::query(
-        "UPDATE decoded_days SET inputs_through = ? \
-         WHERE user_id = ? AND date = ? AND classifier_version = ?",
-    )
-    .bind(inputs_through)
-    .bind(user_id)
-    .bind(date)
-    .bind(CLASSIFIER_VERSION)
-    .execute(pool)
-    .await
-    .with_context(|| format!("marking {user_id} {date} current"))?;
-    Ok(Some(usize::try_from(n).unwrap_or(0)))
 }
 
 /// The prior day's end-of-day seed, shaped as `parseContinuity` reads it — or

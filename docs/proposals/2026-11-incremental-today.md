@@ -76,16 +76,11 @@ the checkpoints alone are ~90 columns of `S × maxD`).
 
 ## Steps
 
-1. **Measure the frontier.** A Lean mode compares a request's per-minute
-   tables with the stored run's and returns `f` and which day-wide input
-   moved; the sidecar logs it per decode and changes nothing else. One real day of logs says
-   what share of each run the reuse would save.
-   Live 2026-11-03; its first night: the frontier sits ~15 minutes before
-   the run, a late upload or the sleep record moves it back (once to minute
-   10), the rail relations' daily refresh moves every minute once a day, and
-   one run in ten had nothing new. Such a run is not decoded: the same request
-   under the same code (`GIT_SHA` and the classifier version) decodes to the
-   stored result, so only `inputs_through` moves.
+1. **Measure the frontier** — done 2026-11-03, and retired the same day: the
+   frontier is now the incremental run's own, reported per decode. Its first
+   night: the frontier sits ~15 minutes before the run, a late upload or the
+   sleep record moves it back (once to minute 10), the rail relations' daily
+   refresh moves every minute once a day, and one run in ten had nothing new.
 2. **The lemma** — PROVED 2026-11-03 (`Packed.lean`): models that agree on
    what a column up to `f` reads (`AgreeTo`) build the same checkpoints and
    columns up to `f` (`pBuildCkpt_agree`), and resuming the new model from the
@@ -105,13 +100,13 @@ the checkpoints alone are ~90 columns of `S × maxD`).
 
 **Live 2026-11-03.** First runs in production: a full decode 45 s (7 s the
 request, 38 s Lean), the next incremental 33 s (8 + 26), its frontier at minute
-833 set by `journey.stopPre`. Open: (a) a station pass still under way
-changes its calling evidence from its start every minute, though no leg ending
-before the pass ends reads it; placing a pass's evidence at its end (the same
-values) moves such a frontier to the present; (b) the tables pass and the
-build each rebuild emissions, transitions and the journey's tables; (c) the
-Rust-side comparison and skip (`decode_frontier`) is superseded by the
-frontier Lean reports.
+833 set by `journey.stopPre`. The tables are built once a run since
+(`buildPre`). Open: a station pass still under way changes its calling
+evidence from its start every minute, though no leg ending before the pass
+ends reads it. Kept by its last minute the frontier would sit at the present,
+but that form also ends a double subtraction of the arrival pass which, it
+turned out, is what keeps a ride from splitting at a calling station (06-23);
+it waits on a fitted prior for changing to the same line, which is model work.
 
 The incremental state is a stopgap (his word, 2026-11-03): the direction is a
 decoder fast enough to compute any day on read, past days included, so that no

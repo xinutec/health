@@ -50,7 +50,6 @@ pub mod config;
 pub mod db;
 pub mod decode_fixture;
 pub mod decode_freshness;
-pub mod decode_frontier;
 pub mod decoder_params;
 pub mod error;
 pub mod fetch_drain;
