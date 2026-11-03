@@ -376,14 +376,16 @@ def argFrom (tb : Tables) (v : FloatArray) (s0 k l : Nat) : Nat := Id.run do
       arg := a
   return arg
 
-/-- `best[(d - 1) * T + e]`: the best leg path over the journey of `d` minutes
-    ending at `e`, with the last-leg prior; `−∞` where none fits. -/
-def best (tb : Tables) : FloatArray := Id.run do
+/-- `best`'s table with the sweeps from `start` on, the cells of earlier starts
+    taken from `prev` (an earlier day's table of the same shape; otherwise `−∞`):
+    every journey ending at `f` or later starts at `f + 1 − maxJ` or later. -/
+def bestFrom (tb : Tables) (start : Nat) (prev : FloatArray) : FloatArray := Id.run do
   let L := tb.legs.size
   let T := tb.T
-  let mut out := Verified.FloatConst.floats (tb.maxJ * T) negInf
+  let mut out := if start == 0 || prev.size != tb.maxJ * T
+    then Verified.FloatConst.floats (tb.maxJ * T) negInf else prev
   let pre := prep tb
-  for s0 in [0:T] do
+  for s0 in [start:T] do
     let w := min tb.maxJ (T - s0)
     let (v, _) := sweepWith tb pre s0 w
     for i in [0:w] do
@@ -393,6 +395,10 @@ def best (tb : Tables) : FloatArray := Id.run do
         if c > b then b := c
       out := out.set! (i * T + (s0 + i)) b
   return out
+
+/-- `best[(d - 1) * T + e]`: the best leg path over the journey of `d` minutes
+    ending at `e`, with the last-leg prior; `−∞` where none fits. -/
+def best (tb : Tables) : FloatArray := bestFrom tb 0 FloatArray.empty
 
 /-- The decoded journey over `[s0, e]` as its legs, first to last: `(leg,
     length)`. -/

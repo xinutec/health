@@ -1288,6 +1288,67 @@ def pDecodeFast (d : PData) (K : Nat) : Option DecodeResult :=
 theorem pDecodeFast_eq (d : PData) (K : Nat) : pDecodeFast d K = pDecode (toModel d) K := by
   simp only [pDecodeFast, pDecode, toModel, pBuildCkptD_eq, pWalkD_eq]
 
+/-- Fast `pResume`. -/
+def pResumeD (d : PData) (K t0 : Nat) (st : Array (Nat × Array (Array Nat)) × Array Nat) :
+    Nat → Array (Nat × Array (Array Nat)) × Array Nat
+  | 0 => st
+  | n + 1 =>
+    let prev := pResumeD d K t0 st n
+    let next := pColStepD d (t0 + n) prev.2
+    (if (t0 + n + 1) % K = 0 then prev.1.push (t0 + n + 1, packCol d.S d.maxD next) else prev.1, next)
+
+theorem pResumeD_eq (d : PData) (K t0 : Nat) (st : Array (Nat × Array (Array Nat)) × Array Nat) :
+    ∀ n, pResumeD d K t0 st n = pResume (toModel d) K t0 st n
+  | 0 => rfl
+  | n + 1 => by
+    simp only [pResumeD, pResume, pResumeD_eq d K t0 st n, pColStepD_eq]
+    rfl
+
+/-- Fast `pDecodeWith`. -/
+def pDecodeWithD (d : PData) (bc : Array (Nat × Array (Array Nat)) × Array Nat) :
+    Option DecodeResult :=
+  match pickBest
+      (fun p : Nat × Nat =>
+        dec ((bc.2).getD (p.1 * d.maxD + (p.2 - 1)) 0) + dec (d.durAt p.1 p.2 (d.T - 1)))
+      ((List.range d.S).flatMap fun s =>
+        (List.range d.maxD).map fun τ0 => (s, τ0 + 1)) with
+  | none => none
+  | some ((s, τ), best) =>
+    match pWalkD d bc.1 (d.T - 1) s τ with
+    | none => none
+    | some rsegs => some ⟨(toPath rsegs.reverse).toArray, best⟩
+
+theorem pDecodeWithD_eq (d : PData) (bc : Array (Nat × Array (Array Nat)) × Array Nat) :
+    pDecodeWithD d bc = pDecodeWith (toModel d) bc := by
+  simp only [pDecodeWithD, pDecodeWith, toModel, pWalkD_eq]
+
+/-- The incremental decode the server runs: `d` resumed from an earlier run's
+    checkpoints `cks` at the stride boundary `t0`. When the earlier run's model
+    agrees with `d`'s up to `f ≥ t0`, this is `pDecodeFast d K`
+    (`pDecodeInc_eq`). -/
+def pDecodeIncD (d : PData) (K t0 : Nat) (cks : Array (Nat × Array (Array Nat))) :
+    Option DecodeResult × Array (Nat × Array (Array Nat)) :=
+  let bc := pResumeD d K t0 (resumeState d.maxD K t0 cks) (d.T - 1 - t0)
+  (pDecodeWithD d bc, bc.1)
+
+/-- The server's incremental decode is the fast full decode, and it hands on a
+    full build's own checkpoints, so the next run may resume from them too. -/
+theorem pDecodeIncD_eq {d₁ d₂ : PData} {f : Nat} (h : AgreeTo (toModel d₁) (toModel d₂) f)
+    {K : Nat} (hK : 0 < K) {t0 t1 : Nat} (hc : t0 % K = 0) (hf : t0 ≤ f) (h01 : t0 ≤ t1)
+    (hT : d₂.T ≠ 0) (h0T : t0 ≤ d₂.T - 1) :
+    (pDecodeIncD d₂ K t0 (pBuildCkptD d₁ K t1).1).1 = pDecodeFast d₂ K ∧
+      (pDecodeIncD d₂ K t0 (pBuildCkptD d₁ K t1).1).2 = (pBuildCkptD d₂ K (d₂.T - 1)).1 := by
+  have hdec := pDecodeInc_eq h hK hc hf h01 hT h0T
+  obtain ⟨r1, r2⟩ := resumeState_eq h hK hc hf h01
+  obtain ⟨e1, _⟩ := pResume_eq (toModel d₂) K t0 _ r1 r2 (d₂.T - 1 - t0)
+  have hend : t0 + (d₂.T - 1 - t0) = d₂.T - 1 := by omega
+  rw [hend] at e1
+  refine ⟨?_, ?_⟩
+  · simp only [pDecodeIncD, pResumeD_eq, pDecodeWithD_eq, pBuildCkptD_eq, pDecodeFast_eq]
+    exact hdec
+  · simp only [pDecodeIncD, pResumeD_eq, pBuildCkptD_eq]
+    exact e1
+
 /-- `decode_correct`, inherited by the fast decoder. -/
 theorem pDecodeFast_correct {d : PData} {P : Problem} (hag : Agrees (toModel d) P)
     (hin : InBounds P) (K : Nat) (hT : P.T ≤ pTMax) {r : DecodeResult}

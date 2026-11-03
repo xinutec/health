@@ -1230,9 +1230,6 @@ private def durClassKey (s : Verified.Hsmm.Emissions.State) : Nat :=
       else if Verified.Hsmm.Emissions.isMainline s then 9 else 4
     | none => 4
 
-/-- Reference `segEnd` for the duration baseline (matches TS `REF_E`). -/
-private def assembleRefE : Nat := 720
-
 /-- The floor under one minute's emission in the journey's leg prefix sums:
     a leg over 240 such minutes stays inside the packed envelope. -/
 private def journeyEmitFloor : Float := -10000
@@ -1411,12 +1408,24 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
     return (out, firstCtx))
   return (transBase, transIdx, transFlat, nRows, legTrans)
 
+/-- What an incremental build reuses from the day's previous one: every cell
+    ending before `f` (`durDelta`, `legDur`, the journey's `inner`), copied
+    (docs/proposals/2026-11-incremental-today.md). -/
+structure IncFrom where
+  f : Nat
+  durDelta : Array Nat
+  legDur : FloatArray
+  inner : FloatArray
+
 /-- Phase three: the duration base and the per-class deltas —
-    `(durClass, durBase, durDelta)`. -/
+    `(durClass, durBase, durDelta)`. With `inc`, only the cells ending at
+    `inc.f` or later are computed; with `tablesOnly`, none, and the journey's
+    per-minute tables come back before its own scores and sweeps. -/
 private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD halfOB : Nat)
     (legTrans : Option (FloatArray × FloatArray) := none)
     (g? : Option Verified.Hsmm.StationChain.ChainGraph := none)
-    (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) := none) :
+    (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) := none)
+    (inc : Option IncFrom := none) (tablesOnly : Bool := false) :
     Except String (Array Nat × Array Nat × Array Nat × Option Verified.Hsmm.Journey.Tables) := do
   let quant := Verified.Hsmm.Quantize.quantize
   -- Duration: EXACT class partition by (mode, isNamedTrain).
@@ -1428,7 +1437,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   let mut durBase : Array Nat := Array.replicate (S * maxD) 0
   for s in [0:S] do
     for d0 in [0:maxD] do
-      durBase := durBase.set! (s * maxD + d0) (← encScore halfOB (quant (Verified.Hsmm.Assemble.durAt c s (d0 + 1) assembleRefE)))
+      durBase := durBase.set! (s * maxD + d0) (← encScore halfOB (quant (Verified.Hsmm.Assemble.durPriorBase c s (d0 + 1))))
   let qiOf := fun (x : Float) => Float.toInt64 x   -- dur is finite
   -- Coverage depends on `e` alone, so once per `e` for every class and `d`.
   let covered : Array Bool := (Array.range T).map (Verified.Hsmm.Assemble.coveredAtE c)
@@ -1442,27 +1451,36 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   let legs := if jIdx.isSome then Verified.Hsmm.Assemble.legIdxs c else #[]
   let legSlots : Array Nat := legs.foldl (fun acc l => let k := durClass[l]!; if acc.contains k then acc else acc.push k) #[]
   let slotOfCls := fun (cls : Nat) => legSlots.findIdx? (· == cls)
-  let legDur0 := Verified.FloatConst.floats (legSlots.size * maxJ * T) Verified.FloatConst.negInf
   -- A pure loop: in `Except` each of the ~2.4M cells paid for the monad, which
   -- was half the phase (#1774). An out-of-range delta is recorded and thrown
   -- after the loop instead.
+  -- The first end minute computed: `T` (none) for the tables alone.
+  let f := if tablesOnly then T else (inc.map (·.f)).getD 0
   let (durDelta, bad, legDur) : Array Nat × Option Int × FloatArray := Id.run do
     let tri := Verified.Hsmm.triOff maxD T
-    let mut durDelta : Array Nat := Array.replicate (nC * tri) halfOB
+    let mut durDelta : Array Nat := match inc, tablesOnly with
+      | _, true => #[]
+      | some p, _ => p.durDelta
+      | none, _ => Array.replicate (nC * tri) halfOB
     let mut bad : Option Int := none
-    let mut legDur := legDur0
+    let mut legDur := match inc, tablesOnly with
+      | _, true => FloatArray.empty
+      | some p, _ => p.legDur
+      | none, _ => Verified.FloatConst.floats (legSlots.size * maxJ * T) Verified.FloatConst.negInf
     for d0 in [0:maxD] do
       -- The gamma prior once per (class, d) (`durAt_eq_durAtFrom`), and the
-      -- reference cell each delta is taken against.
+      -- reference each delta is taken against: the prior itself, which no
+      -- minute's data moves (`durBase` holds it too, so a cell is its class's
+      -- cell at `e` whatever the reference).
       let bases := reps.map fun rep => Verified.Hsmm.Assemble.durPriorBase c rep (d0 + 1)
-      let qRefs := (reps.zip bases).map fun (rep, base) =>
-        match quant (Verified.Hsmm.Assemble.durAtFrom c rep (d0 + 1) assembleRefE base) with
+      let qRefs := bases.map fun base =>
+        match quant base with
           | some v => qiOf v | none => 0
       -- A segment of `d0 + 1` minutes ends at minute `d0` at the earliest;
       -- the cells below start before the day and neither sweep reads them
       -- (`τ ≤ t + 1`, a leg's `start ≥ 0`), so the triangle is skipped: half
-      -- the phase, exactly.
-      for e in [d0:T] do
+      -- the phase, exactly. Below `f` the cells are the previous build's.
+      for e in [max d0 f:T] do
         -- The segment's window once per (d, e) for every class
         -- (`durAtFrom_eq_W`, #1774).
         let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
@@ -1585,21 +1603,24 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       match g? with
       | none => return out
       | some g =>
+        -- Within reach of some fix of the day, once per node: the cheap test
+        -- first, the track geometry only for the stations it keeps.
+        let nearAny : Array Bool := g.nodes.map fun n =>
+          n.stationName.isSome && fixes.any (fun f => nearFix f n)
         for (l, li) in legs.zipIdx do
           let st := c.states[l]!
           match st.mode, st.lineName with
           | .train, some line =>
             if Verified.Hsmm.Emissions.isPlaceholderLine line then continue
-            for n in g.nodes do
-              if n.stationName.isNone then continue
+            for (n, ni) in g.nodes.zipIdx do
+              if !nearAny[ni]! then continue
               if !Verified.Hsmm.StationChain.stationOnLine g line n then continue
               if !servedOn line n then continue
-              if fixes.any (fun f => nearFix f n) then out := out.push (l, li, some n)
+              out := out.push (l, li, some n)
           | .stationary, some _ =>
             -- The wait: a leg per station within reach of the fixes.
-            for n in g.nodes do
-              if n.stationName.isNone then continue
-              if fixes.any (fun f => nearFix f n) then out := out.push (l, li, some n)
+            for (n, ni) in g.nodes.zipIdx do
+              if nearAny[ni]! then out := out.push (l, li, some n)
           | _, _ => pure ()
         return out
     -- A wait continues only into a ride boarding at its node (`pairOk`) and
@@ -1699,6 +1720,11 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       match g? with
       | none => return (out, names, pathOut, callsOut)
       | some g =>
+        -- The stations within reach of each minute's next fix, once for every
+        -- line (each line then keeps those on its track).
+        let nearE : Array (Option (Array (Verified.Hsmm.StationChain.ChainNode × Float))) :=
+          (Array.range T).map fun e => (fixAfter e).map fun (la, lo) =>
+            Verified.Hsmm.StationChain.stationsNear g la lo journeyReachM
         let mut alightCache : Std.HashMap String (Array (Option Verified.Hsmm.StationChain.ChainNode)) := {}
         -- The calls between a pair, once per (line, board, alight).
         let mut stopsCache : Std.HashMap (String × String × String) (Option Nat) := {}
@@ -1710,11 +1736,15 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           -- Per line, the station the fixes put each minute's end at, once.
           let alights := match alightCache.get? line with
             | some a => a
-            | none => (Array.range T).map fun e => match fixAfter e with
+            | none =>
+              -- The track test once per station that comes within reach.
+              let onLine : Std.HashMap String Bool := nearE.foldl (fun m ns? =>
+                (ns?.getD #[]).foldl (fun m (n, _) => if m.contains n.id then m
+                  else m.insert n.id (Verified.Hsmm.StationChain.stationOnLine g line n && servedOn line n)) m) {}
+              nearE.map fun ns? => match ns? with
               | none => none
-              | some (la, lo) =>
-                let near := (Verified.Hsmm.StationChain.stationsNear g la lo journeyReachM).filter
-                  fun (n, _) => Verified.Hsmm.StationChain.stationOnLine g line n && servedOn line n
+              | some ns =>
+                let near := ns.filter fun (n, _) => onLine.getD n.id false
                 (near.foldl (fun (bestN : Option (Verified.Hsmm.StationChain.ChainNode × Float)) (n, d) =>
                   match bestN with
                   | none => some (n, d)
@@ -1904,8 +1934,17 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         first := legOuter.map (prior true jp.firstLeg)
         last := legOuter.map fun l => if isWaitLeg l then Verified.FloatConst.negInf else prior false jp.lastLeg l
         firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, alightName, pairPathM, pairCalls, boardAt, durBaseF, pairOk }
+    if tablesOnly then
+      -- The same base the full build returns: a journey longer than `maxJ`
+      -- is impossible (the loop below).
+      let mut durBaseJ := durBase
+      for d0 in [maxJ:maxD] do
+        for ji in jAll do
+          durBaseJ := durBaseJ.set! (ji * maxD + d0) 0
+      return (durClass, durBaseJ, durDelta, some tb)
     let tb := Verified.Hsmm.Journey.withOwn tb
-    let inner := Verified.Hsmm.Journey.best tb
+    let inner := Verified.Hsmm.Journey.bestFrom tb (f + 1 - maxJ)
+      ((inc.map (·.inner)).getD FloatArray.empty)
     -- The own-score tables served `best`; what reads the tables after it (a
     -- decoded journey's legs, the debuggers) is a few windows, and `candidate`
     -- sums the same terms in the same order, so they go before the decode.
@@ -1926,10 +1965,10 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             durBaseJ := durBaseJ.set! (ji * maxD + d0) 0
           continue
         let base := Verified.Hsmm.Assemble.durPriorBase c jI (d0 + 1)
-        let qRef := match quant (Verified.Hsmm.Assemble.durAtFrom c jI (d0 + 1) assembleRefE base) with
+        let qRef := match quant base with
           | some v => qiOf v | none => 0
         -- From `e = d0`: a journey cannot begin before the day (`triOff`).
-        for e in [d0:T] do
+        for e in [max d0 f:T] do
           let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
           let sst := Verified.Hsmm.SegmentEmission.statsAt c.segPref (d0 + 1) e
           let legsPart := inner.get! (d0 * T + e)
@@ -1953,7 +1992,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     reads. Scores are finite here (log-probabilities), so no -∞ path arises. -/
 private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat)
     (g? : Option Verified.Hsmm.StationChain.ChainGraph := none)
-    (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) := none) :
+    (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) := none)
+    (inc : Option IncFrom := none) (tablesOnly : Bool := false) :
     Except String (PData × Option Verified.Hsmm.Journey.Tables) := do
   let T := c.obs.size
   let S := c.states.size
@@ -1961,7 +2001,8 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat)
   let halfOB := pOB / 2
   let (emit, entry) ← buildEmitEntry c T S
   let (transBase, transIdx, transFlat, nRows, legTrans) ← buildTransitions c T S
-  let (durClass, durBase, durDelta, journey) ← buildDurations c T S maxD halfOB legTrans g? rels?
+  let (durClass, durBase, durDelta, journey) ←
+    buildDurations c T S maxD halfOB legTrans g? rels? inc tablesOnly
   return ({
     T, S, maxD, halfOB, emit, entry, init := #[]
     transBase, nTB := 1, transIdx, transFlat, nRows
@@ -2421,6 +2462,252 @@ private def journeyDebugJson (c : Verified.Hsmm.Assemble.ModelContext)
   Json.mkObj [("journeys", Json.arr out),
     ("legNames", Json.arr (tb.legName.map Json.str))]
 
+/-- The served answer for a decoded day: the segments, the journey's legs, the
+    station chain and the debuggers a request asks for. -/
+private def segmentsOf (j : Json) (c : Verified.Hsmm.Assemble.ModelContext)
+    (g? : Option Verified.Hsmm.StationChain.ChainGraph)
+    (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation))
+    (pd : PData) (journey : Option Verified.Hsmm.Journey.Tables) (r : DecodeResult) : Json :=
+  if let .ok dj := j.getObjVal? "emissionDebug" then
+    -- The stations the day passes, each with the lines calling there:
+    -- the fitter's population for `journey.stops`.
+    let passesJ : Json := match g? with
+      | none => Json.null
+      | some g => Json.arr ((Verified.Hsmm.StationStops.passes g c.obs).map fun q =>
+        let calling := Verified.Hsmm.Assemble.KNOWN_LINES.filter fun line => match rels? with
+          | some rels => match Verified.Hsmm.ServedStations.servedStationSet rels line with
+            | some served => Verified.Hsmm.ServedStations.stationNameServed served q.station
+            | none => false
+          | none => false
+        Json.mkObj [("station", Json.str q.station),
+          ("ts", Lean.toJson ((c.obs[q.t]?.map (·.ts)).getD 0)),
+          ("speedKmh", Lean.toJson q.speedKmh),
+          ("firstTs", Lean.toJson ((c.obs[q.first]?.map (·.ts)).getD 0)),
+          ("lastTs", Lean.toJson ((c.obs[q.last]?.map (·.ts)).getD 0)),
+          ("calls", Json.arr (calling.map Json.str).toArray)])
+    (emissionDebugJson c r.path dj).setObjVal! "stationPasses" passesJ else
+  if let .ok dj := j.getObjVal? "pathDebug" then pathDebugJson c r.path dj journey else
+  if let .ok dj := j.getObjVal? "journeyDebug" then
+    (match journey with
+     | some tb => journeyDebugJson c tb r.path dj
+     | none => Json.mkObj [("error", Json.str "journeyDebug needs the journey state (segEmission.journey)")]) else
+  -- Under the journey state, each journey segment becomes its legs.
+  let isJ := fun (i : Nat) => (c.states[i]?.map (·.mode == .unknown)).getD false
+  -- The longest decoded journey, in minutes: the decode corpus holds it
+  -- under `maxJ`, a table size that must never bind (`JourneyParams`).
+  let longestJourneyMin : Nat := Id.run do
+    let mut best := 0
+    let mut run := 0
+    for i in r.path do
+      run := if isJ i then run + 1 else 0
+      if run > best then best := run
+    return best
+  let path := match journey with
+    | some tb => Verified.Hsmm.Journey.expand tb r.path isJ
+    | none => r.path
+  -- The leg each minute inside a journey came from: a wait's station rides on it.
+  let legAt : Array (Option Nat) := match journey with
+    | some tb => Verified.Hsmm.Journey.expandLegs tb r.path isJ
+    | none => #[]
+  -- Index → the state the model actually holds. An out-of-range index is
+  -- an ERROR, not a skipped minute: it would shorten the path and shift
+  -- every later segment boundary.
+  let states : Except String (Array Verified.HsmmSegments.State) :=
+    path.foldlM (fun acc i => do
+      match c.states[i]? with
+      | none => throw s!"decoded state index {i} is outside the {c.states.size}-state space"
+      | some s => pure (acc.push
+          { mode := Verified.Hsmm.StateSpace.modeName s.mode
+          , placeId := s.placeId
+            -- An unnamed metro is rail with no line to every reader.
+          , lineName := if s.lineName == some Verified.Hsmm.Emissions.UNKNOWN_METRO then some "unknown_rail"
+              else s.lineName })) #[]
+  match states with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok sts =>
+    match Verified.HsmmSegments.groupStates sts (c.obs.map (·.ts)) with
+    | none =>
+      -- `groupStates` returns none ONLY on a length mismatch, which means
+      -- the path and the observation tensor disagree — a wiring fault, not
+      -- a quiet day.
+      Json.mkObj [("error", Json.str
+        s!"path has {sts.size} states but the observation tensor has {c.obs.size} rows")]
+    | some segs0 =>
+      let folded := Verified.HsmmSegments.foldRideWaits segs0
+      -- A decoded wait's station, from its leg at its first minute: the
+      -- segment leaves as a stay AT the station, so the fold's stay namer
+      -- cannot name it after the venue beside it and absorb the walk.
+      let obsT0 := (c.obs[0]?.map (·.ts)).getD 0
+      let waitStation : Array (Option String) := folded.map fun s =>
+        if s.lineName != some Verified.Hsmm.Assemble.WAIT_MARK then none else
+        match journey with
+        | none => none
+        | some tb =>
+          let t := ((s.startTs - obsT0) / 60).toNat
+          (legAt[t]?.bind id).bind fun l => tb.legStation[l]?.bind id
+      let segs := folded.map fun s =>
+        if s.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then { s with lineName := none } else s
+      -- ⚠ THE STATION CHAIN RUNS HERE, and that is the point. `stationchain`
+      -- exists as its own mode and takes `obs` — the 1440-row observation
+      -- tensor — so calling it from the shell would put the tensor back on
+      -- the wire, which the request's raw form keeps off it. This function already
+      -- HOLDS the tensor it built.
+      --
+      -- ⚠ The graph is built from `c.model`, NOT by re-running
+      -- `mkChainGraph`. `buildRouteGraphModel` has already run on these
+      -- edges, and `edgesNearIdx` reads `model.edges` in BUILDER ORDER —
+      -- reusing the same object is not an optimisation, it is the only way
+      -- to be certain the order is the one the model was built with.
+      let chained : Except String (Array Json) := do
+        let nodes ← (← optArr j "nodes").mapM parseChainNode
+        -- ⚠ ABSENT AND `[]` ARE DIFFERENT REQUESTS. Absent means the mirror
+        -- was never consulted, so every candidate's `servedPen` is 0; empty
+        -- means it was consulted and had nothing. Flattening them would let
+        -- a shell that cannot reach the mirror pass for one that found it
+        -- bare.
+        let rels ← match j.getObjVal? "railStopRelations" with
+          | .ok v => if v.isNull then pure none
+                     else pure (some (← (← v.getArr?).mapM parseRelation))
+          | .error _ => pure none
+        let g : Verified.Hsmm.StationChain.ChainGraph :=
+          { model := c.model
+          , nodes := nodes
+          , nodeById := nodes.foldl (fun m n => m.insert n.id n) {}
+          , edgeById := c.model.edges.foldl (fun m e => m.insert e.id e) {} }
+        let chainSegs : Array Verified.Hsmm.StationChain.ChainSeg :=
+          segs.map (fun s =>
+            -- A ride's pair from its journey leg: the board station of
+            -- the leg at its first minute, the alight at its last.
+            let (jb, ja) : Option String × Option String :=
+              if s.mode != "train" then (none, none) else
+              match journey with
+              | none => (none, none)
+              | some tb =>
+                let t := ((s.startTs - obsT0) / 60).toNat
+                let e := ((s.endTs - obsT0) / 60).toNat - 1
+                match legAt[t]?.bind id with
+                | none => (none, none)
+                | some l =>
+                  ( tb.legStation[l]?.bind id
+                  , tb.alightName[l * tb.T + e]?.bind id )
+            { mode := s.mode, lineName := s.lineName
+            , startTs := s.startTs, endTs := s.endTs
+            , journeyBoard := jb, journeyAlight := ja })
+        let byIdx : Std.HashMap Nat Verified.Hsmm.StationChain.ResolvedStations :=
+          (Verified.Hsmm.StationChain.resolveStationChain g chainSegs c.obs rels
+              Verified.Hsmm.Assemble.KNOWN_LINES).foldl
+            (fun m (i, res) => m.insert i res) {}
+        -- `"chainDebug": true`: every pair the chain weighed, per leg, with
+        -- its max-marginal — the instrument for a wrong line.
+        if (j.getObjVal? "chainDebug" >>= (·.getBool?)).toOption == some true then
+          let marg := Verified.Hsmm.StationChain.chainMarginals g chainSegs c.obs rels
+            Verified.Hsmm.Assemble.KNOWN_LINES
+          -- The same legs in the same order, each pair's posterior under the chain.
+          let post := Verified.Hsmm.StationChain.chainPosteriors g chainSegs c.obs rels
+            Verified.Hsmm.Assemble.KNOWN_LINES
+          let dbg := Json.arr (marg.zipIdx.map fun ((leg, through), li) =>
+            let pp := ((post[li]?).map (·.2)).getD #[]
+            Json.mkObj [
+              ("segIndex", Lean.toJson leg.segIndex),
+              ("decodedLine", Json.str leg.decodedLine),
+              ("journeyPair", Json.arr #[optStrJson leg.journeyBoard, optStrJson leg.journeyAlight]),
+              ("startTs", Lean.toJson leg.startTs), ("endTs", Lean.toJson leg.endTs),
+              ("sides", Json.arr (leg.sides.map fun sd => Json.mkObj [
+                ("line", Json.str sd.line), ("side", Json.str sd.side), ("name", Json.str sd.name),
+                ("nodeId", Json.str sd.nodeId), ("anchorPen", Lean.toJson sd.anchorPen)])),
+              ("pairs", Json.arr (leg.pairs.zipIdx.map fun (p, k) =>
+                Json.mkObj [
+                  ("line", Json.str p.line),
+                  ("board", optStrJson p.board.node.stationName),
+                  ("alight", optStrJson p.alight.node.stationName),
+                  ("legScore", Lean.toJson p.legScore),
+                  ("through", Lean.toJson ((through[k]?).getD 0)),
+                  ("posterior", Lean.toJson ((pp[k]?).getD 0)),
+                  ("pathM", match Verified.Hsmm.StationChain.linePathMeters g p.line
+                      p.board.node p.alight.node with
+                    | some m => Lean.toJson m | none => Json.null),
+                  ("calls", match rels, p.board.node.stationName, p.alight.node.stationName with
+                    | some rs, some bn, some an =>
+                      match Verified.Hsmm.ServedStations.intermediateCalls rs p.line bn an with
+                      | some cs => Lean.toJson cs.size | none => Json.null
+                    | _, _, _ => Json.null),
+                  ("boardAnchor", Lean.toJson p.board.anchorPen),
+                  ("alightAnchor", Lean.toJson p.alight.anchorPen),
+                  ("boardDwell", Lean.toJson p.board.dwellPen),
+                  ("alightDwell", Lean.toJson p.alight.dwellPen),
+                  ("boardServed", Lean.toJson p.board.servedPen),
+                  ("alightServed", Lean.toJson p.alight.servedPen),
+                  ("boardTraj", match p.board.trajPen with | some t => Lean.toJson t | none => Json.null),
+                  ("alightTraj", match p.alight.trajPen with | some t => Lean.toJson t | none => Json.null),
+                  ("durPen", Lean.toJson p.durPen),
+                  ("passPen", Lean.toJson p.passPen)]))])
+          pure #[Json.mkObj [("chainDebug", dbg)]]
+        else
+        -- `flags.posterior` (harness-only): each segment's confidence, the
+        -- posterior mass of its mode over its minutes (`Posterior`).
+        -- `flags.unknownBelow` (harness arm): a segment whose confidence is
+        -- under it leaves as `unknown`, the posterior's "don't know".
+        let unknownBelow : Option Float := (j.getObjVal? "flags" >>= (·.getObjVal? "unknownBelow") >>= (·.getNum?)).toOption.map (·.toFloat)
+        let wantPost := (j.getObjVal? "flags" >>= (·.getObjVal? "posterior") >>= (·.getBool?)).toOption == some true
+          || unknownBelow.isSome
+        let marg := if wantPost then Verified.Hsmm.Posterior.marginals pd else #[]
+        let t0 := (c.obs[0]?.map (·.ts)).getD 0
+        let confidence := fun (seg : Verified.HsmmSegments.Segment) => Id.run do
+          let S := c.states.size
+          let mut tot := 0.0
+          let mut n := 0
+          let mut ts := seg.startTs
+          while ts < seg.endTs do
+            let t := ((ts - t0) / 60).toNat
+            for h : k in [0:S] do
+              if Verified.Hsmm.StateSpace.modeName c.states[k].mode == seg.mode then
+                tot := tot + marg.getD (t * S + k) 0
+            n := n + 1
+            ts := ts + 60
+          return if n == 0 then 0.0 else tot / Verified.FloatConst.natToFloat n
+        pure (segs.mapIdx (fun i s =>
+          let conf := if wantPost then confidence s else 1.0
+          let unsure : Bool := match unknownBelow with | some q => decide (conf < q) | none => false
+          let base : List (String × Json) :=
+            (if wantPost then [("confidence", Lean.toJson conf)] else []) ++
+            [ ("startTs", Lean.toJson s.startTs)
+            , ("endTs", Lean.toJson s.endTs)
+            , ("mode", Json.str (if unsure then "unknown" else s.mode))
+            , ("placeId", match s.placeId with
+                | none => Json.null | some p => Lean.toJson p)
+            -- The chain's line when it re-lined the leg.
+            , ("lineName", match (byIdx.get? i).bind (·.line), s.lineName with
+                | some l, _ => Json.str l
+                | none, none => Json.null
+                | none, some l => Json.str l) ]
+          -- ⚠ ABSENT, NOT NULL, ON A SEGMENT THE RESOLVER DID NOT REACH.
+          -- The TypeScript ASSIGNS these two fields only at the indices
+          -- `resolveStationsServed` returned, and `JSON.stringify` omits an
+          -- `undefined`. A resolved segment whose side could not be
+          -- separated carries an explicit null — "wrong is worse than
+          -- missing" — and an unresolved one carries no key at all. The two
+          -- read the same to a consumer and differ byte for byte in
+          -- `segments_json`, which is what the parity diff compares.
+          Json.mkObj (match byIdx.get? i with
+            | none => base ++ (match waitStation[i]? with
+                | some (some st) => [("boardStation", Json.str st)]
+                | _ => [])
+            | some res => base ++
+                [ ("boardStation", optStrJson res.board)
+                , ("alightStation", optStrJson res.alight) ]
+                -- The wait's bound, only when the chain found one.
+                ++ (match res.boardTs with
+                  | some t => [("boardTs", Lean.toJson t)] | none => [])
+                ++ (match res.alightTs with
+                  | some t => [("alightTs", Lean.toJson t)] | none => []))))
+      match chained with
+      | .error e => Json.mkObj [("error", Json.str e)]
+      | .ok rows =>
+        Json.mkObj [
+          ("segments", Json.arr rows),
+          ("longestJourneyMin", Lean.toJson longestJourneyMin),
+          ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
+
 private def assembleSegmentsResult (j : Json) : Json :=
   match parseAssemble j with
   | .error e => Json.mkObj [("error", Json.str e)]
@@ -2434,245 +2721,159 @@ private def assembleSegmentsResult (j : Json) : Json :=
       match pDecodeFast pd ckptStride with
       | none => Json.mkObj [("degenerate", Json.bool true)]
       | some r =>
-        if let .ok dj := j.getObjVal? "emissionDebug" then
-          -- The stations the day passes, each with the lines calling there:
-          -- the fitter's population for `journey.stops`.
-          let passesJ : Json := match g? with
-            | none => Json.null
-            | some g => Json.arr ((Verified.Hsmm.StationStops.passes g c.obs).map fun q =>
-              let calling := Verified.Hsmm.Assemble.KNOWN_LINES.filter fun line => match rels? with
-                | some rels => match Verified.Hsmm.ServedStations.servedStationSet rels line with
-                  | some served => Verified.Hsmm.ServedStations.stationNameServed served q.station
-                  | none => false
-                | none => false
-              Json.mkObj [("station", Json.str q.station),
-                ("ts", Lean.toJson ((c.obs[q.t]?.map (·.ts)).getD 0)),
-                ("speedKmh", Lean.toJson q.speedKmh),
-                ("firstTs", Lean.toJson ((c.obs[q.first]?.map (·.ts)).getD 0)),
-                ("lastTs", Lean.toJson ((c.obs[q.last]?.map (·.ts)).getD 0)),
-                ("calls", Json.arr (calling.map Json.str).toArray)])
-          (emissionDebugJson c r.path dj).setObjVal! "stationPasses" passesJ else
-        if let .ok dj := j.getObjVal? "pathDebug" then pathDebugJson c r.path dj journey else
-        if let .ok dj := j.getObjVal? "journeyDebug" then
-          (match journey with
-           | some tb => journeyDebugJson c tb r.path dj
-           | none => Json.mkObj [("error", Json.str "journeyDebug needs the journey state (segEmission.journey)")]) else
-        -- Under the journey state, each journey segment becomes its legs.
-        let isJ := fun (i : Nat) => (c.states[i]?.map (·.mode == .unknown)).getD false
-        -- The longest decoded journey, in minutes: the decode corpus holds it
-        -- under `maxJ`, a table size that must never bind (`JourneyParams`).
-        let longestJourneyMin : Nat := Id.run do
-          let mut best := 0
-          let mut run := 0
-          for i in r.path do
-            run := if isJ i then run + 1 else 0
-            if run > best then best := run
-          return best
-        let path := match journey with
-          | some tb => Verified.Hsmm.Journey.expand tb r.path isJ
-          | none => r.path
-        -- The leg each minute inside a journey came from: a wait's station rides on it.
-        let legAt : Array (Option Nat) := match journey with
-          | some tb => Verified.Hsmm.Journey.expandLegs tb r.path isJ
-          | none => #[]
-        -- Index → the state the model actually holds. An out-of-range index is
-        -- an ERROR, not a skipped minute: it would shorten the path and shift
-        -- every later segment boundary.
-        let states : Except String (Array Verified.HsmmSegments.State) :=
-          path.foldlM (fun acc i => do
-            match c.states[i]? with
-            | none => throw s!"decoded state index {i} is outside the {c.states.size}-state space"
-            | some s => pure (acc.push
-                { mode := Verified.Hsmm.StateSpace.modeName s.mode
-                , placeId := s.placeId
-                  -- An unnamed metro is rail with no line to every reader.
-                , lineName := if s.lineName == some Verified.Hsmm.Emissions.UNKNOWN_METRO then some "unknown_rail"
-                    else s.lineName })) #[]
-        match states with
-        | .error e => Json.mkObj [("error", Json.str e)]
-        | .ok sts =>
-          match Verified.HsmmSegments.groupStates sts (c.obs.map (·.ts)) with
-          | none =>
-            -- `groupStates` returns none ONLY on a length mismatch, which means
-            -- the path and the observation tensor disagree — a wiring fault, not
-            -- a quiet day.
-            Json.mkObj [("error", Json.str
-              s!"path has {sts.size} states but the observation tensor has {c.obs.size} rows")]
-          | some segs0 =>
-            let folded := Verified.HsmmSegments.foldRideWaits segs0
-            -- A decoded wait's station, from its leg at its first minute: the
-            -- segment leaves as a stay AT the station, so the fold's stay namer
-            -- cannot name it after the venue beside it and absorb the walk.
-            let obsT0 := (c.obs[0]?.map (·.ts)).getD 0
-            let waitStation : Array (Option String) := folded.map fun s =>
-              if s.lineName != some Verified.Hsmm.Assemble.WAIT_MARK then none else
-              match journey with
-              | none => none
-              | some tb =>
-                let t := ((s.startTs - obsT0) / 60).toNat
-                (legAt[t]?.bind id).bind fun l => tb.legStation[l]?.bind id
-            let segs := folded.map fun s =>
-              if s.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then { s with lineName := none } else s
-            -- ⚠ THE STATION CHAIN RUNS HERE, and that is the point. `stationchain`
-            -- exists as its own mode and takes `obs` — the 1440-row observation
-            -- tensor — so calling it from the shell would put back on the wire
-            -- exactly the payload #411 exists to delete. This function already
-            -- HOLDS the tensor it built.
-            --
-            -- ⚠ The graph is built from `c.model`, NOT by re-running
-            -- `mkChainGraph`. `buildRouteGraphModel` has already run on these
-            -- edges, and `edgesNearIdx` reads `model.edges` in BUILDER ORDER —
-            -- reusing the same object is not an optimisation, it is the only way
-            -- to be certain the order is the one the model was built with.
-            let chained : Except String (Array Json) := do
-              let nodes ← (← optArr j "nodes").mapM parseChainNode
-              -- ⚠ ABSENT AND `[]` ARE DIFFERENT REQUESTS. Absent means the mirror
-              -- was never consulted, so every candidate's `servedPen` is 0; empty
-              -- means it was consulted and had nothing. Flattening them would let
-              -- a shell that cannot reach the mirror pass for one that found it
-              -- bare.
-              let rels ← match j.getObjVal? "railStopRelations" with
-                | .ok v => if v.isNull then pure none
-                           else pure (some (← (← v.getArr?).mapM parseRelation))
-                | .error _ => pure none
-              let g : Verified.Hsmm.StationChain.ChainGraph :=
-                { model := c.model
-                , nodes := nodes
-                , nodeById := nodes.foldl (fun m n => m.insert n.id n) {}
-                , edgeById := c.model.edges.foldl (fun m e => m.insert e.id e) {} }
-              let chainSegs : Array Verified.Hsmm.StationChain.ChainSeg :=
-                segs.map (fun s =>
-                  -- A ride's pair from its journey leg: the board station of
-                  -- the leg at its first minute, the alight at its last.
-                  let (jb, ja) : Option String × Option String :=
-                    if s.mode != "train" then (none, none) else
-                    match journey with
-                    | none => (none, none)
-                    | some tb =>
-                      let t := ((s.startTs - obsT0) / 60).toNat
-                      let e := ((s.endTs - obsT0) / 60).toNat - 1
-                      match legAt[t]?.bind id with
-                      | none => (none, none)
-                      | some l =>
-                        ( tb.legStation[l]?.bind id
-                        , tb.alightName[l * tb.T + e]?.bind id )
-                  { mode := s.mode, lineName := s.lineName
-                  , startTs := s.startTs, endTs := s.endTs
-                  , journeyBoard := jb, journeyAlight := ja })
-              let byIdx : Std.HashMap Nat Verified.Hsmm.StationChain.ResolvedStations :=
-                (Verified.Hsmm.StationChain.resolveStationChain g chainSegs c.obs rels
-                    Verified.Hsmm.Assemble.KNOWN_LINES).foldl
-                  (fun m (i, res) => m.insert i res) {}
-              -- `"chainDebug": true`: every pair the chain weighed, per leg, with
-              -- its max-marginal — the instrument for a wrong line (#238).
-              if (j.getObjVal? "chainDebug" >>= (·.getBool?)).toOption == some true then
-                let marg := Verified.Hsmm.StationChain.chainMarginals g chainSegs c.obs rels
-                  Verified.Hsmm.Assemble.KNOWN_LINES
-                -- The same legs in the same order, each pair's posterior under the chain.
-                let post := Verified.Hsmm.StationChain.chainPosteriors g chainSegs c.obs rels
-                  Verified.Hsmm.Assemble.KNOWN_LINES
-                let dbg := Json.arr (marg.zipIdx.map fun ((leg, through), li) =>
-                  let pp := ((post[li]?).map (·.2)).getD #[]
-                  Json.mkObj [
-                    ("segIndex", Lean.toJson leg.segIndex),
-                    ("decodedLine", Json.str leg.decodedLine),
-                    ("journeyPair", Json.arr #[optStrJson leg.journeyBoard, optStrJson leg.journeyAlight]),
-                    ("startTs", Lean.toJson leg.startTs), ("endTs", Lean.toJson leg.endTs),
-                    ("sides", Json.arr (leg.sides.map fun sd => Json.mkObj [
-                      ("line", Json.str sd.line), ("side", Json.str sd.side), ("name", Json.str sd.name),
-                      ("nodeId", Json.str sd.nodeId), ("anchorPen", Lean.toJson sd.anchorPen)])),
-                    ("pairs", Json.arr (leg.pairs.zipIdx.map fun (p, k) =>
-                      Json.mkObj [
-                        ("line", Json.str p.line),
-                        ("board", optStrJson p.board.node.stationName),
-                        ("alight", optStrJson p.alight.node.stationName),
-                        ("legScore", Lean.toJson p.legScore),
-                        ("through", Lean.toJson ((through[k]?).getD 0)),
-                        ("posterior", Lean.toJson ((pp[k]?).getD 0)),
-                        ("pathM", match Verified.Hsmm.StationChain.linePathMeters g p.line
-                            p.board.node p.alight.node with
-                          | some m => Lean.toJson m | none => Json.null),
-                        ("calls", match rels, p.board.node.stationName, p.alight.node.stationName with
-                          | some rs, some bn, some an =>
-                            match Verified.Hsmm.ServedStations.intermediateCalls rs p.line bn an with
-                            | some cs => Lean.toJson cs.size | none => Json.null
-                          | _, _, _ => Json.null),
-                        ("boardAnchor", Lean.toJson p.board.anchorPen),
-                        ("alightAnchor", Lean.toJson p.alight.anchorPen),
-                        ("boardDwell", Lean.toJson p.board.dwellPen),
-                        ("alightDwell", Lean.toJson p.alight.dwellPen),
-                        ("boardServed", Lean.toJson p.board.servedPen),
-                        ("alightServed", Lean.toJson p.alight.servedPen),
-                        ("boardTraj", match p.board.trajPen with | some t => Lean.toJson t | none => Json.null),
-                        ("alightTraj", match p.alight.trajPen with | some t => Lean.toJson t | none => Json.null),
-                        ("durPen", Lean.toJson p.durPen),
-                        ("passPen", Lean.toJson p.passPen)]))])
-                pure #[Json.mkObj [("chainDebug", dbg)]]
-              else
-              -- `flags.posterior` (harness-only): each segment's confidence, the
-              -- posterior mass of its mode over its minutes (`Posterior`).
-              -- `flags.unknownBelow` (harness arm): a segment whose confidence is
-              -- under it leaves as `unknown`, the posterior's "don't know".
-              let unknownBelow : Option Float := (j.getObjVal? "flags" >>= (·.getObjVal? "unknownBelow") >>= (·.getNum?)).toOption.map (·.toFloat)
-              let wantPost := (j.getObjVal? "flags" >>= (·.getObjVal? "posterior") >>= (·.getBool?)).toOption == some true
-                || unknownBelow.isSome
-              let marg := if wantPost then Verified.Hsmm.Posterior.marginals pd else #[]
-              let t0 := (c.obs[0]?.map (·.ts)).getD 0
-              let confidence := fun (seg : Verified.HsmmSegments.Segment) => Id.run do
-                let S := c.states.size
-                let mut tot := 0.0
-                let mut n := 0
-                let mut ts := seg.startTs
-                while ts < seg.endTs do
-                  let t := ((ts - t0) / 60).toNat
-                  for h : k in [0:S] do
-                    if Verified.Hsmm.StateSpace.modeName c.states[k].mode == seg.mode then
-                      tot := tot + marg.getD (t * S + k) 0
-                  n := n + 1
-                  ts := ts + 60
-                return if n == 0 then 0.0 else tot / Verified.FloatConst.natToFloat n
-              pure (segs.mapIdx (fun i s =>
-                let conf := if wantPost then confidence s else 1.0
-                let unsure : Bool := match unknownBelow with | some q => decide (conf < q) | none => false
-                let base : List (String × Json) :=
-                  (if wantPost then [("confidence", Lean.toJson conf)] else []) ++
-                  [ ("startTs", Lean.toJson s.startTs)
-                  , ("endTs", Lean.toJson s.endTs)
-                  , ("mode", Json.str (if unsure then "unknown" else s.mode))
-                  , ("placeId", match s.placeId with
-                      | none => Json.null | some p => Lean.toJson p)
-                  -- The chain's line when it re-lined the leg (#238).
-                  , ("lineName", match (byIdx.get? i).bind (·.line), s.lineName with
-                      | some l, _ => Json.str l
-                      | none, none => Json.null
-                      | none, some l => Json.str l) ]
-                -- ⚠ ABSENT, NOT NULL, ON A SEGMENT THE RESOLVER DID NOT REACH.
-                -- The TypeScript ASSIGNS these two fields only at the indices
-                -- `resolveStationsServed` returned, and `JSON.stringify` omits an
-                -- `undefined`. A resolved segment whose side could not be
-                -- separated carries an explicit null — "wrong is worse than
-                -- missing" — and an unresolved one carries no key at all. The two
-                -- read the same to a consumer and differ byte for byte in
-                -- `segments_json`, which is what the parity diff compares.
-                Json.mkObj (match byIdx.get? i with
-                  | none => base ++ (match waitStation[i]? with
-                      | some (some st) => [("boardStation", Json.str st)]
-                      | _ => [])
-                  | some res => base ++
-                      [ ("boardStation", optStrJson res.board)
-                      , ("alightStation", optStrJson res.alight) ]
-                      -- The wait's bound, only when the chain found one.
-                      ++ (match res.boardTs with
-                        | some t => [("boardTs", Lean.toJson t)] | none => [])
-                      ++ (match res.alightTs with
-                        | some t => [("alightTs", Lean.toJson t)] | none => []))))
-            match chained with
-            | .error e => Json.mkObj [("error", Json.str e)]
-            | .ok rows =>
-              Json.mkObj [
-                ("segments", Json.arr rows),
-                ("longestJourneyMin", Lean.toJson longestJourneyMin),
-                ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
+        segmentsOf j c g? rels? pd journey r
+
+/-! ## Today, from the earliest changed minute (`assemblesegmentsinc`)
+
+The day's previous run is kept by the serve loop; a run whose per-minute tables
+match it before minute `f` copies every cell ending before `f`, computes the
+rest, and resumes the trellis from the previous checkpoints
+(`pDecodeIncD_eq`: the full decode exactly). Any day-wide difference, a new key
+or no previous run decodes in full (docs/proposals/2026-11-incremental-today.md). -/
+
+/-- What the day's next run reuses. -/
+structure TodayState where
+  key : String
+  obs : Array Verified.Hsmm.Observation.ObsRow
+  covered : Array Bool
+  pd : PData
+  journey : Option Verified.Hsmm.Journey.Tables
+  cks : Array (Nat × Array (Array Nat))
+
+private def minOpt (a b : Option Nat) : Option Nat :=
+  match a, b with
+  | some x, some y => some (min x y)
+  | some x, none => some x
+  | none, y => y
+
+/-- The least `minuteOf i` over the indices where two tables differ; minute 0
+    when their sizes do, `none` when they agree. -/
+private def diffMinute {α : Type} [BEq α] [Inhabited α] (a b : Array α) (minuteOf : Nat → Nat) :
+    Option Nat :=
+  if a.size != b.size then some 0 else Id.run do
+    let mut m : Option Nat := none
+    for i in [0:a.size] do
+      if a[i]! != b[i]! then m := minOpt m (some (minuteOf i))
+    return m
+
+private def diffMinuteF (a b : FloatArray) (minuteOf : Nat → Nat) : Option Nat :=
+  if a.size != b.size then some 0 else Id.run do
+    let mut m : Option Nat := none
+    for i in [0:a.size] do
+      if a.get! i != b.get! i then m := minOpt m (some (minuteOf i))
+    return m
+
+private def sameF (a b : FloatArray) : Bool := diffMinuteF a b id == none
+
+/-- The first minute any per-minute table differs from the previous run's, and
+    the table: `0` when a day-wide one does, `T` when none does. -/
+private def todayFrontier (old : TodayState) (obs : Array Verified.Hsmm.Observation.ObsRow)
+    (covered : Array Bool) (pd : PData) (journey : Option Verified.Hsmm.Journey.Tables) :
+    Nat × String :=
+  let T := pd.T
+  let S := pd.S
+  let o := old.pd
+  let modelMoved := [("T", o.T == T), ("S", o.S == S), ("maxD", o.maxD == pd.maxD),
+      ("halfOB", o.halfOB == pd.halfOB), ("init", o.init == pd.init),
+      ("transBase", o.transBase == pd.transBase), ("nTB", o.nTB == pd.nTB),
+      ("transIdx", o.transIdx == pd.transIdx), ("nRows", o.nRows == pd.nRows),
+      ("durBase", o.durBase == pd.durBase), ("durClass", o.durClass == pd.durClass)].filterMap
+    fun (n, ok) => if ok then none else some n
+  let dayWide := modelMoved.isEmpty
+  let jDay : Option (List (String × Option Nat)) := match old.journey, journey with
+    | none, none => some []
+    | some a, some b =>
+      let prefixMin := fun (k : Nat) => k % (T + 1) - 1
+      if a.T == b.T && a.maxJ == b.maxJ && a.journey == b.journey && a.legs == b.legs
+          && a.legName == b.legName && a.legStation == b.legStation && a.legNode == b.legNode
+          && a.baseOf == b.baseOf && a.nBase == b.nBase && a.legSlot == b.legSlot
+          && a.nSlots == b.nSlots && a.first == b.first && a.last == b.last
+          && a.pairOk == b.pairOk && sameF a.durBaseF b.durBaseF
+          && a.stopAlightPre.size == b.stopAlightPre.size then
+        let B := a.nBase
+        some ([ ("journey.emitPre", diffMinuteF a.emitPre b.emitPre prefixMin)
+              , ("journey.entry", diffMinuteF a.entry b.entry (· % T))
+              , ("journey.trans", diffMinuteF a.trans b.trans (· / (B * B)))
+              , ("journey.firstCtx", diffMinuteF a.firstCtx b.firstCtx (· % T))
+              , ("journey.reach", diffMinute a.reachMask b.reachMask (· % T))
+              , ("journey.expectedMin", diffMinuteF a.expectedMin b.expectedMin (· % T))
+              , ("journey.alight", diffMinute a.alightName b.alightName (· % T))
+              , ("journey.pairPathM", diffMinuteF a.pairPathM b.pairPathM (· % T))
+              , ("journey.pairCalls", diffMinuteF a.pairCalls b.pairCalls (· % T))
+              , ("journey.boardAt", diffMinuteF a.boardAt b.boardAt (· % T))
+              , ("journey.stopPre", diffMinuteF a.stopPre b.stopPre prefixMin)
+              , ("journey.stopAlight", diffMinute a.stopAlight b.stopAlight (· % T))
+              , ("journey.stopActive", diffMinuteF a.stopActive b.stopActive (· % T))
+              , ("journey.stopActiveFirst", diffMinute a.stopActiveFirst b.stopActiveFirst (· % T)) ]
+          ++ (a.stopAlightPre.zip b.stopAlightPre).toList.map fun (x, y) =>
+            ("journey.stopAlightPre", diffMinuteF x y prefixMin))
+      else none
+    | _, _ => none
+  match dayWide, jDay with
+  | false, _ => (0, s!"day-wide: {", ".intercalate modelMoved}")
+  | _, none => (0, "day-wide: journey legs")
+  | true, some jd =>
+    let ds := [ ("obs", Verified.Hsmm.Observation.firstDiff old.obs obs)
+              , ("coverage", diffMinute old.covered covered id)
+              , ("emit", diffMinute o.emit pd.emit (· / S))
+              , ("entry", diffMinute o.entry pd.entry (· / S))
+              , ("trans", diffMinute o.transFlat pd.transFlat (· % T)) ] ++ jd
+    ds.foldl (fun (best : Nat × String) (name, d) => match d with
+      | some k => if k < best.1 then (k, name) else best
+      | none => best) (T, "nothing")
+
+/-- `assemblesegmentsinc`: `assemblesegments` for a day decoded again and again
+    as it grows, with the previous run's state; the answer carries
+    `"incremental": {"frontier", "resumedAt"}` when it reused, and the new state
+    to keep. -/
+private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × Option TodayState :=
+  let key := (j.getObjVal? "todayKey" >>= (·.getStr?)).toOption.getD ""
+  match parseAssemble j with
+  | .error e => (Json.mkObj [("error", Json.str e)], none)
+  | .ok (c, maxD) =>
+    let (g?, rels?) := journeyInputs c j
+    let T := c.obs.size
+    let covered := (Array.range T).map (Verified.Hsmm.Assemble.coveredAtE c)
+    let answer := fun (pd : PData) (journey : Option Verified.Hsmm.Journey.Tables)
+        (r? : Option DecodeResult) (cks : Array (Nat × Array (Array Nat))) (incJ : Json) =>
+      match r? with
+      | none => (Json.mkObj [("degenerate", Json.bool true)], none)
+      | some r =>
+        let out := segmentsOf j c g? rels? pd journey r
+        (out.setObjVal! "incremental" incJ,
+          if key.isEmpty then none else some { key, obs := c.obs, covered, pd, journey, cks })
+    let full : Unit → Json × Option TodayState := fun _ =>
+      match buildPData c maxD g? rels? with
+      | .error e => (Json.mkObj [("error", Json.str e)], none)
+      | .ok (pd, journey) =>
+        if pd.T == 0 then (Json.mkObj [("degenerate", Json.bool true)], none) else
+        let bc := pBuildCkptD pd ckptStride (pd.T - 1)
+        answer pd journey (pDecodeWithD pd bc) bc.1 Json.null
+    match st? with
+    | none => full ()
+    | some st =>
+      if key.isEmpty || st.key != key then full () else
+      match buildPData c maxD g? rels? (tablesOnly := true) with
+      | .error e => (Json.mkObj [("error", Json.str e)], none)
+      | .ok (pdT, tbT) =>
+        let (first, why) := todayFrontier st c.obs covered pdT tbT
+        if first == 0 || pdT.T == 0 then
+          let (out, st') := full ()
+          (out.setObjVal! "incremental" (Json.mkObj [("full", Json.str why)]), st')
+        else
+        let f := first - 1
+        let t0 := (min f (pdT.T - 1)) / ckptStride * ckptStride
+        let inc : IncFrom :=
+          { f, durDelta := st.pd.durDelta
+          , legDur := (st.journey.map (·.legDur)).getD FloatArray.empty
+          , inner := (st.journey.map (·.cell)).getD FloatArray.empty }
+        match buildPData c maxD g? rels? (inc := some inc) with
+        | .error e => (Json.mkObj [("error", Json.str e)], none)
+        | .ok (pd, journey) =>
+          let (r?, cks) := pDecodeIncD pd ckptStride t0 st.cks
+          answer pd journey r? cks
+            (Json.mkObj [("frontier", Lean.toJson f), ("resumedAt", Lean.toJson t0),
+              ("by", Json.str why)])
 
 /-- Assemble the model from parsed inputs and emit the quantised tensors: dense
     `emit`/`entry`/`init`, and `trans`/`dur` at the requested probe indices. -/
@@ -3970,27 +4171,33 @@ def dispatch (j : Json) : Json :=
 (`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
 (`{"id", "result": …}`), flushed per line. A handler may write `{"ask": …}`
 lines and read the reply off the same stdin before its result goes out
-(`DayEntry.Host`); the host drives both. -/
-private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
+(`DayEntry.Host`); the host drives both. The loop carries the day's
+incremental state from one `assemblesegmentsinc` to the next; every other mode
+is `dispatch`, a pure function of its request. -/
+private partial def serveLoop (stdin stdout : IO.FS.Stream) (today : Option TodayState) :
+    IO Unit := do
   let line ← stdin.getLine
   if line.isEmpty then return  -- EOF: the worker closed our stdin
-  let resp : Json :=
+  let (resp, today) : Json × Option TodayState :=
     match Json.parse line with
-    | .error e => Json.mkObj [("id", Json.null), ("error", Json.str s!"parse: {e}")]
+    | .error e => (Json.mkObj [("id", Json.null), ("error", Json.str s!"parse: {e}")], today)
     | .ok j =>
       let id := match j.getObjVal? "id" with | .ok v => v | .error _ => Json.null
-      let body : Json := dispatch j
-      Json.mkObj [("id", id), ("result", body)]
+      let (body, today) : Json × Option TodayState :=
+        if (j.getObjVal? "mode" >>= (·.getStr?)).toOption == some "assemblesegmentsinc"
+        then assembleSegmentsInc j today
+        else (dispatch j, today)
+      (Json.mkObj [("id", id), ("result", body)], today)
   stdout.putStr resp.compress
   stdout.putStr "\n"
   stdout.flush
-  serveLoop stdin stdout
+  serveLoop stdin stdout today
 
 /-- The `verified_cli` command line, as a plain function; `Main.lean` is the
 eleven-line shim that turns it into an executable. -/
 def cliMain (args : List String) : IO UInt32 := do
   if args.contains "serve" then
-    serveLoop (← IO.getStdin) (← IO.getStdout)
+    serveLoop (← IO.getStdin) (← IO.getStdout) none
     return 0
   let timing := args.contains "--timing"
   let t0 ← IO.monoMsNow

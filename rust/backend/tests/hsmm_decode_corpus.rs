@@ -166,39 +166,7 @@ fn run_corpus(shard: usize) {
             continue;
         }
         let want = fx["expected"].as_array().expect("expected").clone();
-
-        if got.len() != want.len() {
-            failures.push(format!(
-                "{name}: {} segments vs {} expected",
-                got.len(),
-                want.len()
-            ));
-            continue;
-        }
-        for (i, (g, w)) in got.iter().zip(want.iter()).enumerate() {
-            // Compare the fields the fixture stores; the render may carry more.
-            for f in [
-                "startTs",
-                "endTs",
-                "mode",
-                "placeId",
-                "lineName",
-                "boardStation",
-                "alightStation",
-            ] {
-                let (gv, wv) = (g.get(f), w.get(f));
-                // An absent render field vs an explicit null in the fixture is
-                // the same claim.
-                let norm = |v: Option<&Value>| v.cloned().unwrap_or(Value::Null);
-                if norm(gv) != norm(wv) {
-                    failures.push(format!(
-                        "{name}: segment {i} differs on {f}: lean {} vs blessed {}",
-                        norm(gv),
-                        norm(wv)
-                    ));
-                }
-            }
-        }
+        failures.extend(segment_diffs(name, &got, &want));
     }
 
     eprintln!(
@@ -207,4 +175,152 @@ fn run_corpus(shard: usize) {
         failures.len()
     );
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// Where `got` differs from the fixture's `expected`, on the fields it stores.
+fn segment_diffs(name: &str, got: &[Value], want: &[Value]) -> Vec<String> {
+    if got.len() != want.len() {
+        return vec![format!(
+            "{name}: {} segments vs {} expected",
+            got.len(),
+            want.len()
+        )];
+    }
+    let mut out = Vec::new();
+    for (i, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+        // Compare the fields the fixture stores; the render may carry more.
+        for f in [
+            "startTs",
+            "endTs",
+            "mode",
+            "placeId",
+            "lineName",
+            "boardStation",
+            "alightStation",
+        ] {
+            // An absent render field vs an explicit null in the fixture is
+            // the same claim.
+            let norm = |v: Option<&Value>| v.cloned().unwrap_or(Value::Null);
+            let (gv, wv) = (norm(g.get(f)), norm(w.get(f)));
+            if gv != wv {
+                out.push(format!(
+                    "{name}: segment {i} differs on {f}: lean {gv} vs blessed {wv}"
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// The days the incremental decode is replayed on, and the minutes each is cut
+/// at: a day's request with every reading from the cut on removed, then the
+/// whole request, through one worker in `assemblesegmentsinc`. The second
+/// answer must be the frozen decode; at least one of a test's runs must have
+/// reused (a frontier, not `full`), or the test proves nothing.
+const INC_CUTS: [usize; 1] = [1320];
+const INC_EVERY: usize = 16;
+
+#[test]
+fn an_incremental_decode_is_the_frozen_decode_a() {
+    incremental_corpus(0);
+}
+
+#[test]
+fn an_incremental_decode_is_the_frozen_decode_b() {
+    incremental_corpus(1);
+}
+
+#[test]
+fn an_incremental_decode_is_the_frozen_decode_c() {
+    incremental_corpus(2);
+}
+
+#[test]
+fn an_incremental_decode_is_the_frozen_decode_d() {
+    incremental_corpus(3);
+}
+
+/// `req` as it stood before minute `cut`: no fix, heart rate, step or
+/// proximity row from then on.
+fn cut_request(req: &Value, cut: usize) -> Value {
+    let mut r = req.clone();
+    let start = r["observation"]["startUtc"].as_i64().expect("startUtc");
+    let cut_ts = start + (cut as i64) * 60;
+    for k in ["points", "hr", "steps"] {
+        if let Some(a) = r["observation"][k].as_array_mut() {
+            a.retain(|x| x["ts"].as_i64().is_some_and(|t| t < cut_ts));
+        }
+    }
+    if let Some(a) = r["observation"]["proximity"].as_array_mut() {
+        a.retain(|x| x[0].as_i64().is_some_and(|t| t < cut_ts));
+    }
+    r
+}
+
+fn incremental_corpus(part: usize) {
+    use std::io::{BufRead, BufReader, Write};
+    let Some(names) = backend::decode_fixture::fixture_names().expect("corpus dir readable") else {
+        eprintln!("SKIPPED: no golden corpus");
+        return;
+    };
+    let names: Vec<String> = names
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| i % INC_EVERY == part)
+        .map(|(_, n)| n)
+        .collect();
+    let cli = backend::lean_worker::verified_cli_path().expect("verified_cli");
+    let mut child = std::process::Command::new(cli)
+        .arg("serve")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("verified_cli serve spawns");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut lines = BufReader::new(child.stdout.take().expect("stdout")).lines();
+    let mut ask = |req: &Value| -> Value {
+        writeln!(stdin, "{req}").expect("the worker reads");
+        stdin.flush().expect("flush");
+        let line = lines.next().expect("the worker answers").expect("a line");
+        let v: Value = serde_json::from_str(&line).expect("the answer parses");
+        v["result"].clone()
+    };
+    let (mut failures, mut reused) = (Vec::new(), 0usize);
+    for name in &names {
+        let fx: Value = backend::decode_fixture::read(name).expect("fixture parses");
+        let req = backend::decode_fixture::request(&fx).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        let want = fx["expected"].as_array().expect("expected").clone();
+        for cut in INC_CUTS {
+            let key = format!("test|{name}|{cut}");
+            let mut a = cut_request(&req, cut);
+            a["mode"] = "assemblesegmentsinc".into();
+            a["todayKey"] = key.clone().into();
+            let mut b = req.clone();
+            b["mode"] = "assemblesegmentsinc".into();
+            b["todayKey"] = key.into();
+            ask(&a);
+            let answer = ask(&b);
+            if let Some(e) = answer.get("error") {
+                failures.push(format!("{name} cut {cut}: {e}"));
+                continue;
+            }
+            let inc = &answer["incremental"];
+            if inc.get("frontier").is_some() {
+                reused += 1;
+            }
+            eprintln!("{name} cut {cut}: {inc}");
+            let got =
+                backend::row_json::render_segments(&answer["segments"]).expect("segments render");
+            let got = got.as_array().cloned().unwrap_or_default();
+            failures.extend(segment_diffs(&format!("{name} cut {cut}"), &got, &want));
+        }
+    }
+    drop(stdin);
+    let _ = child.wait();
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+    assert!(
+        names.is_empty() || reused > 0,
+        "no run reused a frontier over {} day(s): the incremental path went untested",
+        names.len()
+    );
 }
