@@ -211,14 +211,16 @@ private def parseModel (j : Json) : Except String PData := do
   -- the next `len` cells along `e`; runs cover exactly `T`.
   let durDeltaFlat : Array Nat := Id.run do
     let nC := durDelta.size
-    let mut a := Array.replicate (nC * maxD * T) halfOB
+    let tri := Verified.Hsmm.triOff maxD T
+    let mut a := Array.replicate (nC * tri) halfOB
     for (cls, c) in durDelta.zipIdx do
       for (runs, d0) in cls.zipIdx do
         if d0 < maxD then
           let mut e := 0
           for (v, len) in runs do
             for _ in [0:len] do
-              if e < T then a := a.set! ((c * T + e) * maxD + d0) v
+              if d0 ≤ e && e < T then
+                a := a.set! (c * tri + Verified.Hsmm.triOff maxD e + d0) v
               e := e + 1
     return a
   let durOv : Std.HashMap Nat Nat ←
@@ -1445,7 +1447,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   -- was half the phase (#1774). An out-of-range delta is recorded and thrown
   -- after the loop instead.
   let (durDelta, bad, legDur) : Array Nat × Option Int × FloatArray := Id.run do
-    let mut durDelta : Array Nat := Array.replicate (nC * maxD * T) halfOB
+    let tri := Verified.Hsmm.triOff maxD T
+    let mut durDelta : Array Nat := Array.replicate (nC * tri) halfOB
     let mut bad : Option Int := none
     let mut legDur := legDur0
     for d0 in [0:maxD] do
@@ -1475,7 +1478,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             | some v => qiOf v | none => 0
           let (packed, over) := packDelta qE qRefs[cls]! halfOB
           if over.isSome then bad := over
-          durDelta := durDelta.set! ((cls * T + e) * maxD + d0) packed
+          durDelta := durDelta.set! (cls * tri + Verified.Hsmm.triOff maxD e + d0) packed
           -- A leg under a journey: the same cell without the level, and
           -- without the covered train's relaxed floor — a leg pays no level,
           -- so the floor is what stops a ride splitting into one-minute legs.
@@ -1905,6 +1908,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     let inner := Verified.Hsmm.Journey.best tb
     let tb := { tb with cell := inner }
     let (durDelta, durBaseJ, bad) : Array Nat × Array Nat × Option Int := Id.run do
+      let tri := Verified.Hsmm.triOff maxD T
       let mut durDelta := durDelta
       let mut durBaseJ := durBase
       let mut bad : Option Int := none
@@ -1916,17 +1920,18 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         let base := Verified.Hsmm.Assemble.durPriorBase c jI (d0 + 1)
         let qRef := match quant (Verified.Hsmm.Assemble.durAtFrom c jI (d0 + 1) assembleRefE base) with
           | some v => qiOf v | none => 0
-        for e in [0:T] do
+        -- From `e = d0`: a journey cannot begin before the day (`triOff`).
+        for e in [d0:T] do
           let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
           let sst := Verified.Hsmm.SegmentEmission.statsAt c.segPref (d0 + 1) e
           let legsPart := inner.get! (d0 * T + e)
           let full := Verified.Hsmm.Assemble.durAtFromW c jI (d0 + 1) covered[e]! w sst base + legsPart
           match quant full with
-          | none => durDelta := durDelta.set! ((jc * T + e) * maxD + d0) 0
+          | none => durDelta := durDelta.set! (jc * tri + Verified.Hsmm.triOff maxD e + d0) 0
           | some v =>
             let (packed, over) := packDelta (qiOf v) qRef halfOB
             if over.isSome then bad := over
-            durDelta := durDelta.set! ((jc * T + e) * maxD + d0) packed
+            durDelta := durDelta.set! (jc * tri + Verified.Hsmm.triOff maxD e + d0) packed
       return (durDelta, durBaseJ, bad)
     if let some delta := bad then throw s!"journey dur delta {delta} exceeds halfOB {halfOB}"
     return (durClass, durBaseJ, durDelta, some tb)

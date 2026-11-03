@@ -783,14 +783,22 @@ structure PData where
   let i := d.transIdx.getD (sp * d.S + s) d.nRows
   if i < d.nRows then d.transFlat.getD (i * d.T + t) 0
   else d.transBase.getD ((if d.nTB == 1 then 0 else t) * (d.S * d.S) + sp * d.S + s) 0
+/-- The cells before end minute `e` in one class's `durDelta`: a segment ending
+    at `e'` has `min maxD (e' + 1)` lengths, since none starts before the day. -/
+@[inline] def triOff (maxD e : Nat) : Nat :=
+  if e ≤ maxD then e * (e + 1) / 2 else maxD * (maxD + 1) / 2 + (e - maxD) * maxD
+
 @[inline] def PData.durAt (d : PData) (s dd e : Nat) : Nat :=
   if dd == 0 then 0
   else if !d.durClass.isEmpty then
     let b := d.durBase.getD (s * d.maxD + (dd - 1)) 0
     if b == 0 then 0
+    -- A segment that would start before the day: no column reaches it (its
+    -- dwell is −∞), so it is not stored.
+    else if dd > e + 1 then b
     -- `durDelta` by class, end minute, then length: the close loop walks
     -- consecutive lengths at one end, so they sit side by side.
-    else b + d.durDelta.getD ((d.durClass.getD s 0 * d.T + e) * d.maxD + (dd - 1)) d.halfOB - d.halfOB
+    else b + d.durDelta.getD (d.durClass.getD s 0 * triOff d.maxD d.T + triOff d.maxD e + (dd - 1)) d.halfOB - d.halfOB
   else if d.hasOv.getD (s * d.maxD + (dd - 1)) false then
     d.durOv.getD ((s * d.maxD + (dd - 1)) * d.T + e) (d.durBase.getD (s * d.maxD + (dd - 1)) 0)
   else d.durBase.getD (s * d.maxD + (dd - 1)) 0
