@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-status: design; step 1 (measure the frontier) next
+status: step 1 live (the frontier logged, unchanged runs skipped); step 2 next
 references:
   - decoder-roadmap.md
   - ../design/lean-and-rust.md
@@ -80,6 +80,12 @@ the checkpoints alone are ~90 columns of `S × maxD`).
    tables with the stored run's and returns `f` and which day-wide input
    moved; the sidecar logs it per decode and changes nothing else. One real day of logs says
    what share of each run the reuse would save.
+   Live 2026-11-03; its first night: the frontier sits ~15 minutes before
+   the run, a late upload or the sleep record moves it back (once to minute
+   10), the rail relations' daily refresh moves every minute once a day, and
+   one run in ten had nothing new. Such a run is not decoded: the same request
+   under the same code (`GIT_SHA` and the classifier version) decodes to the
+   stored result, so only `inputs_through` moves.
 2. **The lemma**, then the incremental build behind the same mode: equal to
    the full decode on every frozen day cut at several frontiers, and on a
    real day's consecutive requests.
