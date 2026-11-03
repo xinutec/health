@@ -152,6 +152,8 @@ pub(crate) async fn decode_day(
         "decode-day: {written} {}, {failed} failed of {attempted} day(s)",
         if dry_run {
             "decoded (DRY RUN, nothing written)"
+        } else if std::env::var_os("DECODE_HANDOFF").is_some() {
+            "handed to the decode watch (nothing written here)"
         } else {
             "written"
         }
@@ -330,6 +332,15 @@ pub(crate) async fn decode_one(
             .and_then(serde_json::Value::as_i64),
         loaded_at,
     );
+    // `DECODE_HANDOFF=<path>`: the request and what its inputs are complete
+    // through, for the decode watch's own worker to decode from the day's
+    // previous run (`decode_today`); nothing decodes or writes here.
+    if let Ok(path) = std::env::var("DECODE_HANDOFF") {
+        let handoff = serde_json::json!({ "request": req, "inputsThrough": inputs_through });
+        std::fs::write(&path, serde_json::to_vec(&handoff)?)
+            .with_context(|| format!("writing {path}"))?;
+        return Ok(0);
+    }
     // What an incremental decode could reuse, logged; a failure here never
     // stops the decode. The same request under the same code decodes to the
     // stored result, so that one is not decoded again. A build without a
@@ -1061,6 +1072,7 @@ pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Res
     let exe = std::env::current_exe().context("locating this binary")?;
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("installing the SIGTERM handler")?;
+    let mut today_worker: Option<TodayWorker> = None;
     eprintln!(
         "decode watch: idle every {interval_s}s, decodes kept current over {window_days} day(s)"
     );
@@ -1080,26 +1092,57 @@ pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Res
         };
         let key = fresh::queue_key(&user_id, &date);
         let started = std::time::Instant::now();
-        let child = tokio::process::Command::new(&exe)
-            .args(["decode-day", &user_id, &date])
-            .kill_on_drop(true)
-            .status();
+        // Today's request comes back to this loop, which decodes it on its own
+        // worker from the day's previous run; every other day decodes whole in
+        // the child.
+        let today = match is_today(&pool, &user_id, &date).await {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("decode watch: is {date} today for {user_id}: {e:#}");
+                false
+            }
+        };
+        let handoff = std::env::temp_dir().join(format!("decode-handoff-{user_id}-{date}.json"));
+        let _ = std::fs::remove_file(&handoff);
+        let mut cmd = tokio::process::Command::new(&exe);
+        cmd.args(["decode-day", &user_id, &date]).kill_on_drop(true);
+        if today {
+            cmd.env("DECODE_HANDOFF", &handoff);
+        }
         let status = tokio::select! {
             _ = term.recv() => break,
-            s = child => s,
+            s = cmd.status() => s,
         };
         match status {
             Ok(s) if s.success() => {
-                queue::done(&pool, fresh::QUEUE_KIND, &key).await?;
-                if let Err(e) =
-                    super::refresh::refresh_presence_log(&pool, 1, Some((&user_id, &date))).await
-                {
-                    eprintln!("decode watch: presence row for {user_id} {date}: {e:#}");
+                let handed = std::fs::read(&handoff).ok();
+                let _ = std::fs::remove_file(&handoff);
+                let outcome = match handed {
+                    Some(bytes) => tokio::select! {
+                        _ = term.recv() => break,
+                        r = decode_today(&mut today_worker, &pool, &user_id, &date, &bytes) => r,
+                    },
+                    None => Ok(String::new()),
+                };
+                match outcome {
+                    Ok(note) => {
+                        queue::done(&pool, fresh::QUEUE_KIND, &key).await?;
+                        if let Err(e) =
+                            super::refresh::refresh_presence_log(&pool, 1, Some((&user_id, &date)))
+                                .await
+                        {
+                            eprintln!("decode watch: presence row for {user_id} {date}: {e:#}");
+                        }
+                        eprintln!(
+                            "decode watch: {user_id} {date} decoded in {}s{note}",
+                            started.elapsed().as_secs()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("decode watch: {user_id} {date} failed: {e:#}");
+                        queue::failed(&pool, fresh::QUEUE_KIND, &key, &format!("{e:#}")).await?;
+                    }
                 }
-                eprintln!(
-                    "decode watch: {user_id} {date} decoded in {}s",
-                    started.elapsed().as_secs()
-                );
             }
             Ok(s) => {
                 eprintln!("decode watch: {user_id} {date} failed ({s})");
@@ -1120,6 +1163,119 @@ pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Res
     eprintln!("decode watch: shutting down");
     pool.close().await;
     Ok(())
+}
+
+/// Today's own Lean worker: a `verified_cli serve` the decode watch keeps, so
+/// a decode of today resumes from the previous one (`assemblesegmentsinc`,
+/// docs/proposals/2026-11-incremental-today.md). Dropped on any failure; the
+/// next decode of today is then a full one.
+struct TodayWorker {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    lines: std::io::Lines<std::io::BufReader<std::process::ChildStdout>>,
+}
+
+impl TodayWorker {
+    fn spawn() -> Result<Self> {
+        use std::io::BufRead;
+        use std::process::Stdio;
+        let cli = backend::lean_worker::verified_cli_path()?;
+        let mut child = std::process::Command::new(cli)
+            .arg("serve")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .with_context(|| format!("spawning {}", cli.display()))?;
+        let stdin = child.stdin.take().context("today's worker has no stdin")?;
+        let stdout = child
+            .stdout
+            .take()
+            .context("today's worker has no stdout")?;
+        Ok(Self {
+            child,
+            stdin,
+            lines: std::io::BufReader::new(stdout).lines(),
+        })
+    }
+
+    fn call(&mut self, req: &serde_json::Value) -> Result<serde_json::Value> {
+        use std::io::Write;
+        writeln!(self.stdin, "{req}").context("writing to today's worker")?;
+        self.stdin.flush().context("flushing today's worker")?;
+        let line = self
+            .lines
+            .next()
+            .context("today's worker closed its stdout")?
+            .context("reading today's worker")?;
+        let v: serde_json::Value =
+            serde_json::from_str(&line).context("today's worker answered something not JSON")?;
+        if let Some(e) = v.get("error") {
+            anyhow::bail!("today's worker: {e}");
+        }
+        Ok(v["result"].clone())
+    }
+}
+
+impl Drop for TodayWorker {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Whether `date` is the user's today in their home timezone.
+async fn is_today(pool: &sqlx::MySqlPool, user_id: &str, date: &str) -> Result<bool> {
+    let tz = backend::sync_state::get(pool, user_id, "home_tz")
+        .await?
+        .unwrap_or_else(|| "Europe/London".into());
+    Ok(backend::timezone::local_date_at(chrono::Utc::now().timestamp(), Some(&tz))? == date)
+}
+
+/// Today's handed-off request, decoded on `worker` from the day's previous run
+/// and written as `decode_one` writes it. The note says what was reused.
+async fn decode_today(
+    worker: &mut Option<TodayWorker>,
+    pool: &sqlx::MySqlPool,
+    user_id: &str,
+    date: &str,
+    handoff: &[u8],
+) -> Result<String> {
+    let handoff: serde_json::Value = serde_json::from_slice(handoff).context("the hand-off")?;
+    let inputs_through = handoff["inputsThrough"]
+        .as_i64()
+        .context("the hand-off has no inputsThrough")?;
+    let mut req = handoff["request"].clone();
+    req["mode"] = "assemblesegmentsinc".into();
+    req["todayKey"] = format!(
+        "{user_id}|{date}|{}+v{CLASSIFIER_VERSION}",
+        std::env::var("GIT_SHA").unwrap_or_else(|_| "dev".into())
+    )
+    .into();
+    let w = match worker.take() {
+        Some(w) => w,
+        None => TodayWorker::spawn()?,
+    };
+    let (w, answer) = tokio::task::spawn_blocking(move || {
+        let mut w = w;
+        let a = w.call(&req);
+        (w, a)
+    })
+    .await
+    .context("today's decode task")?;
+    // A worker that failed a call is not trusted with the next one.
+    let answer = answer?;
+    *worker = Some(w);
+    if answer
+        .get("degenerate")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        anyhow::bail!("the decode is degenerate — no viable path");
+    }
+    let segments = backend::row_json::render_segments(&answer["segments"])?;
+    save_decode(pool, user_id, date, &segments, inputs_through).await?;
+    Ok(format!(" ({})", answer["incremental"]))
 }
 
 /// What a read queued, else the newest stale day among the stored decodes in
