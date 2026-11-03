@@ -412,17 +412,89 @@ theorem pColStep_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBoun
       (by simp only [colB, pEB, pOB, pOff, pTMax] at ht ⊢; omega)
       (col_bounded hin t s (τ - 1)) (hin.emit (t + 1) s)]
 
+/-! ## Checkpoints without their −∞ tails
+
+A column at minute `t` holds, per state, its dwell lengths `1 … maxD`; every
+length past the state's longest live one is `0` (`enc −∞`), and on a real day
+that is most of them (11-02: 32% of checkpoint entries live). A checkpoint keeps
+each state's row only up to its last nonzero entry (`packCol`), and the walk
+reads it back through `unpackCol`, which `unpack_pack` proves entry for entry
+the column it was cut from. -/
+
+/-- The length of `c[base, base + n)` up to and including its last nonzero entry. -/
+def trimLen (c : Array Nat) (base : Nat) : Nat → Nat
+  | 0 => 0
+  | n + 1 => if c.getD (base + n) 0 ≠ 0 then n + 1 else trimLen c base n
+
+theorem trimLen_le (c : Array Nat) (base : Nat) : ∀ n, trimLen c base n ≤ n
+  | 0 => Nat.le_refl 0
+  | n + 1 => by
+    simp only [trimLen]
+    split
+    · exact Nat.le_refl _
+    · exact Nat.le_succ_of_le (trimLen_le c base n)
+
+theorem trimLen_zero (c : Array Nat) (base : Nat) :
+    ∀ n k, trimLen c base n ≤ k → k < n → c.getD (base + k) 0 = 0
+  | 0 => fun _ _ hk => absurd hk (Nat.not_lt_zero _)
+  | n + 1 => by
+    intro k hle hk
+    simp only [trimLen] at hle
+    split at hle
+    · omega
+    · rename_i hz
+      by_cases hkn : k = n
+      · subst hkn; exact Classical.not_not.mp hz
+      · exact trimLen_zero c base n k hle (by omega)
+
+/-- Each state's row of `c`, cut after its last nonzero entry. -/
+def packCol (S maxD : Nat) (c : Array Nat) : Array (Array Nat) :=
+  Array.ofFn (n := S) fun s =>
+    c.extract (s.val * maxD) (s.val * maxD + trimLen c (s.val * maxD) maxD)
+
+/-- The column a `packCol` was cut from, `0` past each row. -/
+def unpackCol (maxD : Nat) (rows : Array (Array Nat)) : Array Nat :=
+  Array.ofFn (n := rows.size * maxD) fun i =>
+    (rows.getD (i.val / maxD) #[]).getD (i.val % maxD) 0
+
+private theorem getD_of_ge {α : Type} (a : Array α) (i : Nat) {d : α} (h : ¬ i < a.size) :
+    a.getD i d = d := by
+  simp [Array.getD, h]
+
+theorem unpack_pack (S maxD : Nat) (c : Array Nat) {s k : Nat} (hs : s < S) (hk : k < maxD) :
+    (unpackCol maxD (packCol S maxD c)).getD (s * maxD + k) 0 = c.getD (s * maxD + k) 0 := by
+  have hsz : (packCol S maxD c).size = S := by simp [packCol]
+  have hi : s * maxD + k < (unpackCol maxD (packCol S maxD c)).size := by
+    simp only [unpackCol, Array.size_ofFn, hsz]; exact idx_lt hs hk
+  rw [getD_of_lt _ _ hi]
+  simp only [unpackCol, Array.getElem_ofFn]
+  rw [idx_div hk, idx_mod hk,
+    getD_of_lt (packCol S maxD c) s (d := #[]) (by rw [hsz]; exact hs)]
+  have hrow : (packCol S maxD c)[s]'(by rw [hsz]; exact hs)
+      = c.extract (s * maxD) (s * maxD + trimLen c (s * maxD) maxD) := by
+    simp [packCol]
+  rw [hrow]
+  generalize hL : trimLen c (s * maxD) maxD = L
+  by_cases hkL : k < L
+  · by_cases hc : s * maxD + k < c.size
+    · have hx : k < (c.extract (s * maxD) (s * maxD + L)).size := by
+        simp only [Array.size_extract]; omega
+      rw [getD_of_lt _ _ hx, Array.getElem_extract, getD_of_lt _ _ hc]
+    · rw [getD_of_ge _ _ (by simp only [Array.size_extract]; omega), getD_of_ge _ _ hc]
+  · rw [getD_of_ge _ _ (by simp only [Array.size_extract]; omega)]
+    exact (trimLen_zero c (s * maxD) maxD k (by omega) hk).symm
+
 /-! ## Packed checkpointed build, walk, decode -/
 
 /-- Packed `buildCkpt`. -/
-def pBuildCkpt (m : PModel) (K : Nat) : Nat → Array (Nat × Array Nat) × Array Nat
+def pBuildCkpt (m : PModel) (K : Nat) : Nat → Array (Nat × Array (Array Nat)) × Array Nat
   | 0 =>
     let c0 := pCol0 m
-    (#[(0, c0)], c0)
+    (#[(0, packCol m.S m.maxD c0)], c0)
   | t + 1 =>
     let prev := pBuildCkpt m K t
     let next := pColStep m t prev.2
-    (if (t + 1) % K = 0 then prev.1.push (t + 1, next) else prev.1, next)
+    (if (t + 1) % K = 0 then prev.1.push (t + 1, packCol m.S m.maxD next) else prev.1, next)
 
 theorem pBuildCkpt_snd {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
     (K : Nat) :
@@ -447,16 +519,20 @@ theorem pBuildCkpt_fst {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBo
     ∀ t, t < pTMax → ∀ i, i < ((pBuildCkpt m K t).1).size →
       (((pBuildCkpt m K t).1).getD i (0, #[])).1 < pTMax ∧
       ∀ s τ, s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-        (((((pBuildCkpt m K t).1).getD i (0, #[])).2).getD (s * P.maxD + (τ - 1)) 0)
+        ((unpackCol m.maxD (((pBuildCkpt m K t).1).getD i (0, #[])).2).getD (s * P.maxD + (τ - 1)) 0)
           = enc (col P (((pBuildCkpt m K t).1).getD i (0, #[])).1 s τ)
   | 0 => by
     intro ht i hi
     have hsz : ((pBuildCkpt m K 0).1).size = 1 := rfl
     have hi0 : i = 0 := by omega
     subst hi0
-    have hread : (((pBuildCkpt m K 0).1).getD 0 (0, #[])) = (0, pCol0 m) := rfl
+    have hread : (((pBuildCkpt m K 0).1).getD 0 (0, #[])) = (0, packCol m.S m.maxD (pCol0 m)) := rfl
     rw [hread]
-    exact ⟨ht, fun s τ hs h1 hm => pCol0_get hag hin hs h1 hm⟩
+    refine ⟨ht, fun s τ hs h1 hm => ?_⟩
+    dsimp only
+    rw [← hag.maxD, unpack_pack m.S m.maxD (pCol0 m) (by rw [hag.S]; exact hs)
+      (by rw [hag.maxD]; omega), hag.maxD]
+    exact pCol0_get hag hin hs h1 hm
   | t + 1 => by
     intro ht i hi
     have hsnd : ∀ s' τ', s' < P.S → 1 ≤ τ' → τ' ≤ P.maxD →
@@ -464,7 +540,7 @@ theorem pBuildCkpt_fst {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBo
       fun s' τ' hs' h1' hm' => pBuildCkpt_snd hag hin K (t + 1) ht s' τ' hs' h1' hm'
     have hfst : (pBuildCkpt m K (t + 1)).1
         = if (t + 1) % K = 0
-          then ((pBuildCkpt m K t).1).push (t + 1, (pBuildCkpt m K (t + 1)).2)
+          then ((pBuildCkpt m K t).1).push (t + 1, packCol m.S m.maxD (pBuildCkpt m K (t + 1)).2)
           else (pBuildCkpt m K t).1 := by
       simp only [pBuildCkpt]
     rw [hfst] at hi ⊢
@@ -476,19 +552,23 @@ theorem pBuildCkpt_fst {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBo
       rw [if_pos hc] at hi ⊢
       rw [Array.size_push] at hi
       by_cases hlt : i < ((pBuildCkpt m K t).1).size
-      · have hread : ((((pBuildCkpt m K t).1).push (t + 1, (pBuildCkpt m K (t + 1)).2)).getD i (0, #[]))
+      · have hread : ((((pBuildCkpt m K t).1).push (t + 1, packCol m.S m.maxD (pBuildCkpt m K (t + 1)).2)).getD i (0, #[]))
             = (((pBuildCkpt m K t).1).getD i (0, #[])) := by
           rw [getD_of_lt _ _ (by rw [Array.size_push]; omega), Array.getElem_push,
             dif_pos hlt]
           exact (getD_of_lt _ _ (by omega)).symm
         rw [hread]
         exact pBuildCkpt_fst hag hin K t (by omega) i hlt
-      · have hread : ((((pBuildCkpt m K t).1).push (t + 1, (pBuildCkpt m K (t + 1)).2)).getD i (0, #[]))
-            = (t + 1, (pBuildCkpt m K (t + 1)).2) := by
+      · have hread : ((((pBuildCkpt m K t).1).push (t + 1, packCol m.S m.maxD (pBuildCkpt m K (t + 1)).2)).getD i (0, #[]))
+            = (t + 1, packCol m.S m.maxD (pBuildCkpt m K (t + 1)).2) := by
           rw [getD_of_lt _ _ (by rw [Array.size_push]; omega), Array.getElem_push,
             dif_neg (by omega)]
         rw [hread]
-        exact ⟨ht, fun s τ hs h1 hm => hsnd s τ hs h1 hm⟩
+        refine ⟨ht, fun s τ hs h1 hm => ?_⟩
+        dsimp only
+        rw [← hag.maxD, unpack_pack m.S m.maxD _ (by rw [hag.S]; exact hs)
+          (by rw [hag.maxD]; omega), hag.maxD]
+        exact hsnd s τ hs h1 hm
 
 /-- Packed `colFrom`. -/
 def pColFrom (m : PModel) (b : Nat) (c : Array Nat) : Nat → Array Nat
@@ -510,17 +590,18 @@ theorem pColFrom_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBoun
         pColFrom_get hag hin b c hc k (by omega) s' τ' hs' h1' hm') hs h1 hm
 
 /-- Packed `colAt`. -/
-def pColAt (m : PModel) (cks : Array (Nat × Array Nat)) (t : Nat) : Array Nat :=
+def pColAt (m : PModel) (cks : Array (Nat × Array (Array Nat))) (t : Nat) : Array Nat :=
   match findCk cks t cks.size with
-  | some (b, c) => pColFrom m b c (t - b)
+  | some (b, c) => pColFrom m b (unpackCol m.maxD c) (t - b)
   | none => pColFrom m 0 (pCol0 m) t
 
 theorem pColAt_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
-    (cks : Array (Nat × Array Nat))
+    (cks : Array (Nat × Array (Array Nat)))
     (hcks : ∀ i, i < cks.size →
       (cks.getD i (0, #[])).1 < pTMax ∧
       ∀ s τ, s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-        (((cks.getD i (0, #[])).2).getD (s * P.maxD + (τ - 1)) 0) = enc (col P ((cks.getD i (0, #[])).1) s τ))
+        ((unpackCol m.maxD (cks.getD i (0, #[])).2).getD (s * P.maxD + (τ - 1)) 0)
+          = enc (col P ((cks.getD i (0, #[])).1) s τ))
     (t : Nat) (ht : t < pTMax) : ∀ s τ, s < P.S → 1 ≤ τ → τ ≤ P.maxD →
       ((pColAt m cks t).getD (s * P.maxD + (τ - 1)) 0) = enc (col P t s τ) := by
   intro s τ hs h1 hm
@@ -535,20 +616,20 @@ theorem pColAt_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds
     obtain ⟨b, c⟩ := e
     obtain ⟨⟨i, hi, hie⟩, hbt⟩ := findCk_spec cks t cks.size (Nat.le_refl _) (b, c) hf
     have hc : ∀ s' τ', s' < P.S → 1 ≤ τ' → τ' ≤ P.maxD →
-        (c.getD (s' * P.maxD + (τ' - 1)) 0) = enc (col P b s' τ') := by
+        ((unpackCol m.maxD c).getD (s' * P.maxD + (τ' - 1)) 0) = enc (col P b s' τ') := by
       intro s' τ' hs' h1' hm'
       have := (hcks i hi).2 s' τ' hs' h1' hm'
       -- `findCk_spec` is generic in the column, so it speaks `default`; here that is `(0, #[])`.
       have hie' : cks.getD i (0, #[]) = (b, c) := hie
       rw [hie'] at this
       exact this
-    have := pColFrom_get hag hin b c hc (t - b)
+    have := pColFrom_get hag hin b (unpackCol m.maxD c) hc (t - b)
       (by omega) s τ hs h1 hm
     rwa [Nat.add_sub_cancel' hbt] at this
 
 /-- Packed walk: identical shape to `walkCk`, cells and tensors decoded with
 `dec` (walk-scale work only — a handful of columns per day). -/
-def pWalk (m : PModel) (cks : Array (Nat × Array Nat)) : (t s τ : Nat) → Option (List Seg)
+def pWalk (m : PModel) (cks : Array (Nat × Array (Array Nat))) : (t s τ : Nat) → Option (List Seg)
   | t, s, τ =>
     if _hτ : τ = 0 then none
     else if _hs0 : t + 1 - τ = 0 then some [⟨s, τ⟩]
@@ -567,7 +648,7 @@ def pWalk (m : PModel) (cks : Array (Nat × Array Nat)) : (t s τ : Nat) → Opt
   decreasing_by omega
 
 theorem pWalk_eq {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
-    (cks : Array (Nat × Array Nat))
+    (cks : Array (Nat × Array (Array Nat)))
     (hcols : ∀ t s τ, t < pTMax → s < P.S → 1 ≤ τ → τ ≤ P.maxD →
       ((pColAt m cks t).getD (s * P.maxD + (τ - 1)) 0) = enc (col P t s τ)) :
     ∀ (t s τ : Nat), t < pTMax → pWalk m cks t s τ = walk P t s τ
@@ -843,14 +924,14 @@ def pColStepD (d : PData) (t : Nat) (prev : Array Nat) : Array Nat :=
     else pAdd (prev.getD (i.val - 1) 0) (emitR.getD s 0)
 
 /-- Fast `pBuildCkpt`. -/
-def pBuildCkptD (d : PData) (K : Nat) : Nat → Array (Nat × Array Nat) × Array Nat
+def pBuildCkptD (d : PData) (K : Nat) : Nat → Array (Nat × Array (Array Nat)) × Array Nat
   | 0 =>
     let c0 := pCol0D d
-    (#[(0, c0)], c0)
+    (#[(0, packCol d.S d.maxD c0)], c0)
   | t + 1 =>
     let prev := pBuildCkptD d K t
     let next := pColStepD d t prev.2
-    (if (t + 1) % K = 0 then prev.1.push (t + 1, next) else prev.1, next)
+    (if (t + 1) % K = 0 then prev.1.push (t + 1, packCol d.S d.maxD next) else prev.1, next)
 
 theorem pCol0D_eq (d : PData) : pCol0D d = pCol0 (toModel d) := rfl
 theorem pCloseRowD_eq (d : PData) (t : Nat) (prev : Array Nat) :
@@ -869,6 +950,7 @@ theorem pBuildCkptD_eq (d : PData) (K : Nat) :
   | 0 => rfl
   | t + 1 => by
     simp only [pBuildCkptD, pBuildCkpt, pBuildCkptD_eq d K t, pColStepD_eq]
+    rfl
 
 /-- Fast `pColFrom`. -/
 def pColFromD (d : PData) (b : Nat) (c : Array Nat) : Nat → Array Nat
@@ -881,20 +963,20 @@ theorem pColFromD_eq (d : PData) (b : Nat) (c : Array Nat) :
   | k + 1 => by simp only [pColFromD, pColFrom, pColFromD_eq d b c k, pColStepD_eq]
 
 /-- Fast `pColAt`. -/
-def pColAtD (d : PData) (cks : Array (Nat × Array Nat)) (t : Nat) : Array Nat :=
+def pColAtD (d : PData) (cks : Array (Nat × Array (Array Nat))) (t : Nat) : Array Nat :=
   match findCk cks t cks.size with
-  | some (b, c) => pColFromD d b c (t - b)
+  | some (b, c) => pColFromD d b (unpackCol d.maxD c) (t - b)
   | none => pColFromD d 0 (pCol0D d) t
 
-theorem pColAtD_eq (d : PData) (cks : Array (Nat × Array Nat)) (t : Nat) :
+theorem pColAtD_eq (d : PData) (cks : Array (Nat × Array (Array Nat))) (t : Nat) :
     pColAtD d cks t = pColAt (toModel d) cks t := by
   rw [pColAtD, pColAt]
   cases findCk cks t cks.size with
-  | some e => obtain ⟨b, c⟩ := e; simp only [pColFromD_eq]
+  | some e => obtain ⟨b, c⟩ := e; simp only [pColFromD_eq]; rfl
   | none => simp only [pColFromD_eq, pCol0D_eq]
 
 /-- Fast `pWalk`. -/
-def pWalkD (d : PData) (cks : Array (Nat × Array Nat)) : (t s τ : Nat) → Option (List Seg)
+def pWalkD (d : PData) (cks : Array (Nat × Array (Array Nat))) : (t s τ : Nat) → Option (List Seg)
   | t, s, τ =>
     if _hτ : τ = 0 then none
     else if _hs0 : t + 1 - τ = 0 then some [⟨s, τ⟩]
@@ -912,7 +994,7 @@ def pWalkD (d : PData) (cks : Array (Nat × Array Nat)) : (t s τ : Nat) → Opt
   termination_by t _ _ => t
   decreasing_by omega
 
-theorem pWalkD_eq (d : PData) (cks : Array (Nat × Array Nat)) :
+theorem pWalkD_eq (d : PData) (cks : Array (Nat × Array (Array Nat))) :
     ∀ (t s τ : Nat), pWalkD d cks t s τ = pWalk (toModel d) cks t s τ
   | t, s, τ => by
     rw [pWalkD, pWalk]
