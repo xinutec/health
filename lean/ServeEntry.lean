@@ -1425,7 +1425,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     (legTrans : Option (FloatArray × FloatArray) := none)
     (g? : Option Verified.Hsmm.StationChain.ChainGraph := none)
     (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) := none)
-    (inc : Option IncFrom := none) (tablesOnly : Bool := false) :
+    (inc : Option IncFrom := none) (tablesOnly : Bool := false)
+    (preTb : Option Verified.Hsmm.Journey.Tables := none) :
     Except String (Array Nat × Array Nat × Array Nat × Option Verified.Hsmm.Journey.Tables) := do
   let quant := Verified.Hsmm.Quantize.quantize
   -- Duration: EXACT class partition by (mode, isNamedTrain).
@@ -1510,430 +1511,434 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   -- level and duration; beyond `maxJ` it is impossible.
   match jIdx, jCls, legTrans with
   | some jI, some jc, some (trans, firstCtx) =>
-    let L := legs.size
-    let emitPre : FloatArray := Id.run do
-      let mut out := Verified.FloatConst.floats (L * (T + 1)) journeyZero
-      -- A minute a leg cannot emit is −∞ per cell in the outer trellis; in a
-      -- prefix sum it would poison every later minute, so it is floored
-      -- here: still far beyond any leg that spans it.
-      for (l, li) in legs.zipIdx do
-        let mut acc := journeyZero
-        for t in [0:T] do
-          let v := Verified.Hsmm.Assemble.emitAt c t l
-          acc := acc + (if v < journeyEmitFloor then journeyEmitFloor else v)
-          out := out.set! (li * (T + 1) + t + 1) acc
-      return out
-    let entryF : FloatArray := Id.run do
-      let mut out := Verified.FloatConst.floats (L * T) journeyZero
-      for (l, li) in legs.zipIdx do
-        for t in [0:T] do
-          out := out.set! (li * T + t) (Verified.Hsmm.Assemble.entryAt c t l)
-      return out
-    -- The first leg's prior is spread over the LINES of its mode (which line),
-    -- as the fitted transition weight is; the last leg's is the leg's own.
-    let prior := fun (spread : Bool) (xs : List (Verified.Hsmm.Emissions.Mode × Float)) (l : Nat) =>
-      let st := c.states[l]!
-      match xs.find? (·.1 == st.mode) with
-      | some (_, lp) =>
-        if !spread then lp else
-        let n := (legs.foldl (fun (acc : List (Option String)) l2 =>
-          let s2 := c.states[l2]!
-          if s2.mode == st.mode && !acc.contains s2.lineName then s2.lineName :: acc else acc) []).length
-        lp - Float.log (Verified.FloatConst.natToFloat (max n 1))
-      | none => Verified.FloatConst.negInf
-    let jp := c.segEm.p.journey.get!
-    -- S2: a named line's leg per board station within reach of the day's
-    -- fixes. It shares its base's tables, begins only within reach of its
-    -- station, and prices its length by the along-line path to the station
-    -- the fixes put the ride's end at.
-    let fixAt := fun (t : Nat) => match c.obs[t]? with
-      | none => none
-      | some o => match o.gps with
-        | some gp => some (gp.lat, gp.lon)
-        | none => match o.prevGpsFix with
-          | some f => if o.ts - f.ts ≤ journeyFixStaleS then some (f.lat, f.lon) else none
-          | none => none
-    -- The last raw fix of the minute, not its median: where he was when the
-    -- next minute began. A minute straddling an arrival puts its median between
-    -- the two stations and its first fix at the one before.
-    let fixBefore := fun (t : Nat) => match c.obs[t]? with
-      | none => none
-      | some o => match o.lastFix with
-        | some f => some (f.lat, f.lon)
-        | none => match o.gps with
-          | some gp => some (gp.lat, gp.lon)
-          | none => none
-    -- The same, or the next fix within the stale window for a dark minute.
-    let fixAfter := fun (t : Nat) => match fixBefore t with
-      | some f => some f
-      | none => match c.obs[t]? with
-        | none => none
-        | some o => match o.nextGpsFix with
-          | some f => if f.ts - o.ts ≤ journeyFixStaleS then some (f.lat, f.lon) else none
-          | none => none
-    let nearFix := fun (f : Option (Float × Float)) (n : Verified.Hsmm.StationChain.ChainNode) =>
-      match f with
-      | some (la, lo) => Verified.Hsmm.FloatScore.haversineMeters la lo n.lat n.lon ≤ journeyReachM
-      | none => false
-    let fixes : Array (Option (Float × Float)) := (Array.range T).map fixAt
-    -- Each line's served stations, once: matching a line to its relations
-    -- parses every relation's name, and the legs' tables ask per station.
-    let servedSets : Std.HashMap String (Option (Std.HashSet String)) := match rels? with
-      | none => {}
-      | some rels => c.states.foldl (fun m st => match st.lineName with
-        | some line => if m.contains line then m
-          else m.insert line (Verified.Hsmm.ServedStations.servedStationSet rels line)
-        | none => m) {}
-    let servedSet : String → Option (Std.HashSet String) := fun line => match rels? with
-      | none => none
-      | some rels => match servedSets.get? line with
-        | some s => s
-        | none => Verified.Hsmm.ServedStations.servedStationSet rels line
-    -- A station is a line's only where the relations have the line calling
-    -- there; without relations, where the line's track passes it.
-    let servedOn := fun (line : String) (n : Verified.Hsmm.StationChain.ChainNode) =>
-      match rels?, n.stationName with
-      | some _, some name =>
-        match servedSet line with
-        | some served => Verified.Hsmm.ServedStations.stationNameServed served name
-        | none => true
-      | _, _ => true
-    let legListAll : Array (Nat × Nat × Option Verified.Hsmm.StationChain.ChainNode) := Id.run do
-      let mut out := legs.zipIdx.map fun (l, li) => (l, li, none)
-      match g? with
-      | none => return out
-      | some g =>
-        -- Within reach of some fix of the day, once per node: the cheap test
-        -- first, the track geometry only for the stations it keeps.
-        let nearAny : Array Bool := g.nodes.map fun n =>
-          n.stationName.isSome && fixes.any (fun f => nearFix f n)
-        for (l, li) in legs.zipIdx do
+    let tb : Verified.Hsmm.Journey.Tables := match preTb with
+      | some t => { t with legDur }
+      | none => Id.run do
+        let L := legs.size
+        let emitPre : FloatArray := Id.run do
+          let mut out := Verified.FloatConst.floats (L * (T + 1)) journeyZero
+          -- A minute a leg cannot emit is −∞ per cell in the outer trellis; in a
+          -- prefix sum it would poison every later minute, so it is floored
+          -- here: still far beyond any leg that spans it.
+          for (l, li) in legs.zipIdx do
+            let mut acc := journeyZero
+            for t in [0:T] do
+              let v := Verified.Hsmm.Assemble.emitAt c t l
+              acc := acc + (if v < journeyEmitFloor then journeyEmitFloor else v)
+              out := out.set! (li * (T + 1) + t + 1) acc
+          return out
+        let entryF : FloatArray := Id.run do
+          let mut out := Verified.FloatConst.floats (L * T) journeyZero
+          for (l, li) in legs.zipIdx do
+            for t in [0:T] do
+              out := out.set! (li * T + t) (Verified.Hsmm.Assemble.entryAt c t l)
+          return out
+        -- The first leg's prior is spread over the LINES of its mode (which line),
+        -- as the fitted transition weight is; the last leg's is the leg's own.
+        let prior := fun (spread : Bool) (xs : List (Verified.Hsmm.Emissions.Mode × Float)) (l : Nat) =>
           let st := c.states[l]!
-          match st.mode, st.lineName with
-          | .train, some line =>
-            if Verified.Hsmm.Emissions.isPlaceholderLine line then continue
-            for (n, ni) in g.nodes.zipIdx do
-              if !nearAny[ni]! then continue
-              if !Verified.Hsmm.StationChain.stationOnLine g line n then continue
-              if !servedOn line n then continue
-              out := out.push (l, li, some n)
-          | .stationary, some _ =>
-            -- The wait: a leg per station within reach of the fixes.
-            for (n, ni) in g.nodes.zipIdx do
-              if nearAny[ni]! then out := out.push (l, li, some n)
-          | _, _ => pure ()
-        return out
-    -- A wait continues only into a ride boarding at its node (`pairOk`) and
-    -- never ends a journey, so a wait where no ride leg boards lies on no
-    -- path: it is not built. It still counts in `boardAt`'s best station.
-    let boards : Std.HashSet String := legListAll.foldl (fun acc (l, _, st?) =>
-      match (c.states[l]!).mode, st? with
-      | .train, some n => acc.insert n.id
-      | _, _ => acc) {}
-    let keptIdx : Array Nat := (Array.range legListAll.size).filter fun i =>
-      match legListAll[i]! with
-      | (l, _, some n) => (c.states[l]!).lineName != some Verified.Hsmm.Assemble.WAIT_MARK || boards.contains n.id
-      | _ => true
-    let legList := keptIdx.map (legListAll[·]!)
-    let L := legList.size
-    let legOuter := legList.map (·.1)
-    let baseOf := legList.map (·.2.1)
-    -- A ride begins where the fixes LEAVE its board station. The station census
-    -- over the corpus's paired rides reads 86 departures with the decoded ride
-    -- beginning inside the platform wait in 85 of them. A minute with a fix of
-    -- its own at the station starts a ride only when the next minute is away
-    -- (the departure seen); a minute whose fix is carried from before (a dark
-    -- platform, `fixAt`) may start one, the departure lying somewhere in the
-    -- dark. The wait before the ride keeps every reach minute.
-    let reachStarts : Array (Array Nat) := legList.map fun (l, _, st?) =>
-      match st? with
-      | none => #[]
-      | some n =>
-        let near := fun (t : Nat) => nearFix fixes[t]! n
-        let seen := fun (t : Nat) => match c.obs[t]? with | some o => o.gps.isSome | none => false
-        -- Seen at the station as the minute ENDS (its own last fix): a train
-        -- pulling away slowly leaves its first moving minute's median within
-        -- reach, and the dark minute after a train enters the tunnel says
-        -- nothing of where he is.
-        let stillHere := fun (t : Nat) => t < T && seen t
-          && nearFix (match fixBefore t with | some f => some f | none => fixes[t]!) n
-        if (c.states[l]!).mode == .train then
-          (Array.range T).filter fun t => near t && (!seen t || !stillHere t || !stillHere (t + 1))
-        else (Array.range T).filter near
-    -- The board station against the fix of the minute BEFORE the leg — where
-    -- he stood when the ride began (the leg's own first minute already moves):
-    -- the chain's anchor form, relative to the best station at that minute.
-    let boardAt : FloatArray := Id.run do
-      let LA := legListAll.size
-      let mut raw := Verified.FloatConst.floats (LA * T) journeyZero
-      let mut has := Array.replicate (LA * T) false
-      -- A station is a complex of nodes (one per line's platforms); the leg's
-      -- distance is its NAME's nearest node, so two lines boarded at the same
-      -- station tie here and their pairs decide.
-      let stationNodes : Std.HashMap String (Array Verified.Hsmm.StationChain.ChainNode) :=
-        match g? with
-        | none => {}
-        | some g => g.nodes.foldl (fun m n => match n.stationName with
-            | some name => m.insert name ((m.getD name #[]).push n)
-            | none => m) {}
-      for (entry, li) in legListAll.zipIdx do
-        let (_, _, st?) := entry
-        let some n := st? | continue
-        let nodes := match n.stationName with
-          | some name => stationNodes.getD name #[n]
-          | none => #[n]
-        for t in [0:T] do
-          let f := if t == 0 then fixes[t]! else match fixBefore (t - 1) with
-            | some f => some f | none => fixes[t]!
-          match f with
-          | none => pure ()
-          | some (la, lo) =>
-            let dM := nodes.foldl (fun acc x =>
-              min acc (Verified.Hsmm.FloatScore.haversineMeters la lo x.lat x.lon))
-              (Verified.Hsmm.FloatScore.haversineMeters la lo n.lat n.lon)
-            let z := dM / Verified.Hsmm.StationChain.STATION_SIGMA_M
-            raw := raw.set! (li * T + t) (max Verified.Hsmm.StationChain.ANCHOR_CLAMP (-(Verified.Hsmm.Journey.HALF * z * z)))
-            has := has.set! (li * T + t) true
-      let mut out := Verified.FloatConst.floats (L * T) journeyZero
-      for t in [0:T] do
-        let mut mx := Verified.FloatConst.negInf
-        for ai in [0:LA] do
-          if has[ai * T + t]! then mx := max mx (raw.get! (ai * T + t))
-        if mx == Verified.FloatConst.negInf then continue
-        for (ai, li) in keptIdx.zipIdx do
-          if has[ai * T + t]! then out := out.set! (li * T + t) (raw.get! (ai * T + t) - mx)
-      return out
-    let reachMask : Array Bool := Id.run do
-      let mut out := Array.replicate (L * T) true
-      for (starts, li) in reachStarts.zipIdx do
-        if starts.isEmpty then continue
-        for t in [0:T] do out := out.set! (li * T + t) false
-        for t in starts do out := out.set! (li * T + t) true
-      return out
-    let (expectedMin, alightName, pairPathM, pairCalls) :
-        FloatArray × Array (Option String) × FloatArray × FloatArray := Id.run do
-      let mut out := Verified.FloatConst.floats (L * T) Verified.FloatConst.negInf
-      -- The station each paired leg alights at, per end minute (`stopAlight`).
-      let mut names : Array (Option String) := Array.replicate (L * T) none
-      let mut pathOut := Verified.FloatConst.floats (L * T) Verified.FloatConst.negInf
-      let mut callsOut := Verified.FloatConst.floats (L * T) Verified.FloatConst.negInf
-      match g? with
-      | none => return (out, names, pathOut, callsOut)
-      | some g =>
-        -- The stations within reach of each minute's next fix, once for every
-        -- line (each line then keeps those on its track).
-        let nearE : Array (Option (Array (Verified.Hsmm.StationChain.ChainNode × Float))) :=
-          (Array.range T).map fun e => (fixAfter e).map fun (la, lo) =>
-            Verified.Hsmm.StationChain.stationsNear g la lo journeyReachM
-        let mut alightCache : Std.HashMap String (Array (Option Verified.Hsmm.StationChain.ChainNode)) := {}
-        -- The calls between a pair, once per (line, board, alight).
-        let mut stopsCache : Std.HashMap (String × String × String) (Option Nat) := {}
-        let mut footCache : Std.HashMap String (Std.HashSet String) := {}
-        for (entry, li) in legList.zipIdx do
-          let (l, _, st?) := entry
-          let some σ := st? | continue
-          let line := (c.states[l]!).lineName.getD ""
-          -- Per line, the station the fixes put each minute's end at, once.
-          let alights := match alightCache.get? line with
-            | some a => a
-            | none =>
-              -- The track test once per station that comes within reach.
-              let onLine : Std.HashMap String Bool := nearE.foldl (fun m ns? =>
-                (ns?.getD #[]).foldl (fun m (n, _) => if m.contains n.id then m
-                  else m.insert n.id (Verified.Hsmm.StationChain.stationOnLine g line n && servedOn line n)) m) {}
-              nearE.map fun ns? => match ns? with
+          match xs.find? (·.1 == st.mode) with
+          | some (_, lp) =>
+            if !spread then lp else
+            let n := (legs.foldl (fun (acc : List (Option String)) l2 =>
+              let s2 := c.states[l2]!
+              if s2.mode == st.mode && !acc.contains s2.lineName then s2.lineName :: acc else acc) []).length
+            lp - Float.log (Verified.FloatConst.natToFloat (max n 1))
+          | none => Verified.FloatConst.negInf
+        let jp := c.segEm.p.journey.get!
+        -- S2: a named line's leg per board station within reach of the day's
+        -- fixes. It shares its base's tables, begins only within reach of its
+        -- station, and prices its length by the along-line path to the station
+        -- the fixes put the ride's end at.
+        let fixAt := fun (t : Nat) => match c.obs[t]? with
+          | none => none
+          | some o => match o.gps with
+            | some gp => some (gp.lat, gp.lon)
+            | none => match o.prevGpsFix with
+              | some f => if o.ts - f.ts ≤ journeyFixStaleS then some (f.lat, f.lon) else none
               | none => none
-              | some ns =>
-                let near := ns.filter fun (n, _) => onLine.getD n.id false
-                (near.foldl (fun (bestN : Option (Verified.Hsmm.StationChain.ChainNode × Float)) (n, d) =>
-                  match bestN with
-                  | none => some (n, d)
-                  | some (_, bd) => if d < bd then some (n, d) else bestN) none).map (·.1)
-          alightCache := alightCache.insert line alights
-          let footOf := fun (cache : Std.HashMap String (Std.HashSet String)) (n : Verified.Hsmm.StationChain.ChainNode) =>
-            match cache.get? n.id with
-            | some f => (f, cache)
-            | none =>
-              let f := Verified.Hsmm.StationChain.stationFootprintNodes g n
-              (f, cache.insert n.id f)
-          let (start, fc) := footOf footCache σ
-          footCache := fc
-          let dist := Verified.Hsmm.StationChain.ssspMap
-            (Verified.Hsmm.StationChain.lineSssp g line (start.toArray.map (fun id => (id, journeyZero))))
-          -- The path along the line from the board's footprint to a station's.
-          let pathTo := fun (fc : Std.HashMap String (Std.HashSet String)) (n : Verified.Hsmm.StationChain.ChainNode) =>
-            let (goal, fc2) := footOf fc n
-            (goal.fold (fun (acc : Option Float) id => match dist.get? id with
-              | none => acc
-              | some d => match acc with | none => some d | some bd => if d < bd then some d else acc) none, fc2)
-          for e in [0:T] do
-            -- The alight is where the fixes resume AWAY from the board station
-            -- and AT a station of the line, within the stale window: a track
-            -- that sits at the station it boarded at is the phone repeating its
-            -- last position underground (07-02: Finchley Road until 08:15:20Z,
-            -- Baker Street at 08:16:47Z), and the minute straddling the arrival
-            -- carries a position between the two stations — away from the
-            -- board, near no alight — so stopping there left a one-stop hop
-            -- with no ride time while a line stationed nearer the midpoint kept
-            -- searching and found its pair.
-            -- The arrival is the FIRST minute after the leg whose END is away
-            -- from the board and at a served station of the line, within the
-            -- stale window. Read from the minute's last fix: the minute after
-            -- the leg begins at a call on the way and ends on the platform
-            -- (07-07: Great Portland Street 08:44:29–08:45:03, Euston Square
-            -- at 08:45:42). The LAST such minute was the next ride (05-18:
-            -- Baker Street at 10:48, the change, Euston Square at 10:52).
-            -- It lies at or beyond the farthest station the ride's own fixes
-            -- reached in the stale window before its end, along the line: the
-            -- phone repeats a call's position underground too (07-16: Finchley
-            -- Road at 07:41–07:42 after St John's Wood at 07:39, Baker Street
-            -- at 07:44). The look-back stops at a fix at the board station, so
-            -- a short hop does not read the ride before it.
-            let mut passedM : Float := journeyZero
-            let mut t := e
-            while true do
-              match alights[t]! with
-              | some r =>
-                if r.stationName == σ.stationName then break
-                let (pm, fc2) := pathTo footCache r
-                footCache := fc2
-                passedM := max passedM (pm.getD journeyZero)
-              | none => pure ()
-              if t == 0 || e - t ≥ journeyFixStaleMin then break
-              t := t - 1
-            let mut m := e + 1
-            let mut found : Option (Verified.Hsmm.StationChain.ChainNode × Option Float) := none
-            while m < T && m ≤ e + journeyFixStaleMin do
-              match fixAfter m, alights[m]! with
-              | some (la, lo), some a =>
-                -- The same STATION is no ride: a station is several nodes
-                -- (King's Cross has six), and a node of the board station
-                -- within reach of the next fix priced a one-minute ride to
-                -- itself at 0.8 minutes.
-                if Verified.Hsmm.FloatScore.haversineMeters la lo σ.lat σ.lon > journeyReachM
-                    && a.stationName != σ.stationName then
-                  let (pm, fc2) := pathTo footCache a
-                  footCache := fc2
-                  if pm.getD passedM ≥ passedM then
-                    found := some (a, pm)
-                    break
+        -- The last raw fix of the minute, not its median: where he was when the
+        -- next minute began. A minute straddling an arrival puts its median between
+        -- the two stations and its first fix at the one before.
+        let fixBefore := fun (t : Nat) => match c.obs[t]? with
+          | none => none
+          | some o => match o.lastFix with
+            | some f => some (f.lat, f.lon)
+            | none => match o.gps with
+              | some gp => some (gp.lat, gp.lon)
+              | none => none
+        -- The same, or the next fix within the stale window for a dark minute.
+        let fixAfter := fun (t : Nat) => match fixBefore t with
+          | some f => some f
+          | none => match c.obs[t]? with
+            | none => none
+            | some o => match o.nextGpsFix with
+              | some f => if f.ts - o.ts ≤ journeyFixStaleS then some (f.lat, f.lon) else none
+              | none => none
+        let nearFix := fun (f : Option (Float × Float)) (n : Verified.Hsmm.StationChain.ChainNode) =>
+          match f with
+          | some (la, lo) => Verified.Hsmm.FloatScore.haversineMeters la lo n.lat n.lon ≤ journeyReachM
+          | none => false
+        let fixes : Array (Option (Float × Float)) := (Array.range T).map fixAt
+        -- Each line's served stations, once: matching a line to its relations
+        -- parses every relation's name, and the legs' tables ask per station.
+        let servedSets : Std.HashMap String (Option (Std.HashSet String)) := match rels? with
+          | none => {}
+          | some rels => c.states.foldl (fun m st => match st.lineName with
+            | some line => if m.contains line then m
+              else m.insert line (Verified.Hsmm.ServedStations.servedStationSet rels line)
+            | none => m) {}
+        let servedSet : String → Option (Std.HashSet String) := fun line => match rels? with
+          | none => none
+          | some rels => match servedSets.get? line with
+            | some s => s
+            | none => Verified.Hsmm.ServedStations.servedStationSet rels line
+        -- A station is a line's only where the relations have the line calling
+        -- there; without relations, where the line's track passes it.
+        let servedOn := fun (line : String) (n : Verified.Hsmm.StationChain.ChainNode) =>
+          match rels?, n.stationName with
+          | some _, some name =>
+            match servedSet line with
+            | some served => Verified.Hsmm.ServedStations.stationNameServed served name
+            | none => true
+          | _, _ => true
+        let legListAll : Array (Nat × Nat × Option Verified.Hsmm.StationChain.ChainNode) := Id.run do
+          let mut out := legs.zipIdx.map fun (l, li) => (l, li, none)
+          match g? with
+          | none => return out
+          | some g =>
+            -- Within reach of some fix of the day, once per node: the cheap test
+            -- first, the track geometry only for the stations it keeps.
+            let nearAny : Array Bool := g.nodes.map fun n =>
+              n.stationName.isSome && fixes.any (fun f => nearFix f n)
+            for (l, li) in legs.zipIdx do
+              let st := c.states[l]!
+              match st.mode, st.lineName with
+              | .train, some line =>
+                if Verified.Hsmm.Emissions.isPlaceholderLine line then continue
+                for (n, ni) in g.nodes.zipIdx do
+                  if !nearAny[ni]! then continue
+                  if !Verified.Hsmm.StationChain.stationOnLine g line n then continue
+                  if !servedOn line n then continue
+                  out := out.push (l, li, some n)
+              | .stationary, some _ =>
+                -- The wait: a leg per station within reach of the fixes.
+                for (n, ni) in g.nodes.zipIdx do
+                  if nearAny[ni]! then out := out.push (l, li, some n)
               | _, _ => pure ()
-              m := m + 1
-            let some (a, pm) := found | continue
-            names := names.set! (li * T + e) a.stationName
-            match pm with
-            | some pathM =>
-              -- The chain's ride-time form: with the calls between the pair
-              -- known, running time plus a stop each; else the all-stations
-              -- average.
-              let calls ← match rels?, σ.stationName, a.stationName with
-                | some rels, some sa, some sb =>
-                  match stopsCache.get? (line, sa, sb) with
+            return out
+        -- A wait continues only into a ride boarding at its node (`pairOk`) and
+        -- never ends a journey, so a wait where no ride leg boards lies on no
+        -- path: it is not built. It still counts in `boardAt`'s best station.
+        let boards : Std.HashSet String := legListAll.foldl (fun acc (l, _, st?) =>
+          match (c.states[l]!).mode, st? with
+          | .train, some n => acc.insert n.id
+          | _, _ => acc) {}
+        let keptIdx : Array Nat := (Array.range legListAll.size).filter fun i =>
+          match legListAll[i]! with
+          | (l, _, some n) => (c.states[l]!).lineName != some Verified.Hsmm.Assemble.WAIT_MARK || boards.contains n.id
+          | _ => true
+        let legList := keptIdx.map (legListAll[·]!)
+        let L := legList.size
+        let legOuter := legList.map (·.1)
+        let baseOf := legList.map (·.2.1)
+        -- A ride begins where the fixes LEAVE its board station. The station census
+        -- over the corpus's paired rides reads 86 departures with the decoded ride
+        -- beginning inside the platform wait in 85 of them. A minute with a fix of
+        -- its own at the station starts a ride only when the next minute is away
+        -- (the departure seen); a minute whose fix is carried from before (a dark
+        -- platform, `fixAt`) may start one, the departure lying somewhere in the
+        -- dark. The wait before the ride keeps every reach minute.
+        let reachStarts : Array (Array Nat) := legList.map fun (l, _, st?) =>
+          match st? with
+          | none => #[]
+          | some n =>
+            let near := fun (t : Nat) => nearFix fixes[t]! n
+            let seen := fun (t : Nat) => match c.obs[t]? with | some o => o.gps.isSome | none => false
+            -- Seen at the station as the minute ENDS (its own last fix): a train
+            -- pulling away slowly leaves its first moving minute's median within
+            -- reach, and the dark minute after a train enters the tunnel says
+            -- nothing of where he is.
+            let stillHere := fun (t : Nat) => t < T && seen t
+              && nearFix (match fixBefore t with | some f => some f | none => fixes[t]!) n
+            if (c.states[l]!).mode == .train then
+              (Array.range T).filter fun t => near t && (!seen t || !stillHere t || !stillHere (t + 1))
+            else (Array.range T).filter near
+        -- The board station against the fix of the minute BEFORE the leg — where
+        -- he stood when the ride began (the leg's own first minute already moves):
+        -- the chain's anchor form, relative to the best station at that minute.
+        let boardAt : FloatArray := Id.run do
+          let LA := legListAll.size
+          let mut raw := Verified.FloatConst.floats (LA * T) journeyZero
+          let mut has := Array.replicate (LA * T) false
+          -- A station is a complex of nodes (one per line's platforms); the leg's
+          -- distance is its NAME's nearest node, so two lines boarded at the same
+          -- station tie here and their pairs decide.
+          let stationNodes : Std.HashMap String (Array Verified.Hsmm.StationChain.ChainNode) :=
+            match g? with
+            | none => {}
+            | some g => g.nodes.foldl (fun m n => match n.stationName with
+                | some name => m.insert name ((m.getD name #[]).push n)
+                | none => m) {}
+          for (entry, li) in legListAll.zipIdx do
+            let (_, _, st?) := entry
+            let some n := st? | continue
+            let nodes := match n.stationName with
+              | some name => stationNodes.getD name #[n]
+              | none => #[n]
+            for t in [0:T] do
+              let f := if t == 0 then fixes[t]! else match fixBefore (t - 1) with
+                | some f => some f | none => fixes[t]!
+              match f with
+              | none => pure ()
+              | some (la, lo) =>
+                let dM := nodes.foldl (fun acc x =>
+                  min acc (Verified.Hsmm.FloatScore.haversineMeters la lo x.lat x.lon))
+                  (Verified.Hsmm.FloatScore.haversineMeters la lo n.lat n.lon)
+                let z := dM / Verified.Hsmm.StationChain.STATION_SIGMA_M
+                raw := raw.set! (li * T + t) (max Verified.Hsmm.StationChain.ANCHOR_CLAMP (-(Verified.Hsmm.Journey.HALF * z * z)))
+                has := has.set! (li * T + t) true
+          let mut out := Verified.FloatConst.floats (L * T) journeyZero
+          for t in [0:T] do
+            let mut mx := Verified.FloatConst.negInf
+            for ai in [0:LA] do
+              if has[ai * T + t]! then mx := max mx (raw.get! (ai * T + t))
+            if mx == Verified.FloatConst.negInf then continue
+            for (ai, li) in keptIdx.zipIdx do
+              if has[ai * T + t]! then out := out.set! (li * T + t) (raw.get! (ai * T + t) - mx)
+          return out
+        let reachMask : Array Bool := Id.run do
+          let mut out := Array.replicate (L * T) true
+          for (starts, li) in reachStarts.zipIdx do
+            if starts.isEmpty then continue
+            for t in [0:T] do out := out.set! (li * T + t) false
+            for t in starts do out := out.set! (li * T + t) true
+          return out
+        let (expectedMin, alightName, pairPathM, pairCalls) :
+            FloatArray × Array (Option String) × FloatArray × FloatArray := Id.run do
+          let mut out := Verified.FloatConst.floats (L * T) Verified.FloatConst.negInf
+          -- The station each paired leg alights at, per end minute (`stopAlight`).
+          let mut names : Array (Option String) := Array.replicate (L * T) none
+          let mut pathOut := Verified.FloatConst.floats (L * T) Verified.FloatConst.negInf
+          let mut callsOut := Verified.FloatConst.floats (L * T) Verified.FloatConst.negInf
+          match g? with
+          | none => return (out, names, pathOut, callsOut)
+          | some g =>
+            -- The stations within reach of each minute's next fix, once for every
+            -- line (each line then keeps those on its track).
+            let nearE : Array (Option (Array (Verified.Hsmm.StationChain.ChainNode × Float))) :=
+              (Array.range T).map fun e => (fixAfter e).map fun (la, lo) =>
+                Verified.Hsmm.StationChain.stationsNear g la lo journeyReachM
+            let mut alightCache : Std.HashMap String (Array (Option Verified.Hsmm.StationChain.ChainNode)) := {}
+            -- The calls between a pair, once per (line, board, alight).
+            let mut stopsCache : Std.HashMap (String × String × String) (Option Nat) := {}
+            let mut footCache : Std.HashMap String (Std.HashSet String) := {}
+            for (entry, li) in legList.zipIdx do
+              let (l, _, st?) := entry
+              let some σ := st? | continue
+              let line := (c.states[l]!).lineName.getD ""
+              -- Per line, the station the fixes put each minute's end at, once.
+              let alights := match alightCache.get? line with
+                | some a => a
+                | none =>
+                  -- The track test once per station that comes within reach.
+                  let onLine : Std.HashMap String Bool := nearE.foldl (fun m ns? =>
+                    (ns?.getD #[]).foldl (fun m (n, _) => if m.contains n.id then m
+                      else m.insert n.id (Verified.Hsmm.StationChain.stationOnLine g line n && servedOn line n)) m) {}
+                  nearE.map fun ns? => match ns? with
+                  | none => none
+                  | some ns =>
+                    let near := ns.filter fun (n, _) => onLine.getD n.id false
+                    (near.foldl (fun (bestN : Option (Verified.Hsmm.StationChain.ChainNode × Float)) (n, d) =>
+                      match bestN with
+                      | none => some (n, d)
+                      | some (_, bd) => if d < bd then some (n, d) else bestN) none).map (·.1)
+              alightCache := alightCache.insert line alights
+              let footOf := fun (cache : Std.HashMap String (Std.HashSet String)) (n : Verified.Hsmm.StationChain.ChainNode) =>
+                match cache.get? n.id with
+                | some f => (f, cache)
+                | none =>
+                  let f := Verified.Hsmm.StationChain.stationFootprintNodes g n
+                  (f, cache.insert n.id f)
+              let (start, fc) := footOf footCache σ
+              footCache := fc
+              let dist := Verified.Hsmm.StationChain.ssspMap
+                (Verified.Hsmm.StationChain.lineSssp g line (start.toArray.map (fun id => (id, journeyZero))))
+              -- The path along the line from the board's footprint to a station's.
+              let pathTo := fun (fc : Std.HashMap String (Std.HashSet String)) (n : Verified.Hsmm.StationChain.ChainNode) =>
+                let (goal, fc2) := footOf fc n
+                (goal.fold (fun (acc : Option Float) id => match dist.get? id with
+                  | none => acc
+                  | some d => match acc with | none => some d | some bd => if d < bd then some d else acc) none, fc2)
+              for e in [0:T] do
+                -- The alight is where the fixes resume AWAY from the board station
+                -- and AT a station of the line, within the stale window: a track
+                -- that sits at the station it boarded at is the phone repeating its
+                -- last position underground (07-02: Finchley Road until 08:15:20Z,
+                -- Baker Street at 08:16:47Z), and the minute straddling the arrival
+                -- carries a position between the two stations — away from the
+                -- board, near no alight — so stopping there left a one-stop hop
+                -- with no ride time while a line stationed nearer the midpoint kept
+                -- searching and found its pair.
+                -- The arrival is the FIRST minute after the leg whose END is away
+                -- from the board and at a served station of the line, within the
+                -- stale window. Read from the minute's last fix: the minute after
+                -- the leg begins at a call on the way and ends on the platform
+                -- (07-07: Great Portland Street 08:44:29–08:45:03, Euston Square
+                -- at 08:45:42). The LAST such minute was the next ride (05-18:
+                -- Baker Street at 10:48, the change, Euston Square at 10:52).
+                -- It lies at or beyond the farthest station the ride's own fixes
+                -- reached in the stale window before its end, along the line: the
+                -- phone repeats a call's position underground too (07-16: Finchley
+                -- Road at 07:41–07:42 after St John's Wood at 07:39, Baker Street
+                -- at 07:44). The look-back stops at a fix at the board station, so
+                -- a short hop does not read the ride before it.
+                let mut passedM : Float := journeyZero
+                let mut t := e
+                while true do
+                  match alights[t]! with
+                  | some r =>
+                    if r.stationName == σ.stationName then break
+                    let (pm, fc2) := pathTo footCache r
+                    footCache := fc2
+                    passedM := max passedM (pm.getD journeyZero)
+                  | none => pure ()
+                  if t == 0 || e - t ≥ journeyFixStaleMin then break
+                  t := t - 1
+                let mut m := e + 1
+                let mut found : Option (Verified.Hsmm.StationChain.ChainNode × Option Float) := none
+                while m < T && m ≤ e + journeyFixStaleMin do
+                  match fixAfter m, alights[m]! with
+                  | some (la, lo), some a =>
+                    -- The same STATION is no ride: a station is several nodes
+                    -- (King's Cross has six), and a node of the board station
+                    -- within reach of the next fix priced a one-minute ride to
+                    -- itself at 0.8 minutes.
+                    if Verified.Hsmm.FloatScore.haversineMeters la lo σ.lat σ.lon > journeyReachM
+                        && a.stationName != σ.stationName then
+                      let (pm, fc2) := pathTo footCache a
+                      footCache := fc2
+                      if pm.getD passedM ≥ passedM then
+                        found := some (a, pm)
+                        break
+                  | _, _ => pure ()
+                  m := m + 1
+                let some (a, pm) := found | continue
+                names := names.set! (li * T + e) a.stationName
+                match pm with
+                | some pathM =>
+                  -- The chain's ride-time form: with the calls between the pair
+                  -- known, running time plus a stop each; else the all-stations
+                  -- average.
+                  let calls ← match rels?, σ.stationName, a.stationName with
+                    | some rels, some sa, some sb =>
+                      match stopsCache.get? (line, sa, sb) with
+                      | some k => pure k
+                      | none =>
+                        let k := Verified.Hsmm.ServedStations.intermediateStops rels line sa sb
+                        stopsCache := stopsCache.insert (line, sa, sb) k
+                        pure k
+                    | _, _, _ => pure none
+                  let expected := match calls with
+                    | some k => (pathM * journeyKmPerM / Verified.Hsmm.StationChain.RIDE_RUN_KMH) * journeyMinPerHour
+                        + Verified.Hsmm.StationChain.RIDE_STOP_MIN * Verified.FloatConst.natToFloat k
+                        + Verified.Hsmm.StationChain.RIDE_FIXED_MIN
+                    | none => (pathM * journeyKmPerM / Verified.Hsmm.StationChain.TUBE_SPEED_KMH) * journeyMinPerHour
+                        + Verified.Hsmm.StationChain.STOP_OVERHEAD_MIN
+                  out := out.set! (li * T + e) expected
+                  pathOut := pathOut.set! (li * T + e) pathM
+                  callsOut := callsOut.set! (li * T + e) (match calls with
+                    | some k => Verified.FloatConst.natToFloat k
+                    | none => Verified.FloatConst.negInf)
+                | none => pure ()
+            return (out, names, pathOut, callsOut)
+        let firstCtxL : FloatArray := Id.run do
+          let mut out := Verified.FloatConst.floats (L * T) journeyZero
+          for (bi, li) in baseOf.zipIdx do
+            for t in [0:T] do
+              out := out.set! (li * T + t) (firstCtx.get! (bi * T + t))
+          return out
+        let durBaseF : FloatArray := Id.run do
+          let mut out := Verified.FloatConst.floats (legSlots.size * maxJ) journeyZero
+          for (cls, slot) in legSlots.zipIdx do
+            for d0 in [0:maxJ] do
+              out := out.set! (slot * maxJ + d0) (Verified.Hsmm.Assemble.durPriorBase c reps[cls]! (d0 + 1))
+          return out
+        -- The pair rule beside the base matrix: a wait at σ is followed by a ride
+        -- boarding at σ and by nothing else (a pause inside a walk is the walk's);
+        -- other legs pair freely. The wait never ends a journey (`last` below).
+        let isWaitLeg := fun (l : Nat) => (c.states[l]!).lineName == some Verified.Hsmm.Assemble.WAIT_MARK
+        let pairOk : Array Bool := Id.run do
+          let mut out := Array.replicate (L * L) true
+          for (ea, ai) in legList.zipIdx do
+            let (la, _, sa) := ea
+            if !isWaitLeg la then continue
+            for (eb, bi) in legList.zipIdx do
+              let (lb, _, sb) := eb
+              let ok := match (c.states[lb]!).mode, sa, sb with
+                | .train, some x, some y => x.id == y.id
+                | _, _, _ => false
+              if !ok then out := out.set! (ai * L + bi) false
+          return out
+        let legName : Array String := legList.map fun (l, _, st?) =>
+          let base := Verified.Hsmm.StateSpace.stateKey c.states[l]!
+          match st? with
+          | some n => base ++ "@" ++ (n.stationName.getD n.id)
+          | none => base
+        -- The train legs' calling evidence (`StationStops`), with the record's `stops`.
+        let (stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst) :
+            FloatArray × Array (Option Nat) × Array FloatArray × FloatArray × Array Nat :=
+          match jp.stops, g? with
+          | some sp, some g => Id.run do
+            let ps := Verified.Hsmm.StationStops.passes g c.obs
+            let calls := fun (line : String) (st : String) => match servedSet line with
+              | some served => Verified.Hsmm.ServedStations.stationNameServed served st
+              | none => false
+            let lineOf := fun (l : Nat) =>
+              let st := c.states[l]!
+              if st.mode != .train then none else
+              st.lineName.filter fun n => !Verified.Hsmm.Emissions.isPlaceholderLine n
+            let mut pre := Verified.FloatConst.floats (L * (T + 1)) journeyZero
+            let mut active := Verified.FloatConst.floats (L * T) journeyZero
+            let mut activeFirst : Array Nat := Array.replicate (L * T) T
+            let mut alightIdx : Array (Option Nat) := Array.replicate (L * T) none
+            let mut alightPre : Array FloatArray := #[]
+            let mut alightKey : Std.HashMap (String × String) Nat := {}
+            for (entry, li) in legList.zipIdx do
+              let (l, _, st?) := entry
+              let some line := lineOf l | continue
+              let row := Verified.Hsmm.StationStops.prefixSum
+                (Verified.Hsmm.StationStops.lineEvidence sp ps T (calls line) (st?.bind (·.stationName)))
+              for t in [0:T + 1] do pre := pre.set! (li * (T + 1) + t) (row.get! t)
+              let (act, actFirst) := Verified.Hsmm.StationStops.activeEvidence sp ps T (calls line)
+                (st?.bind (·.stationName))
+              for t in [0:T] do
+                active := active.set! (li * T + t) (act.get! t)
+                activeFirst := activeFirst.set! (li * T + t) actFirst[t]!
+              for e in [0:T] do
+                let some a := alightName[li * T + e]! | continue
+                let k ← match alightKey.get? (line, a) with
                   | some k => pure k
                   | none =>
-                    let k := Verified.Hsmm.ServedStations.intermediateStops rels line sa sb
-                    stopsCache := stopsCache.insert (line, sa, sb) k
+                    let k := alightPre.size
+                    alightPre := alightPre.push (Verified.Hsmm.StationStops.prefixSum
+                      (Verified.Hsmm.StationStops.lineEvidence sp ps T (fun x => x == a && calls line x)))
+                    alightKey := alightKey.insert (line, a) k
                     pure k
-                | _, _, _ => pure none
-              let expected := match calls with
-                | some k => (pathM * journeyKmPerM / Verified.Hsmm.StationChain.RIDE_RUN_KMH) * journeyMinPerHour
-                    + Verified.Hsmm.StationChain.RIDE_STOP_MIN * Verified.FloatConst.natToFloat k
-                    + Verified.Hsmm.StationChain.RIDE_FIXED_MIN
-                | none => (pathM * journeyKmPerM / Verified.Hsmm.StationChain.TUBE_SPEED_KMH) * journeyMinPerHour
-                    + Verified.Hsmm.StationChain.STOP_OVERHEAD_MIN
-              out := out.set! (li * T + e) expected
-              pathOut := pathOut.set! (li * T + e) pathM
-              callsOut := callsOut.set! (li * T + e) (match calls with
-                | some k => Verified.FloatConst.natToFloat k
-                | none => Verified.FloatConst.negInf)
-            | none => pure ()
-        return (out, names, pathOut, callsOut)
-    let firstCtxL : FloatArray := Id.run do
-      let mut out := Verified.FloatConst.floats (L * T) journeyZero
-      for (bi, li) in baseOf.zipIdx do
-        for t in [0:T] do
-          out := out.set! (li * T + t) (firstCtx.get! (bi * T + t))
-      return out
-    let durBaseF : FloatArray := Id.run do
-      let mut out := Verified.FloatConst.floats (legSlots.size * maxJ) journeyZero
-      for (cls, slot) in legSlots.zipIdx do
-        for d0 in [0:maxJ] do
-          out := out.set! (slot * maxJ + d0) (Verified.Hsmm.Assemble.durPriorBase c reps[cls]! (d0 + 1))
-      return out
-    -- The pair rule beside the base matrix: a wait at σ is followed by a ride
-    -- boarding at σ and by nothing else (a pause inside a walk is the walk's);
-    -- other legs pair freely. The wait never ends a journey (`last` below).
-    let isWaitLeg := fun (l : Nat) => (c.states[l]!).lineName == some Verified.Hsmm.Assemble.WAIT_MARK
-    let pairOk : Array Bool := Id.run do
-      let mut out := Array.replicate (L * L) true
-      for (ea, ai) in legList.zipIdx do
-        let (la, _, sa) := ea
-        if !isWaitLeg la then continue
-        for (eb, bi) in legList.zipIdx do
-          let (lb, _, sb) := eb
-          let ok := match (c.states[lb]!).mode, sa, sb with
-            | .train, some x, some y => x.id == y.id
-            | _, _, _ => false
-          if !ok then out := out.set! (ai * L + bi) false
-      return out
-    let legName : Array String := legList.map fun (l, _, st?) =>
-      let base := Verified.Hsmm.StateSpace.stateKey c.states[l]!
-      match st? with
-      | some n => base ++ "@" ++ (n.stationName.getD n.id)
-      | none => base
-    -- The train legs' calling evidence (`StationStops`), with the record's `stops`.
-    let (stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst) :
-        FloatArray × Array (Option Nat) × Array FloatArray × FloatArray × Array Nat :=
-      match jp.stops, g? with
-      | some sp, some g => Id.run do
-        let ps := Verified.Hsmm.StationStops.passes g c.obs
-        let calls := fun (line : String) (st : String) => match servedSet line with
-          | some served => Verified.Hsmm.ServedStations.stationNameServed served st
-          | none => false
-        let lineOf := fun (l : Nat) =>
-          let st := c.states[l]!
-          if st.mode != .train then none else
-          st.lineName.filter fun n => !Verified.Hsmm.Emissions.isPlaceholderLine n
-        let mut pre := Verified.FloatConst.floats (L * (T + 1)) journeyZero
-        let mut active := Verified.FloatConst.floats (L * T) journeyZero
-        let mut activeFirst : Array Nat := Array.replicate (L * T) T
-        let mut alightIdx : Array (Option Nat) := Array.replicate (L * T) none
-        let mut alightPre : Array FloatArray := #[]
-        let mut alightKey : Std.HashMap (String × String) Nat := {}
-        for (entry, li) in legList.zipIdx do
-          let (l, _, st?) := entry
-          let some line := lineOf l | continue
-          let row := Verified.Hsmm.StationStops.prefixSum
-            (Verified.Hsmm.StationStops.lineEvidence sp ps T (calls line) (st?.bind (·.stationName)))
-          for t in [0:T + 1] do pre := pre.set! (li * (T + 1) + t) (row.get! t)
-          let (act, actFirst) := Verified.Hsmm.StationStops.activeEvidence sp ps T (calls line)
-            (st?.bind (·.stationName))
-          for t in [0:T] do
-            active := active.set! (li * T + t) (act.get! t)
-            activeFirst := activeFirst.set! (li * T + t) actFirst[t]!
-          for e in [0:T] do
-            let some a := alightName[li * T + e]! | continue
-            let k ← match alightKey.get? (line, a) with
-              | some k => pure k
-              | none =>
-                let k := alightPre.size
-                alightPre := alightPre.push (Verified.Hsmm.StationStops.prefixSum
-                  (Verified.Hsmm.StationStops.lineEvidence sp ps T (fun x => x == a && calls line x)))
-                alightKey := alightKey.insert (line, a) k
-                pure k
-            alightIdx := alightIdx.set! (li * T + e) (some k)
-        return (pre, alightIdx, alightPre, active, activeFirst)
-      | _, _ => (FloatArray.empty, #[], #[], FloatArray.empty, #[])
-    let tb : Verified.Hsmm.Journey.Tables :=
-      { T, maxJ, journey := jI, legs := legOuter, legName, baseOf, nBase := legs.size
-        stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst
-        legStation := legList.map fun (_, _, st?) => st?.bind (·.stationName)
-        legNode := legList.map fun (_, _, st?) => st?.map fun n => (n.lat, n.lon)
-        legSlot := legOuter.map (fun l => (slotOfCls durClass[l]!).getD 0)
-        nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
-        first := legOuter.map (prior true jp.firstLeg)
-        last := legOuter.map fun l => if isWaitLeg l then Verified.FloatConst.negInf else prior false jp.lastLeg l
-        firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, alightName, pairPathM, pairCalls, boardAt, durBaseF, pairOk }
+                alightIdx := alightIdx.set! (li * T + e) (some k)
+            return (pre, alightIdx, alightPre, active, activeFirst)
+          | _, _ => (FloatArray.empty, #[], #[], FloatArray.empty, #[])
+        let r : Verified.Hsmm.Journey.Tables :=
+          { T, maxJ, journey := jI, legs := legOuter, legName, baseOf, nBase := legs.size
+            stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst
+            legStation := legList.map fun (_, _, st?) => st?.bind (·.stationName)
+            legNode := legList.map fun (_, _, st?) => st?.map fun n => (n.lat, n.lon)
+            legSlot := legOuter.map (fun l => (slotOfCls durClass[l]!).getD 0)
+            nSlots := legSlots.size, emitPre, entry := entryF, legDur, trans
+            first := legOuter.map (prior true jp.firstLeg)
+            last := legOuter.map fun l => if isWaitLeg l then Verified.FloatConst.negInf else prior false jp.lastLeg l
+            firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, alightName, pairPathM, pairCalls, boardAt, durBaseF, pairOk }
+        return r
     if tablesOnly then
       -- The same base the full build returns: a journey longer than `maxJ`
       -- is impossible (the loop below).
@@ -1984,29 +1989,78 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     return (durClass, durBaseJ, durDelta, some tb)
   | _, _, _ => return (durClass, durBase, durDelta, none)
 
-/-- Build the packed `PData` directly from the assembled model — the in-process
-    twin of `quantizeModel` + `parseModel`, so `verified_cli` goes raw-inputs →
-    trellis with NO marshalled tensor payload. Transitions are per-`t` dense
-    (`nTB = T`); durations use the `(mode, isNamedTrain)` class factorisation
-    (`durBase` at `REF_E` + `durDelta` per class), the compact form the decoder
-    reads. Scores are finite here (log-probabilities), so no -∞ path arises. -/
-private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat)
+/-- The cheap half of a day's model: emissions, entries, transitions, the
+    duration bases and the journey's per-minute tables. An incremental run
+    compares these with the previous run's (`todayFrontier`); every run builds
+    the rest from them (`buildPDataFrom`). -/
+structure Pre where
+  T : Nat
+  S : Nat
+  halfOB : Nat
+  emit : Array Nat
+  entry : Array Nat
+  transBase : Array Nat
+  transIdx : Array Nat
+  transFlat : Array Nat
+  nRows : Nat
+  legTrans : Option (FloatArray × FloatArray)
+  durClass : Array Nat
+  durBase : Array Nat
+  tb : Option Verified.Hsmm.Journey.Tables
+
+private def buildPre (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat)
     (g? : Option Verified.Hsmm.StationChain.ChainGraph := none)
-    (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) := none)
-    (inc : Option IncFrom := none) (tablesOnly : Bool := false) :
-    Except String (PData × Option Verified.Hsmm.Journey.Tables) := do
+    (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) := none) :
+    Except String Pre := do
   let T := c.obs.size
   let S := c.states.size
   if T > pTMax then throw s!"T={T} exceeds the verified envelope (T ≤ 2048)"
   let halfOB := pOB / 2
   let (emit, entry) ← buildEmitEntry c T S
   let (transBase, transIdx, transFlat, nRows, legTrans) ← buildTransitions c T S
+  let (durClass, durBase, _, tb) ←
+    buildDurations c T S maxD halfOB legTrans g? rels? (tablesOnly := true)
+  let pre : Pre :=
+    { T := T, S := S, halfOB := halfOB, emit := emit, entry := entry,
+      transBase := transBase, transIdx := transIdx, transFlat := transFlat, nRows := nRows,
+      legTrans := legTrans, durClass := durClass, durBase := durBase, tb := tb }
+  return pre
+
+/-- `pre`'s tables as a `PData` without its duration cells: what
+    `todayFrontier` compares. -/
+private def Pre.toPData (pre : Pre) (maxD : Nat) : PData :=
+  { T := pre.T, S := pre.S, maxD, halfOB := pre.halfOB, emit := pre.emit, entry := pre.entry
+    init := #[], transBase := pre.transBase, nTB := 1, transIdx := pre.transIdx
+    transFlat := pre.transFlat, nRows := pre.nRows, durBase := pre.durBase
+    durClass := pre.durClass, durDelta := #[], hasOv := #[], durOv := {} }
+
+/-- The day's `PData` from its cheap half: with `inc`, the duration cells and
+    the journey's sweeps only from `inc.f` on. -/
+private def buildPDataFrom (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat)
+    (g? : Option Verified.Hsmm.StationChain.ChainGraph) 
+    (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation))
+    (pre : Pre) (inc : Option IncFrom := none) :
+    Except String (PData × Option Verified.Hsmm.Journey.Tables) := do
   let (durClass, durBase, durDelta, journey) ←
-    buildDurations c T S maxD halfOB legTrans g? rels? inc tablesOnly
+    buildDurations c pre.T pre.S maxD pre.halfOB pre.legTrans g? rels? inc (preTb := pre.tb)
   return ({
-    T, S, maxD, halfOB, emit, entry, init := #[]
-    transBase, nTB := 1, transIdx, transFlat, nRows
+    T := pre.T, S := pre.S, maxD, halfOB := pre.halfOB, emit := pre.emit, entry := pre.entry
+    init := #[], transBase := pre.transBase, nTB := 1, transIdx := pre.transIdx
+    transFlat := pre.transFlat, nRows := pre.nRows
     durBase, durClass, durDelta, hasOv := #[], durOv := {} }, journey)
+
+/-- Build the packed `PData` directly from the assembled model — the in-process
+    twin of `quantizeModel` + `parseModel`, so `verified_cli` goes raw-inputs →
+    trellis with NO marshalled tensor payload. Transitions are per-`t` dense
+    (`nTB = T`); durations use the `(mode, isNamedTrain)` class factorisation
+    (`durBase`, the prior, + `durDelta` per class), the compact form the decoder
+    reads. Scores are finite here (log-probabilities), so no -∞ path arises. -/
+private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat)
+    (g? : Option Verified.Hsmm.StationChain.ChainGraph := none)
+    (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) := none) :
+    Except String (PData × Option Verified.Hsmm.Journey.Tables) := do
+  buildPDataFrom c maxD g? rels? (← buildPre c maxD g? rels?)
+
 
 /-- Assemble the model from parsed inputs, build `PData`, and DECODE it with
     `pDecodeFast` — the full raw-inputs → path serve path, no marshalled payload. -/
@@ -2842,8 +2896,11 @@ private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × O
         let out := segmentsOf j c g? rels? pd journey r
         (out.setObjVal! "incremental" incJ,
           if key.isEmpty then none else some { key, obs := c.obs, covered, pd, journey, cks })
+    match buildPre c maxD g? rels? with
+    | .error e => (Json.mkObj [("error", Json.str e)], none)
+    | .ok pre =>
     let full : Unit → Json × Option TodayState := fun _ =>
-      match buildPData c maxD g? rels? with
+      match buildPDataFrom c maxD g? rels? pre with
       | .error e => (Json.mkObj [("error", Json.str e)], none)
       | .ok (pd, journey) =>
         if pd.T == 0 then (Json.mkObj [("degenerate", Json.bool true)], none) else
@@ -2853,27 +2910,25 @@ private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × O
     | none => full ()
     | some st =>
       if key.isEmpty || st.key != key then full () else
-      match buildPData c maxD g? rels? (tablesOnly := true) with
+      let pdT := pre.toPData maxD
+      let (first, why) := todayFrontier st c.obs covered pdT pre.tb
+      if first == 0 || pdT.T == 0 then
+        let (out, st') := full ()
+        (out.setObjVal! "incremental" (Json.mkObj [("full", Json.str why)]), st')
+      else
+      let f := first - 1
+      let t0 := (min f (pdT.T - 1)) / ckptStride * ckptStride
+      let inc : IncFrom :=
+        { f, durDelta := st.pd.durDelta
+        , legDur := (st.journey.map (·.legDur)).getD FloatArray.empty
+        , inner := (st.journey.map (·.cell)).getD FloatArray.empty }
+      match buildPDataFrom c maxD g? rels? pre (inc := some inc) with
       | .error e => (Json.mkObj [("error", Json.str e)], none)
-      | .ok (pdT, tbT) =>
-        let (first, why) := todayFrontier st c.obs covered pdT tbT
-        if first == 0 || pdT.T == 0 then
-          let (out, st') := full ()
-          (out.setObjVal! "incremental" (Json.mkObj [("full", Json.str why)]), st')
-        else
-        let f := first - 1
-        let t0 := (min f (pdT.T - 1)) / ckptStride * ckptStride
-        let inc : IncFrom :=
-          { f, durDelta := st.pd.durDelta
-          , legDur := (st.journey.map (·.legDur)).getD FloatArray.empty
-          , inner := (st.journey.map (·.cell)).getD FloatArray.empty }
-        match buildPData c maxD g? rels? (inc := some inc) with
-        | .error e => (Json.mkObj [("error", Json.str e)], none)
-        | .ok (pd, journey) =>
-          let (r?, cks) := pDecodeIncD pd ckptStride t0 st.cks
-          answer pd journey r? cks
-            (Json.mkObj [("frontier", Lean.toJson f), ("resumedAt", Lean.toJson t0),
-              ("by", Json.str why)])
+      | .ok (pd, journey) =>
+        let (r?, cks) := pDecodeIncD pd ckptStride t0 st.cks
+        answer pd journey r? cks
+          (Json.mkObj [("frontier", Lean.toJson f), ("resumedAt", Lean.toJson t0),
+            ("by", Json.str why)])
 
 /-- Assemble the model from parsed inputs and emit the quantised tensors: dense
     `emit`/`entry`/`init`, and `trans`/`dur` at the requested probe indices. -/
