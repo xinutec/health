@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-status: step 1 live (the frontier logged, unchanged runs skipped); step 2 next
+status: step 1 live (the frontier logged, unchanged runs skipped); step 2 lemma proved, the build next
 references:
   - decoder-roadmap.md
   - ../design/lean-and-rust.md
@@ -86,8 +86,23 @@ the checkpoints alone are ~90 columns of `S × maxD`).
    one run in ten had nothing new. Such a run is not decoded: the same request
    under the same code (`GIT_SHA` and the classifier version) decodes to the
    stored result, so only `inputs_through` moves.
-2. **The lemma**, then the incremental build behind the same mode: equal to
-   the full decode on every frozen day cut at several frontiers, and on a
-   real day's consecutive requests.
-3. **The sidecar** keeps the state and decodes today from it; every other
-   decode stays full.
+2. **The lemma** — PROVED 2026-11-03 (`Packed.lean`): models that agree on
+   what a column up to `f` reads (`AgreeTo`) build the same checkpoints and
+   columns up to `f` (`pBuildCkpt_agree`), and resuming the new model from the
+   old run's checkpoints at a stride boundary `t0 ≤ f` (`resumeState`,
+   `pResume`) decodes exactly as the new model from scratch (`pDecodeInc_eq`),
+   so `pDecode_correct` covers it.
+   Then the incremental build, in Lean: emissions, entries and transitions
+   rebuilt whole (cheap); `f` computed from the old and new per-minute tables
+   (the first minute any differs, less one — `AgreeTo` checked, not assumed);
+   duration cells and the journey's sweeps only for ends at or after `f`,
+   the rest copied. Equal to the full decode on every frozen day cut at
+   several frontiers, and on a real day's consecutive requests.
+3. **The sidecar** keeps the state in one long-lived Lean worker for today,
+   held by the watch loop (today's decodes run as child processes now, which
+   is why nothing survives a run); every other decode stays full. In memory,
+   his choice 2026-11-03, about 140 MB by that day's measurements.
+
+The incremental state is a stopgap (his word, 2026-11-03): the direction is a
+decoder fast enough to compute any day on read, past days included, so that no
+decode or state needs storing.
