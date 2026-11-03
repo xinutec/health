@@ -170,8 +170,10 @@ def pairLogPdf (d expected : Float) : Float :=
   cell + stopTerm tb l d e
 
 /-- One candidate length for leg `l` ending at `s0 + i`: the path before it
-    (the first-leg prior at `s0`, else the hoisted transition), its emissions,
-    entry and cell. -/
+    (the first-leg prior at `s0`, else the hoisted transition), plus the leg's
+    own score — emissions, entry, board term and cell, summed in that order
+    before the path is added, exactly as `withOwn` tables them, so a sweep with
+    the tables and one without agree to the bit. -/
 @[inline] def candidate (tb : Tables) (m : FloatArray) (s0 i l d : Nat) : Float :=
   let L := tb.legs.size
   let T := tb.T
@@ -183,7 +185,7 @@ def pairLogPdf (d expected : Float) : Float :=
   let b := tb.baseOf[l]!
   let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
   let board := if tb.boardAt.size == 0 then 0 else tb.boardAt.get! (l * T + start)
-  prev + emit + tb.entry.get! (b * T + start) + board + legCell tb l d e
+  prev + (emit + tb.entry.get! (b * T + start) + board + legCell tb l d e)
 
 /-- The free leg `l`'s best length ending at `s0 + i`, over the tabled own
     scores (`withOwn`): the length loop of `sweepWith` as a tail recursion
@@ -235,8 +237,9 @@ def withOwn (tb : Tables) : Tables := Id.run do
       for e in [d - 1 : T] do
         let start := e + 1 - d
         let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
+        let board := if tb.boardAt.size == 0 then 0 else tb.boardAt.get! (l * T + start)
         own := own.set! ((k * T + e) * tb.maxJ + (d - 1))
-          (emit + tb.entry.get! (b * T + start) + legCell tb l d e)
+          (emit + tb.entry.get! (b * T + start) + board + legCell tb l d e)
   let pairOwn := (Array.range L).map fun l => Id.run do
     let starts := tb.reachStarts[l]!
     let b := tb.baseOf[l]!

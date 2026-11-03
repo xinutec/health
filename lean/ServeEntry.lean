@@ -1906,7 +1906,15 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         firstCtx := firstCtxL, reachStarts, reachMask, expectedMin, alightName, pairPathM, pairCalls, boardAt, durBaseF, pairOk }
     let tb := Verified.Hsmm.Journey.withOwn tb
     let inner := Verified.Hsmm.Journey.best tb
-    let tb := { tb with cell := inner }
+    -- The own-score tables served `best`; what reads the tables after it (a
+    -- decoded journey's legs, the debuggers) is a few windows, and `candidate`
+    -- sums the same terms in the same order, so they go before the decode.
+    let noSlot : Array (Option Nat) := tb.ownSlot.map fun _ => none
+    let tb := { tb with
+      cell := inner
+      own := FloatArray.empty
+      pairOwn := #[]
+      ownSlot := noSlot }
     let (durDelta, durBaseJ, bad) : Array Nat × Array Nat × Option Int := Id.run do
       let tri := Verified.Hsmm.triOff maxD T
       let mut durDelta := durDelta
