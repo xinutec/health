@@ -322,6 +322,11 @@ the underground way — the hall, escalators and gates are that far above the
 platform. 150 m is the upper end at which every London Tube POI attaches; the
 candidate generator applies a wider 250 m and lets the scorer weigh it softly. -/
 def STATION_MERGE_RADIUS_M : Float := 150
+/-- `FloatScore.haversineMeters`' sphere, and degrees per radian. -/
+def EARTH_R_M : Float := 6371000
+def DEG_PER_RAD : Float := 57.29577951308232
+/-- A latitude band 1% wider than the bound, for the rounding of both sides. -/
+def BAND_SLACK : Float := 1.01
 
 private def stopTag (tags : List (String × String)) (k : String) : Option String :=
   (tags.find? (fun p => p.1 == k)).map (·.2)
@@ -389,11 +394,30 @@ def buildWireGraph (ways : List RawWay) (stops : List RawStop) :
           nodes := nodes.push (k, p.lat, p.lon, #[w.id])
     | _, _ => pure ()
   -- Station annotation: nearest node endpoint within the merge radius wins.
+  -- A node within the radius lies within the stop's latitude band: the
+  -- great-circle distance is never less than `R · |Δφ|` (the haversine's first
+  -- term alone), so each stop searches that band, in node order, which is
+  -- every node the full scan could pick, ties resolved the same way.
+  let band := STATION_MERGE_RADIUS_M / EARTH_R_M * DEG_PER_RAD * BAND_SLACK
+  let byLat : Array (Float × Nat) :=
+    (nodes.zipIdx.map fun ((_, la, _, _), i) => (la, i)).qsort (fun a b => a.1 < b.1)
   let mut named : Std.HashMap String String := {}
   for s in stops do
     if !isStationStop s.tags then continue
+    -- The first node at or above the band's foot.
+    let mut foot := 0
+    let mut top := byLat.size
+    while foot < top do
+      let mid := (foot + top) / 2
+      if byLat[mid]!.1 < s.lat - band then foot := mid + 1 else top := mid
+    let mut cands : Array Nat := #[]
+    let mut j := foot
+    while j < byLat.size && byLat[j]!.1 ≤ s.lat + band do
+      cands := cands.push byLat[j]!.2
+      j := j + 1
     let mut best : Option (String × Float) := none
-    for (k, la, lo, _) in nodes do
+    for i in cands.qsort (· < ·) do
+      let (k, la, lo, _) := nodes[i]!
       let d := haversineMeters s.lat s.lon la lo
       if decide (d ≤ STATION_MERGE_RADIUS_M) then
         match best with

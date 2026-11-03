@@ -246,8 +246,9 @@ pub(crate) async fn decode_one(
 
     // ── the route graph, from the mirror ────────────────────────────────────
     let (ways, stops) = route_graph_rows(pool, user_id, &obs).await?;
+    step("graph rows", &mut steps);
     let (edges, nodes) = backend::lean::build_wire_graph(&ways, &stops)?;
-    step("graph", &mut steps);
+    step("graph wire", &mut steps);
     // ⚠ THE GRAPH'S SIZE IS EVIDENCE, not chatter. `emitLeg` is a MARGIN test —
     // a side names a station only when every alternative naming a different one
     // trails by `MARGIN_NATS` — so the number of competing stations in range
