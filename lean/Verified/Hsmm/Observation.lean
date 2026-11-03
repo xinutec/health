@@ -72,7 +72,7 @@ structure ObsRow where
       stations; a boundary is read from the fix at it. -/
   firstFix : Option Fix := none
   lastFix : Option Fix := none
-  deriving Inhabited
+  deriving Inhabited, BEq
 
 /-- `median` — JS `sort((a,b)=>a-b)` then middle (even length averages the two
     central values, in ascending order, exactly as TS does). Empty → 0. -/
@@ -211,6 +211,11 @@ def buildObservationTensor
         | some f => if p.ts > f.ts then some ⟨p.ts, p.lat, p.lon⟩ else acc
         | none => some ⟨p.ts, p.lat, p.lon⟩) none }) #[]
 
+/-- The first minute whose row differs between two tensors, `none` when every
+    row agrees: where a decode of the later one stops matching the earlier. -/
+def firstDiff (a b : Array ObsRow) : Option Nat :=
+  (List.range (max a.size b.size)).find? fun m => a[m]? != b[m]?
+
 -- Parity with the real `buildObservationTensor` (values from Node/V8).
 private def gp (relTs : Int) (lat lon spd : Float) : GpsPoint := ⟨1784156400 + relTs, lat, lon, spd, none⟩
 private def hp (relTs : Int) (bpm : Float) : HrPoint := ⟨1784156400 + relTs, bpm⟩
@@ -251,6 +256,13 @@ private def proj (o : ObsRow) :
   (some (51.61, -0.21, 2), none, some 30, some (480, 51.61, -0.21), some (480, 51.61, -0.21))
 #guard proj tensor[9]! ==
   (none, none, none, some (480, 51.61, -0.21), none)
+
+-- The same day before its last two fixes arrived: the fix at minute 7 reaches
+-- back over the dark minutes 2–6 (`nextGpsFix`), so they are the first to move.
+private def tensorEarly : Array ObsRow :=
+  buildObservationTensor 1784156400 (pts.take 3) hrs stps [] (fun _ => (0, 0)) (fun _ => (none, none)) true
+#guard firstDiff tensor tensor == none
+#guard firstDiff tensorEarly tensor == some 2
 
 -- inBed marking: a record covering [start+90s, start+150s] marks minutes 1 and 2.
 #guard (markInBed 1784156400 [⟨1784156400 + 90, 1784156400 + 150⟩])[1]! == true

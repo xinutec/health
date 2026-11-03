@@ -3687,6 +3687,21 @@ private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DaySt
          , minutesAsleep := ← jOptInt j "minutesAsleep"
          , inferred := ← optB "inferred" }
 
+/-- `obsfrontier` — the first minute whose observation row differs between two
+requests' `observation` blocks (`prev`, `next`), `null` when none does: how
+much of a re-decode an incremental one could reuse
+(docs/proposals/2026-11-incremental-today.md, step 1). -/
+private def obsFrontierResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let a ← parseObservationInput (← j.getObjVal? "prev")
+    let b ← parseObservationInput (← j.getObjVal? "next")
+    return Json.mkObj [("frontier", match Verified.Hsmm.Observation.firstDiff a b with
+      | some m => Lean.toJson m
+      | none => Json.null)]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 private def clipFutureResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let states ← (← optArr j "states").mapM parseDayState
@@ -3908,6 +3923,7 @@ def dispatch (j : Json) : Json :=
   | .ok "relationroute" => relationRouteResult j
   | .ok "railfill" => railFillResult j
   | .ok "clipfuture" => clipFutureResult j
+  | .ok "obsfrontier" => obsFrontierResult j
   | .ok "watchbattery" => watchBatteryResult j
   | .ok "stationchain" => StationChain.stationChainResult j
   -- The walk referee (#1048 Group B). Nothing serves it; it is here rather

@@ -322,6 +322,15 @@ pub(crate) async fn decode_one(
     if let Some(p) = backend::decoder_params::from_env(date)? {
         backend::decoder_params::apply(&mut req, &p);
     }
+    // What an incremental decode could reuse, logged and nothing more; a
+    // failure here never stops the decode.
+    if !dry_run {
+        let dir = std::env::temp_dir().join("decode-frontier");
+        match backend::decode_frontier::note(&dir, user_id, date, &req) {
+            Ok(line) => println!("frontier {date}: {line}"),
+            Err(e) => eprintln!("frontier {date}: {e:#}"),
+        }
+    }
 
     // ⚠ `None` is DEGENERATE — Lean found no viable path. That is a real answer
     // about the day, not a fault, and it must not be written as zero segments:
