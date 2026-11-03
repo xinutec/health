@@ -88,6 +88,9 @@ structure Tables where
       `stopAlightPre`, whose passes the leg leaves out too. -/
   stopAlight : Array (Option Nat) := #[]
   stopAlightPre : Array FloatArray := #[]
+  /-- The (line, station) of each `stopAlightPre`, so two days' tables can be
+      matched by what they are rather than by where they were filed. -/
+  stopAlightKey : Array (String × String) := #[]
   /-- `alightName[l * T + e]`: the station the fixes put the leg's end at,
       `none` where no served station of its line is within reach. -/
   alightName : Array (Option String) := #[]

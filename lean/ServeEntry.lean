@@ -1886,8 +1886,9 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           | some n => base ++ "@" ++ (n.stationName.getD n.id)
           | none => base
         -- The train legs' calling evidence (`StationStops`), with the record's `stops`.
-        let (stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst) :
-            FloatArray × Array (Option Nat) × Array FloatArray × FloatArray × Array Nat :=
+        let (stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst, stopAlightKey) :
+            FloatArray × Array (Option Nat) × Array FloatArray × FloatArray × Array Nat
+              × Array (String × String) :=
           match jp.stops, g? with
           | some sp, some g => Id.run do
             let ps := Verified.Hsmm.StationStops.passes g c.obs
@@ -1904,6 +1905,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             let mut alightIdx : Array (Option Nat) := Array.replicate (L * T) none
             let mut alightPre : Array FloatArray := #[]
             let mut alightKey : Std.HashMap (String × String) Nat := {}
+            let mut alightKeys : Array (String × String) := #[]
             for (entry, li) in legList.zipIdx do
               let (l, _, st?) := entry
               let some line := lineOf l | continue
@@ -1924,13 +1926,14 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
                     alightPre := alightPre.push (Verified.Hsmm.StationStops.prefixSum
                       (Verified.Hsmm.StationStops.lineEvidence sp ps T (fun x => x == a && calls line x)))
                     alightKey := alightKey.insert (line, a) k
+                    alightKeys := alightKeys.push (line, a)
                     pure k
                 alightIdx := alightIdx.set! (li * T + e) (some k)
-            return (pre, alightIdx, alightPre, active, activeFirst)
-          | _, _ => (FloatArray.empty, #[], #[], FloatArray.empty, #[])
+            return (pre, alightIdx, alightPre, active, activeFirst, alightKeys)
+          | _, _ => (FloatArray.empty, #[], #[], FloatArray.empty, #[], #[])
         let r : Verified.Hsmm.Journey.Tables :=
           { T, maxJ, journey := jI, legs := legOuter, legName, baseOf, nBase := legs.size
-            stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst
+            stopPre, stopAlight, stopAlightPre, stopActive, stopActiveFirst, stopAlightKey
             legStation := legList.map fun (_, _, st?) => st?.bind (·.stationName)
             legNode := legList.map fun (_, _, st?) => st?.map fun n => (n.lat, n.lon)
             legSlot := legOuter.map (fun l => (slotOfCls durClass[l]!).getD 0)
@@ -2843,7 +2846,8 @@ private def todayFrontier (old : TodayState) (obs : Array Verified.Hsmm.Observat
           && a.baseOf == b.baseOf && a.nBase == b.nBase && a.legSlot == b.legSlot
           && a.nSlots == b.nSlots && a.first == b.first && a.last == b.last
           && a.pairOk == b.pairOk && sameF a.durBaseF b.durBaseF
-          && a.stopAlightPre.size == b.stopAlightPre.size then
+          && a.stopAlightPre.size == a.stopAlightKey.size
+          && b.stopAlightPre.size == b.stopAlightKey.size then
         let B := a.nBase
         some ([ ("journey.emitPre", diffMinuteF a.emitPre b.emitPre prefixMin)
               , ("journey.entry", diffMinuteF a.entry b.entry (· % T))
@@ -2856,16 +2860,41 @@ private def todayFrontier (old : TodayState) (obs : Array Verified.Hsmm.Observat
               , ("journey.pairCalls", diffMinuteF a.pairCalls b.pairCalls (· % T))
               , ("journey.boardAt", diffMinuteF a.boardAt b.boardAt (· % T))
               , ("journey.stopPre", diffMinuteF a.stopPre b.stopPre prefixMin)
-              , ("journey.stopAlight", diffMinute a.stopAlight b.stopAlight (· % T))
+              , ("journey.stopAlight", diffMinute
+                  (a.stopAlight.map (·.bind (a.stopAlightKey[·]?)))
+                  (b.stopAlight.map (·.bind (b.stopAlightKey[·]?))) (· % T))
               , ("journey.stopActive", diffMinuteF a.stopActive b.stopActive (· % T))
               , ("journey.stopActiveFirst", diffMinute a.stopActiveFirst b.stopActiveFirst (· % T)) ]
-          ++ (a.stopAlightPre.zip b.stopAlightPre).toList.map fun (x, y) =>
-            ("journey.stopAlightPre", diffMinuteF x y prefixMin))
+          -- An alight station's tables by its (line, station): a key on one
+          -- side only is a `stopAlight` difference already.
+          ++ (a.stopAlightKey.zipIdx.toList.filterMap fun (key, i) =>
+            (b.stopAlightKey.findIdx? (· == key)).map fun j =>
+              ("journey.stopAlightPre", diffMinuteF a.stopAlightPre[i]! b.stopAlightPre[j]! prefixMin)))
       else none
     | _, _ => none
   match dayWide, jDay with
   | false, _ => (0, s!"day-wide: {", ".intercalate modelMoved}")
-  | _, none => (0, "day-wide: journey legs")
+  | _, none =>
+    -- Which leg moved, for the log: the counts and the first name that differs.
+    let detail := match old.journey, journey with
+      | some a, some b =>
+        let i := (List.range (min a.legName.size b.legName.size)).find? fun i =>
+          a.legName[i]! != b.legName[i]! || a.legNode[i]! != b.legNode[i]!
+        let checks : List (String × Bool) := [("T", a.T == b.T), ("maxJ", a.maxJ == b.maxJ), ("journey", a.journey == b.journey),
+            ("legs", a.legs == b.legs), ("legStation", a.legStation == b.legStation),
+            ("baseOf", a.baseOf == b.baseOf), ("nBase", a.nBase == b.nBase),
+            ("legSlot", a.legSlot == b.legSlot), ("nSlots", a.nSlots == b.nSlots),
+            ("first", a.first == b.first), ("last", a.last == b.last), ("pairOk", a.pairOk == b.pairOk),
+            ("durBaseF", sameF a.durBaseF b.durBaseF),
+            ("stopAlightKey", a.stopAlightPre.size == a.stopAlightKey.size
+              && b.stopAlightPre.size == b.stopAlightKey.size)]
+        let fields : List String := checks.filterMap fun (p : String × Bool) => if p.2 then none else some p.1
+        let name := match i with
+          | some i => s!"{a.legName[i]!} → {b.legName[i]!}"
+          | none => if a.legName.size == b.legName.size then ", ".intercalate fields else "the list's end"
+        s!" ({a.legName.size} → {b.legName.size} legs; first difference: {name})"
+      | _, _ => ""
+    (0, s!"day-wide: journey legs{detail}")
   | true, some jd =>
     let ds := [ ("obs", Verified.Hsmm.Observation.firstDiff old.obs obs)
               , ("coverage", diffMinute old.covered covered id)
