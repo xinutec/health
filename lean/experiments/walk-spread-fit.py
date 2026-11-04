@@ -16,6 +16,9 @@ Printed: the fits, and per case the term a walk segment would
 pay, `log fW(r|d) − log (fW(r|d) + fM(r|d))` (a flat prior over the two
 explanations; ≤ 0, near 0 for a walk that goes somewhere).
 
+`--extent` reads `sqrt(r² + (D/2)²)` in place of `r`, `D` the decoder's net
+displacement window: a walk trimmed at its ends still goes somewhere.
+
 Run from the repo root, over the decoder's requests (one `<day>-<user>.json`
 per frozen day in DIR, `dump_decode_request`):
   python3 lean/experiments/walk-spread-fit.py DIR
@@ -50,6 +53,26 @@ def rows_of(path):
 
 def local(ref, lat, lon):
     return ((lon - ref[1]) * 111320 * math.cos(math.radians(ref[0])), (lat - ref[0]) * 111320)
+
+EXTENT = "--extent" in sys.argv
+
+def net(mins, lo, hi):
+    """The decoder's net displacement window: the minute fix at or before the
+    first minute to the one at or after the last (`SegmentEvidence.windowFor`)."""
+    before = [t for t in mins if t <= lo]
+    after = [t for t in mins if t >= hi - 1]
+    if not before or not after: return None
+    a, b = mins[max(before)], mins[min(after)]
+    x1, y1 = a[0], a[1]; x2, y2 = b[0], b[1]
+    p1, p2 = math.radians(x1), math.radians(x2)
+    h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(y2 - y1) / 2) ** 2
+    return 2 * 6371000 * math.asin(math.sqrt(h))
+
+def feature(mins, lo, hi, ref):
+    r = radius(mins, lo, hi, ref)
+    if r is None or not EXTENT: return r
+    dn = net(mins, lo, hi)
+    return None if dn is None else math.sqrt(r * r + (dn / 2) ** 2)
 
 def radius(mins, lo, hi, ref):
     w = wx = wy = wrr = 0.0
@@ -86,7 +109,7 @@ for md in sorted(glob.glob(f"{G}/ground-truth/2026-*.md")):
     ref = next(iter(mins.values()))
     for a, b, mode in rows:
         if mode == "walking":
-            r = radius(mins, a, b, ref)
+            r = feature(mins, a, b, ref)
             if r is not None: W.append((b - a, r, day, a))
         else:
             t = a
@@ -95,7 +118,7 @@ for md in sorted(glob.glob(f"{G}/ground-truth/2026-*.md")):
                     u = t
                     while u < b and steps.get(u, 0) >= STEP: u += 1
                     if t > a and u < b:
-                        r = radius(mins, t, u, ref)
+                        r = feature(mins, t, u, ref)
                         if r is not None: M.append((u - t, r, day, t))
                     t = u
                 else: t += 1
