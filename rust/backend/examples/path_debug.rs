@@ -3,7 +3,7 @@
 //! For every segment of the decoded path, and of that path with the caller's
 //! segments written over it: the transition in, the entry prior, the summed
 //! per-minute emissions and the duration term (`Assemble.durAt`, which holds
-//! the segment-level emissions) — the instrument for a boundary the decode did
+//! the segment-level emissions, each of them printed after the state) — the instrument for a boundary the decode did
 //! not place: which term paid for leaving it out. The numbers are the model's
 //! own (`pathDebug` on `assemblesegments`), composed as `Spec.scoreAux`.
 //!
@@ -55,8 +55,14 @@ fn print_rows(label: &str, rows: &[Value], from: i64, to: i64) {
         if e < from || s > to {
             continue;
         }
+        let parts = r["segParts"].as_object().map_or_else(String::new, |m| {
+            m.iter()
+                .filter(|(_, v)| v.as_f64().is_none_or(|x| x != 0.0))
+                .map(|(k, v)| format!(" {k} {}", num(v).trim()))
+                .collect()
+        });
         println!(
-            "  {}–{} {:4} {} {} {} {} {} {} {}  {}",
+            "  {}–{} {:4} {} {} {} {} {} {} {}  {}{}",
             hhmm(s),
             hhmm(e),
             r["d"].as_i64().unwrap_or(0),
@@ -67,7 +73,8 @@ fn print_rows(label: &str, rows: &[Value], from: i64, to: i64) {
             num(&r["durPrior"]),
             num(&r["segEm"]),
             num(&r["total"]),
-            r["state"].as_str().unwrap_or("?")
+            r["state"].as_str().unwrap_or("?"),
+            parts
         );
     }
 }

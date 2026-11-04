@@ -158,7 +158,25 @@ const BASELINE: &str = concat!(
 /// What remained was `@11:13Z`: mode and bounds right, way NAME wrong — a
 /// naming question rather than a truth question. It holds since the check
 /// reads every road a leg was on (`roads`), not only the three in its label.
-const KNOWN_UNHELD: [(&str, i64, &str); 0] = [];
+///
+/// 06-24's two shops: Currys and Lidl, 49 m apart with a
+/// three-minute walk between, decode as one stay at the mined place beside
+/// them since a stay at a listed place may move about inside (`stayMove`).
+/// The defect is the merge; his ruling is that it is the lesser one ("You can
+/// reduce the amount of items (like Curry to Lidl) and lose a bit. The office
+/// 1 minute stuff is worse than having the 3 minute thing").
+const KNOWN_UNHELD: [(&str, i64, &str); 2] = [
+    (
+        "2026-06-24",
+        1_782_326_820,
+        "Currys merged with Lidl into one stay (stayMove at a listed place)",
+    ),
+    (
+        "2026-06-24",
+        1_782_327_360,
+        "Lidl merged with Currys into one stay (stayMove at a listed place)",
+    ),
+];
 
 /// A day's rows, resolved to unix seconds, ready for `truthcheck`.
 struct Resolved {

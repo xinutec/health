@@ -495,9 +495,14 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
 
 /-- `ModelContext.stayMoveCorr`: for every stay segment of length `d ≤ maxD`
     ending at `e`, the best reading of its minutes as still or moving about the
-    place (a two-state pass: `stayMove`'s rates, a moving minute's steps scored
-    as a walk's) less the all-still reading the stay's minutes already carry.
-    One sweep forward from each start. -/
+    place (`stayMove`'s rates, a moving minute's steps scored as a walk's) less
+    the all-still reading the stay's minutes already carry. A spell comes back:
+    the stay's first and last minutes are still, so a walk that leaves for
+    elsewhere is never a spell — only moving about inside, out and back
+    (`lean/experiments/round-trip-census.py`: of 68 narrated walks between two
+    named stays, one returns to the place it left). Three readings, swept
+    forward from each start: still before any spell (the all-still reading,
+    `0`), moving, and still after a spell. -/
 def stayMoveTable (c : ModelContext) (maxD : Nat) : FloatArray := Id.run do
   let some (aIn, pStay) := c.segEm.p.stayMove | return FloatArray.empty
   let T := c.obs.size
@@ -512,23 +517,23 @@ def stayMoveTable (c : ModelContext) (maxD : Nat) : FloatArray := Id.run do
   let leave := Float.log (MIN_ONE - pStay) - stay0
   let mut out := Verified.FloatConst.floats (maxD * T) SEG_ZERO
   for s0 in [0:T] do
-    let mut vs := SEG_ZERO
-    let mut vm := enter + gain.getD s0 SEG_ZERO
-    out := out.set! s0 (max vs vm)
+    let mut vm := Verified.FloatConst.negInf
+    let mut v1 := Verified.FloatConst.negInf
     for d in [2:maxD + 1] do
       let e := s0 + d - 1
       if e ≥ T then break
-      let g := gain.getD e SEG_ZERO
-      let vs' := max vs (vm + leave)
-      let vm' := max (vs + enter) (vm + keep) + g
-      vs := vs'
+      let vm' := max (max enter (vm + keep)) (v1 + enter) + gain.getD e SEG_ZERO
+      v1 := max (vm + leave) v1
       vm := vm'
-      out := out.set! ((d - 1) * T + e) (max vs vm)
+      out := out.set! ((d - 1) * T + e) (max SEG_ZERO v1)
   return out
 
-/-- What moving about adds to stay `x` over minutes `[lo, hi)`. -/
+/-- What moving about adds to stay `x` over minutes `[lo, hi)`: only at a
+    listed place, a building whose rooms he moves between; a placeless stay
+    keeps the all-still reading, so a short walk between two shops tens of
+    metres apart stays a walk. -/
 def stayMoveAt (c : ModelContext) (x : State) (lo hi : Nat) : Float :=
-  if x.mode != .stationary || c.stayMoveCorr.size == 0 || hi ≤ lo then SEG_ZERO
+  if x.mode != .stationary || x.placeId.isNone || c.stayMoveCorr.size == 0 || hi ≤ lo then SEG_ZERO
   else c.stayMoveCorr.get! ((hi - lo - 1) * c.obs.size + (hi - 1))
 
 /-- The segment-level emission of state `s` over a segment of length `d` with

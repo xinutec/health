@@ -882,3 +882,27 @@ fixes do not see), 06-18's board station, and the classes below.
    debugger is the instrument. 07-07's Euston Square → King's Cross hop and
    the `unknown_rail` stations are its remaining rows.
 3. **Platform waits** (2) are S1's state.
+
+## The spell comes back, at a listed place (2026-11-04, shipped)
+
+11-03: Work 10:56–19:30 he never left, served with walks out at 11:30 (ten
+minutes at 22–58 steps, the fixes within 40 m of his desk), 13:01 and 14:04
+(desk moves of 38 and 58 m). Two changes to the 10-30 pass, same rates:
+
+- A spell comes back: the stay's first and last minutes are still, three
+  readings per start (still, moving, still after a spell). A walk that leaves
+  for elsewhere is never a spell; the walk ends 10-30 lost are not eaten.
+- Only at a listed place. A placeless stay keeps the all-still reading, so a
+  three-minute walk between two places tens of metres apart (10-08's stop and
+  Paul) stays a walk.
+
+Flip rows lost 2 gained 4 (control 0/4), the scoreboard unchanged; 11-03's
+three walks out heal but 13:04–13:06. The two lost are 06-24's Currys and
+Lidl, one stay at the one-visit mined cluster beside them: he prefers that
+merge to a phantom walk out of a long stay ("We'd rather underdo that").
+Measured and not shipped the same day (`tests/golden/fits/README`): a hold
+of the spell's fixes to where it left from (no change), a place footprint
+from the miner's visit spread (Work's visits 14 m per axis about its pin,
+Home's 2 m), and the cadence fitted per mode with a segment's edge minutes
+as part-minutes.
+

@@ -125,6 +125,9 @@ struct Run {
     inner: Vec<Minute>,
     /// The decoder's window over the run: `(dispM, hours)`.
     window: Option<(f64, f64)>,
+    /// A stay whose fixes centre within `PLACE_RADIUS_M` of a listed place: what
+    /// the decoder reads as a stay there.
+    listed: bool,
 }
 
 #[derive(Clone, Default)]
@@ -518,11 +521,26 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
         let window = windows
             .get(i)
             .and_then(|w| Some((w["dispM"].as_f64()?, w["hours"].as_f64()?)));
+        let fixes: Vec<(f64, f64)> = (0..)
+            .map(|k| s + 60 * k)
+            .take_while(|t| *t < e)
+            .filter_map(|t| by_ts.get(&t))
+            .filter_map(|m| Some((m["lat"].as_f64()?, m["lon"].as_f64()?)))
+            .collect();
+        let listed = mode == "stationary" && !fixes.is_empty() && {
+            let n = fixes.len() as f64;
+            let c = (
+                fixes.iter().map(|f| f.0).sum::<f64>() / n,
+                fixes.iter().map(|f| f.1).sum::<f64>() / n,
+            );
+            places.iter().any(|p| metres(c, *p) <= PLACE_RADIUS_M)
+        };
         day.runs.push(Run {
             mode,
             minutes_long: ((e - s) / 60) as f64,
             inner: inner(s, e),
             window,
+            listed,
         });
         if i > 0 && spans[i - 1].0 != mode && (s - spans[i - 1].2).abs() <= 60 {
             day.changes.push((spans[i - 1].0, mode));
@@ -1275,9 +1293,10 @@ fn write_fit(
     // and which days the numbers came from.
     let mut record = form.decoder.clone();
     // With `fitStayMove`, moving about inside a stay's place: a two-state
-    // chain over each narrated stay's minutes (still / moving), the moving
-    // minute's steps scored under walking's cadence and the still minute's
-    // under the stay's (the form's own priors), its two rates by maximum
+    // chain over the minutes of each narrated stay at a listed place (still /
+    // moving), the moving minute's steps scored under walking's cadence and
+    // the still minute's under the stay's (the form's own priors), its first
+    // and last minute still (a spell comes back), its two rates by maximum
     // likelihood (EM, forward–backward), a pseudo-count each side. The decoder
     // scores the same chain (`Assemble.stayMoveTable`), so the rates are
     // fitted on the term's own likelihood, not on a step threshold.
@@ -1296,6 +1315,7 @@ fn write_fit(
         // Per stay run, the minutes' (still, moving) log-likelihoods.
         let seqs: Vec<Vec<(f64, f64)>> = of("stationary")
             .iter()
+            .filter(|r| r.listed)
             .map(|r| {
                 r.inner
                     .iter()
@@ -1320,7 +1340,8 @@ fn write_fit(
                     let mut fwd = vec![[0.0f64; 2]; n];
                     let mut scale = vec![0.0f64; n];
                     let e = |k: usize, j: usize| if j == 0 { v[k].0.exp() } else { v[k].1.exp() };
-                    fwd[0] = [(1.0 - a_in) * e(0, 0), a_in * e(0, 1)];
+                    // The run begins still and ends still.
+                    fwd[0] = [e(0, 0), 0.0];
                     scale[0] = fwd[0][0] + fwd[0][1];
                     fwd[0][0] /= scale[0];
                     fwd[0][1] /= scale[0];
@@ -1334,6 +1355,7 @@ fn write_fit(
                         fwd[k][1] /= scale[k];
                     }
                     let mut bwd = vec![[1.0f64; 2]; n];
+                    bwd[n - 1] = [1.0, 0.0];
                     for k in (0..n - 1).rev() {
                         for i in 0..2 {
                             bwd[k][i] = (0..2)
@@ -1369,7 +1391,7 @@ fn write_fit(
             }
             se["stayMove"] = json!([round4(a_in), round4(p_stay)]);
             log.push(format!(
-                "stay move: EM over {} narrated stay runs, {n_min} minutes: a still minute starts moving {:.2}%, a moving one continues {:.1}%",
+                "stay move: EM over {} narrated stay runs at a listed place, {n_min} minutes: a still minute starts moving {:.2}%, a moving one continues {:.1}%",
                 seqs.len(),
                 100.0 * a_in,
                 100.0 * p_stay

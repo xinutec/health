@@ -163,10 +163,11 @@ structure Params where
       per-minute off-network term, which charged a per-segment fact on every
       lit minute and so grew with the stay's length. -/
   unlistedCentre : Option Float := none
-  /-- Moving about inside the place a stay is at (`Assemble.stayMoveTable`):
-      the chance a still minute is followed by a moving one, and a moving one
-      by another. A moving minute's steps are scored as a walk's; the place,
-      the position and the levels stay the stay's. -/
+  /-- Moving about inside the listed place a stay is at
+      (`Assemble.stayMoveTable`): the chance a still minute is followed by a
+      moving one, and a moving one by another. A spell comes back (the stay
+      begins and ends still); a moving minute's steps are scored as a walk's;
+      the place, the position and the levels stay the stay's. -/
   stayMove : Option (Float × Float) := none
   /-- What the train generator knows at a train's start (`TrainLine`): with it
       a transition into a train gives the even split over train states back,
