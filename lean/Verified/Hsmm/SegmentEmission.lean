@@ -543,16 +543,15 @@ def dispPrep (v : FloatArray × Float) : DispVec := Id.run do
   return { vals, flat, lse := mx + Float.log acc }
 
 /-- `dispPosteriorFrom` over a prepared vector. -/
-def dispPosteriorPrep (p : Params) (mode : Mode) (v : DispVec) : Float := Id.run do
-  if v.lse.isNaN then return dispPosteriorFrom p mode (v.vals, v.flat)
-  let mut own := v.flat
-  let mut i := 0
-  for (m, _) in p.disp do
-    if m == mode then
-      own := v.vals.get! i
-      break
-    i := i + 1
-  return own - v.lse
+def dispPosteriorPrep (p : Params) (mode : Mode) (v : DispVec) : Float :=
+  if v.lse.isNaN then dispPosteriorFrom p mode (v.vals, v.flat) else
+  let i := dispIdx mode p.disp 0
+  (if i < v.vals.size then v.vals.get! i else v.flat) - v.lse
+where
+  /-- The position of `mode`'s first entry in `p.disp`, past the end for none. -/
+  dispIdx (mode : Mode) : List (Mode × DispParams) → Nat → Nat
+    | [], i => i + p.disp.length
+    | (m, _) :: rest, i => if m == mode then i else dispIdx mode rest (i + 1)
 
 private def dvT : FloatArray × Float := (⟨#[-3.5, -0.25, -7]⟩, -2)
 private def dvInf : FloatArray × Float := (⟨#[Verified.FloatConst.negInf]⟩, Verified.FloatConst.negInf)

@@ -134,6 +134,8 @@ structure Tables where
     time is 27 nats worse, and a floor with a fraction gains 2.5 for its extra
     parameter (`lean/experiments/ride-time-fit.py`). -/
 def RIDE_SIGMA_MIN : Float := 1.8
+/-- `0`, once: a literal in a branch is converted on every call. -/
+private def ZERO : Float := 0
 def HALF : Float := 0.5
 /-- `−½ log 2π`. -/
 def NEG_HALF_LOG_TWO_PI : Float := -0.9189385332046727
@@ -148,9 +150,9 @@ def pairLogPdf (d expected : Float) : Float :=
     the wait at its board station, one touching its end its arrival — and not
     at its own board and alight stations. -/
 @[inline] def stopTerm (tb : Tables) (l d e : Nat) : Float :=
-  if tb.stopPre.size == 0 then 0 else
+  if tb.stopPre.size == 0 then ZERO else
   let start := e + 1 - d
-  if e < start + 2 then 0 else
+  if e < start + 2 then ZERO else
   let T1 := tb.T + 1
   -- The runs begun inside, less those still under way at the end.
   let s0 := tb.stopPre.get! (l * T1 + e) - tb.stopPre.get! (l * T1 + start + 1)
@@ -187,41 +189,51 @@ def pairLogPdf (d expected : Float) : Float :=
   if prev == negInf then negInf else
   let b := tb.baseOf[l]!
   let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
-  let board := if tb.boardAt.size == 0 then 0 else tb.boardAt.get! (l * T + start)
+  let board := if tb.boardAt.size == 0 then ZERO else tb.boardAt.get! (l * T + start)
   prev + (emit + tb.entry.get! (b * T + start) + board + legCell tb l d e)
 
+/-- `a[i]`, `0` past the end, at a machine index: the hot loops below index
+    in `USize`, whose arithmetic is the machine's where `Nat`'s checks for
+    overflow into a bignum on every step. -/
+@[inline] def fgetU (a : FloatArray) (i : USize) : Float :=
+  if h : i.toNat < a.size then a.uget i h else ZERO
+
+/-- `bestOwn`'s lengths that read the path before them in `m`, `n` of them:
+    `mi` and `oi` their cells in `m` and `own`, walking down and up. -/
+partial def bestOwnGo (m own : FloatArray) (mi oi n : USize) (best : Float) : Float :=
+  if n == 0 then best else
+  let prev := fgetU m mi
+  if prev == negInf then bestOwnGo m own (mi - 1) (oi + 1) (n - 1) best else
+  let cand := prev + fgetU own oi
+  bestOwnGo m own (mi - 1) (oi + 1) (n - 1) (if cand > best then cand else best)
+
 /-- The free leg `l`'s best length ending at `s0 + i`, over the tabled own
-    scores (`withOwn`): the length loop of `sweepWith` as a tail recursion
-    whose state (`best`, `bd`) travels in registers instead of a boxed pair
-    allocated per iteration. The same reads, comparisons and order as the
-    loop it replaces. `firstPrev` is the first-leg prior at `s0`; `mBase`
-    is `l * w`; `ownBase` is `(slot * T + e) * maxJ`. -/
-@[specialize] partial def bestOwn (m own : FloatArray) (firstPrev : Float) (mBase ownBase i dMax : Nat)
-    (d : Nat) (best : Float) (bd : Nat) : Float × Nat :=
-  if d > dMax then (best, bd) else
-  let prev := if d == i + 1 then firstPrev else m.get! (mBase + (i - d))
-  if prev == negInf then bestOwn m own firstPrev mBase ownBase i dMax (d + 1) best bd else
-  let cand := prev + own.get! (ownBase + (d - 1))
-  if cand > best then bestOwn m own firstPrev mBase ownBase i dMax (d + 1) cand d
-  else bestOwn m own firstPrev mBase ownBase i dMax (d + 1) best bd
+    scores (`withOwn`), lengths `1 … dMax`: those shorter than the window read
+    the path before them in `m`, and one as long as the window is the
+    journey's first leg (`firstPrev`, the first-leg prior at `s0`). `mBase` is
+    `l * w`; `ownBase` is `(slot * T + e) * maxJ`. -/
+def bestOwn (m own : FloatArray) (firstPrev : Float) (mBase ownBase i dMax : Nat) : Float :=
+  let b := bestOwnGo m own (mBase + i - 1).toUSize ownBase.toUSize (min dMax i).toUSize negInf
+  if dMax < i + 1 || firstPrev == negInf then b else
+  let cand := firstPrev + fgetU own (ownBase + i).toUSize
+  if cand > b then cand else b
 
 /-- The paired leg `l`'s best length ending at `e = s0 + i`, over its tabled own
     scores (`withOwn`): its starts from the `k`-th on, while they are at or
-    before `e`, in the loop's order with its state in registers (`bestOwn`).
-    `firstPrev` is the first-leg prior at `s0`; `mBase` is `l * w`. -/
-@[specialize] partial def bestPaired (m po : FloatArray) (starts : Array Nat) (firstPrev : Float)
-    (mBase i e maxJ k : Nat) (best : Float) (bd : Nat) : Float × Nat :=
-  if h : k < starts.size then
-    let s := starts[k]
-    if s > e then (best, bd) else
+    before `e`. `firstPrev` is the first-leg prior at `s0`; `mBase` is
+    `l * w`; indices in `USize` (`fgetU`). -/
+partial def bestPairedGo (m po : FloatArray) (starts : Array Nat) (firstPrev : Float)
+    (mBase i e maxJ k : USize) (best : Float) : Float :=
+  if h : k.toNat < starts.size then
+    let s := starts[k.toNat].toUSize
+    if s > e then best else
     let d := e + 1 - s
-    if d > maxJ then bestPaired m po starts firstPrev mBase i e maxJ (k + 1) best bd else
-    let prev := if d == i + 1 then firstPrev else m.get! (mBase + (i - d))
-    if prev == negInf then bestPaired m po starts firstPrev mBase i e maxJ (k + 1) best bd else
-    let cand := prev + po.get! (k * maxJ + (d - 1))
-    if cand > best then bestPaired m po starts firstPrev mBase i e maxJ (k + 1) cand d
-    else bestPaired m po starts firstPrev mBase i e maxJ (k + 1) best bd
-  else (best, bd)
+    if d > maxJ then bestPairedGo m po starts firstPrev mBase i e maxJ (k + 1) best else
+    let prev := if d == i + 1 then firstPrev else fgetU m (mBase + (i - d))
+    if prev == negInf then bestPairedGo m po starts firstPrev mBase i e maxJ (k + 1) best else
+    let cand := prev + fgetU po (k * maxJ + (d - 1))
+    bestPairedGo m po starts firstPrev mBase i e maxJ (k + 1) (if cand > best then cand else best)
+  else best
 
 /-- What the hoisted transition needs from `pairOk`, once per table: a leg is
     `restricted` when some leg may not follow it (a wait, which continues only
@@ -262,7 +274,7 @@ def withOwn (tb : Tables) : Tables := Id.run do
       for e in [d - 1 : T] do
         let start := e + 1 - d
         let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
-        let board := if tb.boardAt.size == 0 then 0 else tb.boardAt.get! (l * T + start)
+        let board := if tb.boardAt.size == 0 then ZERO else tb.boardAt.get! (l * T + start)
         own := own.set! ((k * T + e) * tb.maxJ + (d - 1))
           (emit + tb.entry.get! (b * T + start) + board + legCell tb l d e)
   let pairOwn := (Array.range L).map fun l => Id.run do
@@ -274,16 +286,87 @@ def withOwn (tb : Tables) : Tables := Id.run do
         let e := start + d - 1
         if e ≥ T then break
         let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
-        let board := if tb.boardAt.size == 0 then 0 else tb.boardAt.get! (l * T + start)
+        let board := if tb.boardAt.size == 0 then ZERO else tb.boardAt.get! (l * T + start)
         po := po.set! (k * tb.maxJ + (d - 1))
           (emit + tb.entry.get! (b * T + start) + board + legCell tb l d e)
     return po
   return { tb with ownSlot, own, pairOwn }
 
+/-- Leg `l`'s candidate of length `d` ending at `e = s0 + i`, as the sweep
+    weighs it: from the tabled own scores where there are some (`withOwn`),
+    else `candidate`, which sums the same terms in the same order. `k` is the
+    start's position among `l`'s starts, for a paired leg. -/
+def legCand (tb : Tables) (m : FloatArray) (s0 w i l d k : Nat) : Float :=
+  let T := tb.T
+  let e := s0 + i
+  let prev := if d == i + 1 then tb.first[l]! + tb.firstCtx.get! (l * T + s0)
+    else m.get! (l * w + (i - d))
+  let po := tb.pairOwn[l]?.getD FloatArray.empty
+  match (tb.ownSlot[l]?.bind id), tb.reachStarts[l]!.isEmpty with
+  | some slot, true =>
+    if prev == negInf then negInf else prev + tb.own.get! ((slot * T + e) * tb.maxJ + (d - 1))
+  | _, false =>
+    if po.size == 0 then candidate tb m s0 i l d
+    else if prev == negInf then negInf else prev + po.get! (k * tb.maxJ + (d - 1))
+  | none, true => candidate tb m s0 i l d
+
+/-- Leg `l`'s best length ending at `e = s0 + i` (`firstAt`: its first start
+    in the window). -/
+def legBest (tb : Tables) (m : FloatArray) (firstAt : Array Nat) (s0 w i l : Nat) : Float :=
+  let T := tb.T
+  let e := s0 + i
+  let starts := tb.reachStarts[l]!
+  let firstPrev := tb.first[l]! + tb.firstCtx.get! (l * T + s0)
+  if starts.isEmpty then
+    match tb.ownSlot[l]?.bind id with
+    | some slot => bestOwn m tb.own firstPrev (l * w) ((slot * T + e) * tb.maxJ) i (min tb.maxJ (i + 1))
+    | none => Id.run do
+      let mut best := negInf
+      for d in [1:min tb.maxJ (i + 1) + 1] do
+        let cand := candidate tb m s0 i l d
+        if cand > best then best := cand
+      return best
+  else
+    let po := tb.pairOwn[l]?.getD FloatArray.empty
+    if po.size != 0 then
+      bestPairedGo m po starts firstPrev (l * w).toUSize i.toUSize e.toUSize tb.maxJ.toUSize
+        firstAt[l]!.toUSize negInf
+    else Id.run do
+      let mut best := negInf
+      let mut k := firstAt[l]!
+      while k < starts.size && starts[k]! ≤ e do
+        let d := e + 1 - starts[k]!
+        if d ≤ tb.maxJ then
+          let cand := candidate tb m s0 i l d
+          if cand > best then best := cand
+        k := k + 1
+      return best
+
+/-- The length `legBest` chose: the first, in its order, whose candidate is the
+    best (lengths ascending for a free leg, starts ascending for a paired one);
+    `0` where every candidate is `−∞`. -/
+def legArg (tb : Tables) (m : FloatArray) (firstAt : Array Nat) (s0 w i l : Nat) (best : Float) : Nat :=
+  Id.run do
+    if best == negInf then return 0
+    let e := s0 + i
+    let starts := tb.reachStarts[l]!
+    if starts.isEmpty then
+      for d in [1:min tb.maxJ (i + 1) + 1] do
+        if legCand tb m s0 w i l d 0 == best then return d
+      return 0
+    else
+      let mut k := firstAt[l]!
+      while k < starts.size && starts[k]! ≤ e do
+        let d := e + 1 - starts[k]!
+        if d ≤ tb.maxJ && legCand tb m s0 w i l d k == best then return d
+        k := k + 1
+      return 0
+
 /-- The sweep from `s0` over `w` minutes: `V[i * L + l]`, the best path over
     `[s0, s0 + i]` ending in leg `l`, and its back-pointers (the leg's length;
     a length of `i + 1` is the first leg, and the leg before is `argFrom`). -/
-def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat := Id.run do
+def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) (withBp : Bool := true) :
+    FloatArray × Array Nat := Id.run do
   let L := tb.legs.size
   let B := tb.nBase
   let T := tb.T
@@ -311,44 +394,10 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
   for i in [0:w] do
     let e := s0 + i
     for l in live do
-      let mut best := negInf
-      let mut bd := 0
-      let starts := tb.reachStarts[l]!
-      if starts.isEmpty then
-        match tb.ownSlot[l]?.bind id with
-        | some slot =>
-          -- The path before the leg, plus its own score, tabled once (`withOwn`).
-          let (b, d) := bestOwn m tb.own (tb.first[l]! + tb.firstCtx.get! (l * T + s0))
-            (l * w) ((slot * T + e) * tb.maxJ) i (min tb.maxJ (i + 1)) 1 best bd
-          best := b
-          bd := d
-        | none =>
-          for d in [1:min tb.maxJ (i + 1) + 1] do
-            let cand := candidate tb m s0 i l d
-            if cand > best then
-              best := cand
-              bd := d
-      else
-        -- A paired leg begins only within reach of its station.
-        let po := tb.pairOwn[l]?.getD FloatArray.empty
-        if po.size != 0 then
-          -- The path before the leg, plus its own score, tabled once (`withOwn`).
-          let (b, d) := bestPaired m po starts (tb.first[l]! + tb.firstCtx.get! (l * T + s0))
-            (l * w) i e tb.maxJ firstAt[l]! best bd
-          best := b
-          bd := d
-        else
-          let mut k := firstAt[l]!
-          while k < starts.size && starts[k]! ≤ e do
-            let d := e + 1 - starts[k]!
-            if d ≤ tb.maxJ then
-              let cand := candidate tb m s0 i l d
-              if cand > best then
-                best := cand
-                bd := d
-            k := k + 1
-      v := v.set! (i * L + l) best
-      bpD := bpD.set! (i * L + l) bd
+      v := v.set! (i * L + l) (legBest tb m firstAt s0 w i l)
+    if withBp then
+      for l in live do
+        bpD := bpD.set! (i * L + l) (legArg tb m firstAt s0 w i l (v.get! (i * L + l)))
     -- The hoisted transition into every leg that may begin at `e + 1`: the
     -- best leg before it, other than itself, plus the transition between their
     -- bases. The price depends on the bases alone, so each base's best and
@@ -419,7 +468,7 @@ def bestFrom (tb : Tables) (start : Nat) (prev : FloatArray) : FloatArray := Id.
   let pre := prep tb
   for s0 in [start:T] do
     let w := min tb.maxJ (T - s0)
-    let (v, _) := sweepWith tb pre s0 w
+    let (v, _) := sweepWith tb pre s0 w (withBp := false)
     for i in [0:w] do
       let mut b := negInf
       for l in [0:L] do
