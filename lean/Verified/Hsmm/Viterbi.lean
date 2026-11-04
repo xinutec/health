@@ -18,9 +18,9 @@ Differences from the TypeScript, both deliberate:
     it a visible signal instead of silent corruption).
 
 The goal theorem is proved for the *specification* decoder (`Decode.lean`:
-`decode_correct`, `decode_none_iff`) and inherited by the memoised production
-forms (`Memo.decodeFast` → `Ckpt.decodeCk` → `Packed.pDecode`, the last being
-what `verified_cli` runs). This array `viterbi` is **not** itself proved and is
+`decode_correct`, `decode_none_iff`) and inherited by the memoised forms
+(`Memo.decodeFast`, `Ckpt.decodeCk`) and by `ByStart.sDecode`, what
+`verified_cli` runs. This array `viterbi` is **not** itself proved and is
 **not** on the production path: it is the TS-faithful reference that `Tests.lean`
 `#guard`-pins the spec decoder against — paths included — so a divergence
 between the ported loop and the verified spec fails the build. It exists to

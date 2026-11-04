@@ -931,7 +931,7 @@ fn decodeprof(
 /// together, ~170 s — swings 2× run to run and cannot tell a 10% decoder change
 /// from noise. This runs `verified_cli decodeprof` on each fixture's request,
 /// the request the gate replays, which builds the `PData` once and times
-/// `pDecodeFast` N times on it.
+/// `sDecode` N times on it.
 ///
 /// Two numbers per day, because the machine is rarely quiet:
 /// * WALL min/median/max of the N decodes — the decoder's cost when nothing

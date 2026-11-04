@@ -4,7 +4,7 @@ import Verified.Hsmm.Trellis
 import Verified.Hsmm.Decode
 import Verified.Hsmm.Memo
 import Verified.Hsmm.Ckpt
-import Verified.Hsmm.Packed
+import Verified.Hsmm.ByStart
 
 /-!
 # Compile-time parity checks: trellis vs brute-force oracle
@@ -136,18 +136,32 @@ private def checkTrellis (P : Problem) : Bool :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
   decodeCk blocked 7 == viterbi blocked
 
--- The packed decoder (`Nat`-scalar arithmetic through `enc`) is proved equal
--- to decode under the envelope hypotheses (`pDecode_eq`); the seeded test
+-- The by-start decoder (`Nat`-scalar arithmetic through `enc`) is proved equal
+-- to decode under the envelope hypotheses (`sDecode_eq`); the seeded test
 -- family sits comfortably inside the envelope, so it must match exactly.
-#guard (List.range 6).all fun seed =>
-  [0, 1, 7, 64].all fun K =>
-    pDecode (packM (mkP seed 30 4 6)) K == viterbi (mkP seed 30 4 6)
-#guard (List.range 4).all fun seed =>
-  [1, 16].all fun K =>
-    pDecode (packM (mkP seed 60 3 10)) K == viterbi (mkP seed 60 3 10)
+-- `pdOf` lays a `Problem` out as the flat arrays the server builds, every
+-- duration cell an override.
+private def pdOf (P : Problem) : PData :=
+  let S := P.S
+  let T := P.T
+  let D := P.maxD
+  { T, S, maxD := D, halfOB := 0
+    emit := (Array.range (T * S)).map fun i => enc (P.emit (i / S) (i % S))
+    entry := (Array.range (T * S)).map fun i => enc (P.entry (i % S) (i / S))
+    init := (Array.range S).map fun s => enc (P.init s)
+    transBase := (Array.range (T * S * S)).map fun i =>
+      enc (P.trans ((i % (S * S)) / S) (i % S) (i / (S * S)))
+    nTB := T, transIdx := #[], transFlat := #[], nRows := 0
+    durBase := Array.replicate (S * D) 0, durClass := #[], durDelta := #[]
+    hasOv := Array.replicate (S * D) true
+    durOv := (List.range (S * D * T)).foldl (fun m i =>
+      m.insert i (enc (P.dur (i / T / D) (i / T % D + 1) (i % T)))) {} }
+
+#guard (List.range 6).all fun seed => sDecode (pdOf (mkP seed 30 4 6)) == viterbi (mkP seed 30 4 6)
+#guard (List.range 4).all fun seed => sDecode (pdOf (mkP seed 60 3 10)) == viterbi (mkP seed 60 3 10)
 #guard
   let blocked : Problem :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
-  pDecode (packM blocked) 7 == viterbi blocked
+  sDecode (pdOf blocked) == viterbi blocked
 
 end Verified.Hsmm.Tests

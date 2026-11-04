@@ -23,17 +23,14 @@ the day; and the journey pass is the largest phase on every day.
 
 ## The invariant it rests on
 
-The packed decoder already stores columns as checkpoints and proves the walk
-correct for any stride: every stored column equals `col` at its own time
-(`Packed.lean`, `pBuildCkpt_fst`). A column depends only on the model at or
-before its time: `col (t + 1) = colStep m t (col t)`. So two models that agree
-on every entry a column up to `f` reads have the same columns up to `f`, and
-a run may start from the last stored checkpoint before `f`.
-
-The lemma to prove: if `m₁` and `m₂` agree on emissions, entries, transitions
-and duration cells at every `t < f` (the cells by their END minute), then
-`col m₁ t = col m₂ t` for `t ≤ f`. The walk then needs the tables for every
-minute, so the stored tables for `e < f` are reused and only `e ≥ f` is built.
+The decoder keeps, per minute and state, the score of entering the state and
+its best close (`ByStart.lean`): a minute's rows read the model at that
+minute or before, and the closes read the duration cells ending before it.
+So two models that agree on everything up to `f` (`AgreeTo`) build the same
+rows up to `f` (`sBuild_agree`), and a build to a later minute only appends
+rows (`sBuild_prefix`). The earlier run's rows, cut at `f` and built on with
+the new model, are the new model's own (`sDecodeInc_eq`), so `sDecode_correct`
+covers the incremental decode.
 
 ## The frontier
 
@@ -68,11 +65,9 @@ the journey's sweeps then start at `f − maxJ` or later.
 
 ## Where the state lives
 
-Per user and day, one file under the sidecar's tmp mount, named by the code
-hash: the built rows, the per-minute tables and the checkpoints. A missing or
-foreign file means a full decode. Its size is to be measured (the full
-`PData` of a day is the upper bound, ~0.5–1 GB in the worker's RSS today;
-the checkpoints alone are ~90 columns of `S × maxD`).
+In the long-lived worker's memory (step 3): the day's `PData`, its journey
+tables and the decoder's rows, two `T × S` arrays of `Nat` (~2.6 MB on
+2026-11-02's 115 states). A new key or no earlier run means a full decode.
 
 ## Steps
 
@@ -86,7 +81,8 @@ the checkpoints alone are ~90 columns of `S × maxD`).
    columns up to `f` (`pBuildCkpt_agree`), and resuming the new model from the
    old run's checkpoints at a stride boundary `t0 ≤ f` (`resumeState`,
    `pResume`) decodes exactly as the new model from scratch (`pDecodeInc_eq`),
-   so `pDecode_correct` covers it.
+   so `pDecode_correct` covers it. Superseded 2026-11-04 with the checkpoint
+   decoder itself: the by-start rows resume at `f` exactly (`sDecodeInc_eq`).
    Then the incremental build, in Lean: emissions, entries and transitions
    rebuilt whole (cheap); `f` computed from the old and new per-minute tables
    (the first minute any differs, less one — `AgreeTo` checked, not assumed);

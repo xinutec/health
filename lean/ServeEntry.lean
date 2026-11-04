@@ -18,10 +18,10 @@ and every Lean decision it makes crosses here (#1709).
 /-!
 # `verified_cli` — JSON decode interface
 
-Reads one HSMM problem as JSON on stdin, decodes it with `pDecodeFast` — the
-flat-array decoder proved equal to the packed, checkpointed `pDecode`
-(`pDecodeFast_eq`), so its output stays theorem-backed
-(`pDecodeFast_correct`) — and writes the result as JSON on stdout. The parser
+Reads one HSMM problem as JSON on stdin, decodes it with `sDecode` — the
+by-start decoder proved equal to the specification's `decode`
+(`sDecode_eq`), so its output stays theorem-backed (`sDecode_correct`) — and
+writes the result as JSON on stdout. The parser
 lays the tensors out as the flat `Array Nat`s `PData` reads through direct,
 inlinable accessors (the forward pass' hot path), instead of the `PModel`
 closure fields it used to build. The bridge for A/B-ing against
@@ -287,11 +287,6 @@ private def parseModel (j : Json) : Except String PData := do
     durBase := durBaseFlat, durClass := durClass, durDelta := durDeltaFlat
     hasOv := hasOv, durOv := durOv
   }
-
-/-- Checkpoint stride for `pDecode`: retained cells scale as `T/K` columns
-and each decoded segment recomputes `< K` columns during the walk.
-`pDecode_eq` holds for every stride, so this is purely a space/time knob. -/
-def ckptStride : Nat := 16
 
 private def parseRail (j : Json) : Except String (Verified.Rail.Graph × Nat × Nat) := do
   let adj : Array (Array (Nat × Nat)) ← (← (← j.getObjVal? "adj").getArr?).mapM fun r => do
@@ -2069,7 +2064,7 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat)
 
 
 /-- Assemble the model from parsed inputs, build `PData`, and DECODE it with
-    `pDecodeFast` — the full raw-inputs → path serve path, no marshalled payload. -/
+    `sDecode` — the full raw-inputs → path serve path, no marshalled payload. -/
 private def assembleDecodeResult (j : Json) : Json :=
   match parseAssemble j with
   | .error e => Json.mkObj [("error", Json.str e)]
@@ -2077,7 +2072,7 @@ private def assembleDecodeResult (j : Json) : Json :=
     match buildPData c maxD with
     | .error e => Json.mkObj [("error", Json.str e)]
     | .ok (pd, _) =>
-      match pDecodeFast pd ckptStride with
+      match Verified.Hsmm.sDecode pd with
       | none => Json.mkObj [("degenerate", Json.bool true)]
       | some r => Json.mkObj [
           ("path", Json.arr (r.path.map fun s => Lean.toJson s)),
@@ -2160,7 +2155,7 @@ private def journeyInputs (c : Verified.Hsmm.Assemble.ModelContext) (j : Json) :
 
 /-- `verified_cli decodeprof` — the decoder's cost on one day, apart from its
 model build. Reads an `assemblesegments` request plus `"runs"` (default 5),
-builds the `PData` once, then times `pDecodeFast` that many times on it; each
+builds the `PData` once, then times `sDecode` that many times on it; each
 `IO.lazyPure` pins one decode between two timestamps. The reply is the trellis
 shape, `buildMs`, every `decodeMs`, and the best score — which every run must
 agree on, so a timing never comes from a decode that changed its answer.
@@ -2211,7 +2206,7 @@ private def decodeProfMain (input : String) : IO UInt32 := do
         let mut bests : Array String := #[]
         for _ in [0:runs] do
           let a ← IO.monoMsNow
-          let r ← IO.lazyPure fun _ => pDecodeFast pd ckptStride
+          let r ← IO.lazyPure fun _ => Verified.Hsmm.sDecode pd
           let b ← IO.monoMsNow
           times := times.push (b - a)
           bests := bests.push (match r with
@@ -2778,7 +2773,7 @@ private def assembleSegmentsResult (j : Json) : Json :=
     match buildPData c maxD g? rels? with
     | .error e => Json.mkObj [("error", Json.str e)]
     | .ok (pd, journey) =>
-      match pDecodeFast pd ckptStride with
+      match Verified.Hsmm.sDecode pd with
       | none => Json.mkObj [("degenerate", Json.bool true)]
       | some r =>
         segmentsOf j c g? rels? pd journey r
@@ -2787,8 +2782,8 @@ private def assembleSegmentsResult (j : Json) : Json :=
 
 The day's previous run is kept by the serve loop; a run whose per-minute tables
 match it before minute `f` copies every cell ending before `f`, computes the
-rest, and resumes the trellis from the previous checkpoints
-(`pDecodeIncD_eq`: the full decode exactly). Any day-wide difference, a new key
+rest, and builds the trellis's rows on from the previous run's, cut at `f`
+(`sDecodeInc_eq`: the full decode exactly). Any day-wide difference, a new key
 or no previous run decodes in full (docs/proposals/2026-11-incremental-today.md). -/
 
 /-- What the day's next run reuses. -/
@@ -2798,7 +2793,9 @@ structure TodayState where
   covered : Array Bool
   pd : PData
   journey : Option Verified.Hsmm.Journey.Tables
-  cks : Array (Nat × Array (Array Nat))
+  /-- The run's by-start rows (`sBuild`), which the next run cuts at its
+      frontier and builds on (`sDecodeInc_eq`). -/
+  rows : Array Nat × Array Nat
 
 private def minOpt (a b : Option Nat) : Option Nat :=
   match a, b with
@@ -2921,13 +2918,13 @@ private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × O
     let T := c.obs.size
     let covered := (Array.range T).map (Verified.Hsmm.Assemble.coveredAtE c)
     let answer := fun (pd : PData) (journey : Option Verified.Hsmm.Journey.Tables)
-        (r? : Option DecodeResult) (cks : Array (Nat × Array (Array Nat))) (incJ : Json) =>
+        (r? : Option DecodeResult) (rows : Array Nat × Array Nat) (incJ : Json) =>
       match r? with
       | none => (Json.mkObj [("degenerate", Json.bool true)], none)
       | some r =>
         let out := segmentsOf j c g? rels? pd journey r
         (out.setObjVal! "incremental" incJ,
-          if key.isEmpty then none else some { key, obs := c.obs, covered, pd, journey, cks })
+          if key.isEmpty then none else some { key, obs := c.obs, covered, pd, journey, rows })
     match buildPre c maxD g? rels? with
     | .error e => (Json.mkObj [("error", Json.str e)], none)
     | .ok pre =>
@@ -2936,8 +2933,9 @@ private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × O
       | .error e => (Json.mkObj [("error", Json.str e)], none)
       | .ok (pd, journey) =>
         if pd.T == 0 then (Json.mkObj [("degenerate", Json.bool true)], none) else
-        let bc := pBuildCkptD pd ckptStride (pd.T - 1)
-        answer pd journey (pDecodeWithD pd bc) bc.1 Json.null
+        let pref := Verified.Hsmm.sPrefix pd
+        let rows := Verified.Hsmm.sBuild pd pref pd.T
+        answer pd journey (Verified.Hsmm.sDecodeWith pd pref rows.1) rows Json.null
     match st? with
     | none => full ()
     | some st =>
@@ -2949,7 +2947,8 @@ private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × O
         (out.setObjVal! "incremental" (Json.mkObj [("full", Json.str why)]), st')
       else
       let f := first - 1
-      let t0 := (min f (pdT.T - 1)) / ckptStride * ckptStride
+      -- Both runs' rows exist up to here: the earlier run's to its day's end.
+      let t0 := min f (min pdT.T st.pd.T)
       let inc : IncFrom :=
         { f, durDelta := st.pd.durDelta
         , legDur := (st.journey.map (·.legDur)).getD FloatArray.empty
@@ -2957,8 +2956,8 @@ private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × O
       match buildPDataFrom c maxD g? rels? pre (inc := some inc) with
       | .error e => (Json.mkObj [("error", Json.str e)], none)
       | .ok (pd, journey) =>
-        let (r?, cks) := pDecodeIncD pd ckptStride t0 st.cks
-        answer pd journey r? cks
+        let (r?, rows) := Verified.Hsmm.sDecodeInc pd t0 st.rows
+        answer pd journey r? rows
           (Json.mkObj [("frontier", Lean.toJson f), ("resumedAt", Lean.toJson t0),
             ("by", Json.str why)])
 
@@ -4301,7 +4300,7 @@ def cliMain (args : List String) : IO UInt32 := do
     let t2 ← IO.monoMsNow
     -- `IO.lazyPure` pins the evaluation between the two timestamps; a plain
     -- pure `let` gets floated into the match by the compiler.
-    let r ← IO.lazyPure fun _ => pDecodeFast m ckptStride
+    let r ← IO.lazyPure fun _ => Verified.Hsmm.sDecode m
     let t3 ← IO.monoMsNow
     match r with
     | none => IO.println (Json.mkObj [("degenerate", Json.bool true)]).compress

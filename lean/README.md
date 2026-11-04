@@ -58,13 +58,18 @@ knowing about from outside. `find lean -name '*.lean'` is the index.
   stride, so `K` is purely a space/time knob. Also the fold-form column
   functions (`rangeMax`/`closeRowF`/`colStepF`, proved equal to the
   list-form ones).
-- `Verified/Hsmm/Packed.lean` — the production form: scores offset-encoded
-  as `Nat` scalars (`enc`: `-∞ ↦ 0`, `v ↦ v + 2^61`) so the forward pass
-  never touches GMP. Exact, not approximate: `enc_add`/`enc_max` are proved
-  homomorphisms under the magnitude envelope that `col_bounded` establishes
-  for every cell (inputs `|v| ≤ 2^49` emissions / `2^45` others, `T ≤ 2048`
-  — the CLI refuses inputs outside it). `pDecode` inherits everything
-  through `pDecode_eq`. This is what `verified_cli` runs.
+- `Verified/Hsmm/Packed.lean` — scores offset-encoded as `Nat` scalars
+  (`enc`: `-∞ ↦ 0`, `v ↦ v + 2^61`) so the decoder never touches GMP.
+  Exact, not approximate: `enc_add`/`enc_max` are proved homomorphisms under
+  the magnitude envelope that `col_bounded` establishes for every cell
+  (inputs `|v| ≤ 2^49` emissions / `2^45` others, `T ≤ 2048` — the CLI
+  refuses inputs outside it). Also the flat-array model `PData`.
+- `Verified/Hsmm/ByStart.lean` — the production form: per minute and state
+  the encoded score of entering the state and its best close, a cell read as
+  an entering score plus emission prefix sums, every argmax `pickBest`'s in
+  `Nat`. `sDecode` inherits everything through `sDecode_eq`, and today's
+  incremental decode through `sDecodeInc_eq`. This is what `verified_cli`
+  runs.
 - `Verified/Hsmm/Viterbi.lean` — the trellis (faithful port of
   `src/hmm/hsmm-viterbi.ts`, same loop order and tie-breaks; degenerate cases
   return `none` instead of the TS silent fallbacks).
