@@ -139,6 +139,9 @@ const POST_TS: &[&str] = &[
     // Brussels, and a restaurant by Liverpool Street.
     "2026-05-10.md",
     "2026-05-16.md",
+    // A day at the office he said he never left; its walks out and the stay
+    // at the change station are known-wrong.
+    "2026-11-03.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
