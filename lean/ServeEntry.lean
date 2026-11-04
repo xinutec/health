@@ -1948,7 +1948,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         for ji in jAll do
           durBaseJ := durBaseJ.set! (ji * maxD + d0) 0
       return (durClass, durBaseJ, durDelta, some tb)
-    let tb := Verified.Hsmm.Journey.withOwn tb
+    let tb := Verified.Hsmm.Journey.withOwn tb (f + 1 - maxJ)
     let inner := Verified.Hsmm.Journey.bestFrom tb (f + 1 - maxJ)
       ((inc.map (·.inner)).getD FloatArray.empty)
     -- The own-score tables served `best`; what reads the tables after it (a

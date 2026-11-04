@@ -270,10 +270,10 @@ def prep (tb : Tables) : Pre := Id.run do
     (Array.range L).filter fun l => tb.reachMask[l * tb.T + t]!
   return { restricted, into, startersAt }
 
-/-- The tables with `own` filled: once per day, before `best`, so the sweep
-    from every start and the decoded journey's back-pointers read the same
-    numbers. -/
-def withOwn (tb : Tables) : Tables := Id.run do
+/-- The tables with `own` filled for the legs that begin at `fromStart` or
+    later: before `bestFrom`, whose sweeps from `fromStart` on read no other.
+    The rest stay `−∞`. -/
+def withOwn (tb : Tables) (fromStart : Nat := 0) : Tables := Id.run do
   let L := tb.legs.size
   let T := tb.T
   let free := (Array.range L).filter fun l => tb.reachStarts[l]!.isEmpty
@@ -283,7 +283,7 @@ def withOwn (tb : Tables) : Tables := Id.run do
   for (l, k) in free.zipIdx do
     let b := tb.baseOf[l]!
     for d in [1 : tb.maxJ + 1] do
-      for e in [d - 1 : T] do
+      for e in [fromStart + d - 1 : T] do
         let start := e + 1 - d
         let emit := tb.emitPre.get! (b * (T + 1) + e + 1) - tb.emitPre.get! (b * (T + 1) + start)
         let board := if tb.boardAt.size == 0 then ZERO else tb.boardAt.get! (l * T + start)
@@ -294,6 +294,7 @@ def withOwn (tb : Tables) : Tables := Id.run do
     let b := tb.baseOf[l]!
     let mut po := Verified.FloatConst.floats (starts.size * tb.maxJ) negInf
     for (start, k) in starts.zipIdx do
+      if start < fromStart then continue
       for d in [1 : tb.maxJ + 1] do
         let e := start + d - 1
         if e ≥ T then break
