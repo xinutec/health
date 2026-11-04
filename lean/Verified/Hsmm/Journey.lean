@@ -205,14 +205,34 @@ def pairLogPdf (d expected : Float) : Float :=
   if cand > best then bestOwn m own firstPrev mBase ownBase i dMax (d + 1) cand d
   else bestOwn m own firstPrev mBase ownBase i dMax (d + 1) best bd
 
+/-- The paired leg `l`'s best length ending at `e = s0 + i`, over its tabled own
+    scores (`withOwn`): its starts from the `k`-th on, while they are at or
+    before `e`, in the loop's order with its state in registers (`bestOwn`).
+    `firstPrev` is the first-leg prior at `s0`; `mBase` is `l * w`. -/
+@[specialize] partial def bestPaired (m po : FloatArray) (starts : Array Nat) (firstPrev : Float)
+    (mBase i e maxJ k : Nat) (best : Float) (bd : Nat) : Float × Nat :=
+  if h : k < starts.size then
+    let s := starts[k]
+    if s > e then (best, bd) else
+    let d := e + 1 - s
+    if d > maxJ then bestPaired m po starts firstPrev mBase i e maxJ (k + 1) best bd else
+    let prev := if d == i + 1 then firstPrev else m.get! (mBase + (i - d))
+    if prev == negInf then bestPaired m po starts firstPrev mBase i e maxJ (k + 1) best bd else
+    let cand := prev + po.get! (k * maxJ + (d - 1))
+    if cand > best then bestPaired m po starts firstPrev mBase i e maxJ (k + 1) cand d
+    else bestPaired m po starts firstPrev mBase i e maxJ (k + 1) best bd
+  else (best, bd)
+
 /-- What the hoisted transition needs from `pairOk`, once per table: a leg is
     `restricted` when some leg may not follow it (a wait, which continues only
     into a ride boarding at its station), and `into[l]` lists the restricted
     legs that may precede `l`. Every other pair is free, and the transition's
-    price depends on the two legs' bases alone. -/
+    price depends on the two legs' bases alone. `startersAt[t]`: the legs that
+    may begin at `t` (`reachMask`), ascending. -/
 structure Pre where
   restricted : Array Bool
   into : Array (Array Nat)
+  startersAt : Array (Array Nat)
 
 def prep (tb : Tables) : Pre := Id.run do
   let L := tb.legs.size
@@ -222,7 +242,9 @@ def prep (tb : Tables) : Pre := Id.run do
     if !restricted[a]! then continue
     for b in [0:L] do
       if a != b && tb.pairOk[a * L + b]! then into := into.modify b (·.push a)
-  return { restricted, into }
+  let startersAt := (Array.range tb.T).map fun t =>
+    (Array.range L).filter fun l => tb.reachMask[l * tb.T + t]!
+  return { restricted, into, startersAt }
 
 /-- The tables with `own` filled: once per day, before `best`, so the sweep
     from every start and the decoded journey's back-pointers read the same
@@ -280,9 +302,15 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
       let mid := (lo + hi) / 2
       if starts[mid]! < s0 then lo := mid + 1 else hi := mid
     return lo
+  -- The legs this sweep can reach, ascending: every free leg, and a paired
+  -- leg with a start inside the window. Any other leg stays `−∞` throughout,
+  -- as its initial value, and adds nothing to a maximum.
+  let live := (Array.range L).filter fun l =>
+    let starts := tb.reachStarts[l]!
+    starts.isEmpty || (firstAt[l]! < starts.size && starts[firstAt[l]!]! < s0 + w)
   for i in [0:w] do
     let e := s0 + i
-    for l in [0:L] do
+    for l in live do
       let mut best := negInf
       let mut bd := 0
       let starts := tb.reachStarts[l]!
@@ -303,20 +331,22 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
       else
         -- A paired leg begins only within reach of its station.
         let po := tb.pairOwn[l]?.getD FloatArray.empty
-        let mut k := firstAt[l]!
-        while k < starts.size && starts[k]! ≤ e do
-          let s := starts[k]!
-          let d := e + 1 - s
-          if d ≤ tb.maxJ then
-            -- The path before the leg, plus its own score, tabled once (`withOwn`).
-            let prev := if d == i + 1 then tb.first[l]! + tb.firstCtx.get! (l * T + s0)
-              else m.get! (l * w + (i - d))
-            let cand := if po.size == 0 then candidate tb m s0 i l d
-              else if prev == negInf then negInf else prev + po.get! (k * tb.maxJ + (d - 1))
-            if cand > best then
-              best := cand
-              bd := d
-          k := k + 1
+        if po.size != 0 then
+          -- The path before the leg, plus its own score, tabled once (`withOwn`).
+          let (b, d) := bestPaired m po starts (tb.first[l]! + tb.firstCtx.get! (l * T + s0))
+            (l * w) i e tb.maxJ firstAt[l]! best bd
+          best := b
+          bd := d
+        else
+          let mut k := firstAt[l]!
+          while k < starts.size && starts[k]! ≤ e do
+            let d := e + 1 - starts[k]!
+            if d ≤ tb.maxJ then
+              let cand := candidate tb m s0 i l d
+              if cand > best then
+                best := cand
+                bd := d
+            k := k + 1
       v := v.set! (i * L + l) best
       bpD := bpD.set! (i * L + l) bd
     -- The hoisted transition into every leg that may begin at `e + 1`: the
@@ -329,7 +359,7 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
       let mut b1 := Verified.FloatConst.floats B negInf
       let mut b1i : Array Nat := Array.replicate B L
       let mut b2 := Verified.FloatConst.floats B negInf
-      for a in [0:L] do
+      for a in live do
         if pre.restricted[a]! then continue
         let va := v.get! (i * L + a)
         if va == negInf then continue
@@ -340,8 +370,7 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) : FloatArray × Array Nat :
           b1i := b1i.set! ba a
         else if va > b2.get! ba then
           b2 := b2.set! ba va
-      for l in [0:L] do
-        if !tb.reachMask[l * T + (e + 1)]! then continue
+      for l in pre.startersAt[e + 1]! do
         let bl := tb.baseOf[l]!
         let mut best := negInf
         for ba in [0:B] do
