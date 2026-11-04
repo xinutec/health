@@ -235,6 +235,18 @@ partial def bestPairedGo (m po : FloatArray) (starts : Array Nat) (firstPrev : F
     bestPairedGo m po starts firstPrev mBase i e maxJ (k + 1) (if cand > best then cand else best)
   else best
 
+/-- The hoisted transition's maximum over the bases `ba … B - 1` into leg
+    `l`: each base's best free leg, its second where the best is `l` itself,
+    plus the transition at `ti` (`trans[((e + 1) * B + ba) * B + bl]`, one
+    row of `B` further per base). Indices in `USize` (`fgetU`). -/
+partial def transGo (b1 b2 : FloatArray) (b1i : Array Nat) (trans : FloatArray) (l : Nat)
+    (ba B ti : USize) (best : Float) : Float :=
+  if ba ≥ B then best else
+  let va := if b1i[ba.toNat]! == l then fgetU b2 ba else fgetU b1 ba
+  if va == negInf then transGo b1 b2 b1i trans l (ba + 1) B (ti + B) best else
+  let cand := va + fgetU trans ti
+  transGo b1 b2 b1i trans l (ba + 1) B (ti + B) (if cand > best then cand else best)
+
 /-- What the hoisted transition needs from `pairOk`, once per table: a leg is
     `restricted` when some leg may not follow it (a wait, which continues only
     into a ride boarding at its station), and `into[l]` lists the restricted
@@ -421,12 +433,7 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) (withBp : Bool := true) :
           b2 := b2.set! ba va
       for l in pre.startersAt[e + 1]! do
         let bl := tb.baseOf[l]!
-        let mut best := negInf
-        for ba in [0:B] do
-          let va := if b1i[ba]! == l then b2.get! ba else b1.get! ba
-          if va == negInf then continue
-          let cand := va + tb.trans.get! (((e + 1) * B + ba) * B + bl)
-          if cand > best then best := cand
+        let mut best := transGo b1 b2 b1i tb.trans l 0 B.toUSize ((e + 1) * B * B + bl).toUSize negInf
         for a in pre.into[l]! do
           let va := v.get! (i * L + a)
           if va == negInf then continue
