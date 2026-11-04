@@ -516,6 +516,60 @@ def dispPosteriorFrom (p : Params) (mode : Mode) (v : FloatArray × Float) : Flo
   acc := acc + Float.exp (flat - mx)
   return own - (mx + Float.log acc)
 
+/-- A `dispVector` with its log-sum, which no mode changes: built once per
+    `(d, e)`, so each class pays only for its own entry. -/
+structure DispVec where
+  vals : FloatArray
+  flat : Float
+  /-- `mx + log Σ exp (· − mx)` as `dispPosteriorFrom` sums it. NaN when an
+      entry is NaN or every entry is `−∞`; then the posterior is taken the
+      long way. -/
+  lse : Float
+
+/-- The log-sum of `v`, in `dispPosteriorFrom`'s order. Its maximum starts
+    from `−∞` where that one starts from the mode's own entry, which is one of
+    the entries, so without a NaN the two maxima are the same double. -/
+def dispPrep (v : FloatArray × Float) : DispVec := Id.run do
+  let (vals, flat) := v
+  let n := vals.size
+  let mut mx := Verified.FloatConst.negInf
+  for k in [0:n] do
+    mx := max mx (vals.get! k)
+  mx := max mx flat
+  let mut acc := ZERO
+  for k in [0:n] do
+    acc := acc + Float.exp (vals.get! k - mx)
+  acc := acc + Float.exp (flat - mx)
+  return { vals, flat, lse := mx + Float.log acc }
+
+/-- `dispPosteriorFrom` over a prepared vector. -/
+def dispPosteriorPrep (p : Params) (mode : Mode) (v : DispVec) : Float := Id.run do
+  if v.lse.isNaN then return dispPosteriorFrom p mode (v.vals, v.flat)
+  let mut own := v.flat
+  let mut i := 0
+  for (m, _) in p.disp do
+    if m == mode then
+      own := v.vals.get! i
+      break
+    i := i + 1
+  return own - v.lse
+
+private def dvT : FloatArray × Float := (⟨#[-3.5, -0.25, -7]⟩, -2)
+private def dvInf : FloatArray × Float := (⟨#[Verified.FloatConst.negInf]⟩, Verified.FloatConst.negInf)
+private def dvNaN : FloatArray × Float := (⟨#[0.0 / 0.0, -1]⟩, -2)
+private def pDispT : Params :=
+  { (default : Params) with disp := [(.walking, default), (.train, default), (.walking, default)] }
+#guard [Mode.walking, .train, .stationary].all fun m =>
+  dispPosteriorPrep pDispT m (dispPrep dvT) == dispPosteriorFrom pDispT m dvT
+#guard [Mode.walking, .stationary].all fun m =>
+  let a := dispPosteriorPrep pDispT m (dispPrep dvInf)
+  let b := dispPosteriorFrom pDispT m dvInf
+  a.isNaN && b.isNaN
+#guard [Mode.walking, .train, .stationary].all fun m =>
+  let a := dispPosteriorPrep pDispT m (dispPrep dvNaN)
+  let b := dispPosteriorFrom pDispT m dvNaN
+  (a.isNaN && b.isNaN) || a == b
+
 /-- `log f_mode(D) − log Σ_m f_m(D)` over the modes with a fitted displacement:
     the posterior of the mode given the segment's net displacement under a flat
     prior over those modes. A density per segment is about `−log(scale)` for

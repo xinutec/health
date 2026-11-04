@@ -14,6 +14,8 @@ namespace Verified.Hsmm.SegmentEvidence
 
 /-- Unattributable-motion spread per minute of bracket slop (m/min). -/
 def SLOP_SPEED_M_PER_MIN : Float := 500
+/-- A literal in the window's branch is converted on every call; once here. -/
+private def SECONDS_PER_MINUTE_F : Float := 60
 /-- Caller-resolved segment geometry: net displacement between the bracketing
     fixes, the (already-squared) slop variance, and the measured step total. -/
 structure Window where
@@ -55,8 +57,8 @@ def windowFor (obs : Array ObsRow) (pref : Array Float) (startIndex segEnd : Int
         else
           let segStartTs := first.ts
           let segEndTs := last.ts + 60
-          let slopMin := ((max 0 (segStartTs - before.ts)).toNat.toFloat
-                        + (max 0 (after.ts - segEndTs)).toNat.toFloat) / 60
+          let slopMin := (Verified.FloatConst.natToFloat (max 0 (segStartTs - before.ts)).toNat
+                        + Verified.FloatConst.natToFloat (max 0 (after.ts - segEndTs)).toNat) / SECONDS_PER_MINUTE_F
           let sl := SLOP_SPEED_M_PER_MIN * slopMin
           let hiIdx := (min (obs.size : Int) (segEnd + 1)).toNat
           -- `pref` is `stepPrefix obs`, one longer than the tensor; a shorter

@@ -1451,7 +1451,9 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   let maxJ := match c.segEm.p.journey with | some jp => min jp.maxJ maxD | none => 0
   let legs := if jIdx.isSome then Verified.Hsmm.Assemble.legIdxs c else #[]
   let legSlots : Array Nat := legs.foldl (fun acc l => let k := durClass[l]!; if acc.contains k then acc else acc.push k) #[]
-  let slotOfCls := fun (cls : Nat) => legSlots.findIdx? (· == cls)
+  let slotArr : Array (Option Nat) := (Array.range nC).map fun cls => legSlots.findIdx? (· == cls)
+  -- Every slot is a class below `nC`, so past it there is none either.
+  let slotOfCls := fun (cls : Nat) => slotArr.getD cls none
   -- A pure loop: in `Except` each of the ~2.4M cells paid for the monad, which
   -- was half the phase (#1774). An out-of-range delta is recorded and thrown
   -- after the loop instead.
@@ -1488,7 +1490,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         let sst := Verified.Hsmm.SegmentEmission.statsAt c.segPref (d0 + 1) e
         -- The displacement densities once per (d, e): every class and both
         -- cells below read the same vector (`dispPosteriorFrom`).
-        let dv := w.map (Verified.Hsmm.SegmentEmission.dispVector c.segEm.p (d0 + 1))
+        let dv := w.map fun w => Verified.Hsmm.SegmentEmission.dispPrep
+          (Verified.Hsmm.SegmentEmission.dispVector c.segEm.p (d0 + 1) w)
         let cov := covered[e]!
         for cls in [0:nC] do
           -- The journey's cell waits for the inner pass (below).

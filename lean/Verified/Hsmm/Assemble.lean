@@ -535,7 +535,7 @@ def stayMoveAt (c : ModelContext) (x : State) (lo hi : Nat) : Float :=
     window `w` (its net displacement) and statistics `st`. -/
 def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
     (st : SegmentEmission.Stats) (level : Bool := true)
-    (dv : Option (FloatArray × Float) := none) : Float :=
+    (dv : Option SegmentEmission.DispVec := none) : Float :=
   let q := c.segEm
   match c.states[s]? with
   | some x =>
@@ -559,7 +559,7 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
       -- The displacement vector built once per `(d, e)` by the cells loop,
       -- else here.
       + (match dv with
-         | some v => SegmentEmission.dispPosteriorFrom q.p x.mode v
+         | some v => SegmentEmission.dispPosteriorPrep q.p x.mode v
          | none => SegmentEmission.dispPosteriorScore q.p x.mode d w)
       + stayMoveAt c x st.lo st.hi
   | none => SEG_ZERO
@@ -623,7 +623,7 @@ def coveredAtE (c : ModelContext) (e : Nat) : Bool :=
     segment's window — resolved by the caller once for every state (#1774). -/
 def durAtFromW (c : ModelContext) (s d : Nat) (covered : Bool)
     (w : Option SegmentEvidence.Window) (sst : SegmentEmission.Stats) (base : Float)
-    (level : Bool := true) (dv : Option (FloatArray × Float) := none) : Float :=
+    (level : Bool := true) (dv : Option SegmentEmission.DispVec := none) : Float :=
   match c.states[s]? with
   | none => negInf
   | some st =>
