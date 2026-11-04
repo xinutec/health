@@ -19,12 +19,14 @@ open Verified.Hsmm.FloatScore
 
 /-- `SCALE = 2²⁰`. -/
 def SCALE : Float := 1048576
+/-- `½`, once: inlined into a caller's loop a literal is converted per call. -/
+def HALF : Float := 0.5
 
 /-- `quantize`: `-∞ → none`; otherwise `round(x · SCALE)` as an integer-valued
     `Float`, using `Math.round`'s round-half-toward-+∞ (`floor(y + 0.5)`). -/
-def quantize (x : Float) : Option Float :=
+@[inline] def quantize (x : Float) : Option Float :=
   if x == negInf then none
-  else some (Float.floor (x * SCALE + 0.5))
+  else some (Float.floor (x * SCALE + HALF))
 
 -- Parity with the TS `quantize` (values from Node/V8):
 #guard quantize (-5.7721301172670145) == some (-6052517)

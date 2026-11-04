@@ -18,6 +18,13 @@ open Verified.Hsmm.Emissions (Mode State)
 /-- `HOUR_PROFILE_FLOOR`. -/
 def HOUR_PROFILE_FLOOR : Float := 0.001
 
+-- The literals the entry prior reads, once each: in a branch a literal is
+-- converted on every call, and the prior runs per state per minute.
+private def ZERO : Float := 0
+private def ONE : Float := 1
+private def TEN : Float := 10
+private def HOURS : Float := 24
+
 /-- `buildInitialStatePrior`: uniform `0` today. -/
 def initialStateLogProb (_s : State) : Float := 0.0
 
@@ -28,7 +35,7 @@ def initialStateLogProb (_s : State) : Float := 0.0
     (it is `0` exactly when the weights map is absent). -/
 def entryLogProb (s : State) (hourLocal : Nat) (useHourProfiles : Bool)
     (profile : Option (Array Float)) (nPlaces : Nat) (visitWeight : Option Float) : Float :=
-  if s.mode != .stationary || s.placeId.isNone then 0.0
+  if s.mode != .stationary || s.placeId.isNone then ZERO
   else
     let p1 :=
       if useHourProfiles then
@@ -36,17 +43,17 @@ def entryLogProb (s : State) (hourLocal : Nat) (useHourProfiles : Bool)
         | some pr =>
           if pr.size == 24 then
             -- Hours are 0–23; one off the profile reads as never visited.
-            let v := (pr[hourLocal]?).getD 0.0
+            let v := (pr[hourLocal]?).getD ZERO
             let f := if v > HOUR_PROFILE_FLOOR then v else HOUR_PROFILE_FLOOR
-            Float.log (24 * f)
-          else 0.0
-        | none => 0.0
-      else 0.0
+            Float.log (HOURS * f)
+          else ZERO
+        | none => ZERO
+      else ZERO
     let p2 :=
       if nPlaces > 0 then
-        let fallback := 1.0 / (10.0 * nPlaces.toFloat)
-        Float.log (nPlaces.toFloat * visitWeight.getD fallback)
-      else 0.0
+        let fallback := ONE / (TEN * Verified.FloatConst.natToFloat nPlaces)
+        Float.log (Verified.FloatConst.natToFloat nPlaces * visitWeight.getD fallback)
+      else ZERO
     p1 + p2
 
 -- Parity with the real `buildEntryPrior` / `buildInitialStatePrior` (Node/V8).

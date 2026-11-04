@@ -676,7 +676,7 @@ private def idx (x : Float) : Nat := (x + HALF).toUInt64.toNat
 /-- `scorePrepared`'s two mode-table terms apart: the fix-presence term and
     the heart-rate level. A journey's legs keep the first (a ride is dark, a
     walk lit — the leg's own fact) and the journey draws the second once. -/
-def scorePreparedParts (q : Prepared) (mode : Mode) (st : Stats) : Float × Float :=
+@[inline] def scorePreparedParts (q : Prepared) (mode : Mode) (st : Stats) : Float × Float :=
   match q.tableOf[modeSlot mode]! with
   | none => (ZERO, ZERO)
   | some t =>
@@ -689,7 +689,7 @@ def scorePreparedParts (q : Prepared) (mode : Mode) (st : Stats) : Float × Floa
       if hn == 0 then ZERO else
       let mean := hrSum / hrN
       let ssw := max ZERO (hrSq - hrN * mean * mean)
-      let w := (1 - q.p.rho) / (1 + q.p.rho)
+      let w := (ONE - q.p.rho) / (ONE + q.p.rho)
       let s2 := q.p.sigmaW * q.p.sigmaW
       q.withinConst.getD hn ZERO - w * ssw / (TWO * s2)
         - HALF * t.logTwoPiV.getD hn ZERO - (mean - t.m.hrMean) * (mean - t.m.hrMean) * t.invTwoV.getD hn ZERO
