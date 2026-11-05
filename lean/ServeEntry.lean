@@ -805,6 +805,9 @@ private def parseObservationInput (v : Json)
     radius, past which a segment's centre within the radius would need fixes
     on every side of the pin, far off. -/
 private def PIN_PLAY_M : Float := 2 * Verified.Geo.FocusPlaces.CLUSTER_RADIUS_M
+/-- How many of a footprint's spreads a fix may lie off its pin and still be
+    at the place: past six, a core fix's density is below `e^−18`. -/
+private def PIN_REACH_SD : Float := 6
 /-- Past every fixed duration-class key. -/
 private def PIN_CLASS_BASE : Nat := 100
 
@@ -1099,6 +1102,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     o.gps.map fun g => Verified.Hsmm.SegmentEmission.localXY posRef g.lat g.lon
   let inPlay := fun (xy : Float × Float) => fixesXY.any fun (fx, fy) =>
     (fx - xy.1) * (fx - xy.1) + (fy - xy.2) * (fy - xy.2) ≤ PIN_PLAY_M * PIN_PLAY_M
+  let near := fun (xy : Float × Float) (r : Float) => fixesXY.any fun (fx, fy) =>
+    (fx - xy.1) * (fx - xy.1) + (fy - xy.2) * (fy - xy.2) ≤ r * r
   if segEm.position.isSome && segEm.listedCentre.isNone then
     throw "flags.segEmission.position needs listedCentre: where a listed place's visits are"
   if segEm.position.isSome && segEm.pairBoundaryMeanKmh.isNone then
@@ -1121,7 +1126,14 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let (n, ss) := spread.getD p.id (0, 0)
       let pp := Verified.Hsmm.SegmentEmission.pinPriorOf xy nu0 t0 n ss
         Verified.Geo.FocusPlaces.CLUSTER_RADIUS_M
-      if inPlay xy then m := m.insert p.id pp
+      -- Under `position` a place is in play when one of the day's fixes could
+      -- be at it: within `PIN_REACH_SD` spreads of its footprint and the local
+      -- scatter of its pin. Farther, every fix is a stray under the model, and
+      -- the per-minute far rule is the stay's density (`pinFar`).
+      let play := match segEm.position with
+        | some pos => near xy (PIN_REACH_SD * Float.sqrt pp.s2 + pos.r1)
+        | none => inPlay xy
+      if play then m := m.insert p.id pp
       else if segEm.position.isSome then far := far.insert p.id pp
     return (m, far)
   -- Under `position`: every fix in local metres with its core noise, the

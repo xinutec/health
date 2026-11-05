@@ -329,16 +329,20 @@ def pairSpan (obs : Array ObsRow) (t : Nat) : Option (Float × Float) := do
   pure (FloatScore.haversineMeters a.lat a.lon b.lat b.lon * perS,
     (ea * ea + eb * eb) * perS * perS)
 
-/-- Under `position`, each moving state's speed density, by state key. -/
-def positionQuads (c : ModelContext) : Std.HashMap String SegmentEmission.SpeedQuad :=
-  let q := c.segEm
-  c.states.foldl (fun m st =>
-    if st.mode == .stationary || st.mode == .unknown then m else
-    let key := StateSpace.stateKey st
-    let prior := Emissions.priorOf c.priors st
-    let eps := ((q.p.speedEps.find? (·.1 == st.mode)).map (·.2)).getD SEG_ZERO
-    m.insert key (SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd prior.stopShare
-      prior.stopStd eps q.p.uMaxKmh)) {}
+/-- Under `position`, a moving state's speed density: its prior's speeds,
+    standstill and outlier share. -/
+def stateQuad (c : ModelContext) (st : State) : SegmentEmission.SpeedQuad :=
+  let prior := Emissions.priorOf c.priors st
+  let eps := ((c.segEm.p.speedEps.find? (·.1 == st.mode)).map (·.2)).getD SEG_ZERO
+  SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd prior.stopShare prior.stopStd eps c.segEm.p.uMaxKmh
+
+/-- What a moving state's speed density depends on, as a key: states with
+    the same key share their tables. `none` for a stay or the journey. -/
+def speedKey (c : ModelContext) (st : State) : Option String :=
+  if st.mode == .stationary || st.mode == .unknown then none else
+  let prior := Emissions.priorOf c.priors st
+  let eps := ((c.segEm.p.speedEps.find? (·.1 == st.mode)).map (·.2)).getD SEG_ZERO
+  some s!"{prior.speedMean}|{prior.speedStd}|{prior.stopShare}|{prior.stopStd}|{eps}"
 
 /-- The stop chain's class of a state: the mainline's, or a train's. -/
 def stopClass (st : State) : Option String :=
@@ -357,17 +361,23 @@ def chainQuads (prior : Emissions.ModePrior) (eps uMax : Float) (sc : SegmentEmi
     SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd share prior.stopStd eps uMax
   fun g => qs[min (max g 1) cap]!
 
-/-- Under `position`, per state its gap tables (empty for a stay). -/
+/-- Under `position`, per state its gap tables (empty for a stay), one per
+    distinct speed density and stop chain. -/
 def positionGapTables (c : ModelContext) (pp : SegmentEmission.PositionParams) : Array (Array SegmentEmission.GapTable) :=
-  let quads := positionQuads c
-  c.states.map fun st => match quads.get? (StateSpace.stateKey st) with
-    | some sq =>
-      let sc := (stopClass st).bind fun k => (c.segEm.p.stopChain.find? (·.1 == k)).map (·.2)
-      let qOf := sc.map fun sc =>
-        let eps := ((c.segEm.p.speedEps.find? (·.1 == st.mode)).map (·.2)).getD SEG_ZERO
-        chainQuads (Emissions.priorOf c.priors st) eps c.segEm.p.uMaxKmh sc
-      SegmentEmission.gapTables c.posXY c.posPrev pp sq qOf
-    | none => #[]
+  (c.states.foldl (fun (acc : Array (Array SegmentEmission.GapTable) × Std.HashMap String (Array SegmentEmission.GapTable)) st =>
+    match speedKey c st with
+    | none => (acc.1.push #[], acc.2)
+    | some key =>
+      let key := key ++ "|" ++ ((stopClass st).getD "")
+      match acc.2.get? key with
+      | some g => (acc.1.push g, acc.2)
+      | none =>
+        let sc := (stopClass st).bind fun k => (c.segEm.p.stopChain.find? (·.1 == k)).map (·.2)
+        let qOf := sc.map fun sc =>
+          let eps := ((c.segEm.p.speedEps.find? (·.1 == st.mode)).map (·.2)).getD SEG_ZERO
+          chainQuads (Emissions.priorOf c.priors st) eps c.segEm.p.uMaxKmh sc
+        let g := SegmentEmission.gapTables c.posXY c.posPrev pp (stateQuad c st) qOf
+        (acc.1.push g, acc.2.insert key g)) (#[], {})).1
 
 /-- Under `position` with `stopChain`, per state its vehicle table: the
     moving and stopped readings of each consecutive lit minute (the state's
@@ -435,13 +445,17 @@ def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
     -- Each lit minute under a moving state: its fix from the fix before, at
     -- the state's speed in any direction. A stay's fixes are its spot
     -- table's; no pair belongs to a boundary.
-    let quads := positionQuads c
-    let pref := c.states.map fun st =>
-      match quads.get? (StateSpace.stateKey st) with
-      | none => Array.replicate (c.obs.size + 1) SEG_ZERO
-      | some sq =>
-        (SegmentEmission.moveIncrements c.posXY c.posPrev pp sq c.posBroad).foldl
-          (fun acc x => acc.push (acc.back! + c.weights.base * x)) #[SEG_ZERO]
+    -- One prefix per distinct speed density: the named lines share the
+    -- train's, so they are computed once (the states number in the hundreds).
+    let (pref, _) := c.states.foldl (fun (acc : Array (Array Float) × Std.HashMap String (Array Float)) st =>
+      match speedKey c st with
+      | none => (acc.1.push (Array.replicate (c.obs.size + 1) SEG_ZERO), acc.2)
+      | some key => match acc.2.get? key with
+        | some pr => (acc.1.push pr, acc.2)
+        | none =>
+          let pr := (SegmentEmission.moveIncrements c.posXY c.posPrev pp (stateQuad c st) c.posBroad).foldl
+            (fun a x => a.push (a.back! + c.weights.base * x)) #[SEG_ZERO]
+          (acc.1.push pr, acc.2.insert key pr)) (#[], {})
     (pref, Array.replicate c.obs.size SEG_ZERO)
   | none =>
   let spans := (Array.range c.obs.size).map (pairSpan c.obs)

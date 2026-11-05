@@ -471,6 +471,11 @@ def logSumExp (xs : Array Float) : Float :=
   if m == Verified.FloatConst.negInf then m else
   m + Float.log (xs.foldl (fun a x => a + Float.exp (x - m)) ZERO)
 
+/-- `log (e^a + e^b)`, without an array. -/
+@[inline] def lse2 (a b : Float) : Float :=
+  let m := max a b
+  if m == Verified.FloatConst.negInf then m else m + Float.log (Float.exp (a - m) + Float.exp (b - m))
+
 /-- An isotropic 2-D Gaussian's log density at squared distance `d2`, per-axis
     variance `v`. -/
 @[inline] def logN2 (d2 v : Float) : Float :=
@@ -653,8 +658,8 @@ def vehicleTable (moving stopped mixed : Array Float) (lit : Array Bool) (consec
       let e := s0 + d - 1
       if e ≥ T then break
       if d > 1 then
-        let m2 := logSumExp #[vm + lmm, vs + lsm]
-        let s2 := logSumExp #[vm + lms, vs + lss]
+        let m2 := lse2 (vm + lmm) (vs + lsm)
+        let s2 := lse2 (vm + lms) (vs + lss)
         vm := m2
         vs := s2
       if lit[e]! then
@@ -715,6 +720,11 @@ def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Opt
   let mut out := Verified.FloatConst.floats (Verified.Hsmm.triOff maxD T) ZERO
   let tm2 := pp.tm * pp.tm
   let comps := noiseComps pp
+  -- The components unboxed, each weight's log once.
+  let nc := comps.size
+  let cLw : FloatArray := ⟨comps.map fun (w, _) => Float.log w⟩
+  let cEx : FloatArray := ⟨comps.map (·.2)⟩
+  let l1r := Float.log (ONE - pp.rho)
   for s0 in [0:T] do
     let mut mx := ZERO
     let mut my := ZERO
@@ -796,8 +806,10 @@ def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Opt
           let d2 := (x - mx) * (x - mx) + (y - my) * (y - my)
           -- The spot since the last lit minute: stayed, or moved.
           let k := Verified.FloatConst.natToFloat (dark + 1)
-          let still := Float.exp (k * Float.log (ONE - pp.rho))
+          let lStill := k * l1r
+          let still := Float.exp lStill
           let twoMoves := still < ONE
+          let lMoved := if twoMoves then Float.log (ONE - still) else Verified.FloatConst.negInf
           -- A move redraws the spot inside the place: however many moves
           -- since the last lit minute, one spread.
           let vMove := V + tm2
@@ -810,9 +822,10 @@ def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Opt
           let mut sy := ZERO
           let mut sq := ZERO
           for j in [0:(if twoMoves then 2 else 1)] do
-            let (pm, Vp) := if j == 0 then ((if twoMoves then still else ONE), V) else (ONE - still, vMove)
-            for (w, ex) in comps do
-              let lm := Float.log (pm * w) + logN2 d2 (Vp + R + ex)
+            let (lpm, Vp) := if j == 0 then ((if twoMoves then lStill else ZERO), V) else (lMoved, vMove)
+            for ci in [0:nc] do
+              let ex := cEx[ci]!
+              let lm := lpm + cLw[ci]! + logN2 d2 (Vp + R + ex)
               let kk := Vp / (Vp + R + ex)
               -- The component's posterior mean as an offset from the spot.
               let ax := kk * (x - mx)
