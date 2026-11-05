@@ -2331,12 +2331,12 @@ private def PATH_ZERO : Float := 0
 /-- `"pathDebug": {"alt": [{"startTs": n, "endTs": n, "state": "<stateKey>"}]}` on
 an `assemblesegments` request: the decoded path, and the decoded path with the
 caller's segments written over `[startTs, endTs)`, each scored segment by
-segment with the model's own cells (`initAt`/`transAt`, `entryAt`, `emitAt`,
-`durAt`, composed as `Spec.scoreAux`) — the instrument for a boundary the
+segment with the model's own cells (`initAt`, the trellis's transitions,
+`entryAt`, `emitAt`, `durAt`, composed as `Spec.scoreAux`) — the instrument for a boundary the
 decode did not place: which term paid for leaving it out. A written-over run
 may exceed `maxD`; `durAt` still prices it, the trellis never would. -/
 private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Array Nat)
-    (dj : Json) (journey : Option Verified.Hsmm.Journey.Tables := none) : Json :=
+    (dj : Json) (journey : Option Verified.Hsmm.Journey.Tables := none) (pd : Option PData := none) : Json :=
   let fl (v : Float) : Json := if v == Verified.Hsmm.FloatScore.negInf then Json.null else Lean.toJson v
   let alts : Array Json := ((dj.getObjVal? "alt") >>= (·.getArr?)).toOption.getD #[]
   let (altPath, bad) : Array Nat × Option String := Id.run do
@@ -2359,9 +2359,15 @@ private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Arra
     let mut total := PATH_ZERO
     for seg in Verified.Hsmm.ofPath p.toList do
       let last := start + seg.dur - 1
-      let trans := match prev with
-        | none => Verified.Hsmm.Assemble.initAt c seg.state
-        | some sp => Verified.Hsmm.Assemble.transAt c sp seg.state start
+      -- The trellis's own transition where it has one: under the journey a
+      -- stay and the journey exchange by the outer rule, which the flat
+      -- model's `transAt` does not know.
+      let trans := match prev, pd with
+        | none, _ => Verified.Hsmm.Assemble.initAt c seg.state
+        | some sp, some d => match Verified.Hsmm.dec (d.transAt sp seg.state start) with
+          | .val v => Float.ofInt v / Verified.Hsmm.Quantize.SCALE
+          | .negInf => Verified.FloatConst.negInf
+        | some sp, none => Verified.Hsmm.Assemble.transAt c sp seg.state start
       let entry := Verified.Hsmm.Assemble.entryAt c start seg.state
       let emit := (List.range seg.dur).foldl
         (fun acc i => acc + Verified.Hsmm.Assemble.emitAt c (start + i) seg.state) PATH_ZERO
@@ -2541,7 +2547,7 @@ private def segmentsOf (j : Json) (c : Verified.Hsmm.Assemble.ModelContext)
           ("lastTs", Lean.toJson ((c.obs[q.last]?.map (·.ts)).getD 0)),
           ("calls", Json.arr (calling.map Json.str).toArray)])
     (emissionDebugJson c r.path dj).setObjVal! "stationPasses" passesJ else
-  if let .ok dj := j.getObjVal? "pathDebug" then pathDebugJson c r.path dj journey else
+  if let .ok dj := j.getObjVal? "pathDebug" then pathDebugJson c r.path dj journey (some pd) else
   if let .ok dj := j.getObjVal? "journeyDebug" then
     (match journey with
      | some tb => journeyDebugJson c tb r.path dj
