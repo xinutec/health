@@ -14,6 +14,18 @@ uncertainty is part of the answer. Every layer is a physical model whose
 numbers are measured facts or fits, so no number compensates for another
 (principles, Rules 7 and 8).
 
+## His decisions (2026-11-05)
+
+What the served day shows, decided by the person it describes:
+
+* **Unsure:** the best guess, marked as unsure when the posterior is not
+  confident — never a list to choose from (Rule 6), never false certainty.
+* **Pauses in a walk** (a light, waiting to cross): one walk. Only a real
+  stop at a place is a stay.
+* **Moving about inside a place:** not shown. It is one stay.
+* **Meanwhile:** the live decoder stays as shipped on 2026-11-04; the work
+  goes into the rebuild, shipped when it is clearly better.
+
 ## The layers
 
 The history is three latent processes; the observations depend on them.
