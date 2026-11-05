@@ -1,6 +1,6 @@
 # A stay's position: stray fixes and moving spots
 
-**Status (2026-11-05):** measured, design open. Layer 1 and 2 of the
+**Status (2026-11-05):** design A built and refuted as an addition (below); the rework is every mode scoring each fix the same way. Layer 1 and 2 of the
 position-first rebuild (#1947); the activity terms (the heart rate answering the
 steps, the fitted cadence with edge minutes) wait on it.
 
@@ -71,3 +71,33 @@ spot inside the spell sweep, which already runs once per start; A only if B's
 approximation shows in the loss report. Each step ships alone, measured against
 the confirmed rows, the history's round trips (`instruments/roundtrips.py`) and
 the loss report by kind (`instruments/lossreport.py`), with time and memory.
+
+## Design A, measured: a stay-only density cannot be weighed
+
+Built (`tests/golden/fits/arm-spot-2026-11-05.patch`): the spot filter orders the
+cases right on position alone — 11-03's desk move −9.6 against splitting,
+Currys and Lidl −22.0, the stop and Paul −22.8, a real four-minute walk −50.7 —
+and collapses as an arm (74 rows lost, phantoms 3 → 51, long stays become
+rides). A stay paid a density for its fixes that no moving state pays.
+
+## The rework: one question per fix, asked of every mode
+
+For each lit minute, every state answers the same question — how probable is
+this fix, given the segment's earlier fixes? — as a density of the fix in
+square metres, so the states are compared on the same observation:
+
+* a stay: the spot filter's predictive density (the spot from the pin, or the
+  placeless prior, then sometimes moving; core, local and far fixes);
+* a moving mode: the fix from the one before it, the displacement a 2-D
+  density — the mode's fitted speed, in any direction, convolved with both
+  fixes' noise. Today's pair terms score the speed alone; the speed's density
+  becomes the displacement's by its Jacobian, which a stay does not share.
+
+It replaces, for every state: the pair terms, the placeless centre term, the
+listed place's per-minute 150 m term, and `centreSigmaM`. A segment's first
+fix is scored against its predecessor by the mode either side (a stay's spot
+prior is its Occam factor). Before any decoder code, a prototype on the
+narrated minutes must show: a still minute's density far higher for a stay
+than for a walk, a walking minute's the reverse, a desk move in between; and on
+the cases above, the office one stay and the separations split.
+
