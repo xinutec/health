@@ -1020,6 +1020,13 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | [tau, rl, su, phi] => some { tau, rl, su, phi }
       | [tau, rl, su, phi, beta, ta] => some { tau, rl, su, phi, beta, ta }
       | _ => none
+    -- `stopChain: {train: [toStop, stay], mainline: [...]}`.
+    let stopChain : List (String × Verified.Hsmm.SegmentEmission.StopChain) :=
+      ["train", "mainline"].filterMap fun k => do
+        let arr ← ((f.getObjVal? "stopChain") >>= (·.getObjVal? k) >>= (·.getArr?)).toOption
+        match arr.toList.filterMap num with
+        | [toStop, stay] => some (k, { toStop, stay })
+        | _ => none
     let stayMove : Option (Float × Float) := do
       let arr ← ((f.getObjVal? "stayMove") >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
@@ -1061,7 +1068,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let g := fun (k : String) => (tl.getObjVal? k).toOption >>= num
       pure { vouchedShare := ← g "vouchedShare", covered := ← g "covered", uncovered := ← g "uncovered" }
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM, placeSigmaM, placeEps,
-           obsChain, asleep, unlistedCentre, listedCentre, position, stayMove, strayFix, hrLevel, edgeCadence, walkPause, journey, trainLine }
+           obsChain, asleep, unlistedCentre, listedCentre, position, stopChain, stayMove, strayFix, hrLevel, edgeCadence, walkPause, journey, trainLine }
   let some segEm := segEm?
     | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
   if segEm.trainLine.isNone then
@@ -1227,7 +1234,10 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         return out
       let c1 := { ctx with posEntry, posNext, posLast }
       match segEm.position with
-      | some pp => { c1 with posGaps := Verified.Hsmm.Assemble.positionGapTables c1 pp }
+      | some pp =>
+        let posGaps := Verified.Hsmm.Assemble.positionGapTables c1 pp
+        let posVehicle := Verified.Hsmm.Assemble.positionVehicleTables c1 pp maxD
+        { c1 with posGaps, posVehicle }
       | none => c1
     | none => ctx
   let lineProxBest := Verified.Hsmm.Assemble.lineProxBestTable ctx

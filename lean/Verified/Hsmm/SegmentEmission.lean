@@ -144,6 +144,15 @@ structure PositionParams where
   tm : Float
   deriving Inhabited
 
+/-- A vehicle's minutes as a chain of moving and stopped (`vehicleChain`):
+    `P(stopped | moving)` and `P(stopped | stopped)`, fitted on the narrated
+    rides (`lean/experiments/stopchain.py`: Tube 0.04 and 0.66, the other
+    trains 0.016 and 0.50). -/
+structure StopChain where
+  toStop : Float
+  stay : Float
+  deriving Inhabited
+
 /-- Where a stay's spot is expected before its first fix: around a listed
     place's pin at variance `v0`, or where the last fix before left him. -/
 inductive SpotStart where
@@ -237,6 +246,10 @@ structure Params where
       net displacement, which each score the same fixes again. Needs
       `listedCentre` (where a listed place's visits are). -/
   position : Option PositionParams := none
+  /-- Under `position`, a vehicle's minutes moving or stopped as a chain
+      (`vehicleTable`), per class: `train` (the named lines and the unnamed
+      metro) and `mainline`. -/
+  stopChain : List (String × StopChain) := []
   /-- The awake heart rate as a level that drifts and returns to the mode's
       own (`hrLevelTable`): the level's spread about the mode's mean `τ` and
       its lag-1 correlation, and the minute's own noise about the level `σu`
@@ -599,16 +612,63 @@ def stillLog (pp : PositionParams) (d2 g vA vB : Float) : Float :=
     `0`. A segment that does not own all of a gap at its edge corrects it
     (`gapTables`, `Assemble.gapEdge`). -/
 def moveIncrements (xy : Array (Option (Float × Float × Float))) (prev : Array (Option Nat))
-    (pp : PositionParams) (q : SpeedQuad) (broad : Array Float) : Array Float :=
+    (pp : PositionParams) (q : SpeedQuad) (broad : Array Float) (qOf : Option (Nat → SpeedQuad) := none) :
+    Array Float :=
   (Array.range xy.size).map fun t =>
     match xy[t]!, prev[t]! with
     | none, _ => ZERO
     | some _, none => broad.getD t ZERO
     | some (x, y, R), some tp => match xy[tp]! with
       | some (xp, yp, Rp) =>
-        moveLog pp q (Float.sqrt ((x - xp) * (x - xp) + (y - yp) * (y - yp)))
+        -- A vehicle's speed over a gap of `g` minutes: its chain's share of
+        -- standing still throughout (`qOf`), else the per-minute mixture.
+        let q' := match qOf with | some f => f (t - tp) | none => q
+        moveLog pp q' (Float.sqrt ((x - xp) * (x - xp) + (y - yp) * (y - yp)))
           (Verified.FloatConst.natToFloat (t - tp)) R Rp
       | none => broad.getD t ZERO
+
+/-- Per vehicle segment `(d, e)` at `triOff maxD e + d − 1`: the log density
+    of its fixes when each minute is moving (`moving`, the ring at the moving
+    speed alone) or stopped (`stopped`), the two a chain (`sc`), a leg
+    beginning and ending moving — it departs and arrives — so a "ride" that
+    stands still throughout is no ride. A minute whose fix follows a gap, or
+    the segment's first fix, is the full mixture's (`mixed`): the gap's
+    minutes are not told apart. Summed over the chain's paths from each
+    start. -/
+def vehicleTable (moving stopped mixed : Array Float) (lit : Array Bool) (consec : Array Bool)
+    (sc : StopChain) (maxD : Nat) : FloatArray := Id.run do
+  let T := lit.size
+  let mut out := Verified.FloatConst.floats (Verified.Hsmm.triOff maxD T) ZERO
+  let lmm := Float.log (ONE - sc.toStop)
+  let lms := Float.log sc.toStop
+  let lsm := Float.log (ONE - sc.stay)
+  let lss := Float.log sc.stay
+  let negInf := Verified.FloatConst.negInf
+  for s0 in [0:T] do
+    -- Log masses of the chain being moving or stopped after the minutes so far.
+    let mut vm := ZERO
+    let mut vs := negInf
+    let mut first := true
+    for d in [1:maxD + 1] do
+      let e := s0 + d - 1
+      if e ≥ T then break
+      if d > 1 then
+        let m2 := logSumExp #[vm + lmm, vs + lsm]
+        let s2 := logSumExp #[vm + lms, vs + lss]
+        vm := m2
+        vs := s2
+      if lit[e]! then
+        if first || !consec[e]! then
+          -- Not told apart: the mixture's density, the chain carried on.
+          vm := vm + mixed[e]!
+          vs := vs + mixed[e]!
+        else
+          vm := vm + moving[e]!
+          vs := vs + stopped[e]!
+        first := false
+      -- It arrives moving: the leg ends in the moving state.
+      out := out.set! (Verified.Hsmm.triOff maxD e + (d - 1)) vm
+  return out
 
 /-- Per lit minute `n` whose fix follows a gap (`g = n − prev n > 1`): the
     ring of its displacement over `k` minutes of motion, `k = 1 … g`
@@ -621,7 +681,7 @@ structure GapTable where
   deriving Inhabited
 
 def gapTables (xy : Array (Option (Float × Float × Float))) (prev : Array (Option Nat))
-    (pp : PositionParams) (q : SpeedQuad) : Array GapTable :=
+    (pp : PositionParams) (q : SpeedQuad) (qOf : Option (Nat → SpeedQuad) := none) : Array GapTable :=
   (Array.range xy.size).map fun n =>
     match xy[n]!, prev[n]! with
     | some (x, y, R), some tp =>
@@ -632,7 +692,8 @@ def gapTables (xy : Array (Option (Float × Float × Float))) (prev : Array (Opt
         let r := Float.sqrt d2
         let g := n - tp
         let ring := (List.range (g + 1)).foldl (fun acc k =>
-          acc.push (if k == 0 then ZERO else moveLog pp q r (Verified.FloatConst.natToFloat k) R Rp)) FloatArray.empty
+          acc.push (if k == 0 then ZERO else
+            moveLog pp (match qOf with | some f => f k | none => q) r (Verified.FloatConst.natToFloat k) R Rp)) FloatArray.empty
         { ring, still := stillLog pp d2 (Verified.FloatConst.natToFloat g) R Rp }
       | none => default
     | _, _ => default

@@ -141,6 +141,9 @@ structure ModelContext where
       first lit minute at or after it and the last lit one before it (both
       `T + 1` long). -/
   posGaps : Array (Array SegmentEmission.GapTable) := #[]
+  /-- Under `position` with `stopChain`, per state its vehicle table
+      (`SegmentEmission.vehicleTable`), `none` for a state without a chain. -/
+  posVehicle : Array (Option FloatArray) := #[]
   posNext : Array Nat := #[]
   posLast : Array (Option Nat) := #[]
   /-- The transition weight: the shipped uniform split unless the harness
@@ -337,12 +340,67 @@ def positionQuads (c : ModelContext) : Std.HashMap String SegmentEmission.SpeedQ
     m.insert key (SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd prior.stopShare
       prior.stopStd eps q.p.uMaxKmh)) {}
 
+/-- The stop chain's class of a state: the mainline's, or a train's. -/
+def stopClass (st : State) : Option String :=
+  if st.mode != .train then none else if Emissions.isMainline st then some "mainline" else some "train"
+
+/-- A vehicle's speed over `g` minutes under its stop chain: standing still
+    throughout with the stationary share `π = toStop / (toStop + 1 − stay)`
+    times `stay^(g−1)`, else moving. Cached for the gaps up to a cap past
+    which the share is negligible. -/
+def chainQuads (prior : Emissions.ModePrior) (eps uMax : Float) (sc : SegmentEmission.StopChain) :
+    Nat → SegmentEmission.SpeedQuad :=
+  let pi := sc.toStop / (sc.toStop + MIN_ONE - sc.stay)
+  let cap := 30
+  let qs := (Array.range (cap + 1)).map fun g =>
+    let share := pi * Float.exp (Verified.FloatConst.natToFloat (g - 1) * Float.log sc.stay)
+    SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd share prior.stopStd eps uMax
+  fun g => qs[min (max g 1) cap]!
+
 /-- Under `position`, per state its gap tables (empty for a stay). -/
 def positionGapTables (c : ModelContext) (pp : SegmentEmission.PositionParams) : Array (Array SegmentEmission.GapTable) :=
   let quads := positionQuads c
   c.states.map fun st => match quads.get? (StateSpace.stateKey st) with
-    | some sq => SegmentEmission.gapTables c.posXY c.posPrev pp sq
+    | some sq =>
+      let sc := (stopClass st).bind fun k => (c.segEm.p.stopChain.find? (·.1 == k)).map (·.2)
+      let qOf := sc.map fun sc =>
+        let eps := ((c.segEm.p.speedEps.find? (·.1 == st.mode)).map (·.2)).getD SEG_ZERO
+        chainQuads (Emissions.priorOf c.priors st) eps c.segEm.p.uMaxKmh sc
+      SegmentEmission.gapTables c.posXY c.posPrev pp sq qOf
     | none => #[]
+
+/-- Under `position` with `stopChain`, per state its vehicle table: the
+    moving and stopped readings of each consecutive lit minute (the state's
+    speed without its standstill, and the standstill alone), the full
+    mixture where minutes are not told apart. One table per class. -/
+def positionVehicleTables (c : ModelContext) (pp : SegmentEmission.PositionParams) (maxD : Nat) :
+    Array (Option FloatArray) := Id.run do
+  let q := c.segEm
+  if q.p.stopChain.isEmpty then return c.states.map fun _ => none
+  let lit := c.posXY.map (·.isSome)
+  let consec := (Array.range lit.size).map fun t => lit[t]! && t > 0 && lit[t - 1]!
+  let mut byClass : Std.HashMap String FloatArray := {}
+  let mut out : Array (Option FloatArray) := #[]
+  for st in c.states do
+    match stopClass st, (stopClass st).bind fun k => (q.p.stopChain.find? (·.1 == k)).map (·.2) with
+    | some k, some sc =>
+      match byClass.get? k with
+      | some t => out := out.push (some t)
+      | none =>
+        let prior := Emissions.priorOf c.priors st
+        let eps := ((q.p.speedEps.find? (·.1 == st.mode)).map (·.2)).getD SEG_ZERO
+        let qMove := SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd SEG_ZERO prior.stopStd eps q.p.uMaxKmh
+        let qStop := SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd MIN_ONE prior.stopStd eps q.p.uMaxKmh
+        let qMix := SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd prior.stopShare prior.stopStd eps q.p.uMaxKmh
+        let mixed := SegmentEmission.moveIncrements c.posXY c.posPrev pp qMix c.posBroad
+          (some (chainQuads prior eps q.p.uMaxKmh sc))
+        let moving := SegmentEmission.moveIncrements c.posXY c.posPrev pp qMove c.posBroad
+        let stopped := SegmentEmission.moveIncrements c.posXY c.posPrev pp qStop c.posBroad
+        let t := SegmentEmission.vehicleTable moving stopped mixed lit consec sc maxD
+        byClass := byClass.insert k t
+        out := out.push (some t)
+    | _, _ => out := out.push none
+  return out
 
 /-- A moving segment `[lo, hi)`'s claim on a gap at its start: the
     displacement across a gap belongs to the minutes that moved, so the
@@ -742,6 +800,16 @@ def walkPauseAt (c : ModelContext) (x : State) (lo hi : Nat) : Float :=
   if x.mode != .walking || c.walkPauseCorr.size == 0 || hi ≤ lo then SEG_ZERO
   else c.walkPauseCorr.get! ((hi - lo - 1) * c.obs.size + (hi - 1))
 
+/-- A vehicle segment's fixes from its table where it has one, else `dflt`
+    (the per-minute sum). -/
+def vehicleOr (c : ModelContext) (s : Nat) (st : SegmentEmission.Stats) (dflt : Float) : Float :=
+  match (c.posVehicle[s]?).join with
+  | some t =>
+    let d := st.hi - st.lo
+    if d == 0 || st.hi == 0 then dflt else
+    (t[Verified.Hsmm.triOff c.spotMaxD (st.hi - 1) + (d - 1)]?).getD dflt
+  | none => dflt
+
 /-- The segment-level emission of state `s` over a segment of length `d` with
     window `w` (its net displacement) and statistics `st`. -/
 def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
@@ -762,7 +830,7 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
            -- Under `position` an entry is the fix of its minute given the one
            -- before: the segment's own minutes. Else the pairs inside
            -- `[lo, hi)`, and the one across its end.
-           if q.p.position.isSome then (pr[st.hi]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
+           if q.p.position.isSome then vehicleOr c s st ((pr[st.hi]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO)
              + gapEdge c s st.lo st.hi
            else (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
              + (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO)
@@ -791,7 +859,7 @@ def segEmParts (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window
      ("centre", centreTerm c x st),
      ("pairs", if st.hi == 0 then SEG_ZERO else
        let pr := (c.pairPref[s]?).getD #[]
-       if q.p.position.isSome then (pr[st.hi]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO + gapEdge c s st.lo st.hi
+       if q.p.position.isSome then vehicleOr c s st ((pr[st.hi]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO) + gapEdge c s st.lo st.hi
        else (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO),
      ("pairBoundary", if st.hi == 0 then SEG_ZERO else (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO),
      ("disp", if q.p.position.isSome then SEG_ZERO else SegmentEmission.dispPosteriorScore q.p x.mode d w),
