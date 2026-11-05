@@ -2521,7 +2521,8 @@ private def segScoreJson (c : Verified.Hsmm.Assemble.ModelContext) (dj : Json)
       let cell := match journey with
         | some tb =>
           if s == tb.journey then
-            (if d ≤ tb.maxJ then tb.cell.get! ((d - 1) * tb.T + last) else Verified.FloatConst.negInf)
+            (if d ≤ tb.maxJ then tb.cell.get! ((d - 1) * tb.T + last)
+               + Verified.Hsmm.Assemble.durAt c s d last else Verified.FloatConst.negInf)
           else Verified.Hsmm.Assemble.durAt c s d last
         | none => Verified.Hsmm.Assemble.durAt c s d last
       let entry := Verified.Hsmm.Assemble.entryAt c lo s
@@ -2591,7 +2592,10 @@ private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Arra
       let dur := match journey with
         | some tb =>
           if seg.state == tb.journey then
-            (if seg.dur ≤ tb.maxJ then tb.cell.get! ((seg.dur - 1) * tb.T + last) else Verified.FloatConst.negInf)
+            -- The legs' inner pass, and the journey's own level and duration,
+            -- as the trellis's cell sums them.
+            (if seg.dur ≤ tb.maxJ then tb.cell.get! ((seg.dur - 1) * tb.T + last)
+               + Verified.Hsmm.Assemble.durAt c seg.state seg.dur last else Verified.FloatConst.negInf)
           else Verified.Hsmm.Assemble.durAt c seg.state seg.dur last
         | none => Verified.Hsmm.Assemble.durAt c seg.state seg.dur last
       let sum := trans + entry + emit + dur
