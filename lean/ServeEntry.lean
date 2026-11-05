@@ -1212,7 +1212,23 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     | some _ =>
       let posEntry := Verified.Hsmm.Assemble.positionEntryTable ctx
         (segEm.pairBoundaryMeanKmh.getD recordZero * recordMPerMinPerKmh) (segEm.pairBoundaryEps.getD recordZero)
-      { ctx with posEntry }
+      -- The first lit minute at or after each minute, the last lit one before.
+      let T := obs.size
+      let posNext : Array Nat := Id.run do
+        let mut out := Array.replicate (T + 1) T
+        for i in [0:T] do
+          let t := T - 1 - i
+          out := out.set! t (if obs[t]!.gps.isSome then t else out[t + 1]!)
+        return out
+      let posLast : Array (Option Nat) := Id.run do
+        let mut out : Array (Option Nat) := Array.replicate (T + 1) none
+        for t in [0:T] do
+          out := out.set! (t + 1) (if obs[t]!.gps.isSome then some t else out[t]!)
+        return out
+      let c1 := { ctx with posEntry, posNext, posLast }
+      match segEm.position with
+      | some pp => { c1 with posGaps := Verified.Hsmm.Assemble.positionGapTables c1 pp }
+      | none => c1
     | none => ctx
   let lineProxBest := Verified.Hsmm.Assemble.lineProxBestTable ctx
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx

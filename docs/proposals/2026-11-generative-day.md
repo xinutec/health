@@ -159,9 +159,12 @@ Absent, nothing moves (scoreboard and flip rows equal to the shipped decoder).
 Every stay's spot starts given the fix before it (reached across the
 boundary, and inside the footprint for a listed place), and which place a
 stay begins at is its posterior given the hour and that fix
-(`Assemble.positionEntryTable`), so the fix is not scored twice. On, alone:
-14 narrated rows lost and 3 gained (11 of them a boundary a minute off),
-journeys 131 of 131, phantoms 3 → 8; with the joint emission (`hrLevel`,
+(`Assemble.positionEntryTable`), so the fix is not scored twice. A segment's first fix after a gap begun before it is scored over its own
+minutes of the gap, a stay's rare move stays inside the place however long
+the gap, and every asleep heart-rate difference belongs to the segment it
+ends in (a split at a jump hid the jump). On, alone: 14 narrated rows lost
+and 3 gained (10 of them a boundary a minute off), journeys 130 of 131,
+phantoms 3 → 6; with the joint emission (`hrLevel`,
 `edgeCadence`, `walkPause`, spells at every stay) 47 lost and 6 gained.
 11-03's office is Work throughout, split by two moves inside the building
 (13:01–13:05, 19:21–19:23) — the spot's rare jump is all a stay has for

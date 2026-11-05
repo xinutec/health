@@ -136,6 +136,13 @@ structure ModelContext where
       place a stay beginning there is at (`positionEntryTable`), per place
       and for a place not on the list; empty without a fix before. -/
   posEntry : Array (Std.HashMap Int Float × Float) := #[]
+  /-- Under `position`, per state the gaps' rings by minutes of motion
+      (`SegmentEmission.gapTables`; empty for a stay), and per minute the
+      first lit minute at or after it and the last lit one before it (both
+      `T + 1` long). -/
+  posGaps : Array (Array SegmentEmission.GapTable) := #[]
+  posNext : Array Nat := #[]
+  posLast : Array (Option Nat) := #[]
   /-- The transition weight: the shipped uniform split unless the harness
       carries a fitted mode matrix (`Transitions.fittedWeight`). -/
   transWeight : State → State → Float := Transitions.transitionWeight
@@ -319,6 +326,45 @@ def pairSpan (obs : Array ObsRow) (t : Nat) : Option (Float × Float) := do
   pure (FloatScore.haversineMeters a.lat a.lon b.lat b.lon * perS,
     (ea * ea + eb * eb) * perS * perS)
 
+/-- Under `position`, each moving state's speed density, by state key. -/
+def positionQuads (c : ModelContext) : Std.HashMap String SegmentEmission.SpeedQuad :=
+  let q := c.segEm
+  c.states.foldl (fun m st =>
+    if st.mode == .stationary || st.mode == .unknown then m else
+    let key := StateSpace.stateKey st
+    let prior := Emissions.priorOf c.priors st
+    let eps := ((q.p.speedEps.find? (·.1 == st.mode)).map (·.2)).getD SEG_ZERO
+    m.insert key (SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd prior.stopShare
+      prior.stopStd eps q.p.uMaxKmh)) {}
+
+/-- Under `position`, per state its gap tables (empty for a stay). -/
+def positionGapTables (c : ModelContext) (pp : SegmentEmission.PositionParams) : Array (Array SegmentEmission.GapTable) :=
+  let quads := positionQuads c
+  c.states.map fun st => match quads.get? (StateSpace.stateKey st) with
+    | some sq => SegmentEmission.gapTables c.posXY c.posPrev pp sq
+    | none => #[]
+
+/-- A moving segment `[lo, hi)`'s claim on a gap at its start: the
+    displacement across a gap belongs to the minutes that moved, so the
+    segment's first fix after a gap begun before it is scored over the
+    segment's own minutes of the gap, not the whole gap — a ride that starts
+    late inside a dark stretch moves faster, and splitting a ride shortens
+    the second leg's time. (A claim by a dark tail on the fix after it would
+    count the same displacement again when the next segment moves too.) -/
+def gapEdge (c : ModelContext) (s lo hi : Nat) : Float :=
+  match c.posGaps[s]? with
+  | none => SEG_ZERO
+  | some gt =>
+  if gt.isEmpty || hi ≤ lo then SEG_ZERO else
+  let T := c.obs.size
+  let f := c.posNext.getD lo T
+  if f ≥ hi then SEG_ZERO else
+  match (c.posPrev[f]?).join, gt[f]? with
+  | some tp, some tab =>
+    if tp < lo && f - tp > 1 then (tab.ring[f - lo + 1]?).getD SEG_ZERO - (tab.ring[f - tp]?).getD SEG_ZERO
+    else SEG_ZERO
+  | _, _ => SEG_ZERO
+
 /-- The pair tables: per state the prefix sums of each pair's score under
     it (with the mode's outlier share), and per minute the score of its pair
     across a boundary: exponential at `pairBoundaryMeanKmh`, else uniform over
@@ -331,13 +377,7 @@ def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
     -- Each lit minute under a moving state: its fix from the fix before, at
     -- the state's speed in any direction. A stay's fixes are its spot
     -- table's; no pair belongs to a boundary.
-    let quads : Std.HashMap String SegmentEmission.SpeedQuad := c.states.foldl (fun m st =>
-      if st.mode == .stationary || st.mode == .unknown then m else
-      let key := StateSpace.stateKey st
-      let prior := Emissions.priorOf c.priors st
-      let eps := ((q.p.speedEps.find? (·.1 == st.mode)).map (·.2)).getD SEG_ZERO
-      m.insert key (SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd prior.stopShare
-        prior.stopStd eps q.p.uMaxKmh)) {}
+    let quads := positionQuads c
     let pref := c.states.map fun st =>
       match quads.get? (StateSpace.stateKey st) with
       | none => Array.replicate (c.obs.size + 1) SEG_ZERO
@@ -723,6 +763,7 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
            -- before: the segment's own minutes. Else the pairs inside
            -- `[lo, hi)`, and the one across its end.
            if q.p.position.isSome then (pr[st.hi]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
+             + gapEdge c s st.lo st.hi
            else (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
              + (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO)
       -- The displacement vector built once per `(d, e)` by the cells loop,
@@ -750,7 +791,7 @@ def segEmParts (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window
      ("centre", centreTerm c x st),
      ("pairs", if st.hi == 0 then SEG_ZERO else
        let pr := (c.pairPref[s]?).getD #[]
-       if q.p.position.isSome then (pr[st.hi]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
+       if q.p.position.isSome then (pr[st.hi]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO + gapEdge c s st.lo st.hi
        else (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO),
      ("pairBoundary", if st.hi == 0 then SEG_ZERO else (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO),
      ("disp", if q.p.position.isSome then SEG_ZERO else SegmentEmission.dispPosteriorScore q.p x.mode d w),

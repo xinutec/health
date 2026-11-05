@@ -579,9 +579,25 @@ def fixesLocal (obs : Array ObsRow) (ref : Float × Float) (accDefaultM : Float)
   obs.map fun o => o.gps.map fun g =>
     let (x, y) := localXY ref g.lat g.lon; (x, y, coreVar pp (g.accuracyM.getD accDefaultM))
 
+/-- The log density of a displacement of squared length `d2` over `g` minutes
+    for a phone that stayed: the spot still, or moved at least once in the
+    `g` minutes (a stay's rare move, which redraws the spot inside the
+    place, so its spread does not grow with the gap), under both fixes'
+    noise. -/
+def stillLog (pp : PositionParams) (d2 g vA vB : Float) : Float :=
+  let still := Float.exp (g * Float.log (ONE - pp.rho))
+  -- A move redraws the spot inside the place: however many, one spread.
+  let moved := pp.tm * pp.tm
+  logSumExp ((noiseComps pp).foldl (fun acc (w, ex) =>
+    acc.push (Float.log (still * w) + logN2 d2 (vA + vB + ex))
+      |>.push (if still < ONE then Float.log ((ONE - still) * w) + logN2 d2 (moved + vA + vB + ex)
+               else Verified.FloatConst.negInf)) #[])
+
 /-- Per minute, a moving state's log density of its fix given the fix before
-    (any gap), at speed `q`; the day's first fix at `broad`, an unlit minute
-    `0`. A moving segment's fixes are the sum over its minutes. -/
+    (any gap), at speed `q`: the ring over the whole gap, as if the state had
+    moved through all of it; the day's first fix at `broad`, an unlit minute
+    `0`. A segment that does not own all of a gap at its edge corrects it
+    (`gapTables`, `Assemble.gapEdge`). -/
 def moveIncrements (xy : Array (Option (Float × Float × Float))) (prev : Array (Option Nat))
     (pp : PositionParams) (q : SpeedQuad) (broad : Array Float) : Array Float :=
   (Array.range xy.size).map fun t =>
@@ -593,6 +609,33 @@ def moveIncrements (xy : Array (Option (Float × Float × Float))) (prev : Array
         moveLog pp q (Float.sqrt ((x - xp) * (x - xp) + (y - yp) * (y - yp)))
           (Verified.FloatConst.natToFloat (t - tp)) R Rp
       | none => broad.getD t ZERO
+
+/-- Per lit minute `n` whose fix follows a gap (`g = n − prev n > 1`): the
+    ring of its displacement over `k` minutes of motion, `k = 1 … g`
+    (`ring[k]`), and its density had he stayed through the gap (`still`).
+    A moving segment that owns only `k` of a gap's minutes scores its
+    displacement over those: the motion was in its own minutes. -/
+structure GapTable where
+  ring : FloatArray := FloatArray.empty
+  still : Float := 0
+  deriving Inhabited
+
+def gapTables (xy : Array (Option (Float × Float × Float))) (prev : Array (Option Nat))
+    (pp : PositionParams) (q : SpeedQuad) : Array GapTable :=
+  (Array.range xy.size).map fun n =>
+    match xy[n]!, prev[n]! with
+    | some (x, y, R), some tp =>
+      if n - tp ≤ 1 then default else
+      match xy[tp]! with
+      | some (xp, yp, Rp) =>
+        let d2 := (x - xp) * (x - xp) + (y - yp) * (y - yp)
+        let r := Float.sqrt d2
+        let g := n - tp
+        let ring := (List.range (g + 1)).foldl (fun acc k =>
+          acc.push (if k == 0 then ZERO else moveLog pp q r (Verified.FloatConst.natToFloat k) R Rp)) FloatArray.empty
+        { ring, still := stillLog pp d2 (Verified.FloatConst.natToFloat g) R Rp }
+      | none => default
+    | _, _ => default
 
 /-- Per stay segment `(d, e)` at `triOff maxD e + d − 1`, the log density of
     its fixes: from each start, an assumed-density filter over the spot,
@@ -690,12 +733,13 @@ def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Opt
           seen := true
         else
           let d2 := (x - mx) * (x - mx) + (y - my) * (y - my)
-          -- The spot since the last lit minute: stayed, or moved (the expected
-          -- spread of at least one move); the first fix only where it starts.
+          -- The spot since the last lit minute: stayed, or moved.
           let k := Verified.FloatConst.natToFloat (dark + 1)
           let still := Float.exp (k * Float.log (ONE - pp.rho))
           let twoMoves := still < ONE
-          let vMove := V + tm2 * pp.rho * k / (ONE - still)
+          -- A move redraws the spot inside the place: however many moves
+          -- since the last lit minute, one spread.
+          let vMove := V + tm2
           -- One pass over the components (stayed or moved, × the noise
           -- mixture): the log-sum-exp from a running maximum, and the
           -- posterior's moments, each weight taken relative to it.
@@ -895,6 +939,11 @@ structure Stats where
   hrR : Float := ZERO
   hrMu : Float := ZERO
   hrV : Float := ZERO
+  /-- The same asleep differences with the pair across the segment's start:
+      every pair belongs to the segment it ends in, so a boundary hides none
+      (`sleepScore` under `position`). -/
+  bedDiffSqB : Float := ZERO
+  bedDiffNB : Float := ZERO
 
 /-- A prefix array's share of the minute before `[lo, hi)` and the minute
     after it; a minute off the day adds nothing. -/
@@ -922,7 +971,8 @@ def statsAt (p : Prefix) (d e : Nat) : Stats :=
    -- The pairs ending inside the segment: the prefix at `hi` less the one
    -- at `lo + 1`.
    get p.bedDiffSq hi - get p.bedDiffSq (lo + 1), get p.bedDiffN hi - get p.bedDiffN (lo + 1),
-   hrAt p.hrR, hrAt p.hrMu, hrAt p.hrV⟩
+   hrAt p.hrR, hrAt p.hrMu, hrAt p.hrV,
+   get p.bedDiffSq hi - get p.bedDiffSq lo, get p.bedDiffN hi - get p.bedDiffN lo⟩
 where
   /-- A level table's cell for this segment, `0` off the table. -/
   hrAt (a : FloatArray) : Float :=
@@ -1088,7 +1138,10 @@ def sleepScore (p : Params) (st : Stats) : Float :=
       let v := sp.hrTau * sp.hrTau
       let between := -HALF * Float.log (TWO_PI * v) - (mean - sp.hrMean) * (mean - sp.hrMean) / (TWO * v)
       let d2 := sp.diffSd * sp.diffSd
-      between + st.bedDiffN * (-HALF * Float.log (TWO_PI * d2)) - st.bedDiffSq / (TWO * d2)
+      -- Under `position` the pair across the segment's start is the
+      -- segment's: splitting a night at a jump no longer hides the jump.
+      let (dq, dn) := if p.position.isSome then (st.bedDiffSqB, st.bedDiffNB) else (st.bedDiffSq, st.bedDiffN)
+      between + dn * (-HALF * Float.log (TWO_PI * d2)) - dq / (TWO * d2)
     else hrMarginal sp.sigmaW sp.rho sp.hrMean sp.hrTau st.bedN st.bedSum st.bedSq
   | none => ZERO
 
@@ -1346,9 +1399,9 @@ private def pTest : Params :=
   { sigmaW := 8, rho := 0.8
     byMode := [(.stationary, ⟨84, 9, 0.09, 0.064⟩), (.train, ⟨89, 9, 2.55, 1.04⟩)]
     disp := [(.stationary, ⟨3.5, 1.5, 0.006⟩), (.train, ⟨3.4, 0.6, 0.025⟩)] }
-#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO⟩ + 10
-#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO⟩ - 1
-#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO⟩ == 0
+#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ + 10
+#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ - 1
+#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ == 0
 -- An 84-minute café at 30 m scatter, 150 m place radius, 300 m from the
 -- nearest of three listed places at a 300 m bandwidth: a few nats of scatter
 -- and one Occam factor, not 168.
@@ -1371,7 +1424,7 @@ private def stop5 : Stats :=
     anchorW := 2 / 22500, anchorWX := 0, anchorWY := 0 }
 #guard centreScore stop5 300 threePlaces true > -3
 -- The tables agree with the closed form.
-private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO⟩
+private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩
 #guard Float.abs (scorePrepared (prepare pTest 400) .train stT - score pTest .train stT) < 1e-6
 #guard Float.abs (scorePrepared (prepare pTest 400) .stationary stT - score pTest .stationary stT) < 1e-6
 
