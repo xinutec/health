@@ -975,6 +975,11 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     let pairBoundaryMeanKmh := (f.getObjVal? "pairBoundaryMeanKmh").toOption >>= num
     let pairBoundaryEps := (f.getObjVal? "pairBoundaryEps").toOption >>= num
     let unlistedCentre := (f.getObjVal? "unlistedCentre").toOption >>= num
+    let strayFix : Option (Float × Float × Float × Float) := do
+      let arr ← ((f.getObjVal? "strayFix") >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [lam, kap, eps, range] => some (lam, kap, eps, range)
+      | _ => none
     let stayMove : Option (Float × Float) := do
       let arr ← ((f.getObjVal? "stayMove") >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
@@ -1016,7 +1021,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let g := fun (k : String) => (tl.getObjVal? k).toOption >>= num
       pure { vouchedShare := ← g "vouchedShare", covered := ← g "covered", uncovered := ← g "uncovered" }
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM, placeSigmaM, placeEps,
-           obsChain, asleep, unlistedCentre, stayMove, journey, trainLine }
+           obsChain, asleep, unlistedCentre, stayMove, strayFix, journey, trainLine }
   let some segEm := segEm?
     | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
   if segEm.trainLine.isNone then
@@ -1031,6 +1036,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (Verified.Hsmm.SegmentEmission.prefixOf obs) obs posRef
     (segEm.centreSigmaM.getD Verified.Hsmm.Emissions.PLACE_RADIUS_M)
     Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M
+    (Verified.Hsmm.SegmentEmission.strayShares obs posRef Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M segEm.strayFix)
   let placePrior := Verified.Hsmm.SegmentEmission.placesLocal posRef
     (places.toList.map fun (_, lat, lon, _, _) => (lat, lon))
   -- A fitted mode-to-mode transition matrix (harness-only): `{src: {dst: p}}`.

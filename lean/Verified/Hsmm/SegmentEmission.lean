@@ -169,6 +169,12 @@ structure Params where
       begins and ends still); a moving minute's steps are scored as a walk's;
       the place, the position and the levels stay the stay's. -/
   stayMove : Option (Float × Float) := none
+  /-- A minute's fix may be a far stray (`strayShares`): the spread a fix
+      keeps from the line between its lit neighbours, `λ·(7² + accuracy²)`
+      plus `κ`·their speed·the gap, the share of strays and the range they
+      fall in — fitted on the narrated minutes. A stray carries no position:
+      the position sums weigh each fix by its share of not being one. -/
+  strayFix : Option (Float × Float × Float × Float) := none
   /-- What the train generator knows at a train's start (`TrainLine`): with it
       a transition into a train gives the even split over train states back,
       and the entry scores the line and the coverage. Without it a train's
@@ -226,18 +232,66 @@ def localXY (ref : Float × Float) (lat lon : Float) : Float × Float :=
 /-- The position prefix sums: each lit minute's aggregate at weight
     `1 / (sigmaM² + accuracy²)`, the accuracy its own reported one or
     `accDefaultM`. -/
+private def STRAY_BASE_M : Float := 7
+/-- How far apart in minutes a fix's neighbours may be to judge it. -/
+private def STRAY_GAP_MIN : Nat := 10
+
+/-- Per minute, the share of its fix that is not a far stray: judged against
+    the line between the nearest lit minutes either side (within
+    `STRAY_GAP_MIN`), its residual scored under the fitted inlier spread
+    against the strays' uniform range. `1` without the record's `strayFix`,
+    without a fix, or without a neighbour on both sides. -/
+def strayShares (obs : Array ObsRow) (ref : Float × Float) (accDefaultM : Float)
+    (h : Option (Float × Float × Float × Float)) : Array Float := Id.run do
+  let T := obs.size
+  let some (lam, kap, eps, range) := h | return Array.replicate T ONE
+  let xy : Array (Option (Float × Float × Float)) := obs.map fun o =>
+    o.gps.map fun g => let (x, y) := localXY ref g.lat g.lon; (x, y, g.accuracyM.getD accDefaultM)
+  let mut prev : Array (Option Nat) := Array.replicate T none
+  let mut last : Option Nat := none
+  for t in [0:T] do
+    prev := prev.set! t last
+    if (xy[t]!).isSome then last := some t
+  let mut next : Array (Option Nat) := Array.replicate T none
+  last := none
+  for i in [0:T] do
+    let t := T - 1 - i
+    next := next.set! t last
+    if (xy[t]!).isSome then last := some t
+  let mut out := Array.replicate T ONE
+  for t in [0:T] do
+    match xy[t]!, prev[t]!, next[t]! with
+    | some (x, y, acc), some tp, some tn =>
+      if t - tp > STRAY_GAP_MIN || tn - t > STRAY_GAP_MIN then continue
+      match xy[tp]!, xy[tn]! with
+      | some (xp, yp, _), some (xn, yn, _) =>
+        let span := Verified.FloatConst.natToFloat (tn - tp)
+        let u := Verified.FloatConst.natToFloat (t - tp) / span
+        let px := xp + u * (xn - xp)
+        let py := yp + u * (yn - yp)
+        let r := Float.sqrt ((x - px) * (x - px) + (y - py) * (y - py))
+        let speed := Float.sqrt ((xn - xp) * (xn - xp) + (yn - yp) * (yn - yp)) / span
+        let gap := Verified.FloatConst.natToFloat (max (t - tp) (tn - t))
+        let v := lam * (STRAY_BASE_M * STRAY_BASE_M + acc * acc) + (kap * speed * gap) * (kap * speed * gap)
+        let fin := (ONE - eps) * r / v * Float.exp (ZERO - r * r / (TWO * v))
+        let fout := if r < range then eps * TWO * r / (range * range) else ZERO
+        if fin + fout > ZERO then out := out.set! t (fin / (fin + fout))
+      | _, _ => pure ()
+    | _, _, _ => pure ()
+  return out
+
 def withPositions (p : Prefix) (obs : Array ObsRow) (ref : Float × Float)
-    (sigmaM accDefaultM : Float) : Prefix := Id.run do
+    (sigmaM accDefaultM : Float) (keep : Array Float := #[]) : Prefix := Id.run do
   let mut w := #[ZERO]
   let mut wx := #[ZERO]
   let mut wy := #[ZERO]
   let mut wrr := #[ZERO]
-  for o in obs do
+  for (o, t) in obs.zipIdx do
     let (dw, dx, dy, drr) := match o.gps with
       | some g =>
         let (x, y) := localXY ref g.lat g.lon
         let acc := g.accuracyM.getD accDefaultM
-        let k := ONE / (sigmaM * sigmaM + acc * acc)
+        let k := keep.getD t ONE / (sigmaM * sigmaM + acc * acc)
         (k, k * x, k * y, k * (x * x + y * y))
       | none => (ZERO, ZERO, ZERO, ZERO)
     w := w.push (w.back?.getD ZERO + dw)
