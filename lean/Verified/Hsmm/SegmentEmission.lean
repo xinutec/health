@@ -246,6 +246,11 @@ structure Params where
       net displacement, which each score the same fixes again. Needs
       `listedCentre` (where a listed place's visits are). -/
   position : Option PositionParams := none
+  /-- Under `position`, keep the net displacement between a segment's
+      bracketing fixes (`dispPosteriorScore`): where a trip ends, which the
+      per-minute terms cannot say (a walk between two places almost never
+      returns where it began). -/
+  positionDisp : Bool := false
   /-- Under `position`, a vehicle's minutes moving or stopped as a chain
       (`vehicleTable`), per class: `train` (the named lines and the unnamed
       metro) and `mainline`. -/

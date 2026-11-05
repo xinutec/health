@@ -852,7 +852,7 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
       -- else here.
       -- Under `position` every fix is scored once already; the net
       -- displacement between the bracketing fixes would score them again.
-      + (if q.p.position.isSome then SEG_ZERO else match dv with
+      + (if q.p.position.isSome && !q.p.positionDisp then SEG_ZERO else match dv with
          | some v => SegmentEmission.dispPosteriorPrep q.p x.mode v
          | none => SegmentEmission.dispPosteriorScore q.p x.mode d w)
       + stayMoveAt c x st.lo st.hi
@@ -876,7 +876,7 @@ def segEmParts (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window
        if q.p.position.isSome then vehicleOr c s st ((pr[st.hi]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO) + gapEdge c s st.lo st.hi
        else (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO),
      ("pairBoundary", if st.hi == 0 then SEG_ZERO else (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO),
-     ("disp", if q.p.position.isSome then SEG_ZERO else SegmentEmission.dispPosteriorScore q.p x.mode d w),
+     ("disp", if q.p.position.isSome && !q.p.positionDisp then SEG_ZERO else SegmentEmission.dispPosteriorScore q.p x.mode d w),
      ("stayMove", stayMoveAt c x st.lo st.hi),
      ("walkPause", walkPauseAt c x st.lo st.hi),
      ("edgeCadence", edgeCadenceAt c x st.lo st.hi)]
