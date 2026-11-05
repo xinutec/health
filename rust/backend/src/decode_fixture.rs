@@ -163,6 +163,32 @@ fn attach_visits(places: &mut Value, visits: &std::collections::HashMap<i64, f64
     }
 }
 
+/// `HSMM_PLACE_SPREAD=<file>`: the miner's places (`refresh-focus-places
+/// --places-out`), `[{id, visits, visitSs}]`, laid on every request place
+/// whose id they name as `visitSpread: [visits, visitSs]` — what `known_places` carries in production, for the
+/// fixtures captured before the miner measured a place's spread. A place the
+/// file does not name keeps the pooled prior alone.
+fn attach_spread(places: &mut Value) -> Result<()> {
+    let Ok(path) = std::env::var("HSMM_PLACE_SPREAD") else {
+        return Ok(());
+    };
+    let mined: Value = serde_json::from_str(
+        &std::fs::read_to_string(&path).with_context(|| format!("HSMM_PLACE_SPREAD: {path}"))?,
+    )?;
+    let by_id: std::collections::HashMap<i64, &Value> = mined
+        .as_array()
+        .map_or(&[] as &[Value], Vec::as_slice)
+        .iter()
+        .filter_map(|m| Some((m["id"].as_i64()?, m)))
+        .collect();
+    for p in places.as_array_mut().into_iter().flatten() {
+        if let Some(m) = p["id"].as_i64().and_then(|id| by_id.get(&id)) {
+            p["visitSpread"] = json!([m["visits"], m["visitSs"]]);
+        }
+    }
+    Ok(())
+}
+
 /// Each fix's reported accuracy by ts, from the capture-side fixture of the
 /// same day (`tests/golden/days`, whose PhoneTrack rows carry it); empty when
 /// that fixture is absent. The frozen decoder fixtures were written before
@@ -239,6 +265,7 @@ pub fn request(fx: &Value) -> Result<Value> {
         req["flags"]["transFit"] = json_file("HSMM_TRANS_FIT", date)?;
         attach_accuracy(&mut req["observation"]["points"], &accuracy_by_ts(fx)?);
         attach_visits(&mut req["places"], &visits_by_id(fx)?);
+        attach_spread(&mut req["places"])?;
         req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS", date)?;
         if let Some(p) = crate::decoder_params::from_env(date)? {
             crate::decoder_params::apply(&mut req, &p);
@@ -406,6 +433,7 @@ pub fn request(fx: &Value) -> Result<Value> {
     }
     attach_accuracy(&mut req["observation"]["points"], &accuracy_by_ts(fx)?);
     attach_visits(&mut req["places"], &visits_by_id(fx)?);
+    attach_spread(&mut req["places"])?;
     req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS", date)?;
     if let Some(p) = crate::decoder_params::from_env(date)? {
         crate::decoder_params::apply(&mut req, &p);

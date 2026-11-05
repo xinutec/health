@@ -1139,6 +1139,7 @@ private def report (windows : List (Int × Int)) (c : Cluster) : Json :=
     ("lon", fBits c.centroidLon),
     ("dwell", Lean.toJson c.totalDwellSec),
     ("stays", Json.arr ((c.stays.map encStay).toArray)),
+    ("visitSs", fBits (visitSpreadOf c)),
     ("label", Json.str (classifyClusterLabel c)),
     ("profile", Json.str profile),
     ("reparsed", match parseHourProfile (some profile) with

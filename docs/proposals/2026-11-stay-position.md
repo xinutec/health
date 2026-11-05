@@ -1,6 +1,6 @@
 # A stay's position: stray fixes and moving spots
 
-**Status (2026-11-05):** design A built and refuted as an addition (below); the rework is every mode scoring each fix the same way. Layer 1 and 2 of the
+**Status (2026-11-05):** design A built and refuted as an addition (below); the rework — every mode scoring each fix the same way — is built behind `segEmission.position` and measured in `2026-11-generative-day.md` (step 1). Layer 1 and 2 of the
 position-first rebuild (#1947); the activity terms (the heart rate answering the
 steps, the fitted cadence with edge minutes) wait on it.
 

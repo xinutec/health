@@ -96,6 +96,24 @@ fails when it does not:
 * **Calibration over agreement.** The posterior's confidence matches how
   often it is right, measured, beside the narrated rows (Rule 5).
 
+## The invariants, measured on the shipped decoder (2026-11-05)
+
+Each is an instrument over the shipped cells (`segScore` on an
+`assemblesegments` request scores any list of segments with the trellis's own
+terms; the instruments are under `tests/golden/fits/instruments/invariants/`,
+each with its run in `tests/golden/fits/README`):
+
+| Invariant | Test | Shipped |
+|---|---|---|
+| Every hypothesis explains every observation | One fix moved over a polar grid; each state's evidence integrated over the plane (`density.py`) | Broken: no state integrates. Moving a still minute's fix, the stays level off at −23 (the place term's floor), the walk at −15 (the speed outlier share), driving, train and the journey hardly move; on a walking minute a fix 362 m off costs a stay −4 and the walk −17 |
+| Splitting never pays for itself | Each narrated stay of an hour or more, one segment against the best split into two of the same state, evidence only (`split.py`) | Broken on 126 of 187: the heart-rate level, one constant per segment (07-14's office +76.9, 11-03's +20.9) |
+| Each piece of evidence counts once | Walk against still on the narrated walks and stays, with the heart rate and without it, the steps kept (`once.py`) | Broken in sign, small in size: the heart rate adds a median +1.8 a walk and −2.7 a stay beside the steps; the segment level's saturation keeps it to a few nats |
+| Position decides location | Walking steps and their heart rate injected into a still stretch of a stay, the fixes kept (`position.py`) | Holds at a listed place (the spells); broken at a placeless one (the day shifted off every listed place): three minutes of steps on the spot decode as a walk |
+| No compensation constants | The cell's files' `Float` constants (Rule 8's count) | 112, among them the place term's floor and width, the one-minute floor, the hand cadence, the pre-filter's 250 km/h |
+| Calibration over agreement | `posterior_calibration` over the narrated minutes | Broken: 49,241 minutes claimed at 0.999 are right 98.3% of the time; 5,598 at 0.000 are right 89% — every decoded ride among them (likely: the journey state's legs carry no posterior of their own) |
+
+
+
 ## What the measurements so far say
 
 From the narrated days (instruments under `tests/golden/fits/instruments/`,
@@ -131,6 +149,18 @@ computed on read stays the goal).
 4. **Steps from activity,** the edge minute a part of each, the cadence
    fitted per activity; the hand-set cadence priors retire.
 5. **Posterior output and calibration,** with `2026-10-posterior-confidence.md`.
+
+**Step 1, built (2026-11-05)** behind `segEmission.position` (with
+`listedCentre` and each place's `visitSpread`): every state scores each fix
+as a density, a stay from its spot (`SegmentEmission.spotTable`), a moving
+mode from the fix before at its speed in any direction (`ringLog`); the
+pair, boundary, centre, place, gap, feasibility and displacement terms off.
+Absent, nothing moves (scoreboard and flip rows equal to the shipped decoder).
+On, alone: 21 narrated rows lost and 3 gained, phantoms 3 → 7, mostly
+boundaries a minute off; with the joint emission (`hrLevel`, `edgeCadence`,
+`walkPause`, spells at every stay) 45 lost and 3 gained. 11-03's office
+reads as placeless stays with two-minute walks in both — not yet the shipped
+day's one stay. The runs: `tests/golden/fits/README`.
 
 Steps 1–4 are the one knot Rule 7 describes: each has been measured alone
 and each lost confirmed rows alone (`tests/golden/fits/README`, 2026-11-04

@@ -113,6 +113,25 @@ structure ModelContext where
   /-- The listed places in local metres (`SegmentEmission.placesLocal`), the
       centres of the unlisted place's prior (`unlistedCentre`). -/
   placePrior : Array (Float × Float) := #[]
+  /-- Per listed place in play, where its visits are centred
+      (`listedCentre`): empty without it, and the place keeps the per-minute
+      place term. -/
+  pinPriors : Std.HashMap Int SegmentEmission.PinPrior := {}
+  /-- Under `spot`: the placeless stay's spot table and each listed place in
+      play's (`SegmentEmission.spotTable`), and the length they are cut at. -/
+  spotPlaceless : FloatArray := FloatArray.empty
+  spotListed : Std.HashMap Int FloatArray := {}
+  spotMaxD : Nat := 0
+  /-- Under `position`: the frame's origin, each lit minute's fix in it with
+      its core noise, the last lit minute before each, and the broad prior's
+      log density at each fix (where a fix with nothing before it may be). -/
+  posRef : Float × Float := (0, 0)
+  posXY : Array (Option (Float × Float × Float)) := #[]
+  posPrev : Array (Option Nat) := #[]
+  posBroad : Array Float := #[]
+  /-- Under `position`, each listed place not in play, where its visits are:
+      every fix of a stay there is scored about its pin, one at a time. -/
+  pinFar : Std.HashMap Int SegmentEmission.PinPrior := {}
   /-- The transition weight: the shipped uniform split unless the harness
       carries a fitted mode matrix (`Transitions.fittedWeight`). -/
   transWeight : State → State → Float := Transitions.transitionWeight
@@ -142,6 +161,9 @@ structure ModelContext where
       the place adds to its all-still reading (`stayMoveTable`); empty without
       `stayMove`. -/
   stayMoveCorr : FloatArray := FloatArray.empty
+  /-- The same for a walk's pauses (`walkPauseTable`); empty without
+      `walkPause`. -/
+  walkPauseCorr : FloatArray := FloatArray.empty
 
 /-- The journey's wait state: stationary, no place, this in `lineName`. A leg
     of the journey state only; the outer trellis never holds it. -/
@@ -300,6 +322,26 @@ def pairSpan (obs : Array ObsRow) (t : Nat) : Option (Float × Float) := do
     emission; empty without the flag. -/
 def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
   let q := c.segEm
+  match q.p.position with
+  | some pp =>
+    -- Each lit minute under a moving state: its fix from the fix before, at
+    -- the state's speed in any direction. A stay's fixes are its spot
+    -- table's; no pair belongs to a boundary.
+    let quads : Std.HashMap String SegmentEmission.SpeedQuad := c.states.foldl (fun m st =>
+      if st.mode == .stationary || st.mode == .unknown then m else
+      let key := StateSpace.stateKey st
+      let prior := Emissions.priorOf c.priors st
+      let eps := ((q.p.speedEps.find? (·.1 == st.mode)).map (·.2)).getD SEG_ZERO
+      m.insert key (SegmentEmission.modeSpeedQuad prior.speedMean prior.speedStd prior.stopShare
+        prior.stopStd eps q.p.uMaxKmh)) {}
+    let pref := c.states.map fun st =>
+      match quads.get? (StateSpace.stateKey st) with
+      | none => Array.replicate (c.obs.size + 1) SEG_ZERO
+      | some sq =>
+        (SegmentEmission.moveIncrements c.posXY c.posPrev pp sq c.posBroad).foldl
+          (fun acc x => acc.push (acc.back! + c.weights.base * x)) #[SEG_ZERO]
+    (pref, Array.replicate c.obs.size SEG_ZERO)
+  | none =>
   let spans := (Array.range c.obs.size).map (pairSpan c.obs)
   let pref := c.states.map fun st =>
     let prior := Emissions.priorOf c.priors st
@@ -322,7 +364,7 @@ def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
 /-- The base emission's terms a minute still carries under `SegmentEmission`:
     the segment scores the awake heart rate and fix presence of every mode it
     has parameters for (`segEmAt`), the asleep heart rate with `asleep`, the
-    placeless stay's position with `unlistedCentre`, and every fix's speed
+    stay's position with `unlistedCentre` and `listedCentre`, and every fix's speed
     (`pairTables`); the minute keeps the rest — cadence, the bed, a listed
     place's distance, a fitless mode's presence and heart rate, and a fixless
     minute's speed term. -/
@@ -337,7 +379,21 @@ def segBaseAt (q : SegmentEmission.Prepared) (c : ModelContext) (st : State) (o 
   let cad := match o.cadence with | none => SEG_ZERO | some k => Emissions.logCadencePdf k prior
   let bed := if o.inBed then Float.log (Emissions.inBedProbByMode st.mode) else SEG_ZERO
   let placeCoord := match st.placeId with | some pid => c.placeCoords.get? pid | none => none
-  let place := if q.p.unlistedCentre.isSome && st.mode == .stationary && st.placeId.isNone then SEG_ZERO
+  let centred := match st.placeId with
+    | none => q.p.unlistedCentre.isSome || c.spotMaxD > 0
+    | some pid => c.pinPriors.contains pid
+  let place := if q.p.position.isSome then
+      match q.p.position, st.placeId, o.gps with
+      | some pp, some pid, some g =>
+        if st.mode != .stationary then SEG_ZERO else
+        match c.pinFar.get? pid with
+        | some pin =>
+          let (x, y) := SegmentEmission.localXY c.posRef g.lat g.lon
+          SegmentEmission.fixLog pp ((x - pin.x) * (x - pin.x) + (y - pin.y) * (y - pin.y)) pin.s2
+            (SegmentEmission.coreVar pp (g.accuracyM.getD ACCURACY_DEFAULT_M))
+        | none => SEG_ZERO
+      | _, _, _ => SEG_ZERO
+    else if st.mode == .stationary && centred then SEG_ZERO
     else match q.p.placeSigmaM, q.p.placeEps with
       | some sg, some eps => Emissions.placeTermWith st thin placeCoord sg eps
       | _, _ => Emissions.placeTerm st thin placeCoord
@@ -493,23 +549,16 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
       (if c.durationNoFloor then MIN_ONE else if isWait then c.waitMin else Duration.minDurationByMode st.mode)
       (match c.oneMinuteLog st.mode with | some v => v | none => Duration.HARD_FLOOR_LOG_PROB)
 
-/-- `ModelContext.stayMoveCorr`: for every stay segment of length `d ≤ maxD`
-    ending at `e`, the best reading of its minutes as still or moving about the
-    place (`stayMove`'s rates, a moving minute's steps scored as a walk's) less
-    the all-still reading the stay's minutes already carry. A spell comes back:
-    the stay's first and last minutes are still, so a walk that leaves for
-    elsewhere is never a spell — only moving about inside, out and back
-    (`lean/experiments/round-trip-census.py`: of 68 narrated walks between two
-    named stays, one returns to the place it left). Three readings, swept
-    forward from each start: still before any spell (the all-still reading,
-    `0`), moving, and still after a spell. -/
-def stayMoveTable (c : ModelContext) (maxD : Nat) : FloatArray := Id.run do
-  let some (aIn, pStay) := c.segEm.p.stayMove | return FloatArray.empty
+/-- A segment of mode `base` read minute by minute as its own activity or as
+    `alt`'s (a spell entered at `aIn`, kept at `pStay`), the first and last
+    minute its own, less the all-`base` reading the minutes already carry.
+    One sweep forward from each start. -/
+def spellTable (c : ModelContext) (maxD : Nat) (aIn pStay : Float) (base alt : Mode) : FloatArray := Id.run do
   let T := c.obs.size
-  let still := Emissions.priorOf c.priors ⟨.stationary, none, none⟩
-  let walk := Emissions.priorOf c.priors ⟨.walking, none, none⟩
+  let own := Emissions.priorOf c.priors ⟨base, none, none⟩
+  let other := Emissions.priorOf c.priors ⟨alt, none, none⟩
   let gain : Array Float := c.obs.map fun o => match o.cadence with
-    | some k => c.weights.base * (Emissions.logCadencePdf k walk - Emissions.logCadencePdf k still)
+    | some k => c.weights.base * (Emissions.logCadencePdf k other - Emissions.logCadencePdf k own)
     | none => SEG_ZERO
   let stay0 := Float.log (MIN_ONE - aIn)
   let enter := Float.log aIn - stay0
@@ -528,13 +577,84 @@ def stayMoveTable (c : ModelContext) (maxD : Nat) : FloatArray := Id.run do
       out := out.set! ((d - 1) * T + e) (max SEG_ZERO v1)
   return out
 
-/-- What moving about adds to stay `x` over minutes `[lo, hi)`: only at a
-    listed place, a building whose rooms he moves between; a placeless stay
-    keeps the all-still reading, so a short walk between two shops tens of
-    metres apart stays a walk. -/
+/-- `ModelContext.stayMoveCorr`: for every stay segment of length `d ≤ maxD`
+    ending at `e`, the best reading of its minutes as still or moving about the
+    place (`stayMove`'s rates, a moving minute's steps scored as a walk's) less
+    the all-still reading the stay's minutes already carry. A spell comes back:
+    the stay's first and last minutes are still, so a walk that leaves for
+    elsewhere is never a spell — only moving about inside, out and back
+    (`lean/experiments/round-trip-census.py`: of 68 narrated walks between two
+    named stays, one returns to the place it left). Three readings, swept
+    forward from each start: still before any spell (the all-still reading,
+    `0`), moving, and still after a spell. -/
+def stayMoveTable (c : ModelContext) (maxD : Nat) : FloatArray :=
+  match c.segEm.p.stayMove with
+  | some (aIn, pStay) => spellTable c maxD aIn pStay .stationary .walking
+  | none => FloatArray.empty
+
+/-- `ModelContext.walkPauseCorr`: the same for a walk, whose spells are pauses
+    — a still minute's steps scored as a stay's — and which begins and ends
+    walking (`walkPause`'s rates, fitted by EM on the narrated walks). -/
+def walkPauseTable (c : ModelContext) (maxD : Nat) : FloatArray :=
+  match c.segEm.p.walkPause with
+  | some (aIn, pStay) => spellTable c maxD aIn pStay .walking .stationary
+  | none => FloatArray.empty
+
+/-- What moving about adds to stay `x` over minutes `[lo, hi)`: at a listed
+    place, a building whose rooms he moves between; under `position` at every
+    stay, since the fixes decide whether he left (a walk between two shops is
+    a change of place there, not a spell). Without it a placeless stay keeps
+    the all-still reading, so a short walk between two shops tens of metres
+    apart stays a walk. -/
 def stayMoveAt (c : ModelContext) (x : State) (lo hi : Nat) : Float :=
-  if x.mode != .stationary || x.placeId.isNone || c.stayMoveCorr.size == 0 || hi ≤ lo then SEG_ZERO
+  if x.mode != .stationary || (x.placeId.isNone && c.segEm.p.position.isNone)
+    || c.stayMoveCorr.size == 0 || hi ≤ lo then SEG_ZERO
   else c.stayMoveCorr.get! ((hi - lo - 1) * c.obs.size + (hi - 1))
+
+/-- A stay's centre, integrated out once per segment: a placeless stay's
+    around the listed places (`unlistedCentre`), a listed place's around its
+    own pin (`listedCentre`). -/
+def centreTerm (c : ModelContext) (x : State) (st : SegmentEmission.Stats) : Float :=
+  if x.mode != .stationary then SEG_ZERO else
+  let spotAt := fun (t : FloatArray) =>
+    let d := st.hi - st.lo
+    if d == 0 || d > c.spotMaxD || st.hi == 0 then SEG_ZERO
+    else (t[Verified.Hsmm.triOff c.spotMaxD (st.hi - 1) + (d - 1)]?).getD SEG_ZERO
+  if c.spotMaxD > 0 then
+    match x.placeId with
+    | none => spotAt c.spotPlaceless
+    | some pid => match c.spotListed.get? pid with
+      | some t => spotAt t
+      | none => SEG_ZERO
+  else
+  match x.placeId with
+  | none => match c.segEm.p.unlistedCentre with
+    | some h => SegmentEmission.centreScore st h c.placePrior true
+    | none => SEG_ZERO
+  | some pid => match c.pinPriors.get? pid with
+    | some pp => SegmentEmission.listedCentreScore st pp
+    | none => SEG_ZERO
+/-- What a segment's edge minutes change (`edgeCadence`): its first and last
+    minute's steps scored by the mode's edge cadence in place of the interior
+    one the minute's emission carried (`segBaseAt`); one minute for a
+    one-minute segment, nothing for a minute unworn. -/
+def edgeCadenceAt (c : ModelContext) (x : State) (lo hi : Nat) : Float :=
+  if hi ≤ lo then SEG_ZERO else
+  match c.segEm.p.edgeCadence.find? (·.1 == x.mode) with
+  | none => SEG_ZERO
+  | some (_, (z, m, sd)) =>
+    let prior := Emissions.priorOf c.priors x
+    let edge : Emissions.ModePrior :=
+      { prior with expectedZeroProb := z, cadencePositiveMean := m, cadencePositiveStd := sd }
+    let one := fun (t : Nat) => match (c.obs[t]?).bind (·.cadence) with
+      | some k => c.weights.base * (Emissions.logCadencePdf k edge - Emissions.logCadencePdf k prior)
+      | none => SEG_ZERO
+    if hi - lo == 1 then one lo else one lo + one (hi - 1)
+
+/-- What pausing adds to walk `x` over minutes `[lo, hi)`. -/
+def walkPauseAt (c : ModelContext) (x : State) (lo hi : Nat) : Float :=
+  if x.mode != .walking || c.walkPauseCorr.size == 0 || hi ≤ lo then SEG_ZERO
+  else c.walkPauseCorr.get! ((hi - lo - 1) * c.obs.size + (hi - 1))
 
 /-- The segment-level emission of state `s` over a segment of length `d` with
     window `w` (its net displacement) and statistics `st`. -/
@@ -550,27 +670,29 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
     if x.mode == .unknown then (SegmentEmission.scorePreparedParts q x.mode st).2 else
     (if level then SegmentEmission.scorePrepared q x.mode st
      else SegmentEmission.sleepScore q.p st + (SegmentEmission.scorePreparedParts q x.mode st).1)
-      + (match q.p.unlistedCentre with
-         | some h =>
-           if x.mode == .stationary && x.placeId.isNone then
-             SegmentEmission.centreScore st h c.placePrior true
-           else SEG_ZERO
-         | none => SEG_ZERO)
+      + centreTerm c x st
       + (if st.hi == 0 then SEG_ZERO else
-           -- The pairs inside `[lo, hi)`, and the one across its end.
            let pr := (c.pairPref[s]?).getD #[]
-           (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
+           -- Under `position` an entry is the fix of its minute given the one
+           -- before: the segment's own minutes. Else the pairs inside
+           -- `[lo, hi)`, and the one across its end.
+           if q.p.position.isSome then (pr[st.hi]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
+           else (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
              + (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO)
       -- The displacement vector built once per `(d, e)` by the cells loop,
       -- else here.
-      + (match dv with
+      -- Under `position` every fix is scored once already; the net
+      -- displacement between the bracketing fixes would score them again.
+      + (if q.p.position.isSome then SEG_ZERO else match dv with
          | some v => SegmentEmission.dispPosteriorPrep q.p x.mode v
          | none => SegmentEmission.dispPosteriorScore q.p x.mode d w)
       + stayMoveAt c x st.lo st.hi
+      + walkPauseAt c x st.lo st.hi
+      + edgeCadenceAt c x st.lo st.hi
   | none => SEG_ZERO
 
 /-- `segEmFrom`'s terms one by one, for the path debugger: the heart-rate and
-    fix-presence model, the placeless stay's centre, the fix pairs inside the
+    fix-presence model, the stay's centre, the fix pairs inside the
     segment, the pair across its end, and the net displacement. Their sum is
     `segEmFrom` (guarded below on a real context). -/
 def segEmParts (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
@@ -579,18 +701,16 @@ def segEmParts (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window
   match c.states[s]? with
   | some x =>
     [("hrFix", SegmentEmission.scorePrepared q x.mode st),
-     ("centre", match q.p.unlistedCentre with
-       | some h =>
-         if x.mode == .stationary && x.placeId.isNone then
-           SegmentEmission.centreScore st h c.placePrior true
-         else SEG_ZERO
-       | none => SEG_ZERO),
+     ("centre", centreTerm c x st),
      ("pairs", if st.hi == 0 then SEG_ZERO else
        let pr := (c.pairPref[s]?).getD #[]
-       (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO),
+       if q.p.position.isSome then (pr[st.hi]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO
+       else (pr[st.hi - 1]?).getD SEG_ZERO - (pr[st.lo]?).getD SEG_ZERO),
      ("pairBoundary", if st.hi == 0 then SEG_ZERO else (c.pairBoundary[st.hi - 1]?).getD SEG_ZERO),
-     ("disp", SegmentEmission.dispPosteriorScore q.p x.mode d w),
-     ("stayMove", stayMoveAt c x st.lo st.hi)]
+     ("disp", if q.p.position.isSome then SEG_ZERO else SegmentEmission.dispPosteriorScore q.p x.mode d w),
+     ("stayMove", stayMoveAt c x st.lo st.hi),
+     ("walkPause", walkPauseAt c x st.lo st.hi),
+     ("edgeCadence", edgeCadenceAt c x st.lo st.hi)]
   | none => []
 
 /-- Per minute, the best line-proximity term over the train states. -/
@@ -759,5 +879,29 @@ private def trainsN : Float := Verified.FloatConst.natToFloat (ctxU.states.filte
 -- tensor dims.
 #guard (buildEmit ctxU).size == 1 && (buildEmit ctxU)[0]!.size == 9
 #guard (buildInit ctxU).size == 9
+
+-- Under `position` a moving segment's fixes are its own minutes': the walk over
+-- minutes 1–2 scores the fixes of minutes 1 and 2, each from the one before.
+private def walkFix (ts : Int) (lat : Float) : ObsRow :=
+  { obsTrain with ts, gps := some ⟨lat, -0.1, 0, some 5⟩, prevGpsFix := none, nextGpsFix := none }
+private def ppPos : SegmentEmission.PositionParams :=
+  { lam := 0.02, e1 := 0.16, r1 := 60, e2 := 0.02, r2 := 5000, e3 := 0.001, r3 := 600000, rho := 0.03, tm := 30 }
+private def ctxPos : ModelContext :=
+  let obs := #[walkFix 0 51.5, walkFix 60 51.5006, walkFix 120 51.5012]
+  let c0 := buildContext obs jm places {} {} none false { segNone with position := some ppPos }
+  let xy := SegmentEmission.fixesLocal obs (51.5, -0.1) ACCURACY_DEFAULT_M ppPos
+  let c1 := { c0 with posRef := (51.5, -0.1), posXY := xy, posPrev := SegmentEmission.prevLit obs,
+                      posBroad := Array.replicate 3 0 }
+  { c1 with pairPref := (pairTables c1).1 }
+private def walkIdx : Nat := (ctxPos.states.findIdx? (·.mode == .walking)).getD 0
+#guard
+  let inc := SegmentEmission.moveIncrements ctxPos.posXY ctxPos.posPrev ppPos
+    (let pr := Emissions.priorOf ctxPos.priors ⟨.walking, none, none⟩
+     SegmentEmission.modeSpeedQuad pr.speedMean pr.speedStd pr.stopShare pr.stopStd 0 300) #[0, 0, 0]
+  let st := SegmentEmission.statsAt ctxPos.segPref 2 2
+  let pairs := ((segEmParts ctxPos walkIdx 2 none { st with lo := 1, hi := 3 }).find? (·.1 == "pairs")).map (·.2)
+  match pairs with
+  | some v => (v - (inc[1]! + inc[2]!)).abs < 1e-9
+  | none => false
 
 end Verified.Hsmm.Assemble

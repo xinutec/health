@@ -800,6 +800,14 @@ private def parseObservationInput (v : Json)
     (fun ts => proxMap.getD ts (none, none))
     imputeCadence
 
+/-- How near one of the day's fixes a listed place's pin must be for its
+    stays to be scored around it (`listedCentre`): twice the miner's cluster
+    radius, past which a segment's centre within the radius would need fixes
+    on every side of the pin, far off. -/
+private def PIN_PLAY_M : Float := 2 * Verified.Geo.FocusPlaces.CLUSTER_RADIUS_M
+/-- Past every fixed duration-class key. -/
+private def PIN_CLASS_BASE : Nat := 100
+
 /-- A Float zero for the record parser's branches (a literal there is a GMP call). -/
 private def recordZero : Float := 0
 
@@ -980,6 +988,36 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       match arr.toList.filterMap num with
       | [lam, kap, eps, range] => some (lam, kap, eps, range)
       | _ => none
+    let position : Option Verified.Hsmm.SegmentEmission.PositionParams := do
+      let arr ← ((f.getObjVal? "position") >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [lam, e1, r1, e2, r2, e3, r3, rho, tm] => some { lam, e1, r1, e2, r2, e3, r3, rho, tm }
+      | _ => none
+    let listedCentre : Option (Float × Float) := do
+      let arr ← ((f.getObjVal? "listedCentre") >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [nu0, t0] => some (nu0, t0)
+      | _ => none
+    let walkPause : Option (Float × Float) := do
+      let arr ← ((f.getObjVal? "walkPause") >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [aIn, pStay] => some (aIn, pStay)
+      | _ => none
+    -- `edgeCadence: {mode: [zeroShare, mean, sd]}`.
+    let edgeCadence : List (Verified.Hsmm.Emissions.Mode × (Float × Float × Float)) :=
+      [Verified.Hsmm.Emissions.Mode.stationary, .walking, .cycling, .driving, .train].filterMap fun m => do
+        let arr ← ((f.getObjVal? "edgeCadence") >>= (·.getObjVal? (Verified.Hsmm.StateSpace.modeName m)) >>= (·.getArr?)).toOption
+        match arr.toList.filterMap num with
+        | [z, mu, sd] => some (m, (z, mu, sd))
+        | _ => none
+    -- `hrLevel: [tau, rl, su, phi]` or `[…, beta, ta]`, the drifting awake
+    -- level and its answer to the steps.
+    let hrLevel : Option Verified.Hsmm.SegmentEmission.HrLevel := do
+      let arr ← ((f.getObjVal? "hrLevel") >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [tau, rl, su, phi] => some { tau, rl, su, phi }
+      | [tau, rl, su, phi, beta, ta] => some { tau, rl, su, phi, beta, ta }
+      | _ => none
     let stayMove : Option (Float × Float) := do
       let arr ← ((f.getObjVal? "stayMove") >>= (·.getArr?)).toOption
       match arr.toList.filterMap num with
@@ -1021,7 +1059,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let g := fun (k : String) => (tl.getObjVal? k).toOption >>= num
       pure { vouchedShare := ← g "vouchedShare", covered := ← g "covered", uncovered := ← g "uncovered" }
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM, placeSigmaM, placeEps,
-           obsChain, asleep, unlistedCentre, stayMove, strayFix, journey, trainLine }
+           obsChain, asleep, unlistedCentre, listedCentre, position, stayMove, strayFix, hrLevel, edgeCadence, walkPause, journey, trainLine }
   let some segEm := segEm?
     | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
   if segEm.trainLine.isNone then
@@ -1037,8 +1075,71 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (segEm.centreSigmaM.getD Verified.Hsmm.Emissions.PLACE_RADIUS_M)
     Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M
     (Verified.Hsmm.SegmentEmission.strayShares obs posRef Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M segEm.strayFix)
+  let segPref := match segEm.hrLevel with
+    | some h => Verified.Hsmm.SegmentEmission.withHrLevel segPref obs h maxD
+    | none => segPref
   let placePrior := Verified.Hsmm.SegmentEmission.placesLocal posRef
     (places.toList.map fun (_, lat, lon, _, _) => (lat, lon))
+  -- Each listed place's pin prior under `listedCentre`, from the visits the
+  -- miner counted and their spread (`visitSpread: [n, ss]` on the place); a
+  -- place without them keeps the pooled prior alone. Only a place in play:
+  -- its pin within twice the cluster radius of one of the day's fixes. A
+  -- place farther off keeps the per-minute term, which it pays at its floor,
+  -- and the listed stays without a pin prior share one duration class.
+  let fixesXY : Array (Float × Float) := obs.filterMap fun o =>
+    o.gps.map fun g => Verified.Hsmm.SegmentEmission.localXY posRef g.lat g.lon
+  let inPlay := fun (xy : Float × Float) => fixesXY.any fun (fx, fy) =>
+    (fx - xy.1) * (fx - xy.1) + (fy - xy.2) * (fy - xy.2) ≤ PIN_PLAY_M * PIN_PLAY_M
+  if segEm.position.isSome && segEm.listedCentre.isNone then
+    throw "flags.segEmission.position needs listedCentre: where a listed place's visits are"
+  if segEm.position.isSome && segEm.pairBoundaryMeanKmh.isNone then
+    throw "flags.segEmission.position needs pairBoundaryMeanKmh: the motion across a boundary"
+  -- Every listed place's pin prior, in play or not (`pinFar` keeps the rest
+  -- under `position`).
+  let (pinPriors, pinFar) : Std.HashMap Int Verified.Hsmm.SegmentEmission.PinPrior ×
+      Std.HashMap Int Verified.Hsmm.SegmentEmission.PinPrior := Id.run do
+    let some (nu0, t0) := segEm.listedCentre | return ({}, {})
+    let mut spread : Std.HashMap Int (Float × Float) := {}
+    for pj in ((j.getObjVal? "places") >>= (·.getArr?)).toOption.getD #[] do
+      let vs := ((pj.getObjVal? "visitSpread") >>= (·.getArr?)).toOption.getD #[]
+      match (pj.getObjVal? "id" >>= (·.getInt?)).toOption, vs.toList.filterMap (·.getNum?.toOption) with
+      | some id, [n, ss] => spread := spread.insert id (n.toFloat, ss.toFloat)
+      | _, _ => pure ()
+    let mut m : Std.HashMap Int Verified.Hsmm.SegmentEmission.PinPrior := {}
+    let mut far : Std.HashMap Int Verified.Hsmm.SegmentEmission.PinPrior := {}
+    for (p, lat, lon, _, _) in places.toList do
+      let xy := Verified.Hsmm.SegmentEmission.localXY posRef lat lon
+      let (n, ss) := spread.getD p.id (0, 0)
+      let pp := Verified.Hsmm.SegmentEmission.pinPriorOf xy nu0 t0 n ss
+        Verified.Geo.FocusPlaces.CLUSTER_RADIUS_M
+      if inPlay xy then m := m.insert p.id pp
+      else if segEm.position.isSome then far := far.insert p.id pp
+    return (m, far)
+  -- Under `position`: every fix in local metres with its core noise, the
+  -- last lit minute before each, the broad prior at each fix, and each
+  -- stay's spot table — the placeless one, and every listed place in play's,
+  -- starting at its pin.
+  let acc0 := Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M
+  let (posXY, posPrev, posBroad, spotPlaceless, spotListed, spotMaxD) :
+      Array (Option (Float × Float × Float)) × Array (Option Nat) × Array Float ×
+      FloatArray × Std.HashMap Int FloatArray × Nat :=
+    match segEm.position with
+    | none => (#[], #[], #[], FloatArray.empty, {}, 0)
+    | some pp =>
+      let xy := Verified.Hsmm.SegmentEmission.fixesLocal obs posRef acc0 pp
+      let prev := Verified.Hsmm.SegmentEmission.prevLit obs
+      let h := segEm.unlistedCentre.getD Verified.Hsmm.Emissions.PLACE_RADIUS_M
+      let broad := Verified.Hsmm.SegmentEmission.placelessLogAt obs posRef h placePrior
+      let reach := Verified.Hsmm.SegmentEmission.boundarySpeedQuad
+        (segEm.pairBoundaryMeanKmh.getD recordZero) (segEm.pairBoundaryEps.getD recordZero) segEm.uMaxKmh
+      let none_ := Verified.Hsmm.SegmentEmission.spotTable xy prev pp .placeless reach broad maxD
+      let listed := pinPriors.fold (fun m pid pin =>
+        m.insert pid (Verified.Hsmm.SegmentEmission.spotTable xy prev pp
+          (.pin pin.x pin.y pin.s2) reach broad maxD)) {}
+      (xy, prev, broad, none_, listed, maxD)
+  -- Under `position` the dark minutes' gap and feasibility terms go: the fix
+  -- after a gap is scored from the fix before it, by the state it is in.
+  let weights := if segEm.position.isSome then { weights with gap := recordZero, geometric := recordZero } else weights
   -- A fitted mode-to-mode transition matrix (harness-only): `{src: {dst: p}}`.
   let modesAll : List Verified.Hsmm.Emissions.Mode :=
     [.stationary, .walking, .cycling, .driving, .train, .plane, .unknown]
@@ -1100,11 +1201,13 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     | none => #[]
   let durationNoFloor := ((flags.getObjVal? "durationNoFloor") >>= (·.getBool?)).toOption.getD false
   let ctx := { ctx with priors, fits, mainlineFit, waitFit, waitMin, weights, segPref, placePrior, transWeight, stayEntryLog, trainEntryLog, durationNoFloor,
-                        oneMinuteLog, visitCounts, entryTable }
+                        oneMinuteLog, visitCounts, entryTable, pinPriors,
+                        spotPlaceless, spotListed, spotMaxD, posRef, posXY, posPrev, posBroad, pinFar }
   let lineProxBest := Verified.Hsmm.Assemble.lineProxBestTable ctx
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx
   let stayMoveCorr := Verified.Hsmm.Assemble.stayMoveTable ctx maxD
-  return ({ ctx with lineProxBest, pairPref, pairBoundary, stayMoveCorr }, maxD)
+  let walkPauseCorr := Verified.Hsmm.Assemble.walkPauseTable ctx maxD
+  return ({ ctx with lineProxBest, pairPref, pairBoundary, stayMoveCorr, walkPauseCorr }, maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json
@@ -1216,13 +1319,20 @@ private def packDeltaRef (qE qR : Int64) (h : Nat) : Nat × Option Int :=
     only through `(mode, isNamedTrain, placeless stay)` — segment evidence sees
     the mode, the train-hop relaxation the named-line + coverage (which is
     line-independent), and the unlisted centre (`unlistedCentre`) the placeless
-    stay alone. So this partition is EXACT (no iterative refinement): every
-    state in a class has identical `dur(·,d,e)` at every cell. Named train ⇒ 7;
-    the mainline (`unknown_rail`, its own duration fit) ⇒ 9; another unnamed
-    train ⇒ 4; the placeless stay ⇒ 8. -/
-private def durClassKey (s : Verified.Hsmm.Emissions.State) : Nat :=
+    stay alone, and a listed place's centre (`listedCentre`) that place alone.
+    So this partition is EXACT (no iterative refinement): every state in a
+    class has identical `dur(·,d,e)` at every cell. Named train ⇒ 7; the
+    mainline (`unknown_rail`, its own duration fit) ⇒ 9; another unnamed train
+    ⇒ 4; the placeless stay ⇒ 8; a listed place with a pin prior ⇒ its own,
+    past every other key. -/
+private def durClassKey (pins : Std.HashMap Int Verified.Hsmm.SegmentEmission.PinPrior)
+    (s : Verified.Hsmm.Emissions.State) : Nat :=
   match s.mode with
-  | .stationary => if s.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then 10 else if s.placeId.isNone then 8 else 0
+  | .stationary =>
+    if s.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then 10
+    else match s.placeId with
+      | none => 8
+      | some pid => if pins.contains pid then PIN_CLASS_BASE + pid.toNat else 0
   | .walking => 1 | .cycling => 2 | .driving => 3
   | .plane => 5 | .unknown => 6
   | .train => match s.lineName with
@@ -1432,10 +1542,10 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   let quant := Verified.Hsmm.Quantize.quantize
   -- Duration: EXACT class partition by (mode, isNamedTrain).
   let keys : Array Nat := c.states.foldl (fun acc s =>
-    let k := durClassKey s; if acc.contains k then acc else acc.push k) #[]
+    let k := durClassKey c.pinPriors s; if acc.contains k then acc else acc.push k) #[]
   let nC := keys.size
-  let durClass : Array Nat := c.states.map (fun s => (keys.findIdx? (· == durClassKey s)).getD 0)
-  let reps : Array Nat := keys.map (fun k => (c.states.findIdx? (fun s => durClassKey s == k)).getD 0)
+  let durClass : Array Nat := c.states.map (fun s => (keys.findIdx? (· == durClassKey c.pinPriors s)).getD 0)
+  let reps : Array Nat := keys.map (fun k => (c.states.findIdx? (fun s => durClassKey c.pinPriors s == k)).getD 0)
   let mut durBase : Array Nat := Array.replicate (S * maxD) 0
   for s in [0:S] do
     for d0 in [0:maxD] do
@@ -2334,6 +2444,56 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
 
 private def PATH_ZERO : Float := 0
 
+/-- `"segScore": {"segs": [{"startTs": n, "endTs": n, "state": "<stateKey>"}]}` on
+an `assemblesegments` request: each segment over `[startTs, endTs)` scored
+alone with the model's own cells — the summed `emitAt`, `entryAt`, the
+duration prior and the segment-level emissions (`durAt`, or the inner pass's
+cell for a journey) — and no transition. Two segments of one state back to
+back, which no path can write, are two entries here: the instrument for the
+decoder's invariants (whether a stretch scores better split). -/
+private def segScoreJson (c : Verified.Hsmm.Assemble.ModelContext) (dj : Json)
+    (journey : Option Verified.Hsmm.Journey.Tables) : Json :=
+  let fl (v : Float) : Json := if v == Verified.Hsmm.FloatScore.negInf then Json.null else Lean.toJson v
+  let segs : Array Json := ((dj.getObjVal? "segs") >>= (·.getArr?)).toOption.getD #[]
+  Json.arr <| segs.map fun a =>
+    let s0 := (a.getObjValAs? Int "startTs").toOption.getD 0
+    let s1 := (a.getObjValAs? Int "endTs").toOption.getD 0
+    let key := (a.getObjValAs? String "state").toOption.getD ""
+    let lo := c.obs.foldl (fun acc o => if o.ts < s0 then acc + 1 else acc) 0
+    let hi := c.obs.foldl (fun acc o => if o.ts < s1 then acc + 1 else acc) 0
+    match c.states.findIdx? (fun st => Verified.Hsmm.StateSpace.stateKey st == key) with
+    | none => Json.mkObj [("error", Json.str s!"no state {key}")]
+    | some s =>
+      if hi ≤ lo then Json.mkObj [("error", Json.str "empty segment")] else
+      let d := hi - lo
+      let last := hi - 1
+      let emit := (List.range d).foldl (fun acc i => acc + Verified.Hsmm.Assemble.emitAt c (lo + i) s) PATH_ZERO
+      let cell := match journey with
+        | some tb =>
+          if s == tb.journey then
+            (if d ≤ tb.maxJ then tb.cell.get! ((d - 1) * tb.T + last) else Verified.FloatConst.negInf)
+          else Verified.Hsmm.Assemble.durAt c s d last
+        | none => Verified.Hsmm.Assemble.durAt c s d last
+      let entry := Verified.Hsmm.Assemble.entryAt c lo s
+      -- A journey's best legs over the segment, each with its terms.
+      let legs : Json := match journey with
+        | some tb =>
+          if s == tb.journey && d ≤ tb.maxJ then
+            let (ls, _) := Verified.Hsmm.Journey.scoreLegs tb lo (Verified.Hsmm.Journey.legsPath tb lo last)
+            Json.arr (ls.map fun x => Json.mkObj [
+              ("leg", Json.str (tb.legName.getD x.leg "?")), ("d", Lean.toJson x.d),
+              ("prev", fl x.prev), ("emit", fl x.emit), ("entry", fl x.entry), ("cell", fl x.cell)])
+          else Json.null
+        | none => Json.null
+      Json.mkObj [
+        ("state", Json.str key), ("d", Lean.toJson d), ("legs", legs),
+        ("entry", fl entry), ("emit", fl emit), ("cell", fl cell),
+        ("durPrior", fl (Verified.Hsmm.Assemble.durPriorBase c s d)),
+        ("segParts", Json.mkObj ((Verified.Hsmm.Assemble.segEmParts c s d
+          (Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref d last)
+          (Verified.Hsmm.SegmentEmission.statsAt c.segPref d last)).map fun (k, v) => (k, fl v))),
+        ("total", fl (entry + emit + cell))]
+
 /-- `"pathDebug": {"alt": [{"startTs": n, "endTs": n, "state": "<stateKey>"}]}` on
 an `assemblesegments` request: the decoded path, and the decoded path with the
 caller's segments written over `[startTs, endTs)`, each scored segment by
@@ -2554,6 +2714,7 @@ private def segmentsOf (j : Json) (c : Verified.Hsmm.Assemble.ModelContext)
           ("calls", Json.arr (calling.map Json.str).toArray)])
     (emissionDebugJson c r.path dj).setObjVal! "stationPasses" passesJ else
   if let .ok dj := j.getObjVal? "pathDebug" then pathDebugJson c r.path dj journey (some pd) else
+  if let .ok dj := j.getObjVal? "segScore" then Json.mkObj [("segScore", segScoreJson c dj journey)] else
   if let .ok dj := j.getObjVal? "journeyDebug" then
     (match journey with
      | some tb => journeyDebugJson c tb r.path dj
@@ -2951,7 +3112,9 @@ private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × O
     match st? with
     | none => full ()
     | some st =>
-      if key.isEmpty || st.key != key then full () else
+      -- A place coming into play gives it its own duration class: the
+      -- earlier build's cells are laid out by the old classes.
+      if key.isEmpty || st.key != key || st.pd.durClass != pre.durClass then full () else
       let pdT := pre.toPData maxD
       let (first, why) := todayFrontier st c.obs covered pdT pre.tb
       if first == 0 || pdT.T == 0 then

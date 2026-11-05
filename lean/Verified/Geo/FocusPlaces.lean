@@ -378,6 +378,24 @@ private def weekdayDaytimeHours (stays : List Stay) (lon : Float) : Float := Id.
 def uniqueDayCount (stays : List Stay) (lon : Float) : Nat :=
   (stays.map (fun s => localDayIndex s.startTs lon)).eraseDups.length
 
+/-- How far a place's visits sit from it: the summed squared distance (m²) of
+    each stay's centre from the cluster's. With the visit count it is the
+    place's spread, what the decoder's listed-place centre term learns from
+    (one desk or another on different days). -/
+def visitSpreadOf (c : Cluster) : Float :=
+  c.stays.foldl (fun a s =>
+    let d := haversineMeters c.centroidLat c.centroidLon s.centroidLat s.centroidLon
+    a + d * d) 0
+
+private def oneVisitAt (lat : Float) : Cluster :=
+  { id := 0, centroidLat := 51.5, centroidLon := 0, totalDwellSec := 600
+    stays := [{ startTs := 0, endTs := 600, centroidLat := lat, centroidLon := 0
+                pointCount := 3, durationSec := 600 }] }
+
+#guard visitSpreadOf (oneVisitAt 51.5) == 0
+-- 0.0001° of latitude is 11.1 m: the spread is its square.
+#guard (visitSpreadOf (oneVisitAt 51.5001) - 123.6).abs < 0.5
+
 /-! ## Classification -/
 
 /--

@@ -236,6 +236,9 @@ pub enum Command {
         soft_out: Option<String>,
         #[arg(long, requires = "user")]
         dry: bool,
+        /// write the mined places (id, centroid, visits, spread) as JSON
+        #[arg(long, requires = "user")]
+        places_out: Option<String>,
         /// mine as of the end of this YYYY-MM-DD
         #[arg(long, value_parser = parse_date)]
         as_of: Option<chrono::NaiveDate>,

@@ -68,6 +68,8 @@ structure TermWeights where
   duration : Float := 1.0
   deriving Inhabited
 
+private def REST_ZERO : Float := 0
+
 /-- Every term of `emissionLogProbFullWith` but the base: what a minute pays
     beside its base emission, whichever form that base takes. -/
 def emissionRestWith
@@ -77,10 +79,14 @@ def emissionRestWith
     (s : State) (o : ObsRow) (priors : Mode → Emissions.ModePrior := modePriors)
     (w : TermWeights := {}) : Float :=
   let placeCoord := match s.placeId with | some pid => placeCoords.get? pid | none => none
-  w.geometric * Geometric.geometricFeasibility s (Verified.FloatConst.natToFloat o.ts.toNat)
-        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord priors
-    + w.gap * Geometric.gapTerm s o.gps.isSome
-        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) priors
+  -- A family weighed at zero is left out, not multiplied: the feasibility
+  -- term is `−∞` for a teleport, and `0 · −∞` is NaN.
+  (if w.geometric == REST_ZERO then REST_ZERO else
+    w.geometric * Geometric.geometricFeasibility s (Verified.FloatConst.natToFloat o.ts.toNat)
+        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord priors)
+    + (if w.gap == REST_ZERO then REST_ZERO else
+      w.gap * Geometric.gapTerm s o.gps.isSome
+        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) priors)
     -- The kernels' `isCovered` is the TypeScript gate, held open (see above).
     + w.rail * railEv
     + w.lineProximity * RouteModel.lineProximityFactorWith modeledLines minute s o false

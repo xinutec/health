@@ -30,6 +30,10 @@ pub(crate) struct MineSinks {
     pub(crate) soft_out: Option<String>,
     pub(crate) hard_out: Option<String>,
     pub(crate) dry: bool,
+    /// The mined places as they would be written — the id each matched, the
+    /// centroid, the visit count and spread — before the amenity vote; a dry
+    /// run with no other sink stops there.
+    pub(crate) places_out: Option<String>,
     /// Mine as the window stood on this instant rather than now (#1405).
     ///
     /// ⚠ A MEASUREMENT FLAG, and it must stay one until somebody has costed
@@ -234,6 +238,27 @@ pub(crate) async fn refresh_focus_places_one(
         mined.len(),
         deleted.len()
     );
+    if let Some(path) = &sinks.places_out {
+        let rows: Vec<serde_json::Value> = mined
+            .iter()
+            .zip(assignments.iter())
+            .map(|(c, a)| {
+                serde_json::json!({
+                    "id": a,
+                    "lat": c.get("lat").and_then(bitsf),
+                    "lon": c.get("lon").and_then(bitsf),
+                    "visits": c.get("stays").and_then(|v| v.as_array()).map_or(0, Vec::len),
+                    "visitSs": c.get("visitSs").and_then(bitsf),
+                })
+            })
+            .collect();
+        std::fs::write(path, serde_json::to_string_pretty(&rows)?)
+            .with_context(|| format!("writing {path}"))?;
+        eprintln!("[{user_id}] places -> {path} ({} cluster(s))", rows.len());
+        if sinks.dry && sinks.hard_out.is_none() && sinks.soft_out.is_none() {
+            return Ok(());
+        }
+    }
 
     // ── 5. the amenity vote, per cluster ────────────────────────────────────
     // ⚠ TWO PHASES, and the split is forced by the mirror. `MirrorSource` may
