@@ -1158,7 +1158,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let none_ := Verified.Hsmm.SegmentEmission.spotTable xy prev pp .placeless reachM reachEps broad maxD
       let listed := pinPriors.fold (fun m pid pin =>
         m.insert pid (Verified.Hsmm.SegmentEmission.spotTable xy prev pp
-          (.pin pin.x pin.y pin.s2) reachM reachEps broad maxD)) {}
+          (.pin pin.x pin.y pin.s2) reachM reachEps broad maxD
+          (PIN_REACH_SD * Float.sqrt pin.s2 + pp.r1))) {}
       (xy, prev, broad, none_, listed, maxD)
   -- Under `position` the dark minutes' gap and feasibility terms go: the fix
   -- after a gap is scored from the fix before it, by the state it is in.

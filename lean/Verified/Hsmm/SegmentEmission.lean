@@ -715,7 +715,7 @@ def gapTables (xy : Array (Option (Float × Float × Float))) (prev : Array (Opt
     question: where is the first fix, given where he was. -/
 def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Option Nat))
     (pp : PositionParams) (start : SpotStart) (reachM reachEps : Float) (broad : Array Float)
-    (maxD : Nat) : FloatArray := Id.run do
+    (maxD : Nat) (nearR : Float := ZERO) : FloatArray := Id.run do
   let T := xy.size
   let mut out := Verified.FloatConst.floats (Verified.Hsmm.triOff maxD T) ZERO
   let tm2 := pp.tm * pp.tm
@@ -725,7 +725,11 @@ def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Opt
   let cLw : FloatArray := ⟨comps.map fun (w, _) => Float.log w⟩
   let cEx : FloatArray := ⟨comps.map (·.2)⟩
   let l1r := Float.log (ONE - pp.rho)
-  for s0 in [0:T] do
+  -- One row: the filter from start `s0`, its values for `d = 1, 2, …`. With
+  -- `atPin` the spot starts at the pin, the fix before not asked (a row
+  -- whose earlier fixes were all strays).
+  let row := fun (s0 : Nat) (atPin : Bool) => Id.run do
+    let mut vals := FloatArray.emptyWithCapacity maxD
     let mut mx := ZERO
     let mut my := ZERO
     let mut V := ZERO
@@ -744,7 +748,7 @@ def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Opt
           -- over the gap), and for a listed place inside its footprint too —
           -- the two together, normalised. With the boundary's outlier share
           -- he came from anywhere: the footprint alone, or the broad prior.
-          let before : Option (Float × Float × Float) := match prev[s0]! with
+          let before : Option (Float × Float × Float) := if atPin then none else match prev[s0]! with
             | some tp => match xy[tp]! with
               | some (xp, yp, Rp) =>
                 let g := Verified.FloatConst.natToFloat (e - tp)
@@ -854,8 +858,56 @@ def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Opt
           my := my + oy
           seen := true
         dark := 0
-      out := out.set! (Verified.Hsmm.triOff maxD e + (d - 1)) tot
-  return out
+      vals := vals.push tot
+    return vals
+  match start with
+  | .placeless =>
+    for s0 in [0:T] do
+      let r := row s0 false
+      for i in [0:r.size] do
+        out := out.set! (Verified.Hsmm.triOff maxD (s0 + i) + i) r[i]!
+    return out
+  | .pin px py v0 =>
+    -- A row whose first fixes are far from the pin (beyond `nearR`): each
+    -- is a stray and the spot stays at the pin, so up to the first near fix
+    -- `n` the row is the far rule's sum, and from `n` on it is the filter
+    -- from `n` at the pin — one per `n`, shared by every row it serves.
+    let far : Array Float := xy.map fun f => match f with
+      | some (x, y, R) => fixLog pp ((x - px) * (x - px) + (y - py) * (y - py)) v0 R
+      | none => ZERO
+    let isNear : Array Bool := xy.map fun f => match f with
+      | some (x, y, _) => (x - px) * (x - px) + (y - py) * (y - py) ≤ nearR * nearR
+      | none => false
+    let farPre : Array Float := far.foldl (fun acc v => acc.push (acc.back! + v)) #[ZERO]
+    let (nextNear, firstLit) : Array Nat × Array Nat := Id.run do
+      let mut nn := Array.replicate (T + 1) T
+      let mut fl := Array.replicate (T + 1) T
+      for i in [0:T] do
+        let t := T - 1 - i
+        nn := nn.set! t (if isNear[t]! then t else nn[t + 1]!)
+        fl := fl.set! t (if xy[t]!.isSome then t else fl[t + 1]!)
+      return (nn, fl)
+    let mut cache : Std.HashMap Nat FloatArray := {}
+    for s0 in [0:T] do
+      let f := firstLit[s0]!
+      if f < T && isNear[f]! then
+        let r := row s0 false
+        for i in [0:r.size] do
+          out := out.set! (Verified.Hsmm.triOff maxD (s0 + i) + i) r[i]!
+      else
+        let n := nextNear[s0]!
+        let tail : FloatArray := if n ≥ T then FloatArray.empty else
+          match cache.get? n with
+          | some r => r
+          | none => row n true
+        if n < T && !cache.contains n then cache := cache.insert n tail
+        for d in [1:maxD + 1] do
+          let e := s0 + d - 1
+          if e ≥ T then break
+          let v := if e < n then farPre[e + 1]! - farPre[s0]!
+            else farPre[n]! - farPre[s0]! + (tail[e - n]?).getD ZERO
+          out := out.set! (Verified.Hsmm.triOff maxD e + (d - 1)) v
+    return out
 
 -- A still minute is likelier still than walked, a walked one the reverse.
 private def ppT : PositionParams := { lam := 0.02, e1 := 0.16, r1 := 60, e2 := 0.02, r2 := 5000, e3 := 0.001, r3 := 600000, rho := 0.03, tm := 30 }
