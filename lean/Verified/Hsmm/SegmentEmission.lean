@@ -533,13 +533,6 @@ def modeSpeedQuad (meanKmh sdKmh stop stopSdKmh eps uMaxKmh : Float) : SpeedQuad
     (ONE - stop) * Float.exp (ZERO - (s - m) * (s - m) / (TWO * sd * sd)) / sd
       + stop * TWO * Float.exp (ZERO - s * s / (TWO * ssd * ssd)) / ssd) eps uMaxKmh
 
-/-- The motion across a boundary, fitted on the narrated boundaries
-    (`pairBoundaryMeanKmh`, `pairBoundaryEps`): an exponential speed of that
-    mean, with the share of outliers. -/
-def boundarySpeedQuad (meanKmh eps uMaxKmh : Float) : SpeedQuad :=
-  let m := max (meanKmh * M_PER_MIN_PER_KMH) ONE
-  speedQuadOf (fun s => Float.exp (ZERO - s / m)) eps uMaxKmh
-
 /-- The log density (per m²) of a 2-D displacement of length `r` over `g`
     minutes, the noise `v` per axis: a ring of radius speed × `g` in any
     direction, blurred, over the speed density `q`. -/
@@ -605,24 +598,23 @@ def moveIncrements (xy : Array (Option (Float × Float × Float))) (prev : Array
     its fixes: from each start, an assumed-density filter over the spot,
     collapsed to one Gaussian per minute. A fix is the spot plus the noise
     mixture; since the last lit minute the spot stayed or moved at least once.
-    The spot starts at a listed place's pin; for a placeless stay at its first
-    fix, which is scored from the last fix before at the boundary's speed
-    (`reach`), or at `broad` with none before. -/
+    Every stay's spot starts given the last fix before: reached from it at
+    the boundary's mean speed `reachM` (metres a minute), and for a listed
+    place inside its footprint as well; with the boundary's outlier share
+    `reachEps` from anywhere (the footprint alone, or the broad prior
+    `broad`). So a listed and a placeless stay are compared on the same
+    question: where is the first fix, given where he was. -/
 def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Option Nat))
-    (pp : PositionParams) (start : SpotStart) (reach : SpeedQuad) (broad : Array Float)
+    (pp : PositionParams) (start : SpotStart) (reachM reachEps : Float) (broad : Array Float)
     (maxD : Nat) : FloatArray := Id.run do
   let T := xy.size
   let mut out := Verified.FloatConst.floats (Verified.Hsmm.triOff maxD T) ZERO
   let tm2 := pp.tm * pp.tm
   let comps := noiseComps pp
   for s0 in [0:T] do
-    let (m0x, m0y, v0, started) : Float × Float × Float × Bool := match start with
-      | .pin x y v => (x, y, v, true)
-      | .placeless => (ZERO, ZERO, ZERO, false)
-    let mut mx := m0x
-    let mut my := m0y
-    let mut V := v0
-    let mut on := started
+    let mut mx := ZERO
+    let mut my := ZERO
+    let mut V := ZERO
     let mut seen := false
     let mut dark := 0
     let mut tot := ZERO
@@ -632,28 +624,77 @@ def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Opt
       match xy[e]! with
       | none => dark := dark + 1
       | some (x, y, R) =>
-        if !on then
-          -- The placeless spot is where its first fix is, reached from the
-          -- fix before.
-          tot := tot + (match prev[s0]! with
+        if !seen then
+          -- Where the spot starts, given the last fix before: reached from it
+          -- across the boundary (a 2-D Gaussian of the boundary's mean speed
+          -- over the gap), and for a listed place inside its footprint too —
+          -- the two together, normalised. With the boundary's outlier share
+          -- he came from anywhere: the footprint alone, or the broad prior.
+          let before : Option (Float × Float × Float) := match prev[s0]! with
             | some tp => match xy[tp]! with
               | some (xp, yp, Rp) =>
-                moveLog pp reach (Float.sqrt ((x - xp) * (x - xp) + (y - yp) * (y - yp)))
-                  (Verified.FloatConst.natToFloat (e - tp)) R Rp
-              | none => broad.getD e ZERO
-            | none => broad.getD e ZERO)
-          mx := x
-          my := y
-          V := R
-          on := true
+                let g := Verified.FloatConst.natToFloat (e - tp)
+                some (xp, yp, Rp + reachM * reachM * g * g)
+              | none => none
+            | none => none
+          -- Gaussian starts `(log weight, mean, variance)`, and the broad
+          -- prior's share for a placeless spot (the fix where it is).
+          let (starts, flat) : Array (Float × Float × Float × Float) × Option Float :=
+            match start, before with
+            | .pin px py v0, some (xp, yp, vr) =>
+              let vs := ONE / (ONE / v0 + ONE / vr)
+              (#[(Float.log (ONE - reachEps), vs * (px / v0 + xp / vr), vs * (py / v0 + yp / vr), vs),
+                 (Float.log reachEps, px, py, v0)], none)
+            | .pin px py v0, none => (#[(ZERO, px, py, v0)], none)
+            | .placeless, some (xp, yp, vr) =>
+              (#[(Float.log (ONE - reachEps), xp, yp, vr)], some (Float.log reachEps + broad.getD e ZERO))
+            | .placeless, none => (#[], some (broad.getD e ZERO))
+          let mut m := Verified.FloatConst.negInf
+          let mut sw := ZERO
+          let mut sx := ZERO
+          let mut sy := ZERO
+          let mut sq := ZERO
+          -- Offsets from the fix itself; the broad share's spot is the fix.
+          let parts : Array (Float × Float × Float × Float) := Id.run do
+            let mut acc : Array (Float × Float × Float × Float) := #[]
+            for (lw, cx, cy, vc) in starts do
+              for (w, ex) in comps do
+                let kk := vc / (vc + R + ex)
+                let d2 := (x - cx) * (x - cx) + (y - cy) * (y - cy)
+                acc := acc.push (lw + Float.log w + logN2 d2 (vc + R + ex),
+                  (cx - x) * (ONE - kk), (cy - y) * (ONE - kk), vc * (ONE - kk))
+            match flat with
+            | some lf => acc := acc.push (lf, ZERO, ZERO, R)
+            | none => pure ()
+            return acc
+          for (lm, ax, ay, vv) in parts do
+            if lm > m then
+              let r := Float.exp (m - lm)
+              sw := sw * r + ONE
+              sx := sx * r + ax
+              sy := sy * r + ay
+              sq := sq * r + (vv + (ax * ax + ay * ay) / TWO)
+              m := lm
+            else
+              let wgt := Float.exp (lm - m)
+              sw := sw + wgt
+              sx := sx + wgt * ax
+              sy := sy + wgt * ay
+              sq := sq + wgt * (vv + (ax * ax + ay * ay) / TWO)
+          tot := tot + m + Float.log sw
+          let ox := sx / sw
+          let oy := sy / sw
+          V := max (sq / sw - (ox * ox + oy * oy) / TWO) ZERO
+          mx := x + ox
+          my := y + oy
           seen := true
         else
           let d2 := (x - mx) * (x - mx) + (y - my) * (y - my)
           -- The spot since the last lit minute: stayed, or moved (the expected
           -- spread of at least one move); the first fix only where it starts.
           let k := Verified.FloatConst.natToFloat (dark + 1)
-          let still := if seen then Float.exp (k * Float.log (ONE - pp.rho)) else ONE
-          let twoMoves := seen && still < ONE
+          let still := Float.exp (k * Float.log (ONE - pp.rho))
+          let twoMoves := still < ONE
           let vMove := V + tm2 * pp.rho * k / (ONE - still)
           -- One pass over the components (stayed or moved, × the noise
           -- mixture): the log-sum-exp from a running maximum, and the

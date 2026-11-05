@@ -156,11 +156,19 @@ as a density, a stay from its spot (`SegmentEmission.spotTable`), a moving
 mode from the fix before at its speed in any direction (`ringLog`); the
 pair, boundary, centre, place, gap, feasibility and displacement terms off.
 Absent, nothing moves (scoreboard and flip rows equal to the shipped decoder).
-On, alone: 21 narrated rows lost and 3 gained, phantoms 3 → 7, mostly
-boundaries a minute off; with the joint emission (`hrLevel`, `edgeCadence`,
-`walkPause`, spells at every stay) 45 lost and 3 gained. 11-03's office
-reads as placeless stays with two-minute walks in both — not yet the shipped
-day's one stay. The runs: `tests/golden/fits/README`.
+Every stay's spot starts given the fix before it (reached across the
+boundary, and inside the footprint for a listed place), and which place a
+stay begins at is its posterior given the hour and that fix
+(`Assemble.positionEntryTable`), so the fix is not scored twice. On, alone:
+14 narrated rows lost and 3 gained (11 of them a boundary a minute off),
+journeys 131 of 131, phantoms 3 → 8; with the joint emission (`hrLevel`,
+`edgeCadence`, `walkPause`, spells at every stay) 47 lost and 6 gained.
+11-03's office is Work throughout, split by two moves inside the building
+(13:01–13:05, 19:21–19:23) — the spot's rare jump is all a stay has for
+them. Next: a stay's activity and spot together, the spot moving while he
+moves about and never leaving the place, its centre a latent of the place
+(the simpler pull toward the stay's first fix fits to no pull at all). The
+runs: `tests/golden/fits/README`.
 
 Steps 1–4 are the one knot Rule 7 describes: each has been measured alone
 and each lost confirmed rows alone (`tests/golden/fits/README`, 2026-11-04

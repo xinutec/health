@@ -810,6 +810,8 @@ private def PIN_CLASS_BASE : Nat := 100
 
 /-- A Float zero for the record parser's branches (a literal there is a GMP call). -/
 private def recordZero : Float := 0
+/-- Metres a minute in a km/h. -/
+private def recordMPerMinPerKmh : Float := 1000 / 60
 
 private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.ModelContext × Nat) := do
   -- ⚠ `observation` WINS when both are present, and that is not arbitrary: the
@@ -1130,12 +1132,14 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let prev := Verified.Hsmm.SegmentEmission.prevLit obs
       let h := segEm.unlistedCentre.getD Verified.Hsmm.Emissions.PLACE_RADIUS_M
       let broad := Verified.Hsmm.SegmentEmission.placelessLogAt obs posRef h placePrior
-      let reach := Verified.Hsmm.SegmentEmission.boundarySpeedQuad
-        (segEm.pairBoundaryMeanKmh.getD recordZero) (segEm.pairBoundaryEps.getD recordZero) segEm.uMaxKmh
-      let none_ := Verified.Hsmm.SegmentEmission.spotTable xy prev pp .placeless reach broad maxD
+      -- The motion across a boundary, fitted on the narrated boundaries: its
+      -- mean speed in metres a minute and its outlier share.
+      let reachM := segEm.pairBoundaryMeanKmh.getD recordZero * recordMPerMinPerKmh
+      let reachEps := segEm.pairBoundaryEps.getD recordZero
+      let none_ := Verified.Hsmm.SegmentEmission.spotTable xy prev pp .placeless reachM reachEps broad maxD
       let listed := pinPriors.fold (fun m pid pin =>
         m.insert pid (Verified.Hsmm.SegmentEmission.spotTable xy prev pp
-          (.pin pin.x pin.y pin.s2) reach broad maxD)) {}
+          (.pin pin.x pin.y pin.s2) reachM reachEps broad maxD)) {}
       (xy, prev, broad, none_, listed, maxD)
   -- Under `position` the dark minutes' gap and feasibility terms go: the fix
   -- after a gap is scored from the fix before it, by the state it is in.
@@ -1203,6 +1207,13 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let ctx := { ctx with priors, fits, mainlineFit, waitFit, waitMin, weights, segPref, placePrior, transWeight, stayEntryLog, trainEntryLog, durationNoFloor,
                         oneMinuteLog, visitCounts, entryTable, pinPriors,
                         spotPlaceless, spotListed, spotMaxD, posRef, posXY, posPrev, posBroad, pinFar }
+  -- Under `position`, which place a stay begins at given the fix before it.
+  let ctx := match segEm.position with
+    | some _ =>
+      let posEntry := Verified.Hsmm.Assemble.positionEntryTable ctx
+        (segEm.pairBoundaryMeanKmh.getD recordZero * recordMPerMinPerKmh) (segEm.pairBoundaryEps.getD recordZero)
+      { ctx with posEntry }
+    | none => ctx
   let lineProxBest := Verified.Hsmm.Assemble.lineProxBestTable ctx
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx
   let stayMoveCorr := Verified.Hsmm.Assemble.stayMoveTable ctx maxD

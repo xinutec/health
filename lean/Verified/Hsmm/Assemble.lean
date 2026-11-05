@@ -132,6 +132,10 @@ structure ModelContext where
   /-- Under `position`, each listed place not in play, where its visits are:
       every fix of a stay there is scored about its pin, one at a time. -/
   pinFar : Std.HashMap Int SegmentEmission.PinPrior := {}
+  /-- Under `position`, per minute: what the last fix before says of which
+      place a stay beginning there is at (`positionEntryTable`), per place
+      and for a place not on the list; empty without a fix before. -/
+  posEntry : Array (Std.HashMap Int Float × Float) := #[]
   /-- The transition weight: the shipped uniform split unless the harness
       carries a fitted mode matrix (`Transitions.fittedWeight`). -/
   transWeight : State → State → Float := Transitions.transitionWeight
@@ -502,6 +506,41 @@ def trainLineLog (c : ModelContext) (tl : SegmentEmission.TrainLine) (covered : 
     else if isV st then Float.log q else Float.log ((1 - q) / (n - v))
   line + if covered then tl.covered else tl.uncovered
 
+/-- Under `position`, the stay entry's evidence from where he was: for a stay
+    beginning at minute `t`, the last fix before it (minute `tp`), reached
+    across the boundary at `reachM` metres a minute. Each place's chance of
+    being entered from there is its footprint convolved with the reach (with
+    the boundary's outlier share `reachEps` of the broad prior: he came from
+    anywhere), a place not on the list the broad prior's at that fix
+    (`posBroad`). Per minute, `log z_P − log Σ_Q π_Q z_Q`, with `π` the
+    entry's share by hour: added to `log π_P`, the stay's place is its
+    posterior given the hour and the fix, a probability, so the fix is not
+    scored twice. Empty for a minute with no fix before. -/
+def positionEntryTable (c : ModelContext) (reachM reachEps : Float) : Array (Std.HashMap Int Float × Float) :=
+  (Array.range c.obs.size).map fun t => Id.run do
+    let none_ : Std.HashMap Int Float × Float := ({}, SEG_ZERO)
+    let some tp := (c.posPrev[t]?).join | return none_
+    let some (xp, yp, Rp) := (c.posXY[tp]?).join | return none_
+    let some o := c.obs[t]? | return none_
+    let some (pis, piU) := c.entryTable[o.hourLocal]? | return none_
+    let g := Verified.FloatConst.natToFloat (t - tp)
+    let vr := Rp + reachM * reachM * g * g
+    let lb := c.posBroad.getD tp SEG_ZERO
+    let pinOf := fun (pid : Int) => match c.pinPriors.get? pid with
+      | some pp => some pp
+      | none => c.pinFar.get? pid
+    -- log z per place, and the normaliser over the places and the unlisted one.
+    let lz := pis.fold (fun (m : Std.HashMap Int Float) pid _ =>
+      match pinOf pid with
+      | some pp =>
+        let d2 := (xp - pp.x) * (xp - pp.x) + (yp - pp.y) * (yp - pp.y)
+        m.insert pid (SegmentEmission.logSumExp
+          #[Float.log (MIN_ONE - reachEps) + SegmentEmission.logN2 d2 (pp.s2 + vr), Float.log reachEps + lb])
+      | none => m.insert pid lb) {}
+    let terms := pis.fold (fun (acc : Array Float) pid lp => acc.push (lp + lz.getD pid lb)) #[piU + lb]
+    let L := SegmentEmission.logSumExp terms
+    return (lz.fold (fun m pid v => m.insert pid (v - L)) {}, lb - L)
+
 /-- `entry(s, obs[t])` — the base entry prior, or a train's generator entry
     (`trainLineLog`), with the hour profile / visit weight / coverage verdict
     resolved for the state. -/
@@ -518,7 +557,14 @@ def entryAt (c : ModelContext) (t s : Nat) : Float :=
   let profile := match st.placeId with | some pid => c.hourProfiles.get? pid | none => none
   let weight := match st.placeId with | some pid => c.visitWeights.get? pid | none => none
   match (if st.mode == .stationary then entryCountsAt c st o.hourLocal else none) with
-  | some v => c.weights.entry * v
+  | some v =>
+    -- Under `position`, what the fix before says of the place (evidence, not
+    -- a prior: unweighted).
+    let pos := match c.posEntry[t]? with
+      | some (m, unk) => if m.isEmpty && unk == SEG_ZERO then SEG_ZERO else
+        match st.placeId with | some pid => m.getD pid unk | none => unk
+      | none => SEG_ZERO
+    c.weights.entry * v + pos
   | none =>
   match (if st.mode == .train then c.segEm.p.trainLine else none) with
   | some tl => c.weights.entry * trainLineLog c tl covered o.ts st
