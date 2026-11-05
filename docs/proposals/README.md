@@ -21,6 +21,8 @@ will find it.
 
 | File | Status | Topic |
 |---|---|---|
+| `2026-11-generative-day.md` | vision, for review | **The decoder's end state.** One generative model of the day — where (worldline), what (activity, apart from location), the body (heart rate answering the steps) — every observation a density under every state; the invariants as tests |
+| `2026-11-stay-position.md` | measured; design A refuted as an addition | A stay's position: stray fixes and moving spots; the measurements under the generative day's first step |
 | `decoder-roadmap.md` | active | **The single forward plan for the decoder line of work.** One joint probabilistic decoder owning a continuous map-matched worldline; Phases 0–5 |
 | `geometry-roadmap.md` | active | **The single forward plan for the positioning/geometry line of work.** A moving leg as the MAP estimate of one robust energy; Phases G0–G4, the measured landmines |
 | `2026-11-incremental-today.md` | design; step 1 next | Today decoded from the earliest minute whose per-minute tables changed, the rest reused exactly; no extra CPUs |
