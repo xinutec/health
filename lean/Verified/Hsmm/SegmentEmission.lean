@@ -153,6 +153,22 @@ structure StopChain where
   stay : Float
   deriving Inhabited
 
+/-- `Params.awakeDrift`: the awake heart rate as the person's level, which
+    drifts, plus the answer to the recent steps (`beta` bpm per step a minute,
+    the steps of the last `ACTIVITY_LAGS` minutes at `e^(−k/ta)`). Each
+    minute's difference from the minute before, the steps' share taken out,
+    is a two-part Gaussian mixture — `(share, core sd, wide sd)` while still
+    or riding (`calm`) and while walking (`walk`), fitted on the narrated
+    awake minutes (`tests/golden/fits/instruments/invariants/hrdiff.py`) —
+    scored by the segment it ends in, so a boundary hides no pair and a split
+    adds only its segment's level about the mode's mean. -/
+structure AwakeDrift where
+  beta : Float
+  ta : Float
+  calm : Float × Float × Float
+  walk : Float × Float × Float
+  deriving Inhabited
+
 /-- Where a stay's spot is expected before its first fix: around a listed
     place's pin at variance `v0`, or where the last fix before left him. -/
 inductive SpotStart where
@@ -246,6 +262,9 @@ structure Params where
       net displacement, which each score the same fixes again. Needs
       `listedCentre` (where a listed place's visits are). -/
   position : Option PositionParams := none
+  /-- The awake heart rate as a drifting level answering the steps
+      (`AwakeDrift`), in place of one level per segment. -/
+  awakeDrift : Option AwakeDrift := none
   /-- Under `position`, keep the net displacement between a segment's
       bracketing fixes (`dispPosteriorScore`): where a trip ends, which the
       per-minute terms cannot say (a walk between two places almost never
@@ -318,6 +337,13 @@ structure Prefix where
       count, cumulative over the pair ending at each minute. -/
   bedDiffSq : Array Float := #[ZERO]
   bedDiffN : Array Float := #[ZERO]
+  /-- Under `awakeDrift`: per minute, the log density of its steps-adjusted
+      heart-rate difference from the minute before under each family (still
+      or riding, walking), and the adjusted rates' count and sum, cumulative. -/
+  hrDiffCalm : Array Float := #[ZERO]
+  hrDiffWalk : Array Float := #[ZERO]
+  hrAdjN : Array Float := #[ZERO]
+  hrAdjSum : Array Float := #[ZERO]
   /-- With `hrLevel`: per segment `(d, e)` at `triOff maxD e + d − 1`, the
       awake heart rate's likelihood as a Gaussian in the mode's mean `m` —
       `R − (m − μ̂)² / (2V)` — as `R`, `μ̂` and `V` (`V = 0`: no awake minute
@@ -1027,6 +1053,42 @@ def hrLevelTable (obs : Array ObsRow) (h : HrLevel) (maxD : Nat) : FloatArray ×
         tV := tV.set! i (ONE / sBB)
   return (tR, tMu, tV)
 
+/-- A difference's log density under a two-part mixture `(share, sd₁, sd₂)`. -/
+private def mixLog (m : Float × Float × Float) (d : Float) : Float :=
+  let (pi, s1, s2) := m
+  lse2 (Float.log pi - HALF * Float.log (TWO * PI_F * s1 * s1) - d * d / (TWO * s1 * s1))
+    (Float.log (ONE - pi) - HALF * Float.log (TWO * PI_F * s2 * s2) - d * d / (TWO * s2 * s2))
+
+/-- The prefix with the awake drift's sums (`awakeDrift`). -/
+def withAwakeDrift (p : Prefix) (obs : Array ObsRow) (ad : AwakeDrift) : Prefix := Id.run do
+  let T := obs.size
+  let wts := (Array.range ACTIVITY_LAGS).map fun k =>
+    Float.exp (ZERO - Verified.FloatConst.natToFloat k / ad.ta)
+  let wSum := wts.foldl (· + ·) ZERO
+  let xAdj : Array (Option Float) := (Array.range T).map fun t =>
+    match obs[t]? with
+    | some o =>
+      if o.inBed then none else o.hr.map fun x =>
+        let a := (Array.range ACTIVITY_LAGS).foldl (fun acc k =>
+          if k > t then acc else
+          acc + wts[k]! * (((obs[t - k]?).bind (·.cadence)).getD ZERO)) ZERO
+        x - ad.beta * a / wSum
+    | none => none
+  let mut dc := #[ZERO]
+  let mut dw := #[ZERO]
+  let mut an := #[ZERO]
+  let mut asum := #[ZERO]
+  for t in [0:T] do
+    let (lc, lw) := match xAdj[t]!, (if t == 0 then none else xAdj[t - 1]!) with
+      | some x, some xp => (mixLog ad.calm (x - xp), mixLog ad.walk (x - xp))
+      | _, _ => (ZERO, ZERO)
+    let (n, sm) := match xAdj[t]! with | some x => (ONE, x) | none => (ZERO, ZERO)
+    dc := dc.push (dc.back! + lc)
+    dw := dw.push (dw.back! + lw)
+    an := an.push (an.back! + n)
+    asum := asum.push (asum.back! + sm)
+  return { p with hrDiffCalm := dc, hrDiffWalk := dw, hrAdjN := an, hrAdjSum := asum }
+
 /-- The prefix with its level tables (`hrLevelTable`). -/
 def withHrLevel (p : Prefix) (obs : Array ObsRow) (h : HrLevel) (maxD : Nat) : Prefix :=
   let (hrR, hrMu, hrV) := hrLevelTable obs h maxD
@@ -1075,6 +1137,12 @@ structure Stats where
       (`sleepScore` under `position`). -/
   bedDiffSqB : Float := ZERO
   bedDiffNB : Float := ZERO
+  /-- `Prefix.hrDiffCalm` and the rest over the segment's minutes (the pair
+      across its start the segment's). -/
+  hrDiffCalm : Float := ZERO
+  hrDiffWalk : Float := ZERO
+  hrAdjN : Float := ZERO
+  hrAdjSum : Float := ZERO
 
 /-- A prefix array's share of the minute before `[lo, hi)` and the minute
     after it; a minute off the day adds nothing. -/
@@ -1103,7 +1171,9 @@ def statsAt (p : Prefix) (d e : Nat) : Stats :=
    -- at `lo + 1`.
    get p.bedDiffSq hi - get p.bedDiffSq (lo + 1), get p.bedDiffN hi - get p.bedDiffN (lo + 1),
    hrAt p.hrR, hrAt p.hrMu, hrAt p.hrV,
-   get p.bedDiffSq hi - get p.bedDiffSq lo, get p.bedDiffN hi - get p.bedDiffN lo⟩
+   get p.bedDiffSq hi - get p.bedDiffSq lo, get p.bedDiffN hi - get p.bedDiffN lo,
+   get p.hrDiffCalm hi - get p.hrDiffCalm lo, get p.hrDiffWalk hi - get p.hrDiffWalk lo,
+   get p.hrAdjN hi - get p.hrAdjN lo, get p.hrAdjSum hi - get p.hrAdjSum lo⟩
 where
   /-- A level table's cell for this segment, `0` off the table. -/
   hrAt (a : FloatArray) : Float :=
@@ -1516,6 +1586,18 @@ private def idx (x : Float) : Nat := (x + HALF).toUInt64.toNat
         - HALF * t.logTwoPiV.getD hn ZERO - (mean - t.m.hrMean) * (mean - t.m.hrMean) * t.invTwoV.getD hn ZERO
     -- One level per awake run the segment spans: a sleep resets it. Under
     -- `hrLevel` the level drifts instead, and a night is unobserved minutes.
+    match q.p.awakeDrift with
+    | some _ =>
+      -- The drift: each minute's difference is the minute's own state's (the
+      -- part a journey's leg keeps); the segment's level about the mode's
+      -- mean is the segment's.
+      let diffs := if mode == .walking || mode == .cycling then st.hrDiffWalk else st.hrDiffCalm
+      let between := if st.hrAdjN < ONE then ZERO else
+        let mean := st.hrAdjSum / st.hrAdjN
+        let v := t.m.hrTau * t.m.hrTau
+        ZERO - HALF * Float.log (TWO_PI * v) - (mean - t.m.hrMean) * (mean - t.m.hrMean) / (TWO * v)
+      (fix + diffs, between)
+    | none =>
     let hr := if q.p.hrLevel.isSome then hrLevelScore st t.m.hrMean
       else if st.runs.isEmpty then level st.hrN st.hrSum st.hrSq
       else st.runs.foldl (fun acc (n, sm, sq) => acc + level n sm sq) ZERO
@@ -1530,9 +1612,9 @@ private def pTest : Params :=
   { sigmaW := 8, rho := 0.8
     byMode := [(.stationary, ⟨84, 9, 0.09, 0.064⟩), (.train, ⟨89, 9, 2.55, 1.04⟩)]
     disp := [(.stationary, ⟨3.5, 1.5, 0.006⟩), (.train, ⟨3.4, 0.6, 0.025⟩)] }
-#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ + 10
-#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ - 1
-#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ == 0
+#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ + 10
+#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ - 1
+#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ == 0
 -- An 84-minute café at 30 m scatter, 150 m place radius, 300 m from the
 -- nearest of three listed places at a 300 m bandwidth: a few nats of scatter
 -- and one Occam factor, not 168.
@@ -1555,7 +1637,7 @@ private def stop5 : Stats :=
     anchorW := 2 / 22500, anchorWX := 0, anchorWY := 0 }
 #guard centreScore stop5 300 threePlaces true > -3
 -- The tables agree with the closed form.
-private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩
+private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩
 #guard Float.abs (scorePrepared (prepare pTest 400) .train stT - score pTest .train stT) < 1e-6
 #guard Float.abs (scorePrepared (prepare pTest 400) .stationary stT - score pTest .stationary stT) < 1e-6
 

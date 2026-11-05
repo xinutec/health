@@ -1024,6 +1024,12 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | [tau, rl, su, phi, beta, ta] => some { tau, rl, su, phi, beta, ta }
       | _ => none
     let positionDisp := ((f.getObjVal? "positionDisp") >>= (·.getBool?)).toOption.getD false
+    -- `awakeDrift: [beta, ta, calmShare, calmSd1, calmSd2, walkShare, walkSd1, walkSd2]`.
+    let awakeDrift : Option Verified.Hsmm.SegmentEmission.AwakeDrift := do
+      let arr ← ((f.getObjVal? "awakeDrift") >>= (·.getArr?)).toOption
+      match arr.toList.filterMap num with
+      | [beta, ta, cp, c1, c2, wp, w1, w2] => some { beta, ta, calm := (cp, c1, c2), walk := (wp, w1, w2) }
+      | _ => none
     -- `stopChain: {train: [toStop, stay], mainline: [...]}`.
     let stopChain : List (String × Verified.Hsmm.SegmentEmission.StopChain) :=
       ["train", "mainline"].filterMap fun k => do
@@ -1072,7 +1078,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let g := fun (k : String) => (tl.getObjVal? k).toOption >>= num
       pure { vouchedShare := ← g "vouchedShare", covered := ← g "covered", uncovered := ← g "uncovered" }
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM, placeSigmaM, placeEps,
-           obsChain, asleep, unlistedCentre, listedCentre, position, positionDisp, stopChain, stayMove, strayFix, hrLevel, edgeCadence, walkPause, journey, trainLine }
+           obsChain, asleep, unlistedCentre, listedCentre, position, positionDisp, awakeDrift, stopChain, stayMove, strayFix, hrLevel, edgeCadence, walkPause, journey, trainLine }
   let some segEm := segEm?
     | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
   if segEm.trainLine.isNone then
@@ -1088,6 +1094,9 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (segEm.centreSigmaM.getD Verified.Hsmm.Emissions.PLACE_RADIUS_M)
     Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M
     (Verified.Hsmm.SegmentEmission.strayShares obs posRef Verified.Hsmm.Assemble.ACCURACY_DEFAULT_M segEm.strayFix)
+  let segPref := match segEm.awakeDrift with
+    | some ad => Verified.Hsmm.SegmentEmission.withAwakeDrift segPref obs ad
+    | none => segPref
   let segPref := match segEm.hrLevel with
     | some h => Verified.Hsmm.SegmentEmission.withHrLevel segPref obs h maxD
     | none => segPref
