@@ -168,10 +168,18 @@ phantoms 3 → 6; with the joint emission (`hrLevel`,
 `edgeCadence`, `walkPause`, spells at every stay) 47 lost and 6 gained.
 11-03's office is Work throughout, split by two moves inside the building
 (13:01–13:05, 19:21–19:23) — the spot's rare jump is all a stay has for
-them. Next: a stay's activity and spot together, the spot moving while he
-moves about and never leaving the place, its centre a latent of the place
-(the simpler pull toward the stay's first fix fits to no pull at all). The
-runs: `tests/golden/fits/README`.
+them. A stay's activity and spot together, its centre a latent of the place, lost
+more rows than it saved (stays absorbed walks and dark rides). The runs:
+`tests/golden/fits/README`.
+With the heart rate as a drifting level answering the steps
+(`awakeDrift`) and the net displacement kept (`positionDisp`), the history's
+round trips are 24 against the shipped 29, and 11-03's office one stay; the
+rows lost to it are short train hops merged into walks, waits into trains
+and edges. A moving state may score each fix from the last that was not a
+far stray (`moveHold`): correct, and neutral on both measures. What keeps
+10-08's waits inside the trains is the journey's rule that a wait precedes
+only a ride boarding at its station, which has no escape hatch for a line
+the map does not have.
 
 Steps 1–4 are the one knot Rule 7 describes: each has been measured alone
 and each lost confirmed rows alone (`tests/golden/fits/README`, 2026-11-04

@@ -142,7 +142,8 @@ structure ModelContext where
       `T + 1` long). -/
   posGaps : Array (Array SegmentEmission.GapTable) := #[]
   /-- Under `position` with `stopChain`, per state its vehicle table
-      (`SegmentEmission.vehicleTable`), `none` for a state without a chain. -/
+      (`SegmentEmission.vehicleTable`), and with `moveHold` a chainless moving
+      state's (`SegmentEmission.holdTable`); `none` for the rest. -/
   posVehicle : Array (Option FloatArray) := #[]
   posNext : Array Nat := #[]
   posLast : Array (Option Nat) := #[]
@@ -382,11 +383,13 @@ def positionGapTables (c : ModelContext) (pp : SegmentEmission.PositionParams) :
 /-- Under `position` with `stopChain`, per state its vehicle table: the
     moving and stopped readings of each consecutive lit minute (the state's
     speed without its standstill, and the standstill alone), the full
-    mixture where minutes are not told apart. One table per class. -/
+    mixture where minutes are not told apart. One table per class. With
+    `moveHold`, a moving state without a chain has its `holdTable`, one per
+    speed density. -/
 def positionVehicleTables (c : ModelContext) (pp : SegmentEmission.PositionParams) (maxD : Nat) :
     Array (Option FloatArray) := Id.run do
   let q := c.segEm
-  if q.p.stopChain.isEmpty then return c.states.map fun _ => none
+  if q.p.stopChain.isEmpty && q.p.moveHold == 0 then return c.states.map fun _ => none
   let lit := c.posXY.map (·.isSome)
   let consec := (Array.range lit.size).map fun t => lit[t]! && t > 0 && lit[t - 1]!
   let mut byClass : Std.HashMap String FloatArray := {}
@@ -409,7 +412,21 @@ def positionVehicleTables (c : ModelContext) (pp : SegmentEmission.PositionParam
         let t := SegmentEmission.vehicleTable moving stopped mixed lit consec sc maxD
         byClass := byClass.insert k t
         out := out.push (some t)
-    | _, _ => out := out.push none
+    | _, _ =>
+      -- A moving state without a chain: each fix from the last that was not a
+      -- far stray (`moveHold`).
+      match speedKey c st with
+      | some key =>
+        if q.p.moveHold == 0 then out := out.push none else
+        match byClass.get? key with
+        | some t => out := out.push (some t)
+        | none =>
+          let qs := stateQuad c st
+          let first := SegmentEmission.moveIncrements c.posXY c.posPrev pp qs c.posBroad
+          let t := SegmentEmission.holdTable c.posXY first pp qs q.p.moveHold maxD
+          byClass := byClass.insert key t
+          out := out.push (some t)
+      | none => out := out.push none
   return out
 
 /-- A moving segment `[lo, hi)`'s claim on a gap at its start: the

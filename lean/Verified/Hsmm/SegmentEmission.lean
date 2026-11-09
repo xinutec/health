@@ -270,6 +270,10 @@ structure Params where
       per-minute terms cannot say (a walk between two places almost never
       returns where it began). -/
   positionDisp : Bool := false
+  /-- Under `position`, a moving state without a stop chain scores each fix
+      from the last that was not a far stray, over the last `moveHold` lit
+      fixes (`holdTable`); `0` from the fix before. -/
+  moveHold : Nat := 0
   /-- Under `position`, a vehicle's minutes moving or stopped as a chain
       (`vehicleTable`), per class: `train` (the named lines and the unnamed
       metro) and `mainline`. -/
@@ -705,6 +709,124 @@ def vehicleTable (moving stopped mixed : Array Float) (lit : Array Bool) (consec
       -- It arrives moving: the leg ends in the moving state.
       out := out.set! (Verified.Hsmm.triOff maxD e + (d - 1)) vm
   return out
+
+/-- Per moving segment `(d, e)` at `triOff maxD e + d − 1`, the log density of
+    its fixes when a far stray leaves him where he was, as it leaves a stay's
+    spot: each fix moved from the last fix that was not a stray (core or
+    local scatter), a forward from each start over which of the last `K` lit
+    fixes that was. Without it one stray moves the reference, and a walk
+    crosses 900 m for the price of one far fix. The segment's first fix is
+    `first`'s (from the fix before, the full mixture); a reference more than
+    `K` lit fixes back is dropped with its mass. -/
+def holdTable (xy : Array (Option (Float × Float × Float))) (first : Array Float)
+    (pp : PositionParams) (q : SpeedQuad) (K maxD : Nat) : FloatArray := Id.run do
+  let K := max K 2
+  let T := xy.size
+  let negInf := Verified.FloatConst.negInf
+  let mut lits : Array Nat := #[]
+  let mut rank : Array Nat := Array.replicate T 0
+  for t in [0:T] do
+    if (xy[t]!).isSome then
+      rank := rank.set! t lits.size
+      lits := lits.push t
+  -- Per lit fix `i` and `k = 1 … K` at `i·K + k − 1`: the fix moved from the
+  -- `k`-th lit fix before it, or a far stray about where that one left him.
+  let comps := noiseComps pp
+  let mut inl := Verified.FloatConst.floats (lits.size * K) negInf
+  let mut str := Verified.FloatConst.floats (lits.size * K) negInf
+  for i in [0:lits.size] do
+    for k in [1:K + 1] do
+      if k ≤ i then
+        match xy[lits[i]!]!, xy[lits[i - k]!]! with
+        | some (x, y, R), some (xp, yp, Rp) =>
+          let d2 := (x - xp) * (x - xp) + (y - yp) * (y - yp)
+          let g := Verified.FloatConst.natToFloat (lits[i]! - lits[i - k]!)
+          let r := Float.sqrt d2
+          let (w0, x0) := comps[0]!
+          let (w1, x1) := comps[1]!
+          let (w2, x2) := comps[2]!
+          let (w3, x3) := comps[3]!
+          inl := inl.set! (i * K + k - 1) (lse2 (Float.log w0 + ringLog q r g (R + Rp + x0))
+            (Float.log w1 + ringLog q r g (R + Rp + x1)))
+          str := str.set! (i * K + k - 1) (lse2 (Float.log w2 + logN2 d2 (R + Rp + x2))
+            (Float.log w3 + logN2 d2 (R + Rp + x3)))
+        | _, _ => pure ()
+  -- A far stray about a reference further back than the tables reach.
+  let strayFrom := fun (i j : Nat) => match xy[lits[i]!]!, xy[lits[j]!]! with
+    | some (x, y, R), some (xp, yp, Rp) =>
+      let d2 := (x - xp) * (x - xp) + (y - yp) * (y - yp)
+      let (w2, x2) := comps[2]!
+      let (w3, x3) := comps[3]!
+      lse2 (Float.log w2 + logN2 d2 (R + Rp + x2)) (Float.log w3 + logN2 d2 (R + Rp + x3))
+    | _, _ => negInf
+  let mut out := Verified.FloatConst.floats (Verified.Hsmm.triOff maxD T) ZERO
+  -- `a[k]`: the log weight that the reference is the lit fix `k` before the
+  -- last one seen (`k = 0` that one); the last slot holds every reference
+  -- `K − 1` or more back, at the likelier one's rank (`old`). Past the
+  -- tables it goes on only as strays, so no path's mass is lost.
+  let mut a := Verified.FloatConst.floats K negInf
+  let mut b := Verified.FloatConst.floats K negInf
+  for s0 in [0:T] do
+    let mut tot := ZERO
+    let mut started := false
+    let mut old := 0
+    for d in [1:maxD + 1] do
+      let e := s0 + d - 1
+      if e ≥ T then break
+      if (xy[e]!).isSome then
+        let i := rank[e]!
+        if !started then
+          tot := tot + first[e]!
+          started := true
+          a := a.set! 0 ZERO
+          for k in [1:K] do a := a.set! k negInf
+        else
+          let mut inAcc := negInf
+          for k in [0:K] do b := b.set! k negInf
+          let mut newOld := old
+          let mut oldW := negInf
+          for k in [0:K] do
+            let w := a[k]!
+            if w != negInf then
+              let j := if k + 1 < K then i - (k + 1) else old
+              let dist := i - j
+              let (li, ls) := if dist ≤ K then (inl[i * K + dist - 1]!, str[i * K + dist - 1]!)
+                else (negInf, strayFrom i j)
+              inAcc := lse2 inAcc (w + li)
+              let dest := min (k + 1) (K - 1)
+              b := b.set! dest (lse2 b[dest]! (w + ls))
+              if dest == K - 1 && w + ls > oldW then
+                oldW := w + ls
+                newOld := j
+          old := newOld
+          let mut all := inAcc
+          for k in [1:K] do all := lse2 all b[k]!
+          tot := tot + all
+          b := b.set! 0 (inAcc - all)
+          for k in [1:K] do b := b.set! k (b[k]! - all)
+          let tmp := a
+          a := b
+          b := tmp
+      out := out.set! (Verified.Hsmm.triOff maxD e + (d - 1)) tot
+  return out
+
+-- A walk at 80 m a minute: one far fix that comes back costs less held than
+-- from the fix before (once, not twice); a 940 m jump that stays costs more.
+private def ppHold : PositionParams :=
+  { lam := 0.02, e1 := 0.16, r1 := 60, e2 := 0.02, r2 := 5000, e3 := 0.001, r3 := 600000, rho := 0.03, tm := 30 }
+private def qWalk : SpeedQuad := modeSpeedQuad 4.8 1.9 0 1 0 300
+private def holdVsPrev (xs : List Float) : Float × Float :=
+  let xy : Array (Option (Float × Float × Float)) := (xs.map fun x => some (x, ZERO, ONE)).toArray
+  let prev : Array (Option Nat) := (Array.range xy.size).map fun t => if t == 0 then none else some (t - 1)
+  let first := moveIncrements xy prev ppHold qWalk (Array.replicate xy.size ZERO)
+  let n := xy.size
+  ((holdTable xy first ppHold qWalk 4 n)[Verified.Hsmm.triOff n (n - 1) + (n - 1)]!,
+   first.foldl (· + ·) ZERO)
+#guard let (h, p) := holdVsPrev [0, 80, 1100, 240, 320]; h > p + 5
+#guard let (h, p) := holdVsPrev [0, 80, 160, 1100, 1180, 1260]; h < p - 20
+-- A walk that cannot reach a 10 km jump pays a stray a fix: finite, as every
+-- reading is (the window's oldest reference is kept, not dropped).
+#guard let (h, _) := holdVsPrev [0, 80, 10000, 10080, 10160, 10240, 10320, 10400]; h > -1000 && h < -100
 
 /-- Per lit minute `n` whose fix follows a gap (`g = n − prev n > 1`): the
     ring of its displacement over `k` minutes of motion, `k = 1 … g`

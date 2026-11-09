@@ -1024,6 +1024,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       | [tau, rl, su, phi, beta, ta] => some { tau, rl, su, phi, beta, ta }
       | _ => none
     let positionDisp := ((f.getObjVal? "positionDisp") >>= (·.getBool?)).toOption.getD false
+    let moveHold : Nat := (((f.getObjVal? "moveHold") >>= (·.getNat?)).toOption).getD 0
     -- `awakeDrift: [beta, ta, calmShare, calmSd1, calmSd2, walkShare, walkSd1, walkSd2]`.
     let awakeDrift : Option Verified.Hsmm.SegmentEmission.AwakeDrift := do
       let arr ← ((f.getObjVal? "awakeDrift") >>= (·.getArr?)).toOption
@@ -1078,7 +1079,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
       let g := fun (k : String) => (tl.getObjVal? k).toOption >>= num
       pure { vouchedShare := ← g "vouchedShare", covered := ← g "covered", uncovered := ← g "uncovered" }
     pure { sigmaW, rho, byMode, disp, uMaxKmh, speedEps, pairBoundaryMeanKmh, pairBoundaryEps, centreSigmaM, placeSigmaM, placeEps,
-           obsChain, asleep, unlistedCentre, listedCentre, position, positionDisp, awakeDrift, stopChain, stayMove, strayFix, hrLevel, edgeCadence, walkPause, journey, trainLine }
+           obsChain, asleep, unlistedCentre, listedCentre, position, positionDisp, moveHold, awakeDrift, stopChain, stayMove, strayFix, hrLevel, edgeCadence, walkPause, journey, trainLine }
   let some segEm := segEm?
     | throw "flags.segEmission is missing or malformed: the decoder runs on its record (DECODER_PARAMS_JSON)"
   if segEm.trainLine.isNone then
