@@ -23,6 +23,10 @@ What the served day shows, decided by the person it describes:
 * **Pauses in a walk** (a light, waiting to cross): one walk. Only a real
   stop at a place is a stay.
 * **Moving about inside a place:** not shown. It is one stay.
+  Built in the day's fold (`SegmentMerge.absorbMoveInsidePlace`, 2026-11-09):
+  a moving run between two stays at one place whose fixes never leave the
+  place, as the stays' own fixes show it that visit, is that stay. History
+  round trips 29 → 10; no confirmed row moved.
 * **Meanwhile:** the live decoder stays as shipped on 2026-11-04; the work
   goes into the rebuild, shipped when it is clearly better.
 

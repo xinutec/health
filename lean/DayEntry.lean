@@ -1040,12 +1040,17 @@ def dayResult (j : Json) : Json :=
         match Verified.Geo.SegmentMerge.composeWayName roads with
         | some n => { named with wayName := some n }
         | none => named)
-    -- A fixless stretch the decoder labelled by its steps, between two stays
-    -- at one place, is that stay (`absorbDarkMoveAtPlace`). After the
-    -- decoder's places land: a dark stay is named by `hsmmOverride`, not by
-    -- `nameStays`, which needs a centroid.
-    let darkMove : Verified.Geo.PassFold.Pass := ("darkMoveAtPlace", fun segs =>
-      Verified.Geo.SegmentMerge.absorbDarkMoveAtPlace segs env.geoFixes)
+    -- A moving stretch between two stays at one place that never left it is
+    -- that stay (`absorbMoveInsidePlace`): dark, or every fix inside the place
+    -- as the stays' own fixes show it. After the decoder's places land: a dark
+    -- stay is named by `hsmmOverride`, not by `nameStays`, which needs a
+    -- centroid.
+    let accOf : Std.HashMap Int Float := env.rawFixes.foldl (fun m f =>
+      match f.accuracy with | some a => m.insert f.ts a | none => m) {}
+    let accFixes : Array Verified.Geo.SegmentMerge.AccFix := env.points.map fun p =>
+      { ts := p.ts, lat := p.lat, lon := p.lon, acc := accOf.getD p.ts 0 }
+    let darkMove : Verified.Geo.PassFold.Pass := ("moveInsidePlace", fun segs =>
+      Verified.Geo.SegmentMerge.absorbMoveInsidePlace segs accFixes)
     let tail := Verified.Geo.PassFold.passes env
     let tail := match tail.findIdx? (·.1 == "hsmmOverride") with
       | some k => tail.insertIdx! (k + 1) darkMove

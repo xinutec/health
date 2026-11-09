@@ -27,10 +27,6 @@ structure SpeedFix where
 
 /-- The fixes inside `[startTs, endTs]`, both ends included — the window every
 pass's `samplesInWindow` reads. -/
-def GeoFix.within (xs : Array GeoFix) (startTs endTs : Int) : Array GeoFix :=
-  xs.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs
-
-/-- `GeoFix.within` for fixes that carry a speed. -/
 def SpeedFix.within (xs : Array SpeedFix) (startTs endTs : Int) : Array SpeedFix :=
   xs.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs
 

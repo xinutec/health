@@ -12,8 +12,8 @@ import Verified.PlaceSource
 
 * `composeWayName` — a way label composed from each contributor's DURATION;
 * `samePlace` — two stays are one visit when they carry the same name;
-* `absorbDarkMoveAtPlace` — a fixless moving run between two stays at one place
-  is that stay.
+* `absorbMoveInsidePlace` — a moving run between two stays at one place that
+  never left it is that stay.
 
 `haversineMeters` (atan2) is ≤ 1 ULP; everything else is exact. UNPROVEN;
 pinned by the `#guard`s.
@@ -156,9 +156,6 @@ structure Seg where
   roads : Array String := #[]
   deriving Inhabited, BEq, Repr
 
-/-- A GPS fix, as these passes see it. -/
-abbrev Fix := Verified.GeoFix
-
 /-- A per-minute step count. -/
 structure StepPoint where
   ts : Int
@@ -167,11 +164,6 @@ structure StepPoint where
 
 /-- `refinedMode ?? mode`. -/
 def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
-
-/-- Fixes inside a segment's window. INCLUSIVE both ends, the pipeline's
-dominant convention (`samplesInWindow`). -/
-def samplesInWindow (fixes : Array Fix) (startTs endTs : Int) : Array Fix :=
-  Verified.GeoFix.within fixes startTs endTs
 
 /-! ## `composeWayName` -/
 
@@ -222,14 +214,47 @@ its id cannot say two stays are one visit; the name still can. -/
 def samePlace (a b : Seg) : Bool :=
   a.place.any (· != "") && a.place == b.place
 
-/-! ## `absorbDarkMoveAtPlace` -/
+/-! ## `absorbMoveInsidePlace` -/
 
-/-- A run of moving segments with no fix at all, between two stays at one
-place, is that stay: the decoder labels such a stretch by its steps (walking
-about the office on 2026-07-06, 11:31–11:36Z and 14:54–15:09Z), and without a
-fix nothing says the place was left. Each segment of the run becomes the stay
-it sits in. -/
-def absorbDarkMoveAtPlace (segments : Array Seg) (fixes : Array Fix) : Array Seg := Id.run do
+/-- A fix with its reported accuracy in metres (`0` where none was reported:
+no allowance). -/
+structure AccFix where
+  ts : Int
+  lat : Float
+  lon : Float
+  acc : Float := 0
+  deriving Inhabited, BEq, Repr
+
+/-- The stays' own fixes a visit's extent is read from: up to an hour of each
+stay beside the run. -/
+def EXTENT_WINDOW_S : Int := 3600
+/-- Too few of the stays' fixes to read an extent from: nothing is absorbed. -/
+def EXTENT_MIN_FIXES : Nat := 5
+/-- The share of the stays' fixes the extent holds: a stay's far strays are
+~2% of its fixes and its second spot (another desk) ~14%
+(`docs/proposals/2026-11-stay-position.md`), so the 95th percentile keeps the
+spots and drops the strays. -/
+def EXTENT_SHARE : Float := 0.95
+
+/-- The median, as `quantile` reads it. -/
+private def MEDIAN : Float := 0.5
+
+/-- The `q`-quantile of `xs` (the element at `⌊q·n⌋`, the last at most). -/
+private def quantile (xs : Array Float) (q : Float) : Float :=
+  let ys := xs.qsort (· < ·)
+  if ys.isEmpty then 0 else
+  ys[min (ys.size - 1) (q * Verified.FloatConst.natToFloat ys.size).toUInt64.toNat]!
+
+/-- A run of moving segments between two stays at one place is that stay when
+it never left the place: it has no fix at all (the decoder labels a dark
+stretch by its steps: walking about the office with the phone dark), or
+every fix of it lies inside the place as the stays' own
+fixes show it on that visit — within `EXTENT_SHARE` of their distances from
+their median, each fix allowed its reported accuracy. Going out and coming
+back means leaving: steps and a few tens of metres inside the building
+(92 steps a minute, the fixes 40 m from the desk) are moving about in the
+place. Each segment of the run becomes the stay it sits in. -/
+def absorbMoveInsidePlace (segments : Array Seg) (fixes : Array AccFix) : Array Seg := Id.run do
   let mut out := segments
   let mut i := 0
   while i < out.size do
@@ -241,14 +266,24 @@ def absorbDarkMoveAtPlace (segments : Array Seg) (fixes : Array Fix) : Array Seg
     let mut j := i
     while j < out.size && effectiveMode out[j]! != "stationary" do
       j := j + 1
-    let absorbed := match out[i - 1]?, out[j]? with
+    let verdict : Option String := match out[i - 1]?, out[j]? with
       | some prev, some next =>
-        i > 0 && effectiveMode prev == "stationary" && samePlace prev next
-          && (samplesInWindow fixes seg.startTs (out[j - 1]!).endTs).isEmpty
-      | _, _ => false
-    if absorbed then
+        if !(i > 0 && effectiveMode prev == "stationary" && samePlace prev next) then none else
+        let run := fixes.filter fun f => f.ts ≥ seg.startTs && f.ts < next.startTs
+        if run.isEmpty then some "no fix between two stays at" else
+        let own := fixes.filter fun f =>
+          (f.ts ≥ max prev.startTs (prev.endTs - EXTENT_WINDOW_S) && f.ts < prev.endTs)
+            || (f.ts ≥ next.startTs && f.ts < min next.endTs (next.startTs + EXTENT_WINDOW_S))
+        if own.size < EXTENT_MIN_FIXES then none else
+        let cLat := quantile (own.map (·.lat)) MEDIAN
+        let cLon := quantile (own.map (·.lon)) MEDIAN
+        let extent := quantile (own.map fun f => haversineMeters cLat cLon f.lat f.lon) EXTENT_SHARE
+        if run.all fun f => haversineMeters cLat cLon f.lat f.lon - f.acc ≤ extent
+        then some "every fix inside" else none
+      | _, _ => none
+    if let some why := verdict then
       let prev := out[i - 1]!
-      let reason := s!"no fix between two stays at {prev.place.getD ""} — the place was not left"
+      let reason := s!"{why} {prev.place.getD ""} — the place was not left"
       for k in [i : j] do
         let w := out[k]!
         out := out.set! k { w with
@@ -264,6 +299,37 @@ def absorbDarkMoveAtPlace (segments : Array Seg) (fixes : Array Fix) : Array Seg
             | none => reason) }
     i := j
   return out
+
+-- An office morning and afternoon around a three-minute walk: the stays' fixes
+-- within ~10 m of the desk, one in ten at a second spot 40 m off.
+private def DESK_LAT : Float := 51.5
+private def DESK_LON : Float := -0.1
+private def SECOND_SPOT : Float := 0.00036
+private def JITTER : Float := 0.00001
+private def STAY_ACC : Float := 5
+private def officeStays : Array AccFix := Id.run do
+  let mut out := #[]
+  for k in [0:60] do
+    let off := if k % 10 == 0 then SECOND_SPOT else JITTER * Verified.FloatConst.natToFloat (k % 7)
+    out := out.push { ts := k * 60, lat := DESK_LAT + off, lon := DESK_LON, acc := STAY_ACC }
+    out := out.push { ts := 3780 + k * 60, lat := DESK_LAT + off, lon := DESK_LON, acc := STAY_ACC }
+  return out
+private def walkOut : Array Seg :=
+  #[{ startTs := 0, endTs := 3600, mode := "stationary", place := some "Work" },
+    { startTs := 3600, endTs := 3780, mode := "walking" },
+    { startTs := 3780, endTs := 7380, mode := "stationary", place := some "Work" }]
+private def runFixes (dLat : Float) : Array AccFix :=
+  #[{ ts := 3620, lat := DESK_LAT + dLat, lon := DESK_LON, acc := 10 },
+    { ts := 3700, lat := DESK_LAT + dLat, lon := DESK_LON, acc := 10 }]
+-- Dark: the stay.
+#guard effectiveMode (absorbMoveInsidePlace walkOut officeStays)[1]! == "stationary"
+-- 30 m from the desk, inside the second spot's reach: the stay.
+#guard effectiveMode (absorbMoveInsidePlace walkOut (officeStays ++ runFixes 0.00027))[1]! == "stationary"
+-- 300 m away: he left; the walk stands.
+#guard effectiveMode (absorbMoveInsidePlace walkOut (officeStays ++ runFixes 0.0027))[1]! == "walking"
+-- Two different places either side: the walk stands, inside or not.
+#guard effectiveMode (absorbMoveInsidePlace (walkOut.set! 2 { walkOut[2]! with place := some "Home" })
+  (officeStays ++ runFixes 0.00027))[1]! == "walking"
 
 /-- A mined place's id and centre, as the fold's `Env` carries it. -/
 structure KnownPlaceProjection where
