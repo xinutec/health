@@ -494,12 +494,22 @@ pub fn unsnapped_train_routes(
 /// through the SAME encoder they were emitted by, so a field this port does not
 /// know about would be dropped — which is why `Day.stateJson` is shared rather
 /// than restated.
-pub fn clip_future(states: &[serde_json::Value], now_ts: i64) -> Result<Vec<serde_json::Value>> {
+///
+/// `observed_through`: where the day's decode had data to (`decoded_days.inputs_through`);
+/// a state beginning at or after it is marked inferred (`DayState.clipFuture`).
+pub fn clip_future(
+    states: &[serde_json::Value],
+    now_ts: i64,
+    observed_through: Option<i64>,
+) -> Result<Vec<serde_json::Value>> {
     #[derive(Deserialize)]
     struct Wire {
         states: Vec<serde_json::Value>,
     }
-    let req = serde_json::json!({ "mode": "clipfuture", "states": states, "nowTs": now_ts });
+    let mut req = serde_json::json!({ "mode": "clipfuture", "states": states, "nowTs": now_ts });
+    if let Some(t) = observed_through {
+        req["observedThrough"] = serde_json::json!(t);
+    }
     let out = serve(&req.to_string()).context("lean serve clipfuture")?;
     let v: serde_json::Value =
         serde_json::from_str(&out).context("clipfuture answer is not JSON")?;

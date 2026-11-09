@@ -171,10 +171,11 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
         .await?;
 
     // ⚠ PER REQUEST, on the cached value. See the module note.
+    let observed = cached.get("decodedThrough").and_then(Value::as_i64);
     let states = cached
         .get("states")
         .and_then(Value::as_array)
-        .map(|s| lean::clip_future(s, now_s))
+        .map(|s| lean::clip_future(s, now_s, observed))
         .transpose()?
         .unwrap_or_default();
 
@@ -293,6 +294,14 @@ pub async fn compute_with(
         phase = std::time::Instant::now();
     };
 
+    // Where the stored decode had data to, read BEFORE the decode itself: a
+    // decode written in between then pairs newer segments with an earlier
+    // horizon, which marks more as a guess, never less. Only short of the
+    // day's end: a finished day's states past midnight (the next morning's
+    // sleep, from the watch) are observed.
+    let decoded_through = crate::decode_freshness::decoded_through(&st.pool, user_id, date)
+        .await?
+        .filter(|t| *t < bounds.end_utc);
     let (inputs, load_split) = classification_inputs::load_timed(
         &st.pool,
         &st.http,
@@ -462,6 +471,9 @@ pub async fn compute_with(
         })).collect::<Vec<_>>(),
         "segments": segments,
         "states": out.get("states").cloned().unwrap_or_else(|| json!([])),
+        // Past this the states are the decoder's guess for minutes it had no
+        // data for; the per-request clip marks them (`DayState.clipFuture`).
+        "decodedThrough": decoded_through,
         // ⚠ DECODED, not forwarded. See `decode_episode_bits` — the fold's
         // bit-string coordinates hung the Android app for a full day.
         "episodes": decode_episode_bits(out.get("episodes").cloned().unwrap_or_else(|| json!([]))),

@@ -4231,7 +4231,8 @@ private def clipFutureResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let states ← (← optArr j "states").mapM parseDayState
     let nowTs ← (← j.getObjVal? "nowTs").getInt?
-    let out := Verified.Geo.DayState.clipFuture states.toList nowTs
+    let observed := (j.getObjValAs? Int "observedThrough").toOption
+    let out := Verified.Geo.DayState.clipFuture states.toList nowTs observed
     return Json.mkObj [("states", Json.arr ((out.map Day.stateJson).toArray))]
   match parsed with
   | .error e => Json.mkObj [("error", Json.str e)]

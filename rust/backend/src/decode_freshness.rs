@@ -67,6 +67,22 @@ pub async fn freshness(
     })
 }
 
+/// Where the day's stored decode had data to (`inputs_through`), any version —
+/// the decode a read serves is the newest the day has (`hsmm_decode`). Past it
+/// the decoder filled minutes it never saw. `None` without a decode or a
+/// recorded horizon.
+pub async fn decoded_through(pool: &MySqlPool, user_id: &str, date: &str) -> Result<Option<i64>> {
+    let row: Option<Option<i64>> = sqlx::query_scalar(
+        "SELECT inputs_through FROM decoded_days WHERE user_id = ? AND date = ?",
+    )
+    .bind(user_id)
+    .bind(date)
+    .fetch_optional(pool)
+    .await
+    .with_context(|| format!("reading decoded_days.inputs_through for {user_id} {date}"))?;
+    Ok(row.flatten())
+}
+
 /// Queue the day when its decode does not stand. ⚠ Errors are logged, not
 /// returned: the read serves the day either way, and the next read asks again.
 pub async fn queue_if_stale(pool: &MySqlPool, user_id: &str, date: &str, horizon: i64) {

@@ -304,9 +304,19 @@ def MIN_SHOWN_S : Int := 60
 
     A state that straddles `now` is truncated to it — unless less than
     `MIN_SHOWN_S` of it has happened, in which case it is dropped like a
-    wholly-future one: it will appear once a minute of it has. -/
-def clipFuture (states : List DayState) (nowTs : Int) : List DayState :=
+    wholly-future one: it will appear once a minute of it has.
+
+    `observedThrough`, the instant the decode's inputs reached: a state that
+    begins at or after it was drawn with no data under it — the decoder fills
+    the minutes it has not seen with its likeliest guess, a stay at the place
+    the hour favours — so it is inferred, the best guess marked as one. A state
+    already under way there was observed beginning, and stands. -/
+def clipFuture (states : List DayState) (nowTs : Int) (observedThrough : Option Int := none) :
+    List DayState :=
   states.filterMap (fun s =>
+    let s := match observedThrough with
+      | some t => if s.startTs ≥ t then { s with inferred := some true } else s
+      | none => s
     if s.endTs ≤ nowTs then some s
     else if s.startTs + MIN_SHOWN_S > nowTs then none  -- nothing yet: drop
     else some { s with endTs := nowTs })               -- straddles now: truncate
@@ -592,6 +602,11 @@ private def inf (a b : Int) : DayState :=
 #guard clipFuture [inf (NOW-59) (T0+7200)] NOW == []
 -- A whole minute behind now is the first thing worth showing.
 #guard clipFuture [inf (NOW-60) (T0+7200)] NOW == [inf (NOW-60) NOW]
+-- Past the decode's data: a stay that begins there is a guess, one under way
+-- before it was observed beginning.
+#guard clipFuture [obs, { obs with startTs := T0+7200, endTs := T0+9000 }] (T0+9000) (some (T0+7200))
+  == [obs, { obs with startTs := T0+7200, endTs := T0+9000, inferred := some true }]
+#guard clipFuture [obs] (T0+9000) (some (T0+3600)) == [obs]
 
 /-! ### `derivePlaceForSleepAt` -/
 

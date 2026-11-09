@@ -64,7 +64,7 @@ fn a_settled_day_round_trips_through_the_clip_unchanged() {
     // A `nowTs` past any plausible day end, so nothing is clipped and the only
     // thing under test is the encode/parse pair.
     let far_future = 4_102_444_800; // 2100-01-01
-    let got = lean::clip_future(&states, far_future).expect("clipfuture answers");
+    let got = lean::clip_future(&states, far_future, None).expect("clipfuture answers");
 
     assert_eq!(
         got, states,
@@ -95,16 +95,16 @@ fn a_state_past_now_is_truncated_or_dropped_observed_or_not() {
     let now = 1_000;
 
     // Wholly future and inferred: dropped.
-    let got = lean::clip_future(&[state(2_000, 3_000, Some(true))], now).unwrap();
+    let got = lean::clip_future(&[state(2_000, 3_000, Some(true))], now, None).unwrap();
     assert!(got.is_empty());
 
     // Straddles now by under a minute: nothing has happened yet, so it is
     // dropped rather than shown as a zero-minute inferred stay.
-    let got = lean::clip_future(&[state(950, 3_000, Some(true))], now).unwrap();
+    let got = lean::clip_future(&[state(950, 3_000, Some(true))], now, None).unwrap();
     assert!(got.is_empty());
 
     // Straddles now: truncated to now, everything else intact.
-    let got = lean::clip_future(&[state(500, 3_000, Some(true))], now).unwrap();
+    let got = lean::clip_future(&[state(500, 3_000, Some(true))], now, None).unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0]["endTs"], json!(now));
     assert_eq!(got[0]["startTs"], json!(500));
@@ -113,14 +113,14 @@ fn a_state_past_now_is_truncated_or_dropped_observed_or_not() {
 
     // ⚠ OBSERVED states are clipped too. The decoder fills a stay to the day's
     // end, so today's last stay ends after `now` with no minute measured there.
-    let got = lean::clip_future(&[state(500, 3_000, None)], now).unwrap();
+    let got = lean::clip_future(&[state(500, 3_000, None)], now, None).unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0]["endTs"], json!(now));
     assert_eq!(got[0]["inferred"], json!(null));
 
     // Already ended: untouched.
     let past = state(100, 900, Some(true));
-    let got = lean::clip_future(std::slice::from_ref(&past), now).unwrap();
+    let got = lean::clip_future(std::slice::from_ref(&past), now, None).unwrap();
     assert_eq!(got, vec![past]);
 }
 
@@ -137,12 +137,26 @@ fn absent_optional_fields_survive_as_null_rather_than_vanishing() {
         "placeAt": null, "wayName": null, "roads": [], "asleep": null,
         "tz": null, "minutesAsleep": null, "inferred": null,
     });
-    let got = lean::clip_future(std::slice::from_ref(&bare), 1_000).unwrap();
+    let got = lean::clip_future(std::slice::from_ref(&bare), 1_000, None).unwrap();
     assert_eq!(got, vec![bare]);
 }
 
 #[test]
 fn an_empty_timeline_clips_to_an_empty_timeline() {
     lean::init().expect("the Lean runtime must start");
-    assert!(lean::clip_future(&[], 1_000).unwrap().is_empty());
+    assert!(lean::clip_future(&[], 1_000, None).unwrap().is_empty());
+}
+
+#[test]
+fn a_stay_drawn_past_the_decodes_data_is_marked_a_guess() {
+    lean::init().expect("the Lean runtime must start");
+    // The decode saw data to 1 000; the stay after the ride is its guess for
+    // minutes it had nothing for. The ride, under way before, stands.
+    let ride = state(400, 1_000, None);
+    let guess = state(1_000, 3_000, None);
+    let got = lean::clip_future(&[ride.clone(), guess], 2_000, Some(1_000)).unwrap();
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0], ride);
+    assert_eq!(got[1]["inferred"], json!(true));
+    assert_eq!(got[1]["endTs"], json!(2_000));
 }
