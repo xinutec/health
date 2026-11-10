@@ -8,7 +8,7 @@ import Verified.Geo.BiometricWindows
 import Verified.JsNum
 import Verified.FloatConst
 /-!
-# The walk-annotation pass (port of `annotateWalkMatches`, `pedestrian-match-annotate.ts`)
+# The walk-annotation pass
 
 Attach a pavement-matched geometry to every walking leg the evidence can
 confidently place. The pass itself is an ORCHESTRATOR: the Viterbi matcher, the
@@ -22,10 +22,9 @@ with.
 
 The five heavy leaves arrive as function arguments:
 
-* the **matcher** because its Lean counterpart is the QUANTISED arm
-  (`Verified.Geo.Match`), which is measured and ceilinged against the TS rather
-  than bit-identical to it (#395 / #403) — wiring it in directly would make this
-  module's guards assert the ceiling, not the orchestration;
+* the **matcher**, because its Lean counterpart is the quantised arm
+  (`Verified.Geo.Match`), and wiring it in would make this module's guards
+  assert its tolerance rather than the orchestration;
 * the **reconstruction**, **refinement**, **corrector** and **passage snap**
   because each is a solver whose own module already pins it, and re-running a
   PCG solve inside a `#guard` buys nothing this module is responsible for.
@@ -40,10 +39,10 @@ makes is therefore made against the real Lean leaf, not a stub.
 ## The three asymmetries the guards pin
 
 1. **Decisions read `coarsePath`; the draw reads `path`.** The display gate, the
-   splice salvage and the refinement's engagement test were all tuned on the
-   coarse line, so they consume it; only the DRAWN line gets the finer
-   route-detail geometry (#369). On a straight way the two coincide, which is
-   why the curved-way fixture exists.
+   splice salvage and the refinement's engagement test were tuned on the
+   coarse line, so they consume it; only the drawn line gets the finer
+   route-detail geometry. On a straight way the two coincide, which is why
+   the curved-way fixture exists.
 2. **The matcher sees the DESPIKED fixes; the reconstruction sees the HELD
    ones.** `clean` (spikes dropped) feeds the matcher, `held` (spikes dropped
    AND the teleport run collapsed) feeds both reconstruction arms. That is what
@@ -60,7 +59,8 @@ Every eligible leg's `walkableRoads` read is fired before any leg's
 back non-empty. Both facts are pinned by the read trace: a fixture replay that
 saw a different call order would be seeing different captured keys.
 
-UNPROVEN; pinned against Node/V8 (`lean/experiments/walk-annotate-refs.mts`).
+UNPROVEN; the guards pin reference values taken from the original
+implementation.
 -/
 
 namespace Verified.Geo.WalkAnnotate
@@ -79,8 +79,8 @@ structure PedFix where
   ts : Int
   lat : Float
   lon : Float
-  /-- The phone's self-reported accuracy (m). `none` is the TS `null`, and both
-  reach the solvers as "no number", not as a number meaning zero. -/
+  /-- The phone's self-reported accuracy (m). `none` reaches the solvers as "no
+  number", not as zero. -/
   accuracy : Option Float := none
   deriving Inhabited, BEq, Repr
 
@@ -94,26 +94,20 @@ every downstream threshold was tuned against. -/
 structure MatchOut where
   path : Array MPt
   coarsePath : Array MPt
-  /-- Arc length per way NAME along the route the Viterbi chose, in the
-  matcher's own integer units — the identity report #445 asked for. Relative
-  weight is all naming reads, so the unit never converts. -/
+  /-- Arc length per way name along the route the Viterbi chose, in the
+  matcher's own integer units; naming reads only relative weight, so the unit
+  never converts. -/
   wayUm : Array (Option String × Nat) := #[]
   deriving Inhabited, BEq, Repr
 
 /-- The walk corrector's switches, as configuration. Defaults are what
 production draws.
 
-⚠ THESE ARE NOT ENVIRONMENT VARIABLES, however they are named. Nothing reads an
-env var into this structure: `PassFold.Env.walkFlags` takes its default, no day
-request carries a field for it, and there is no reader in the Rust shell. The
-names are the TypeScript's, kept because the `#guard`s below flip these fields
-to pin what each one changes — which is a real use, and the only one.
-
-This docstring used to describe them as environment switches, and a pod manifest
-believed it: `WALK_BUILDING_ESCAPE = "1"` shipped for two months with a comment
-calling `"0"` the emergency off-switch. Setting it would have changed nothing.
-The manifest entry was deleted 2026-08-31 rather than wired, because a switch
-that has never been exercised is not safety (#1268). -/
+⚠ Not environment variables, whatever their names: nothing reads an env var
+into this, `PassFold.Env.walkFlags` takes its default, and no day request
+carries it. The `#guard`s below flip these fields to pin what each changes.
+A pod manifest once set `WALK_BUILDING_ESCAPE = "1"` as an off-switch, and it
+did nothing. -/
 structure Flags where
   matchDisable : Bool := false
   recon : Bool := true
@@ -122,20 +116,19 @@ structure Flags where
   deriving Inhabited, BEq, Repr
 
 /-- Which line the leg draws. `matcher` is production; `recon` is the
-reconstruction-primary arm (#330 / geometry-roadmap G2). -/
+reconstruction-primary arm. -/
 inductive Draw where
   | matcher
   | recon
   deriving Inhabited, BEq, Repr
 
-/-! ## Remembering a walk's result (#1921)
+/-! ## Remembering a walk's result
 
-A walk's drawn line is a function of the walk's own inputs — its fixes, the
-roads and buildings answered for its disc, its step evidence, the cascade's
-name for it, the draw arm and flags — and of the code. The host keeps the result
-keyed by a hash of those inputs (and the code version, which it adds), so a
-walk already drawn is not drawn again: a page load re-drew every walk of the
-day on every fold, the same walks every time. -/
+A walk's drawn line is a function of its own inputs (its fixes, the roads and
+buildings answered for its disc, its step evidence, the cascade's name for it,
+the draw arm and flags) and of the code. The host keys the result by a hash of
+those inputs and the code version, so a walk already drawn is not drawn again
+on the next fold. -/
 
 /-- Two independently seeded 64-bit FNV-1a lanes over the inputs' exact bits. -/
 structure MemoKey where
@@ -184,14 +177,12 @@ def WalkPatch.apply (seg : Seg) : WalkPatch → Seg
 
 /-- The shell: the two OSM reads and the five solver leaves. -/
 structure Env where
-  /-- `osm.walkableRoads(lat, lon, radiusM)`. Full way records since #445:
-  the capture always carried `name`/`osmId`/`subtype` and only the old `Ways`
-  type dropped them. The solver leaves still consume plain geometry — the
-  pass projects — but the MATCHER receives the names, so it can report the
-  way identity it chose and naming need not re-derive it.
+  /-- `osm.walkableRoads(lat, lon, radiusM)`, as full way records. The solver
+  leaves consume plain geometry, but the matcher receives the names, so it can
+  report the way identity it chose.
 
-  ⚠ `none` is a DECLINE — the mirror covers no data for this disc — and is not
-  `some #[]`, "asked, and there is no road here" (#1667). -/
+  ⚠ `none` is a decline (the mirror has no data for this disc), not `some #[]`,
+  "asked, and there is no road here". -/
   walkableRoads : Float → Float → Int → Option (Array Way)
   /-- `osm.buildingsNear(lat, lon, radiusM)`. Declines as `walkableRoads` does. -/
   buildingsNear : Float → Float → Int → Option (Array Ring)
@@ -231,26 +222,19 @@ def WALK_NEEDS_MATCH_M : Float := 18
 /-- …and the match must stay within this (p85) of the fixes. Generous by
 design: a walker's GPS genuinely sits 10-30 m off the pavement. -/
 def WALK_MATCH_MAX_STRAY_M : Float := 40
-/-- A match is REFUSED when it stalls beyond this AND draws more than the
-pedometer justifies (#1497). Neither half alone: see the conjunction note in
-`matchImprovesDisplay`.
+/-- A match is refused when it stalls beyond this and draws more than the
+pedometer justifies; neither half alone (see `matchImprovesDisplay`).
 
-⚠ **BOTH FIGURES ARE READ OFF THE BLESSED FLOOR, and they are corpus-fitted —
-say so rather than implying they are derived.** Over 235 walks carrying both
-`lenM` and `budgetM`, stall runs to p98 = 138.7 m and the next value is
-384.7 m, so 200 sits in an empty band. 1.5 separates the highest in-budget
-high-stall walk (1.10x) from the two detours (2.91x, 3.08x). The conjunction
-selects exactly those two and nothing else; a future day outside this
-distribution is what would move them. -/
+⚠ Both figures are corpus-fitted, read off the blessed floor. Stall runs to
+p98 = 138.7 m with the next value 384.7 m, so 200 sits in an empty band; 1.5
+separates the highest in-budget high-stall walk (1.10x) from the two detours
+(2.91x, 3.08x). A day outside this distribution would move them. -/
 def WALK_MATCH_MAX_STALL_M : Float := 200
 /-- …and the drawn line must exceed the step budget by this factor. -/
 def WALK_MATCH_MAX_BUDGET_RATIO : Float := 1.5
 /-- The building-crossing metres a match must remove before the building ground
-alone admits it (#1501).
-
-⚠ **`segBadnessM`'s own sampling step, not a tuned number** — it is the smallest
-gain the metric can resolve, so anything above it is a real reduction rather
-than sampling noise. -/
+alone admits it: `segBadnessM`'s own sampling step, the smallest gain the metric
+can resolve. -/
 def WALK_MATCH_MIN_BUILDING_GAIN_M : Float := 2
 
 /-- The reconstruction replaces the drawn line only when it is at most this
@@ -267,9 +251,8 @@ def STEP_SLACK_RATIO : Float := 1.4
 
 open Verified.FloatConst (pi)
 
-/-- Great-circle metres. NOT `WalkableRoute.metersBetween` — this pass keeps its
-own haversine, as the TS does, and the two disagree beyond the flat-earth
-approximation's error. -/
+/-- Great-circle metres. Not `WalkableRoute.metersBetween`: the two disagree
+beyond the flat-earth approximation's error. -/
 def metersBetween (aLat aLon bLat bLon : Float) : Float :=
   let R := 6371000.0
   let dLat := (bLat - aLat) * pi / 180.0
@@ -308,10 +291,8 @@ def prepFor (seg : Seg) (displayFixes : Array PedFix) (speedByTs : Int → Optio
     Option Prep :=
   if Verified.Geo.WalkAnchors.effectiveMode seg != "walking" then none
   else
-    -- The TS sorts by `ts` after filtering. `displayFixes` arrives in ts order
-    -- and the filter is stable, so the sort is a no-op — but it is a TOTAL
-    -- order on a field the caller owns, not an invariant this pass may assume,
-    -- so it is kept.
+    -- Sorted by `ts` after filtering. `displayFixes` arrives in order, so this
+    -- is a no-op, but the order is the caller's, not an invariant to assume.
     let inWin := (displayFixes.filter fun f =>
       decide (f.ts ≥ seg.startTs) && decide (f.ts ≤ seg.endTs)
         && decide ((speedByTs f.ts).getD 0 ≤ WALK_SPEED_CAP_KMH)).insertionSort
@@ -329,22 +310,18 @@ def prepFor (seg : Seg) (displayFixes : Array PedFix) (speedByTs : Int → Optio
 /-! ## The band around the track
 
 A leg's disc read (`prepFor`: the farthest fix from the centroid, plus 120 m)
-brings the whole neighbourhood: 2026-09-30's Paris walk fetched 11,746 ways and
-4,055 footprints, of which 2,775 and 944 lie within 300 m of any fix. Nothing
-the drawing does reaches that far — the matcher's detour budget keeps a route
-within ~150 m of its chords by its own corridor penalty, the gate's and the
-corrector's radii are tens of metres, the reconstruction's attraction 15 m — so
-the rest only costs: the routing graph, every grid, the walk graph, each four
-times their size (#1921). Filtered here, AFTER the ask (its key is the disc,
-and a fixture answers the disc) and BEFORE the memo key (the drawing reads the
-filtered set, so the key hashes it).
+brings the whole neighbourhood; in a dense city about a quarter of the ways and
+footprints lie within 300 m of any fix. Nothing the drawing does reaches that
+far (the matcher stays within ~150 m of its chords, the gate's and corrector's
+radii are tens of metres, the reconstruction's attraction 15 m), so the rest
+only costs. Filtered after the ask (its key is the disc) and before the memo
+key (the drawing reads the filtered set).
 
 Cells, not distances: the chords between consecutive fixes are rasterised into
-`BAND_CELL_M` cells and dilated by enough cells to cover `BAND_M`, so one
-lookup decides a vertex; a way or ring with any vertex in the band stays whole.
-A superset of the true band, never a subset. Not exact in the strict sense —
-vertex numbering and heap contents change where far ways go — and judged by
-the corpus gate, which it passed unchanged. -/
+`BAND_CELL_M` cells and dilated to cover `BAND_M`, so one lookup decides a
+vertex; a way or ring with any vertex in the band stays whole. A superset of
+the true band, never a subset; not bit-exact (vertex numbering and heap
+contents change), and judged by the corpus gate. -/
 
 /-- How far from the track a way or footprint is still read (m). -/
 def BAND_M : Float := 300
@@ -404,15 +381,14 @@ open Verified.Geo (rejectSpikes holdSpeed)
 open Verified.Geo.EpisodeGeometry (spikeAt speedOk)
 
 private def PedFix.latLon (p : PedFix) : Verified.Geo.EpisodeGeometry.LatLon :=
-  -- A captured fix's `ts` is a whole second; `LatLon.ts` is `Float` because the
-  -- DERIVED vertices sharing that field are fractional (#420). Widening here is
-  -- exact — every Int in this range is a Float.
+  -- A captured fix's `ts` is a whole second; `LatLon.ts` is `Float` because
+  -- derived vertices are fractional. Every Int in this range is exact.
   { lat := p.lat, lon := p.lon, ts := some (Float.ofInt p.ts) }
 private def PedFix.rawFix (p : PedFix) : Verified.Geo.EpisodeGeometry.RawFix :=
   { ts := p.ts, lat := p.lat, lon := p.lon }
 
-/-- `rejectSpikes` at `PedFix` — the generic scan with the TS's own
-out-and-back predicate, instantiated so `accuracy` rides along. -/
+/-- `rejectSpikes` at `PedFix`, with the out-and-back predicate, so `accuracy`
+rides along. -/
 def despike (pts : Array PedFix) : Array PedFix :=
   (rejectSpikes (fun a b c => spikeAt a.latLon b.latLon c.latLon)
     (fun i => pts.getD i default) pts.size).toArray
@@ -447,12 +423,10 @@ def offChordM (a b c : PedFix) : Float × Float :=
   (Float.sqrt ((ax + t * dx) * (ax + t * dx) + (ay + t * dy) * (ay + t * dy)), raw)
 
 /-- Drop a stray only the fix's own noise explains: it is the least certain of
-    itself and its two neighbours, and it lies off the line between them
-    farther than either neighbour's 95% radius but within its own. Such a fix
-    draws an out-and-back spur (10-15: two fixes at 52 and 65 m among fixes at
-    7–17 m pulled the line 60 m back up a hill twice). A fix the neighbours'
-    own noise could put where it is carries the walk's timing and stays, as
-    does one whose stray its accuracy does not cover. A neighbour without an
+    itself and its two neighbours, and lies off the line between them farther
+    than either neighbour's 95% radius but within its own. Such a fix draws an
+    out-and-back spur. A fix the neighbours' own noise could explain stays, as
+    does one whose accuracy does not cover its stray. A neighbour without an
     accuracy keeps the fix. -/
 def dropUncertain (pts : Array PedFix) : Array PedFix :=
   if pts.size < 3 then pts else
@@ -529,7 +503,7 @@ def evidenceFor (segments : Array Seg) (si : Nat) (stepsWalked : Option Float) :
 /-! ## The pass -/
 
 /-- Whether the drawn line changed under a corrector: a different vertex count,
-or any vertex moved. Position only — the TS compares `lat`/`lon` and not `ts`. -/
+or any vertex moved. Position only, not `ts`. -/
 private def changed (before after : Array TPt) : Bool :=
   after.size != before.size
     || (after.zip before).any fun (a, b) => a.lat != b.lat || a.lon != b.lon
@@ -541,13 +515,11 @@ private def drawRecon (env : Env) (ways : Ways) (buildings : Array Ring)
   | some recon => if recon.size ≥ 2 then (recon, true) else (held.map PedFix.pathPt, false)
   | none => (held.map PedFix.pathPt, false)
 
-/-- The dominant NAMED way of an identity report (`MatchOut.wayUm`) — the way
-the matcher's route ran along for the greatest arc length. ⚠ This is a helper
-for the one surviving use in `drawMatcher` (naming a leg the cascade left
-unnamed); as the general naming rule it is REFUTED — the ledger is in
-`drawMatcher` and on #445. Unnamed ways cannot name a leg; a tie keeps the
-first, which is route traversal order and deterministic. `none` means the
-route touched no named way, and the caller keeps whatever name it had. -/
+/-- The dominant named way of an identity report (`MatchOut.wayUm`): the way
+the matcher's route ran along for the greatest arc length. Only for naming a
+leg the cascade left unnamed; as a general naming rule it was refuted (see
+`drawMatcher`). A tie keeps the first, in traversal order. `none` means the
+route touched no named way, and the caller keeps its name. -/
 def matchWayName (wayUm : Array (Option String × Nat)) : Option String :=
   (wayUm.foldl (init := (none : Option (String × Nat))) fun best p =>
     match p with
@@ -566,21 +538,17 @@ def matchWayName (wayUm : Array (Option String × Nat)) : Option String :=
 -- A tie keeps the first — route traversal order, deterministic.
 #guard matchWayName #[(some "A", 100), (some "B", 100)] == some "A"
 
-/-- The whole identity report as a DEBUG surface (#1464): every NAMED way the
-route ran along, with its arc weight, longest first.
+/-- The whole identity report as a debug surface: every named way the route ran
+along, with its arc weight, longest first.
 
-⚠ **THE WEIGHT IS THE MATCHER'S OWN INTEGER UNIT, NOT METRES** — see
-`MatchOut.wayUm`. Compare them to each other; never label one a distance.
+⚠ The weight is the matcher's integer unit, not metres (see `MatchOut.wayUm`).
 
-⚠ **`matchWayName` CANNOT SUBSTITUTE.** It returns the single dominant name, so
-a way the route merely TOUCHED is invisible to it — and "does this way carry any
-arc at all?" is what a `wayContinuityNats` bracket has to read.
-
-⚠ Unnamed arcs are dropped, the same choice `matchWayName` makes. A tie keeps
-traversal order, so two runs are diffable. -/
+`matchWayName` cannot substitute: it returns only the dominant name, so a way
+the route merely touched is invisible to it. Unnamed arcs are dropped; a tie
+keeps traversal order. -/
 def wayUmReport (wayUm : Array (Option String × Nat)) : Array (String × Nat) :=
   let named := wayUm.filterMap fun (n, um) => n.map (·, um)
-  -- ⚠ A STABLE sort on a STRICT comparison: `>` alone would let a tie reorder.
+  -- A stable sort on a strict comparison: `>` alone would let a tie reorder.
   named.zipIdx.qsort (fun (a, i) (b, j) =>
     if a.2 == b.2 then i < j else a.2 > b.2) |>.map (·.1)
 
@@ -590,8 +558,7 @@ def wayUmReport (wayUm : Array (Option String × Nat)) : Array (String × Nat) :
 -- Longest first, and an unnamed arc between two named ones does not reorder them.
 #guard wayUmReport #[(some "Park Place", 100), (none, 900), (some "Queen's Walk", 400)]
   == #[("Queen's Walk", 400), ("Park Place", 100)]
--- ⚠ THE CASE `matchWayName` CANNOT SEE: a way carrying metres but not the most.
--- The bracket on #1464 reads this to tell "never went there" from "went there".
+-- The case `matchWayName` cannot see: a way carrying metres, but not the most.
 #guard wayUmReport #[(some "Grosvenor Place", 700), (some "Queen's Walk", 3)]
   == #[("Grosvenor Place", 700), ("Queen's Walk", 3)]
 #guard matchWayName #[(some "Grosvenor Place", 700), (some "Queen's Walk", 3)]
@@ -605,16 +572,13 @@ def wayUmReport (wayUm : Array (Option String × Nat)) : Array (String × Nat) :
 /-- One leg's drawn line under the matcher arm: the display gate, the
 local-divergence splice salvage, the de-boxing refinement, and the
 robust-reconstruction swap. Returns the line, whether a match (or a splice) was
-used, whether the reconstruction replaced it, and — only for a leg whose
-cascade name is `none` — the way name the matcher's own route endorses (#445;
-see the ledger comment at the `matchName` binding).
+used, whether the reconstruction replaced it, and, only for a leg whose cascade
+name is `none`, the way name the matcher's route endorses.
 
-Also returns the route's FULL identity report, ungated, as a debug surface
-(#1464) — see `Seg.walkWayUm`. ⚠ It is reported even when the route is
-DISCARDED (no match used, or the reconstruction swapped in), because "the
-matcher wanted to go this way and we overrode it" is exactly what a bracket
-needs to see. A reader must therefore not infer from a non-empty report that
-the drawn line follows it. -/
+Also returns the route's full identity report (`Seg.walkWayUm`), even when the
+route is discarded: "the matcher wanted this way and was overridden" is what a
+bracket needs to see. A non-empty report does not mean the drawn line follows
+it. -/
 private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (buildings : Array Ring)
     (badCtx : BadnessCtx) (clean held : Array PedFix) (ev : WalkEvidence)
     (cascadeName : Option String) :
@@ -625,15 +589,13 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
   -- keep their own sets.
   let fixes := (holdUnwalkable clean).map PedFix.pathPt
   let result := env.matcher fixes ways buildings
-  -- Decision parity (#369): the gate, the salvage and the refinement's
-  -- engagement test all consume `coarsePath`, never the finer display line.
-  -- #1497: the detour veto needs the pedometer as its independent witness.
-  -- Same budget the corrector and the ratchet use — steps x stride x slack.
+  -- The gate, the salvage and the refinement's engagement test all consume
+  -- `coarsePath`, never the finer display line.
+  -- The detour veto's independent witness is the pedometer: steps x stride x
+  -- slack, as the corrector and the ratchet use.
   let stepBudget := ev.stepsWalked.map (· * STEP_STRIDE_M * STEP_SLACK_RATIO)
-  -- #1501's second ground. ⚠ Measured on the SAME line the off-road clauses
-  -- judge (`coarsePath`), for #369 decision parity — the gate, the salvage and
-  -- the refinement must agree about the route, and reading a different line
-  -- here would break that for one clause only.
+  -- The building ground, measured on `coarsePath` too, so every clause judges
+  -- the same line.
   let rawBuildingM := pathBadnessM (fixes.map PathPt.pt) badCtx
   let decision := result.map fun r =>
     matchImprovesDisplay (fixes.map PathPt.pt) (r.coarsePath.map PathPt.pt) geom
@@ -649,13 +611,8 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
   -- Salvage-worthy only when the raw fallback is DRASTICALLY off-network and
   -- the match is clean: a systematic parallel-way snap still rejects wholesale.
   let mut spliced : Option (Array MPt) := none
-  -- ⚠ THE SALVAGE ARM MUST HONOUR THE DETOUR VETO (#1497), and it did not:
-  -- the veto set `use := false` and this block turned it straight back on,
-  -- because the raw line IS badly off-network — which is exactly the shape of
-  -- the legs the veto exists to refuse. Measured: 07-12 @1783863056 kept its
-  -- 690.6 m stall with the veto live and firing. A splice of a detoured match
-  -- is a detour; rejecting the whole and re-admitting a piece is not a
-  -- different judgement.
+  -- ⚠ The salvage honours the detour veto: a splice of a detoured match is a
+  -- detour, and the raw line of a vetoed leg is badly off-network by design.
   if !useMatch && !(decision.map (·.detour) |>.getD false) then
     match result, decision with
     | some r, some d =>
@@ -679,23 +636,14 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
     else
       drawn := held.map PedFix.pathPt
   | none => drawn := held.map PedFix.pathPt
-  -- #445: the identity report names a leg ONLY when the cascade named it
-  -- nothing. Every stronger use was measured 2026-09-04 over the 45
-  -- enforceable named-walk truth windows and REFUTED: route-dominant naming
-  -- outright broke 12 (raw) / 13 (with the per-edge pavement borrow) while
-  -- fixing 2 and 1 — the route rides squares, forecourts and underpasses the
-  -- narrative does not name the walk after; and even as a pure VETO
-  -- (override only a cascade name carrying ZERO metres of the route) it
-  -- broke 3 while fixing 1, because a zero can also mean the ROUTE missed
-  -- the true way — the Euston Underpass legs match onto the surface streets,
-  -- so absence-of-metres cannot distinguish a phantom cascade name from a
-  -- blind route. What survived: on legs the cascade left UNNAMED, adopting
-  -- the route's dominant borrowed name broke nothing. The stray bar is the
-  -- display gate's own parallel-way guard: a match that does not track the
-  -- fixes describes some other street's pavement. A splice keeps raw
-  -- geometry over divergent runs, so a spliced route describes nothing.
-  -- ⚠ FROM `result`, NOT from the gated `matchName` below. The report exists to
-  -- show where the route ran even on legs whose name the cascade kept.
+  -- The identity report names a leg only when the cascade named it nothing.
+  -- Stronger uses were measured against the named-walk truth windows and
+  -- refuted: the route rides squares, forecourts and underpasses a walk is
+  -- not named after, and a zero for the cascade's name can mean the route
+  -- missed the true way. The stray bar is the display gate's parallel-way
+  -- guard; a splice keeps raw geometry, so a spliced route names nothing.
+  -- ⚠ The report comes from `result`, not the gated `matchName` below, so it
+  -- shows the route even where the cascade's name was kept.
   let report := match result with
     | some r => wayUmReport r.wayUm
     | none => #[]
@@ -749,15 +697,14 @@ def drawWalk (env : Env) (draw : Draw) (flags : Flags) (inWin : Array PedFix) (w
     (cascadeName : Option String) : WalkPatch := Id.run do
   let clean := dropUncertain (despike inWin)
   let held := hold clean
-  -- The walk's one badness context — the way grid and the footprint grid —
-  -- for the display gate, the corrector and the passage snap alike (it was
-  -- built three times a walk, 77 ms each on a dense city walk, #1921). A
-  -- thunk, so the recon arm without building escape never builds it.
+  -- The walk's one badness context (way grid and footprint grid), for the
+  -- display gate, the corrector and the passage snap alike. A thunk, so the
+  -- recon arm without building escape never builds it.
   let badCtx : Thunk BadnessCtx := Thunk.mk fun _ => makeBadnessCtx (ways.map Way.coords) buildings {}
   let (drawn0, useMatch, smoothed0, matchName, wayUm) := match draw with
     | .recon =>
-      -- ⚠ The recon arm runs NO matcher, so it has no identity report —
-      -- empty here means "not measured", not "the route named nothing".
+      -- The recon arm runs no matcher: an empty report means "not measured",
+      -- not "the route named nothing".
       let (d, s) := drawRecon env (ways.map Way.coords) buildings held ev
       (d, false, s, none, #[])
     | .matcher => drawMatcher env flags ways buildings badCtx.get clean held ev cascadeName
@@ -774,18 +721,15 @@ def drawWalk (env : Env) (draw : Draw) (flags : Flags) (inWin : Array PedFix) (w
     if changed drawn snapped then
       drawn := snapped
       corrected := true
-  -- ⚠ `walkWayUm` IS ATTACHED ON EVERY BRANCH, including the ones that
-  -- throw the matcher's line away (#1464). A report present only where
-  -- the route was drawn could not answer "what did the matcher want
-  -- here?" on the legs where it was overridden — which is the half of
-  -- the bracket that says whether a nats value is doing anything.
+  -- `walkWayUm` is attached on every branch, including those that discard
+  -- the matcher's line, so it can show what the matcher wanted where it was
+  -- overridden.
   if smoothed0 then
     return WalkPatch.smoothed drawn wayUm
   else if useMatch || corrected then
-    -- #445: when the full match ships, its own route names the leg —
-    -- the corrector only escapes buildings locally and does not change
-    -- which ways the route ran along. A leg whose route touched no
-    -- named way keeps the cascade's name.
+    -- When the full match ships, its own route names the leg; the corrector
+    -- only escapes buildings locally. A route on no named way keeps the
+    -- cascade's name.
     return WalkPatch.matched drawn matchName wayUm
   else
     return WalkPatch.plain matchName wayUm
@@ -800,22 +744,17 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
     (draw : Draw := .matcher) (flags : Flags := {}) : Array Seg := Id.run do
   if flags.matchDisable then return segments
   let prep := segments.map fun s => prepFor s displayFixes speedByTs
-  -- Every leg's ways read fires before any leg's buildings read (the TS fires
-  -- both promises up front so the DB round-trips overlap). The buildings read
-  -- is CONDITIONAL on the ways coming back non-empty, so a fixture replay sees
+  -- Every leg's ways read fires before any leg's buildings read, and the
+  -- buildings read only follows non-empty ways, so a fixture replay sees
   -- exactly the captured keys.
   --
-  -- ⚠ A DECLINED WAYS READ FLATTENS INTO "no leg to draw" (#1667). It leaves
-  -- the leg raw, which is also what an empty answer does two `match`es below —
-  -- correctly, since neither gives the solver anything to run on. The decline
-  -- is not lost: the HOST records the disc it could not answer, so the ground
-  -- is fetched instead of being re-asked forever.
+  -- A declined ways read leaves the leg raw, as an empty answer does: neither
+  -- gives the solver anything. The host records the disc it could not answer,
+  -- so the ground is fetched rather than re-asked forever.
   let waysOf := prep.map fun p? => p?.bind fun p => env.walkableRoads p.cLat p.cLon p.discRadiusM
-  -- A DECLINED BUILDINGS READ draws the leg as if the ground had no walls —
-  -- buildings are a CORRECTION to a line the ways already drew, and with no
-  -- wall data there is nothing to correct against. What the two cases must not
-  -- share is the wall METRIC, so the segment carries whether the read answered
-  -- (`walkBuildingsMeasured`, #1501/#1678) and the referee scores walls only
+  -- A declined buildings read draws the leg as if the ground had no walls:
+  -- buildings correct a line the ways drew. The segment records whether the
+  -- read answered (`walkBuildingsMeasured`) so the referee scores walls only
   -- where it did.
   let buildingsOf := (prep.zip waysOf).map fun (p?, w?) =>
     match p?, w? with
@@ -851,8 +790,8 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
           let band := trackBand p.inWin
           let ways := waysInBand band ways
           let buildings := ringsInBand band buildings
-          -- Remembered, or drawn and offered to the host (#1921). A replay
-          -- remembers nothing, so every gate draws.
+          -- Remembered, or drawn and offered to the host. A replay remembers
+          -- nothing, so every gate draws.
           let key := walkMemoKey draw flags p.inWin ways buildings stepsWalked ev seg.wayName
           let patch : WalkPatch := match env.memoGet key with
             | some pt => pt
@@ -862,16 +801,16 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
     | _, _, _ => out := out.push seg
   return out
 
-/-! ## Guards (V8 reference values)
+/-! ## Guards
 
-Every number below is `lean/experiments/walk-annotate-refs.mts`'s output on the
-same fixture, transcribed at V8's own precision — including the centroid dust
-(`51.501099999999994`), which is what pins the summation order.
+The reference numbers are the original implementation's output on the same
+fixture, at full double precision, including the centroid dust
+(`51.501099999999994`) that pins the summation order.
 
-The stubs DISCRIMINATE: the OSM read answers only at the exact
-`(lat, lon, radius)` the leg is expected to ask for, the matcher only for the
-exact DESPIKED fix array, the reconstruction only for the exact HELD one, and
-the refinement only for the exact base line. A stub that ignored its arguments
+The stubs discriminate: the OSM read answers only at the exact
+`(lat, lon, radius)` the leg should ask for, the matcher only for the exact
+despiked fixes, the reconstruction only for the exact held ones, and the
+refinement only for the exact base line. A stub that ignored its arguments
 could not pin what the pass passes.
 -/
 
@@ -1010,13 +949,10 @@ the refinement on the despiked fixes AND on the base line. -/
 private def mkEnv (ways : Ways) (key : Float × Float × Int)
     (cleanIn heldIn : Array PedFix) (m : Option MatchOut) (rec : Option (Array TPt))
     (refBase : Array Pt) (ref : Option (Array TPt)) : Env :=
-  -- The stub wraps its plain geometry into anonymous `Way` records: these
-  -- fixtures pin ORCHESTRATION, and no guard here exercises the #445 naming
-  -- report (`matchWayName` has its own guards on literals).
-  -- ⚠ OFF-KEY ANSWERS `some #[]`, NOT `none`. Every guard below pins what the
-  -- pass does with data, against a mirror that has this ground; a stub that
-  -- declined off-key would quietly move the misses onto the decline path and
-  -- stop discriminating on the key at all.
+  -- The stub wraps plain geometry into anonymous `Way` records: these fixtures
+  -- pin orchestration, and `matchWayName` has its own guards.
+  -- ⚠ Off-key answers `some #[]`, not `none`: a stub declining off-key would
+  -- move the misses onto the decline path and stop discriminating on the key.
   { walkableRoads := fun la lo r =>
       some (if (la, lo, r) == key then ways.map (fun w => { osmId := 0, coords := w }) else #[])
     buildingsNear := fun _ _ _ => some #[]
@@ -1310,7 +1246,7 @@ private def budgetProbe : Env :=
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240, walkSeg 1000 1240] CORNER anySpeed envC)
   == #[(some (C_LINE), none), (some (C_LINE), none)]
 
-/-! ### The haversine and the JS rounding
+/-! ### The haversine and the rounding
 
 `metersBetween` feeds only two things — the disc radius (rounded to a metre) and
 the swap's length comparison (never near its bars on a real leg) — so on a
@@ -1598,9 +1534,8 @@ private def envSBad : Env :=
   { envS with reconstruct := fun _ _ _ _ => some #[tp 51.5 (-0.14) 1000] })
   == #[(some (S_LINE), none)]
 
--- A corrector that DROPS a vertex: every surviving vertex is where it was, so
--- only the length test sees the change. (In the TS the same test is what keeps
--- the coordinate scan from indexing past the end.)
+-- A corrector that drops a vertex: every surviving vertex is where it was, so
+-- only the length test sees the change.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
   { echoEnv (51.504599999999996, -0.14, 631) with correct := fun d _ _ => d.pop })
   == #[(some ((TELE_HELD.map PedFix.pathPt).pop), none)]
@@ -1610,10 +1545,8 @@ private def envSBad : Env :=
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
   { echoEnv (51.504599999999996, -0.14, 631) with walkableRoads := fun _ _ _ => some #[] }) == RAW
 
--- ⚠ AND A DECLINED WAYS READ LEAVES IT RAW TOO — the same outcome as the empty
--- answer above, from the opposite fact about the world. The pass has nothing to
--- draw from in either case; what must not happen is a leg drawn from roads
--- nobody ever looked up.
+-- A declined ways read leaves it raw too: nothing to draw from, and never a
+-- leg drawn from roads nobody looked up.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
   { echoEnv (51.504599999999996, -0.14, 631) with walkableRoads := fun _ _ _ => none }) == RAW
 

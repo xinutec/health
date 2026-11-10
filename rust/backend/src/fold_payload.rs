@@ -1,44 +1,35 @@
 //! The day fold's wire encoding.
 //!
-//! The fold takes one JSON object and the pipeline builds it. This encoding IS
-//! the interface between the pipeline and the verified core, so a host that
-//! gets it wrong asks a different question and gets a confidently wrong day
-//! rather than an error. The lookup tables that used to ride in it are gone
-//! (#1709): the fold asks for those, and `lookup_rows` below turns a fixture's
-//! recorded trace into the rows it will be answered with.
+//! The fold takes one JSON object and the pipeline builds it. This encoding is
+//! the interface to the verified core, so a host that gets it wrong asks a
+//! different question and gets a confidently wrong day, not an error. Lookup
+//! tables do not ride in it: the fold asks for those, and `lookup_rows` below
+//! turns a fixture's recorded trace into the rows it will be answered with.
 //!
-//! # Floats cross as their BIT PATTERN, and that is the point
+//! ⚠ Floats cross as their bit pattern. `bits` renders an `f64` as the decimal
+//! of its IEEE-754 payload, so the fold reads the pipeline's exact double.
+//! Formatting the number instead (`{}`, `{:.6}`, `to_string`) silently changes
+//! coordinate precision, where 1e-7° is what the match gate adjudicates.
 //!
-//! `bits` renders an `f64` as the decimal of its IEEE-754 payload, so the
-//! double the fold reads is the double the pipeline had — not a rendering of
-//! it. Anything that formats the number instead (`{}`, `{:.6}`, `to_string` on
-//! the value) is a silent precision change on coordinates, where 1e-7° is the
-//! quantisation the match gate already adjudicates.
-//!
-//! # Verified against the TypeScript's own output, not against my reading
-//!
-//! `tests/suite/fold_payload.rs` compares this to `fold-payload.js`'s
-//! encoding of the same captured day, byte for byte. That matters more here
-//! than in most ports: the shape is 25 keys of mostly-pass-through data where a
-//! wrong field name produces a well-formed request the fold answers anyway.
+//! `tests/suite/fold_payload.rs` compares the encoding byte for byte against
+//! frozen output of the original encoder: in mostly pass-through data, a wrong
+//! field name is a well-formed request the fold answers anyway.
 
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 
 /// An `f64` as the decimal of its IEEE-754 bit pattern.
 ///
-/// The inverse of `day-serve.ts`'s `unbits`. ⚠ NaN has many bit patterns and
-/// this preserves whichever one it was handed, exactly as the TypeScript's
-/// `DataView` round trip does — it is a transport, not a normaliser.
+/// The inverse of `unbits`. NaN has many bit patterns and this keeps the one it
+/// was handed: a transport, not a normaliser.
 pub fn bits(x: f64) -> String {
     x.to_bits().to_string()
 }
 
 /// `bits`, but `null` survives as `null`.
 ///
-/// ⚠ Absent and zero are different facts here. A segment with no `refinedMode`
-/// is not a segment refined to nothing, and encoding one as the other is the
-/// class of defect the activity-summary port already paid for.
+/// ⚠ Absent and zero are different facts: a segment with no `refinedMode` is
+/// not one refined to nothing.
 pub fn opt_bits(x: Option<f64>) -> Value {
     match x {
         Some(v) => Value::String(bits(v)),
@@ -61,9 +52,8 @@ fn opt_str(o: &Map<String, Value>, k: &str) -> Value {
 
 /// `opt_str` for a value already looked up, rather than a key in a map.
 ///
-/// Absent and `null` both encode as `null`, which is what the TypeScript's
-/// `optStr` does with `undefined` — and what Lean's `getObjValAs? String` reads
-/// back as `none`. The string "null" would parse as a PLACE NAME.
+/// Absent and `null` both encode as `null`, which Lean's `getObjValAs? String`
+/// reads as `none`. The string "null" would parse as a place name.
 fn opt_str_at(v: Option<&Value>) -> Value {
     match v {
         Some(Value::String(s)) => Value::String(s.clone()),
@@ -74,11 +64,8 @@ fn opt_str_at(v: Option<&Value>) -> Value {
 /// A field passed through UNENCODED.
 ///
 /// Timestamps, counts and ids are not bit-encoded: JSON carries an integer
-/// exactly, so there is nothing to preserve. It also carries the string keys —
-/// `routeKey`, and the enum-ish `mode` values — which is why this is `raw`
-/// rather than `int`: the TypeScript writes `r.routeKey` with no conversion at
-/// all, and naming it for one of the types it passes would invite someone to
-/// "fix" the others.
+/// exactly. It also carries string keys (`routeKey`, the enum-ish `mode`
+/// values), which is why this is `raw` and not `int`.
 fn raw(o: &Map<String, Value>, k: &str) -> Value {
     o.get(k).cloned().unwrap_or(Value::Null)
 }
@@ -106,11 +93,9 @@ fn path(v: Option<&Value>) -> Value {
 
 /// One segment in the shape `Day.parseSeg` reads.
 ///
-/// ⚠ THIRTY FIELDS, and the tail of the list is the easy half to miss — my
-/// first attempt stopped at `wayName` because that is where the first screen
-/// of the TypeScript ends. A short encoding is not a parse error on the Lean
-/// side: absent fields take `Seg`'s defaults, so the fold answers a
-/// well-formed question about a segment that has lost its enrichment.
+/// ⚠ Thirty fields, and the tail is the easy half to miss. A short encoding
+/// is no parse error in Lean: absent fields take `Seg`'s defaults, and the fold
+/// answers about a segment that has lost its enrichment.
 pub fn encode_seg(seg: &Value) -> Value {
     let Some(o) = seg.as_object() else {
         return Value::Null;
@@ -130,14 +115,12 @@ pub fn encode_seg(seg: &Value) -> Value {
         "city": opt_str(o, "city"),
         "wayName": opt_str(o, "wayName"),
         "refinedReason": opt_str(o, "refinedReason"),
-        // Absent becomes `[]`, not `null`: Lean reads a list and the TypeScript
-        // spreads or substitutes an empty array.
+        // Absent becomes `[]`, not `null`: Lean reads a list.
         "refinedKinds": o.get("refinedKinds").cloned().unwrap_or_else(|| json!([])),
         "centroidLat": num_bits(o, "centroidLat"),
         "centroidLon": num_bits(o, "centroidLon"),
-        // ⚠ `string | number` in TypeScript, `Option Int` in Lean. A
-        // non-numeric id would become NaN, so it is DROPPED rather than
-        // coerced — the TypeScript's own choice, kept.
+        // `Option Int` in Lean: a non-numeric id is dropped, not coerced to
+        // NaN.
         "focusPlaceId": focus_place_id(o.get("focusPlaceId")),
         "needsReenrich": o.get("needsReenrich").and_then(Value::as_bool).unwrap_or(false),
         "needsRename": o.get("needsRename").and_then(Value::as_bool).unwrap_or(false),
@@ -169,8 +152,8 @@ fn focus_place_id(v: Option<&Value>) -> Value {
 
 /// The per-segment biometric summary, or `null` when the segment carries none.
 ///
-/// ⚠ `sleepFraction` is `bits`, NOT `optBits` — the TypeScript reads it
-/// unconditionally, so a segment with biometrics always has one.
+/// `sleepFraction` is `bits`, not `opt_bits`: a segment with biometrics always
+/// has one.
 fn encode_biometrics(v: Option<&Value>) -> Value {
     let Some(b) = v.and_then(Value::as_object) else {
         return Value::Null;
@@ -210,8 +193,7 @@ fn fixes4(v: Option<&Value>) -> Value {
 /// Map over a JSON array of objects, skipping anything that is not one.
 ///
 /// An absent array becomes `[]`, not `null`: every one of these fields is a
-/// list on the Lean side, and the TypeScript spells the same default with
-/// `?? []`.
+/// list on the Lean side.
 fn arr_map<F: Fn(&Map<String, Value>) -> Value>(v: Option<&Value>, f: F) -> Value {
     Value::Array(
         v.and_then(Value::as_array)
@@ -222,13 +204,12 @@ fn arr_map<F: Fn(&Map<String, Value>) -> Value>(v: Option<&Value>, f: F) -> Valu
 
 /// The observation series and the cross-day tail, as `env` carries them.
 ///
-/// ⚠ `points` and `speedByTs` are the SAME source read twice, and both are
-/// sent: the fold wants the track and the speed lookup separately, and
-/// deriving one from the other here would be this encoder deciding something.
+/// `points` and `speedByTs` are the same source sent twice: the fold wants the
+/// track and the speed lookup separately, and deriving one here would be this
+/// encoder deciding something.
 ///
-/// ⚠ `sleep` and `rawSleep` are NOT the same list. `sleep` is the projection
-/// the biometric windows read; `rawSleep` is the Fitbit windows before place
-/// attribution — same rows, different fields, and neither derives the other.
+/// `sleep` and `rawSleep` differ: `sleep` is the projection the biometric
+/// windows read, `rawSleep` the Fitbit windows before place attribution.
 pub fn encode_obs_and_tail(obs: &Value, tail: Option<&Value>) -> Map<String, Value> {
     let o = obs.as_object();
     let g = |k: &str| o.and_then(|o| o.get(k));
@@ -284,14 +265,9 @@ pub fn encode_obs_and_tail(obs: &Value, tail: Option<&Value>) -> Map<String, Val
         "dayEndTs".into(),
         tg("dayEndTs").cloned().unwrap_or_else(|| json!(0)),
     );
-    // The empty-day arm's three (health #1055). A fixture captured before they
-    // existed carries none of them, and the defaults are what the TypeScript
-    // sends in that case — `null` for both strings, not the string "null", and
-    // 0 for the start, which the fold never reads without a bracket.
-    //
-    // ⚠ These are here because `fold_request_corpus` FAILED when they were not:
-    // the encoder has to match the TypeScript byte for byte, so a field added on
-    // one side and not the other is a divergence, not an omission.
+    // The empty-day arm's three. A fixture captured before they existed has
+    // none, and the defaults are `null` for both strings (not "null") and 0 for
+    // the start, which the fold never reads without a bracket.
     m.insert(
         "dayStartTs".into(),
         tg("dayStartTs").cloned().unwrap_or_else(|| json!(0)),
@@ -322,23 +298,20 @@ pub fn encode_mode_stats(v: Option<&Value>) -> Value {
 
 /// A required float field: `bits`, with a default when absent.
 ///
-/// ⚠ Distinct from [`num_bits`] and the difference is load-bearing. These
-/// fields are `bits(x ?? d)` in the TypeScript — a number Lean always reads —
-/// whereas `num_bits` is `optBits`, where absent stays `null`. Using the wrong
-/// one turns "unknown" into a specific value or vice versa.
+/// ⚠ Not [`num_bits`]: these fields are a number Lean always reads, whereas
+/// `num_bits` keeps absent as `null`. The wrong one turns "unknown" into a
+/// value or the reverse.
 fn num_bits_or(o: &Map<String, Value>, k: &str, dflt: f64) -> Value {
     Value::String(bits(o.get(k).and_then(Value::as_f64).unwrap_or(dflt)))
 }
 
-/// The mined places, SIX WAYS, as `env` carries them.
+/// The mined places, six ways, as `env` carries them.
 ///
-/// ⚠ One source list, six different tuples, and they are not redundant: each
-/// stage reads the columns it needs and Lean indexes them positionally. The
-/// stay DETECTOR wants a display name to snap a cluster to; the dwell
-/// CONTINUATION wants visit counts; the enrichment stage wants the whole row
-/// because it scores geometry and hour profile and then branches the LABEL on
-/// the same row. Emitting five of the six, or the right six in the wrong
-/// order, is not a decode error on the far side.
+/// ⚠ One source list, six tuples, none redundant: each stage reads the columns
+/// it needs and Lean indexes them positionally. The stay detector wants a
+/// display name to snap to; the dwell continuation wants visit counts; the
+/// enrichment stage wants the whole row. Five of six, or six in the wrong
+/// order, is no decode error on the far side.
 pub fn encode_places(known: Option<&Value>) -> Map<String, Value> {
     let mut m = Map::new();
     m.insert(
@@ -360,8 +333,8 @@ pub fn encode_places(known: Option<&Value>) -> Map<String, Value> {
                 num_bits(p, "centroidLon"),
                 num_bits(p, "radiusM"),
                 num_bits(p, "totalDwellSec"),
-                // ⚠ `?? null` in the TypeScript, NOT `?? 0`: a place with no
-                // recorded visits is not a place visited zero times.
+                // `null`, not 0: a place with no recorded visits is not a
+                // place visited zero times.
                 p.get("visitCount").cloned().unwrap_or(Value::Null),
                 raw(p, "uniqueDays")
             ])
@@ -374,8 +347,7 @@ pub fn encode_places(known: Option<&Value>) -> Map<String, Value> {
                 raw(p, "id"),
                 num_bits(p, "centroidLat"),
                 num_bits(p, "centroidLon"),
-                // ⚠ Defaults to 50 m here and stays null in `stayPlaces` above.
-                // Both are the TypeScript's, on the same field.
+                // Defaults to 50 m here and stays null in `stayPlaces` above.
                 num_bits_or(p, "radiusM", 50.0),
                 num_bits_or(p, "uniqueDays", 0.0),
                 hour_profile(p.get("hourProfile")),
@@ -455,24 +427,17 @@ fn fix_cells(points: Option<&Value>) -> std::collections::HashSet<(i64, i64)> {
 
 /// Drop bus routes the day cannot possibly have travelled.
 ///
-/// ⚠ **THIS IS SOUND BY THE MATCHER'S OWN GATE, not by a heuristic.**
-/// `Verified.Geo.Bus.bestPairFor` returns `none` unless `anchorsNear` finds a
-/// stop within `BUS_STOP_ANCHOR_M` (120 m) of BOTH the leg's board fix and its
-/// alight fix, and `Env.busFixes` is `env.points` — the very array probed here.
-/// So a route with no stop near any fix cannot match any leg, and keeping it
-/// only costs the parse. The grid cells are ~222 m x ~277 m and a stop is
-/// accepted if any of the nine cells around it holds a fix, so every route
-/// within 120 m of a fix survives with room to spare.
+/// Sound by the matcher's own gate: `Verified.Geo.Bus.bestPairFor` needs a
+/// stop within `BUS_STOP_ANCHOR_M` (120 m) of both the board and alight fix,
+/// and `Env.busFixes` is `env.points`, the array probed here. Grid cells are
+/// ~222 m x ~277 m and a stop counts if any of the nine cells around it holds
+/// a fix, so every route within 120 m of a fix survives.
 ///
-/// ⚠ **WHY IT IS WORTH DOING AT ALL**: `busRouteCache` is 1.50 MB of a 3.10 MB
-/// request, and `Json.parse` on the Lean side costs ~20x the text in heap —
-/// 61 MiB for the whole request, against 1 MiB for everything the fold then
-/// computes (health #1071). The cheapest way to shrink the Lean heap is to stop
-/// handing it reference data the day cannot reach.
+/// Worth doing because `busRouteCache` is about half the request, and Lean's
+/// `Json.parse` costs ~20x the text in heap.
 ///
-/// ⚠ Returns the input UNFILTERED when there are no fixes to filter against. No
-/// fixes means no basis for the judgement, and a silent empty cache would read
-/// downstream exactly like a day with no bus service.
+/// ⚠ With no fixes the input is returned unfiltered: a silent empty cache would
+/// read downstream as a day with no bus service.
 pub fn reachable_bus_routes(bus_routes: Option<&Value>, points: Option<&Value>) -> Option<Value> {
     let cells = fix_cells(points);
     let all = bus_routes?.as_array()?;
@@ -503,9 +468,8 @@ pub fn reachable_bus_routes(bus_routes: Option<&Value>, points: Option<&Value>) 
         })
         .cloned()
         .collect();
-    // ⚠ STDERR, NOT STDOUT. `dump_day_request` and `replay-corpus-states.sh`
-    // write the REQUEST to stdout — a diagnostic line there corrupts the JSON
-    // they emit, which is how the first version of this broke both.
+    // ⚠ Stderr: `dump_day_request` and `replay-corpus-states.sh` write the
+    // request to stdout.
     eprintln!(
         "busRouteCache: {} of {} route(s) reachable from {} fix cell(s)",
         kept.len(),
@@ -532,17 +496,12 @@ fn stops(v: Option<&Value>) -> Value {
 
 /// The route and decode caches, as `env` carries them.
 ///
-/// ⚠ `railRouteCache` holds its geometry as a JSON STRING inside the row, so
-/// this parses a document out of a field, and a row that does not parse is an
-/// ERROR rather than a row that is quietly skipped.
-///
-/// The first version dropped it and called that a deliberate improvement on the
-/// TypeScript, which throws. `dev-lint`'s `rust-serde-swallow` rejected it, and
-/// the linter was right: a corrupt cache row silently becoming "this route does
-/// not exist" is a matcher scoring a day against a route set that is missing
-/// something, with nothing anywhere saying so. The three outcomes are not
-/// symmetric — an empty polyline is a route that goes nowhere, a dropped row is
-/// a route nobody offered, and only an error is a statement about the cache.
+/// ⚠ `railRouteCache` holds its geometry as a JSON string inside the row, and
+/// a row that does not parse is an error, not a skip. A corrupt row silently
+/// becoming "this route does not exist" would score a day against a route set
+/// with something missing; an empty polyline is a route that goes nowhere, a
+/// dropped row a route nobody offered, and only an error says the cache is
+/// broken.
 pub fn encode_caches(
     hsmm_decode: Option<&Value>,
     rail_routes: Option<&Value>,
@@ -620,9 +579,8 @@ pub fn encode_caches(
 
 /// The numbers in a trace key, `lat|lon[|radius]`.
 ///
-/// ⚠ An unparseable part becomes NaN rather than an error, because that is what
-/// `Number("x")` does on the other side and the key then encodes as a NaN bit
-/// pattern. Rejecting it here would refuse a request the TypeScript sends.
+/// An unparseable part becomes NaN, not an error, as `Number("x")` does, and
+/// the key encodes as a NaN bit pattern.
 fn key_nums(k: &str) -> Vec<f64> {
     k.split('|')
         .filter(|s| !s.is_empty())
@@ -636,11 +594,10 @@ fn key_nums(k: &str) -> Vec<f64> {
 
 /// `[latBits, lonBits, radiusBits, answer]` from a trace section.
 ///
-/// ⚠ THE DEFAULT RADIUS IS NOT A WIDENING. The trace keys on the radius the
-/// CALLER passed, and several call sites omit it; the Lean fold passes one
-/// explicitly, as a function of three arguments must. Filling it in records the
-/// EFFECTIVE argument, so `lat|lon` and `lat|lon|100` are the same question
-/// rather than a hit and a miss.
+/// The default radius is not a widening: the trace keys on the radius the
+/// caller passed, and several callers omit it, while the Lean fold always
+/// passes one. Filling it in records the effective argument, so `lat|lon` and
+/// `lat|lon|100` are the same question.
 fn table3<F: Fn(&Value) -> Value>(section: Option<&Value>, dflt: f64, map: F) -> Value {
     let mut out = Vec::new();
     for (k, v) in section.and_then(Value::as_object).into_iter().flatten() {
@@ -660,10 +617,9 @@ fn table3<F: Fn(&Value) -> Value>(section: Option<&Value>, dflt: f64, map: F) ->
 
 /// `[latBits, lonBits, answer]`, for the one lookup that takes no radius.
 ///
-/// ⚠ EXACTLY two key parts, where [`table3`] takes two-or-more. The cascade's
-/// `nearbyWays` never passes a radius, so `Env.nearbyWays` is a function of two
-/// arguments and a three-part key is a DIFFERENT question — skipped rather than
-/// truncated into this one.
+/// Exactly two key parts, where [`table3`] takes two or more: `nearbyWays`
+/// never passes a radius, so a three-part key is a different question, skipped
+/// rather than truncated into this one.
 fn table2<F: Fn(&Value) -> Value>(section: Option<&Value>, map: F) -> Value {
     let mut out = Vec::new();
     for (k, v) in section.and_then(Value::as_object).into_iter().flatten() {
@@ -694,10 +650,8 @@ fn venue_stats(v: &Value) -> Value {
 
 /// The mined visit-shape priors, or `null`.
 ///
-/// ⚠ `null` is not "no evidence about this venue" but "no evidence about ANY
-/// venue", and `rankVenues` drops the whole shape term rather than scoring
-/// every candidate at a base rate. Encoding an empty object instead would turn
-/// a dropped term into a uniform one.
+/// ⚠ `null` is "no evidence about any venue", and `rankVenues` drops the shape
+/// term; an empty object would turn a dropped term into a uniform one.
 pub fn encode_venue_priors(v: Option<&Value>) -> Value {
     let Some(o) = v.and_then(Value::as_object) else {
         return Value::Null;
@@ -721,12 +675,11 @@ pub fn encode_venue_priors(v: Option<&Value>) -> Value {
     })
 }
 
-/// `DEFAULT_RADIUS_M` from `osm.ts`, in metres.
+/// The default radii, in metres, of lookups whose callers omit one.
 ///
-/// ⚠ These are the EFFECTIVE arguments of the lookups whose callers omit a
-/// radius, so they decide whether a recorded answer is found or missed. They
-/// are not tuning knobs: changing one here does not change what the mirror was
-/// asked, it changes which recorded answer the fold is offered.
+/// ⚠ They decide whether a recorded answer is found or missed. Changing one
+/// does not change what the mirror was asked, only which recorded answer the
+/// fold is offered.
 pub mod default_radius_m {
     pub const NEARBY_WAYS: f64 = 50.0;
     pub const NEARBY_STATIONS: f64 = 200.0;
@@ -820,9 +773,8 @@ pub fn encode_lookups(
             }))
         }),
         "stationsOnLine": stations_on_line(sec("stationsOnLine")),
-        // ⚠ NOT from the trace — the adapter never saw these. `tzAt` is a
-        // direct `tzLookup` import in the pipeline, so `RecordingOsmAdapter`
-        // has no record of it and the fold capture carries it separately.
+        // Not from the trace: `tzAt` is a direct `tzLookup` import in the
+        // pipeline, so the fold capture carries it separately.
         "tzAt": arr_map(tz_at, |q| json!([
             num_bits(q, "lat"),
             num_bits(q, "lon"),
@@ -837,7 +789,7 @@ pub fn encode_lookups(
                     "subtype": raw(l, "subtype"),
                     "distanceM": num_bits(l, "distanceM"),
                     "openingHours": opt_str(l, "openingHours"),
-                    // ⚠ `=== true`, so a missing flag is false rather than null.
+                    // A missing flag is false, not null.
                     "enclosing": l.get("enclosing") == Some(&Value::Bool(true)),
                 });
                 // Inside an open space's outline: only when true, so a day
@@ -848,27 +800,22 @@ pub fn encode_lookups(
                 o
             })
         }),
-        // The stay CONTEXT of each naming question, not its answer: Lean
-        // computes the label, and what it cannot compute is the venue-local
-        // clock. ⚠ The only table whose entries are DERIVED rather than passed
-        // through — see `timezone::local_stay_samples`.
+        // The stay context of each naming question, not its answer: Lean
+        // computes the label; what it cannot compute is the venue-local clock.
+        // The only table derived rather than passed through; see
+        // `timezone::local_stay_samples`.
         "bestPlace": best_place(best)?,
     }))
 }
 
 /// `[latBits, lonBits, startTs, endTs, tz, staySamples, midpointHour]`.
 ///
-/// ⚠ The tz stays IN THE KEY even though nothing downstream reads it: the two
-/// derived fields were resolved AGAINST it, and a key that dropped it would
-/// answer a different question with the same spelling if the pass ever asked at
-/// two zones.
+/// The tz stays in the key though nothing downstream reads it: the derived
+/// fields were resolved against it, and dropping it would let two zones share
+/// a spelling.
 ///
-/// ⚠ The midpoint is `(start + end) / 2` UNFLOORED in the TypeScript, because
-/// `new Date(x * 1000)` takes the half-second. Flooring cannot change the HOUR
-/// — an instant and its floor lie in the same hour, since hour boundaries fall
-/// on whole seconds — so the integer division here is safe. It is written down
-/// because "the TypeScript does not floor it" invites the conclusion that the
-/// difference matters somewhere.
+/// The midpoint is floored; an instant and its floor lie in the same hour,
+/// so the hour cannot change.
 fn best_place(section: Option<&Value>) -> Result<Value> {
     let mut out = Vec::new();
     for q in section.and_then(Value::as_array).into_iter().flatten() {
@@ -933,16 +880,11 @@ pub const NOMINATIM_DEFAULT_ZOOM: f64 = 18.0;
 
 /// `[latBits, lonBits, zoom, address|null]`.
 ///
-/// ⚠ THE ZOOM CROSSES AS A PLAIN INTEGER, unlike every other numeric in every
-/// other table. It is a literal the caller writes, not a measurement, so there
-/// is no precision to preserve — but it means this one table cannot reuse
-/// `table3`, and a copy of that helper "tidied" to share it would silently
+/// ⚠ The zoom crosses as a plain integer, unlike every other numeric: it is a
+/// literal the caller writes. So this table cannot reuse `table3`, which would
 /// bit-encode the zoom and miss every key.
 ///
-/// ⚠ Public so the ANSWERER's live row can be compared against it directly
-/// (#1076). A geocode reaching the fold from a cache and one reaching it from a
-/// recorded section must be the same bytes, and that is a claim worth a test
-/// rather than a comment.
+/// Public so a test can hold the answerer's live rows against it.
 pub fn geocode_table(section: Option<&Value>) -> Value {
     let mut out = Vec::new();
     for (k, v) in section.and_then(Value::as_object).into_iter().flatten() {
@@ -950,9 +892,7 @@ pub fn geocode_table(section: Option<&Value>) -> Value {
         if n.len() < 2 {
             continue;
         }
-        // ⚠ An INTEGER on the wire. JavaScript has one number type, so
-        // `JSON.stringify(16)` writes `16`; emitting the f64 would write `16.0`
-        // and Lean's `getInt?` would refuse it.
+        // An integer on the wire: `16.0` would be refused by Lean's `getInt?`.
         let zoom = if n.len() >= 3 {
             n[2]
         } else {
@@ -980,9 +920,9 @@ pub fn geocode_table(section: Option<&Value>) -> Value {
 /// One Nominatim answer, flattened: the three top-level fields plus the address
 /// components the naming cascade reads.
 ///
-/// ⚠ Public because the ANSWERER encodes here too (#1076). A geocode reaching the
-/// fold from a live cache and one reaching it from a recorded section must be the
-/// same bytes, and the only way to guarantee that is one encoder.
+/// Public because the answerer encodes here too: a geocode from a live cache
+/// and one from a recorded section must be the same bytes, so there is one
+/// encoder.
 pub fn encode_geocode(v: &Value) -> Value {
     let Some(o) = v.as_object() else {
         return Value::Null;
@@ -1001,8 +941,7 @@ pub fn encode_geocode(v: &Value) -> Value {
         "leisure": opt_str(a, "leisure"),
         "shop": opt_str(a, "shop"),
         "building": opt_str(a, "building"),
-        // ⚠ snake_case on the wire in, camelCase out — the Nominatim payload
-        // keeps OSM's spelling and Lean reads the renamed field.
+        // snake_case in, camelCase out: Nominatim keeps OSM's spelling.
         "houseNumber": opt_str(a, "house_number"),
         "road": opt_str(a, "road"),
         "pedestrian": opt_str(a, "pedestrian"),
@@ -1016,27 +955,6 @@ pub fn encode_geocode(v: &Value) -> Value {
     })
 }
 
-/// Answers gathered across converge rounds, ALREADY IN WIRE FORM.
-///
-/// ⚠ WIRE FORM ON PURPOSE, and this is the one design decision in the loop
-/// worth stating. The fold spells a miss as BIT PATTERNS
-/// (`4632448131755700645|13818229285013219213`) because that is how it holds
-/// the coordinate; the recorded trace is keyed by DECIMAL, and `table2` /
-/// `table3` convert decimal → bits on the way out. Answering a miss by writing
-/// a decimal key would round-trip the float twice for nothing, and float
-/// round-trips through text are exactly where this port already found a
-/// one-ULP disagreement with V8. So a round's answers are appended as the rows
-/// the fold reads, and the loop never converts back.
-/// The whole fold request: `{trace, env}`.
-///
-/// Port of `buildDayRequest`. The pieces are separately verified against the
-/// TypeScript; this is the assembly, and the assembly is where a field can be
-/// correct and in the wrong place.
-///
-/// ⚠ KEY ORDER MATTERS FOR THE COMPARISON, not for the fold. Lean reads the
-/// object by name, but the byte-diff against the TypeScript is what makes this
-/// checkable at all, and `preserve_order` means the order written here is the
-/// order emitted. It follows `buildDayRequest`'s.
 /// The day's segments in the decoder dump `var` names, one
 /// `{name, segments}` line per fixture; `None` when the variable is unset or
 /// the dump has no line for the day.
@@ -1061,6 +979,11 @@ fn decoder_head_segments(inputs: &Map<String, Value>, var: &str) -> Result<Optio
     Ok(None)
 }
 
+/// The whole fold request: `{trace, env}`.
+///
+/// Key order does not matter to Lean, which reads by name, but the byte
+/// comparison with the frozen fixtures needs it; `preserve_order` emits it as
+/// written here.
 pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     let c = cap.as_object().context("capture is not an object")?;
     let i = inputs.as_object().context("inputs is not an object")?;
@@ -1070,10 +993,8 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
         "homeTz".into(),
         i.get("homeTz").cloned().unwrap_or(Value::Null),
     );
-    // ⚠ ONLY WHEN THE CALLER SET IT. Lean defaults an absent `walkMatch` to
-    // true, so the gates and the CLIs — which never put it in `inputs` — keep
-    // the production draw. Writing `true` here instead would say the same thing
-    // and make every request carry a field only one caller can vary.
+    // Only when the caller set it: Lean defaults an absent `walkMatch` to true,
+    // so the gates and the CLIs keep the production draw without the field.
     if let Some(wm) = i.get("walkMatch") {
         env.insert("walkMatch".into(), wm.clone());
     }
@@ -1089,20 +1010,19 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
         "venuePriors".into(),
         encode_venue_priors(i.get("venuePriors")),
     );
-    // ⚠ THE FILTER SITS HERE, NOT INSIDE `encode_caches`, and that is deliberate.
-    // `fold_env` pins `encode_caches` against what the TypeScript produced, whole
-    // field for whole field. That oracle is about the PORT being faithful, so an
-    // optimisation must not be smuggled through it — it belongs one level up,
-    // where it is visible at the call site and has its own test.
+    // The filter sits here, not in `encode_caches`: `fold_env` pins that
+    // encoder whole against the frozen fixtures, so an optimisation belongs one
+    // level up, visible at the call site and with its own test.
     let bus_reachable = reachable_bus_routes(i.get("busRouteCache"), obs.get("points"));
-    // THE DECODER HEADS THE FOLD on every day it has decoded: its segments are
+    // The decoder heads the fold on every day it has decoded: its segments are
     // the day, and Lean runs only the naming tail over them (`DayEntry`,
-    // `decoderHead`). A day without a stored decode at this `CLASSIFIER_VERSION`
-    // — today, which the cron never decodes, or a finished day the re-decode
-    // has not reached — folds through the cascade until it has one.
+    // `decoderHead`). A day without a stored decode at this
+    // `CLASSIFIER_VERSION` (today, or a day the re-decode has not reached)
+    // folds through the cascade.
+    //
     // `FOLD_DECODER_HEAD=<dump>` puts an arm's decode (the scoreboard's
-    // `DECODE_DUMP_OUT`) in the stored one's place: a decoder change on the
-    // served day, measured before it ships.
+    // `DECODE_DUMP_OUT`) in the stored one's place, to measure a decoder change
+    // on the served day before it ships.
     let decoder_head = decoder_head_segments(i, "FOLD_DECODER_HEAD")?;
     if decoder_head.is_some() {
         eprintln!("⚠ FOLD_DECODER_HEAD — an arm's decode heads this fold, not the stored one");
@@ -1122,9 +1042,9 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     )? {
         env.insert(k, v);
     }
-    // A train's stations, as the decoder's chain resolved them, onto the
-    // decode `encode_caches` wrote. Here and not in it: `fold_env` pins that
-    // encoder against the TypeScript's, which never carried them.
+    // A train's stations, as the decoder's chain resolved them, onto the decode
+    // `encode_caches` wrote; here and not in it, since `fold_env` pins that
+    // encoder against frozen fixtures that never carried them.
     if let (Some(Value::Array(out)), Some(Value::Array(src))) = (env.get_mut("hmmDecode"), decode) {
         for (o, h) in out.iter_mut().zip(src) {
             if let (Some(o), Some(h)) = (o.as_object_mut(), h.as_object()) {

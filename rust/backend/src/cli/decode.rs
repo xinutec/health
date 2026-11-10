@@ -7,11 +7,10 @@ use backend::{db, decode_fixture};
 
 /// Persist a day's HSMM decode, overwriting any existing row.
 ///
-/// ⚠ `classifier_version` is RECORDED, not just written: `loadDecode` returns
-/// null on a version mismatch so consumers re-decode rather than serve stale
-/// segments. Writing the wrong number here does not fail — it makes every
-/// reader silently discard the row and recompute, which looks like a slow
-/// cache rather than a bug.
+/// ⚠ `classifier_version` is read back: `loadDecode` returns null on a mismatch
+/// so readers re-decode rather than serve stale segments. A wrong number here
+/// fails nothing; every reader just discards the row and recomputes, which
+/// looks like a slow cache.
 pub(crate) async fn save_decode(
     pool: &sqlx::MySqlPool,
     user_id: &str,
@@ -40,25 +39,15 @@ pub(crate) async fn save_decode(
     Ok(())
 }
 
-/// ⚠ ONE DECLARATION, in `classification_inputs`. This was a second copy until
-/// 2026-09-01, kept in step by a comment pointing at a TypeScript file that no
-/// longer exists.
+/// Declared once, in `classification_inputs`.
 use crate::classification_inputs::CLASSIFIER_VERSION;
 
 /// Decode a day's HSMM and persist it to `decoded_days`.
 ///
-/// Ported from `decode-day.ts` (#982); the CronJob runs daily at 06:00.
-///
-/// ⚠ THE WHOLE MODEL IS BUILT AND DECODED IN LEAN. `assemblesegments` takes raw
+/// The whole model is built and decoded in Lean: `assemblesegments` takes raw
 /// `edges`/`nodes`/`obs`/`places`, builds the route-graph model, the coverage
 /// map and the trellis, decodes, and groups the path into segments. Nothing
-/// here constructs a model, and the 33-40 MiB quantised payload the TypeScript
-/// ships per day (#411) never exists.
-///
-/// ⚠ NOT ported, deliberately: `runLeanShadow`, `runWalkShadow` and ten
-/// `logLean*Ledger` calls — about 40% of `decodeAndPersist`. They exist to A/B
-/// the TypeScript arm against Lean. With one arm they measure nothing, and
-/// keeping them would mean keeping the arm they measure.
+/// here constructs a model, so no tens-of-MiB quantised payload crosses.
 pub(crate) async fn decode_day(
     user: Option<&str>,
     dates: &[String],
@@ -124,19 +113,15 @@ pub(crate) async fn decode_day(
             attempted += 1;
             match result {
                 Ok(n) => {
-                    // ⚠ `decode_one` ALREADY PRINTED the dry-run line, including
-                    // the fact that nothing was written. Printing "{n} segments"
-                    // again here said it twice and said it wrong the second time.
+                    // `decode_one` already printed the dry-run line.
                     if !dry_run {
                         eprintln!("[{user_id} {date}] {n} segments");
                     }
                     written += 1;
                 }
                 Err(e) => {
-                    // ⚠ One bad day must not strand the rest — the cron decodes
-                    // a window and a single unparseable day is not a reason to
-                    // leave the other thirteen stale. The refusal below is what
-                    // makes that safe.
+                    // One bad day must not strand the rest of the window; the
+                    // refusal below catches every day failing.
                     eprintln!("[{user_id} {date}] decode failed: {e:#}");
                     failed += 1;
                 }
@@ -144,10 +129,8 @@ pub(crate) async fn decode_day(
         }
     }
 
-    // ⚠ A DRY RUN WROTE NOTHING AND MUST NOT SAY "written". The 2026-08-25 dry
-    // run reported `1 written, 0 failed` while writing nothing at all — a label
-    // that contradicts the flag it was given is worse than no label, because it
-    // is the line somebody greps to find out whether the row was replaced.
+    // ⚠ A dry run wrote nothing and must not say "written": this line is what
+    // gets grepped to learn whether the row was replaced.
     eprintln!(
         "decode-day: {written} {}, {failed} failed of {attempted} day(s)",
         if dry_run {
@@ -158,10 +141,8 @@ pub(crate) async fn decode_day(
             "written"
         }
     );
-    // ⚠ REFUSE rather than report success on nothing. Same rule as
-    // `refresh-rail-routes`, and for the same reason: a batch job's success must
-    // be predicated on evidence having been gathered, never on the absence of an
-    // error. Every day failing is a broken run; a day with no data is not.
+    // ⚠ Refuse rather than report success on nothing, as `refresh-rail-routes`
+    // does: every day failing is a broken run; a day with no data is not.
     if failed > 0 && failed == attempted {
         pool.close().await;
         anyhow::bail!(
@@ -249,12 +230,10 @@ pub(crate) async fn decode_one(
     step("graph rows", &mut steps);
     let (edges, nodes) = backend::lean::build_wire_graph(&ways, &stops)?;
     step("graph wire", &mut steps);
-    // ⚠ THE GRAPH'S SIZE IS EVIDENCE, not chatter. `emitLeg` is a MARGIN test —
-    // a side names a station only when every alternative naming a different one
-    // trails by `MARGIN_NATS` — so the number of competing stations in range
-    // decides whether a leg resolves at all. Two arms that box different regions
-    // resolve differently with identical scoring, which is #1190, and this line
-    // is what makes that visible in a run rather than inferable from a diff.
+    // The graph's size is evidence: `emitLeg` is a margin test (a station is
+    // named only when every rival trails by `MARGIN_NATS`), so the number of
+    // stations in range decides whether a leg resolves, and two runs that box
+    // different regions resolve differently with identical scoring.
     println!(
         "graph {date}: {} ways, {} stops -> {} edges, {} nodes",
         ways.len(),
@@ -264,32 +243,25 @@ pub(crate) async fn decode_one(
     );
 
     // ── the observation tensor's raw materials ──────────────────────────────
-    // ⚠ THE TENSOR IS NOT BUILT HERE AND MUST NOT BE. Lean builds it from these
-    // (#411): shipping 1440 assembled rows instead is the 33-40 MiB per day the
-    // port exists to delete. What crosses is the day's fixes and two lookup
-    // tables that are not pure — a timezone and an OSM query.
+    // ⚠ The tensor is built in Lean, not here: shipping 1440 assembled rows is
+    // the payload this design avoids. What crosses is the day's fixes and two
+    // impure lookups, a timezone and an OSM query.
     //
-    // ⚠ OUTLIERS ARE DROPPED ONCE, HERE, and the same cleaned list feeds both the
-    // tensor and the proximity lookups. The TypeScript cleans in two places
-    // (`buildHsmmModel` and the `computeMinuteProximity` call) and the two agree
-    // only because they clean the same input; doing it once is the same result
-    // with one fewer way to disagree.
+    // Outliers are dropped once, here, and the same cleaned list feeds both
+    // the tensor and the proximity lookups, so the two cannot disagree.
     let cleaned = backend::lean::drop_gps_outliers(&gps_fixes(&obs)?)?;
     step("outliers", &mut steps);
-    // ⚠ THE DECODER'S PLACES ARE NOT `focus_places` ROWS. `knownPlaces` names
-    // the columns (`centroidLat`, `totalDwellSec`, `displayName`); the decode
-    // wire names the concepts (`lat`, `dwell`, `name`). Sending the row shape is
-    // refused by name — see `decode_places`, which is the second field-shape
-    // defect this path shipped and the reason there is a test for the request.
+    // ⚠ The decoder's places are not `focus_places` rows: `knownPlaces` names
+    // the columns (`centroidLat`, `totalDwellSec`, `displayName`), the decode
+    // wire the concepts (`lat`, `dwell`, `name`). The row shape is refused by
+    // name; see `decode_places` and its request test.
     let places = backend::classification_inputs::decode_places(inputs.get("knownPlaces"))?;
     let osm = day_osm(pool, bounds.start_utc, bounds.end_utc, &cleaned, &places).await?;
     println!("osm {date}: {}", osm.note);
     step("osm", &mut steps);
 
-    // ⚠ THE CHAIN SEED, AND IT IS FOUR FIELDS RATHER THAN ONE. Sending only
-    // `priorPlaceId` is refused with `property not found: hoursSince` — the
-    // third field-shape defect on this request, and the third found by probing
-    // the parser instead of reading the struct.
+    // ⚠ The chain seed is four fields: `priorPlaceId` alone is refused with
+    // `property not found: hoursSince`.
     let continuity = load_continuity(pool, user_id, date, &places).await?;
     step("continuity", &mut steps);
     let mut slow = reads.clone();
@@ -325,24 +297,18 @@ pub(crate) async fn decode_one(
         "edges": edges,
         "nodes": nodes,
         "places": places,
-        // ⚠ ABSENT IS NOT NEUTRAL. `parseAssemble` treats a missing
-        // `placeNearLine` as the EMPTY SET, which removes every place→line hard
-        // zero instead of adding them — so the decode runs, looks plausible, and
-        // permits boardings the TypeScript forbids.
+        // ⚠ Absent is not neutral: `parseAssemble` reads a missing
+        // `placeNearLine` as the empty set, which drops every place→line hard
+        // zero, and the decode looks plausible while permitting forbidden
+        // boardings.
         "placeNearLine": osm.place_near_line,
         "railStopRelations": inputs.get("railStopsCache").cloned().unwrap_or(serde_json::Value::Null),
         "continuity": continuity,
-        // ⚠ THE THREE C4 FLAGS, READ FROM THE ENV AS THE TypeScript READS THEM.
-        // All three are `1` in `decodeFlags` and have been since C4 landed, so a
-        // Rust-side `true` would decode production correctly and diverge the
-        // moment anyone replays a day with `scripts/prod-db.sh` — which mirrors
-        // the pod env precisely so that cannot happen.
+        // The three C4 flags, from the env (see [`flag`]).
         //
-        // ⚠ `maxD` IS DELIBERATELY ABSENT: it is the model's own trellis depth,
-        // and `Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION` is where it lives.
-        // Spelling 240 here would be a second copy that nothing compares. The
-        // decoder parameters (`DECODER_PARAMS`, below) carry their own, with
-        // the form it belongs to.
+        // `maxD` is absent on purpose: it is the trellis depth, and
+        // `Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION` holds it. The decoder
+        // parameters (`DECODER_PARAMS`, below) carry their own.
         "flags": {
             "chainContext": flag("USE_CHAIN_CONTEXT"),
         },
@@ -372,10 +338,7 @@ pub(crate) async fn decode_one(
         return Ok(0);
     }
 
-    // ⚠ `None` is DEGENERATE — Lean found no viable path. That is a real answer
-    // about the day, not a fault, and it must not be written as zero segments:
-    // an empty row would read as "decoded, nothing happened".
-    // `DECODE_REQ_DUMP=<dir>`: the live request, as `<dir>/<date>.json` — to set
+    // `DECODE_REQ_DUMP=<dir>`: the live request, as `<dir>/<date>.json`, to set
     // beside a frozen day's (`examples/dump_decode_request`) when the two decode
     // differently.
     if let Ok(dir) = std::env::var("DECODE_REQ_DUMP") {
@@ -400,6 +363,10 @@ pub(crate) async fn decode_one(
     }
     // Blocking Lean work: the runtime moves its other tasks off this thread, so
     // `DECODE_JOBS` days decode side by side.
+    //
+    // ⚠ `None` is degenerate: Lean found no viable path. That is a real answer
+    // about the day, and must not be written as zero segments, which would
+    // read as "decoded, nothing happened".
     let Some(segments) = tokio::task::block_in_place(|| backend::lean::assemble_segments(&req))?
     else {
         anyhow::bail!("the decode is degenerate — no viable path");
@@ -407,11 +374,8 @@ pub(crate) async fn decode_one(
     let segments = backend::row_json::render_segments(&segments)?;
     let n = segments.as_array().map_or(0, Vec::len);
     if dry_run {
-        // ⚠ ONE SEGMENT PER LINE, in exactly the form `segments_json` would hold
-        // — same field order, same encodings, same absent-versus-null. That is
-        // the point: it makes the parity check `diff` against
-        // the deleted `dump-decoded-segments.mjs`, which printed node's row the same
-        // way, instead of a structural comparison nothing can quite trust.
+        // One segment per line, exactly as `segments_json` holds it (field
+        // order, encodings, absent versus null), so two runs compare by `diff`.
         for seg in segments.as_array().unwrap_or(&Vec::new()) {
             println!("{}", serde_json::to_string(seg)?);
         }
@@ -422,39 +386,27 @@ pub(crate) async fn decode_one(
     Ok(n)
 }
 
-/// The prior day's end-of-day seed, shaped as `parseContinuity` reads it — or
-/// `null`, which is a legitimate chain start rather than a fault.
+/// The prior day's end-of-day seed, shaped as `parseContinuity` reads it, or
+/// `null`, a legitimate chain start.
 ///
-/// ⚠ FOUR FIELDS, NOT ONE. `priorPlaceId` alone is refused with `property not
-/// found: hoursSince`. `priorPlaceCoord` is a `[lat, lon]` PAIR on the wire
-/// even though the
-/// TypeScript's own type is an object — `lean/experiments/compare-assemble-*.mts`
-/// convert it the same way.
+/// ⚠ Four fields, not one: `priorPlaceId` alone is refused with `property not
+/// found: hoursSince`. `priorPlaceCoord` is a `[lat, lon]` pair on the wire.
 ///
-/// ⚠ THREE ABSENCES, AND THEY ARE DIFFERENT. No ROW at all is a chain start; a
-/// row whose `end_of_day_place_id` is NULL is a day that ended nowhere known;
-/// a row with no `end_of_day_ts` cannot say how stale the seed is. The
-/// TypeScript returns null for all three and so does this — but they are read
-/// separately so a future reader can tell them apart if that ever matters.
+/// Three absences, read separately though all answer null: no row (a chain
+/// start), a NULL `end_of_day_place_id` (the day ended nowhere known), and no
+/// `end_of_day_ts` (the seed's staleness is unknown).
 ///
-/// ⚠ `u64`, NOT `i64` — `presence_log.*_place_id` is INT UNSIGNED, which sqlx
-/// treats as a distinct type and refuses to hand back as signed. It fails at
-/// RUNTIME on real rows only.
+/// ⚠ sqlx types that fail on real rows only: `presence_log.*_place_id` is INT
+/// UNSIGNED, so `u64`; `end_of_day_posterior` is FLOAT, so `f32`, widened
+/// exactly.
 ///
-/// ⚠ `end_of_day_posterior` is `FLOAT`, so it reads as `f32`. Asking for `f64`
-/// fails on real rows the same way, and the widening is exact — the node driver
-/// hands the TypeScript the same widened value.
+/// The timestamp is read with `UNIX_TIMESTAMP`, mirroring the `FROM_UNIXTIME`
+/// that `refresh-presence-log` writes it with, so the seed's staleness does
+/// not depend on the session timezone.
 ///
-/// ⚠ `UNIX_TIMESTAMP`, MIRRORING THE `FROM_UNIXTIME` THE WRITE USES. Reading the
-/// `TIMESTAMP` as a naive local datetime would make the staleness of the seed
-/// depend on the session timezone, and `refresh-presence-log` a few hundred
-/// lines down writes it through `FROM_UNIXTIME(?)`. Symmetry is the check.
-///
-/// ⚠ THE COORD COMES FROM THE PLACES ALREADY IN HAND, not a second query. The
-/// TypeScript re-reads `focus_places` unfiltered; taking it from the list the
-/// decoder was just given means the seed's coordinate is the same one the
+/// The coordinate comes from the places already in hand, so it is one the
 /// trellis has a state for. A prior place that is no longer a focus place
-/// yields a null coord, which is the documented un-gated case.
+/// yields a null coord, the documented ungated case.
 pub(crate) async fn load_continuity(
     pool: &sqlx::MySqlPool,
     user_id: &str,
@@ -485,10 +437,9 @@ pub(crate) async fn load_continuity(
     };
     let posterior = f64::from(row.try_get::<f32, _>("end_of_day_posterior")?);
 
-    // ⚠ UTC MIDNIGHT OF THE DECODED DATE, not local midnight and not the day's
-    // own `startUtc`. The TypeScript measures from `new Date(`${date}T00:00:00Z`)`,
-    // so in London the two differ by an hour for half the year — and the
-    // difference lands straight in the continuity factor's time decay.
+    // ⚠ UTC midnight of the decoded date, not local midnight nor the day's
+    // `startUtc`: in London those differ by an hour for half the year, and
+    // the difference lands in the continuity factor's time decay.
     let today_start = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .with_context(|| format!("{date:?} is not a YYYY-MM-DD date"))?
         .and_hms_opt(0, 0, 0)
@@ -513,23 +464,22 @@ pub(crate) async fn load_continuity(
     }))
 }
 
-/// A decode feature flag, with the TypeScript's own semantics: set and exactly
-/// `"1"` is on, anything else — including unset — is off.
+/// A decode feature flag: set and exactly `"1"` is on, anything else,
+/// including unset, is off.
 ///
-/// ⚠ NOT DEFAULTED TO `true`. Production sets all three (`decodeFlags` in
-/// `kubes/dhall/apps/health.dhall`) and has since C4, so defaulting on would be
-/// right in the cluster and wrong everywhere else — and `scripts/prod-db.sh`
-/// mirrors the pod env precisely so that a Mac replay decodes the same day the
-/// cron wrote. A parity tool that does not mirror the env is not a parity tool.
+/// ⚠ Not defaulted to `true`. Production sets all three (`decodeFlags` in
+/// `kubes/dhall/apps/health.dhall`), and `scripts/prod-db.sh` mirrors the pod
+/// env so a Mac replay decodes the day the cron wrote; a default would be
+/// right in the cluster and wrong everywhere else.
 pub(crate) fn flag(name: &str) -> bool {
     std::env::var(name).is_ok_and(|v| v == "1")
 }
 
 /// `head::capture`'s `obs.points` as fixes.
 ///
-/// ⚠ THESE ARE THE VELOCITY PIPELINE'S POINTS, not the raw ones. `rawFixes` is
-/// what the route-graph bbox is built from — a wider set on purpose, since the
-/// graph must contain the day even where the pipeline dropped fixes.
+/// ⚠ These are the velocity pipeline's points, not the raw ones. `rawFixes`
+/// builds the route-graph bbox, a wider set on purpose, so the graph contains
+/// the day even where the pipeline dropped fixes.
 pub(crate) fn gps_fixes(obs: &serde_json::Value) -> Result<Vec<backend::lean::GpsFix>> {
     let rows = obs
         .get("points")
@@ -556,14 +506,11 @@ pub(crate) fn gps_fixes(obs: &serde_json::Value) -> Result<Vec<backend::lean::Gp
         .collect()
 }
 
-/// Everything the decode needs from OSM, gathered in ONE trip to the mirror.
+/// Everything the decode needs from OSM, gathered in one trip to the mirror.
 ///
-/// ⚠ THE TWO HALVES TRAVEL TOGETHER BECAUSE THE MIRROR IS BLOCKING-THREAD ONLY.
-/// `with_mirror_answerer` is the only door and its closure cannot await, so a
-/// second call would be a second `MirrorSource`, a second connection, and a
-/// second chance to construct one on a runtime worker — which aborts the
-/// process rather than returning an error. They are unrelated questions asked
-/// through one door, not one question.
+/// ⚠ Two unrelated questions through one door, because the mirror is
+/// blocking-thread only: `with_mirror_answerer`'s closure cannot await, and a
+/// second `MirrorSource` built on a runtime worker aborts the process.
 pub(crate) struct DayOsm {
     /// The sparse `[minuteTs, road, rail]` table, opaque — it goes into the
     /// assemble request unread.
@@ -586,7 +533,7 @@ pub(crate) async fn day_osm(
     let minute_count = plan.minutes.as_array().map_or(0, Vec::len);
     let asked = plan.queries.len();
 
-    // ⚠ THE LINE LIST IS LEAN'S — see `lean::known_lines`.
+    // The line list is Lean's; see `lean::known_lines`.
     let lines = backend::lean::known_lines()?;
     let place_coords: Vec<(i64, f64, f64)> = places
         .as_array()
@@ -609,10 +556,8 @@ pub(crate) async fn day_osm(
             let mut out = Vec::with_capacity(queries.len());
             for q in &queries {
                 // ⚠ `None` is "the mirror could not vouch for this coordinate",
-                // NOT "nothing here". Sending it back as an empty way list would
-                // tell the decoder there is no railway within 300 m, which is
-                // evidence against rail rather than the absence of evidence
-                // (#976).
+                // not "nothing here": an empty way list would tell the decoder
+                // there is no railway within 300 m, evidence against rail.
                 let Some(ways) = ans.nearby_ways(q.lat(), q.lon())? else {
                     continue;
                 };
@@ -620,9 +565,9 @@ pub(crate) async fn day_osm(
             }
             let mut sts: Vec<(String, Vec<(f64, f64)>)> = Vec::with_capacity(want_lines.len());
             for line in &want_lines {
-                // ⚠ Same distinction, opposite consequence: a declined line is
-                // SKIPPED, so no place gains a pair for it. An empty list is a
-                // line no way carries and is a real answer.
+                // Same distinction, opposite consequence: a declined line is
+                // skipped, so no place gains a pair for it. An empty list is a
+                // line no way carries, a real answer.
                 let Some(rows) = ans.stations_serving(line)? else {
                     continue;
                 };
@@ -636,10 +581,8 @@ pub(crate) async fn day_osm(
     let place_near_line = backend::lean::place_near_line(&place_coords, &stations)?;
     let covered = minute_count - unanswered;
     let station_total: usize = stations.iter().map(|(_, s)| s.len()).sum();
-    // ⚠ THE LINE REPORTS WHAT WAS ASKED AS WELL AS WHAT CAME BACK. `2/18
-    // queries` and `18/18 queries` produce tables that look equally healthy, and
-    // only the ratio says a day was decoded against a mirror that mostly
-    // declined (#976, and the shape #1134 reports for the Overpass crons).
+    // The log reports what was asked as well as what came back: only the
+    // ratio shows a day decoded against a mirror that mostly declined.
     Ok(DayOsm {
         note: format!(
             "proximity {covered}/{minute_count} minutes from {}/{asked} queries; \
@@ -656,9 +599,9 @@ pub(crate) async fn day_osm(
 
 /// `[name, latBits, lonBits]` triples → coordinates.
 ///
-/// ⚠ THE BIT PATTERNS ARE PARSED ONLY TO ASK. They go straight back out as bit
-/// patterns on the `placenearline` request, so the coordinate Lean measures from
-/// is the one the mirror answered with, to the last digit.
+/// The bit patterns are parsed only to ask; they go back out as bit patterns
+/// on the `placenearline` request, so Lean measures from the mirror's exact
+/// coordinate.
 pub(crate) fn station_coords(rows: &[serde_json::Value]) -> Vec<(f64, f64)> {
     rows.iter()
         .filter_map(|r| {
@@ -672,9 +615,8 @@ pub(crate) fn station_coords(rows: &[serde_json::Value]) -> Vec<(f64, f64)> {
 }
 
 /// The corridor polygon around a set of points, with `ROUTE_GRAPH_MARGIN_M`
-/// added. ⚠ ONE FORMULA for both the way box and the station box — the #1190
-/// experiment varies them independently, and two copies of the latitude
-/// correction would make that comparison meaningless.
+/// added. One formula for the way box and the station box, so varying the two
+/// compares boxes, not latitude corrections.
 pub(crate) fn bbox_poly(pts: &[(f64, f64)]) -> String {
     let (mut mnla, mut mxla, mut mnlo, mut mxlo) = (
         f64::INFINITY,
@@ -708,9 +650,8 @@ pub(crate) fn bbox_poly(pts: &[(f64, f64)]) -> String {
 
 /// The rail/road ways and station points covering a day's fixes.
 ///
-/// ⚠ The bbox comes from the day's OWN observations, not a fixed region: a day
-/// spent outside the home metro would otherwise get a graph that does not
-/// contain it, and the decode would silently have no rail to match against.
+/// The bbox comes from the day's own observations, so a day away from home
+/// still gets a graph that contains it.
 pub(crate) async fn route_graph_rows(
     pool: &sqlx::MySqlPool,
     user_id: &str,
@@ -718,9 +659,8 @@ pub(crate) async fn route_graph_rows(
 ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>)> {
     use sqlx::Row as _;
 
-    // ⚠ THE TRACK IS BOXED BY THE DAY. A day spent outside the home metro would
-    // otherwise get a graph that does not contain it, and the decode would
-    // silently have no rail to match against.
+    // ⚠ The track is boxed by the day: a day away from home would otherwise
+    // have no rail to match against.
     let mut pts: Vec<(f64, f64)> = Vec::new();
     if let Some(rows) = obs.get("rawFixes").and_then(serde_json::Value::as_array) {
         for r in rows {
@@ -766,34 +706,26 @@ pub(crate) async fn route_graph_rows(
         }));
     }
 
-    // ⚠ THE STATIONS ARE **NOT** BOXED BY THE DAY, and that is the whole of
-    // #1190. `emitLeg` names a station only when every alternative naming a
-    // DIFFERENT one trails by `MARGIN_NATS` — so the candidate pool is a
-    // threshold, and cutting it to the day's own extent lowers the bar. A leg
-    // then resolves because of where the phone happened to be, not because of
-    // where the train went, and the same ride resolves differently on two days.
+    // ⚠ The stations are not boxed by the day. `emitLeg` names a station only
+    // when every rival trails by `MARGIN_NATS`, so the candidate pool is a
+    // threshold; cut to the day's extent it lowers the bar, and a leg resolves
+    // by where the phone was rather than where the train went.
     //
-    // ⚠ MEASURED, not reasoned, 2026-08-26 — and three explanations died first.
-    // Four arms against node's row for the same day, changing only the boxes:
+    // Measured on one ride day, changing only the boxes:
     //
     //     day ways,      day stops        3706 / 694     17 of 18
-    //     WHOLE lines,   day stops        4885 / 694     17 of 18
+    //     whole lines,   day stops        4885 / 694     17 of 18
     //     lifetime ways, lifetime stops  38559 / 9474    18 of 18
-    //     day ways,      LIFETIME stops   3706 / 9474    18 of 18   ← this
+    //     day ways,      lifetime stops   3706 / 9474    18 of 18   ← this
     //
-    // A clean 2x2: the station pool decides it and the track is irrelevant.
-    // Loading every line end to end — 32% more way rows — moved nothing.
-    //
-    // ⚠ AND IT IS THE CHEAP ONE. Node's arm boxes both by the lifetime places,
-    // which is 38 559 way rows carrying geometry; this is 3706 of those plus
-    // station POINTS, which carry none. `RAIL_CORRIDOR_LINE_LIMIT` is 12 000 and
-    // sized for the day box — under the lifetime box it truncates with no
-    // `ORDER BY`, and the measured cost of that was a Metropolitan ride decoded
-    // as a short Jubilee ride with no stations at all.
+    // The station pool decides it; the track is irrelevant. This is also the
+    // cheap arm: station points carry no geometry, and a lifetime way box
+    // overruns `RAIL_CORRIDOR_LINE_LIMIT` (sized for the day box), truncating
+    // with no `ORDER BY`, which once decoded a ride with no stations at all.
     let stops_poly = {
         let rows = sqlx::query(
-            // ⚠ `CAST(… AS CHAR)`: `centroid_lat/lon` are DECIMAL, which sqlx
-            // refuses to hand back as f64 — and it fails on REAL ROWS ONLY.
+            // `CAST(… AS CHAR)`: `centroid_lat/lon` are DECIMAL, which sqlx
+            // will not decode as f64.
             "SELECT CAST(centroid_lat AS CHAR) AS la, CAST(centroid_lon AS CHAR) AS lo \
              FROM focus_places WHERE user_id = ?",
         )
@@ -807,10 +739,8 @@ pub(crate) async fn route_graph_rows(
             let lo: String = r.try_get("lo")?;
             p.push((la.parse()?, lo.parse()?));
         }
-        // ⚠ A USER WITH NO FOCUS PLACES FALLS BACK TO THE DAY BOX rather than
-        // to an empty one. `bbox_poly` on nothing is a box of infinities, which
-        // MariaDB would reject or answer strangely; the day box is at least the
-        // stations the ride passed.
+        // A user with no focus places falls back to the day box: `bbox_poly`
+        // on nothing is a box of infinities.
         if p.is_empty() {
             poly.clone()
         } else {
@@ -845,9 +775,8 @@ pub(crate) async fn route_graph_rows(
 
 /// `tags_json` → `[[k, v], …]`.
 ///
-/// ⚠ PAIRS, not an object. `BackendEntry` reads them as two-element arrays, and
-/// the object spelling parses to nothing — which made `nearbyLandmarks` answer
-/// `[]` for every stay while every count read as answered (#1054).
+/// ⚠ Pairs, not an object: `BackendEntry` reads two-element arrays, and the
+/// object spelling parses to nothing, so every stay would answer no venues.
 pub(crate) fn tag_pairs(raw: Option<&str>) -> Vec<serde_json::Value> {
     let Some(v) = raw.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()) else {
         return Vec::new();
@@ -861,7 +790,7 @@ pub(crate) fn tag_pairs(raw: Option<&str>) -> Vec<serde_json::Value> {
 
 /// Margin (m) around a day's fixes when reading its route graph.
 pub(crate) const ROUTE_GRAPH_MARGIN_M: f64 = 1500.0;
-/// The TypeScript's `--days N` default for the warm-cache cron.
+/// Days the warm-cache cron decodes by default.
 pub(crate) const DECODE_DEFAULT_DAYS: i64 = 14;
 
 /// One `verified_cli decodeprof` child on one request, wrapped in BSD
@@ -923,26 +852,23 @@ fn decodeprof(
     Ok((v, cpu))
 }
 
-/// `backend decode-bench [--runs N] [DAY…]` — the HSMM decoder's cost per
-/// frozen day, apart from its model build (#1714).
+/// `backend decode-bench [--runs N] [DAY…]`: the HSMM decoder's cost per
+/// frozen day, apart from its model build.
 ///
-/// ⚠ THIS IS THE INSTRUMENT FOR A CHANGE TO THE TRELLIS. `hsmm_decode_corpus`
-/// proves a decode still exact; its wall — fixture parse, Rust and Lean
-/// together, ~170 s — swings 2× run to run and cannot tell a 10% decoder change
-/// from noise. This runs `verified_cli decodeprof` on each fixture's request,
-/// the request the gate replays, which builds the `PData` once and times
-/// `sDecode` N times on it.
+/// The instrument for a trellis change. `hsmm_decode_corpus` proves a decode
+/// still exact, but its wall (~170 s) swings 2× run to run and cannot see a
+/// 10% decoder change. This runs `verified_cli decodeprof` on each fixture's
+/// request, which builds the `PData` once and times `sDecode` N times.
 ///
 /// Two numbers per day, because the machine is rarely quiet:
-/// * WALL min/median/max of the N decodes — the decoder's cost when nothing
-///   else runs; the spread is the machine's.
-/// * CPU per decode — the child's user+sys with N decodes minus the same child
-///   with none, over N. The build, the parse and the read cancel, and CPU time
-///   barely moves with a neighbour's build where wall doubles (2026-09-25:
-///   load 150 made wall useless and this column is the answer to that).
+/// * wall min/median/max of the N decodes: the cost when nothing else runs;
+///   the spread is the machine's.
+/// * CPU per decode: the child's user+sys with N decodes minus the same child
+///   with none, over N. The build, parse and read cancel, and CPU time barely
+///   moves under a neighbour's build where wall doubles.
 ///
-/// Compare two arms by swapping `VERIFIED_CLI`, and interleave them (A/B/A).
-/// Prints the day, the trellis shape and the times, never a coordinate.
+/// Compare two arms by swapping `VERIFIED_CLI`, interleaved (A/B/A). Prints
+/// the day, the trellis shape and the times, never a coordinate.
 pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
     anyhow::ensure!(runs > 0, "decode-bench needs at least one run");
     let Some(mut names) = decode_fixture::fixture_names()? else {
@@ -995,8 +921,7 @@ pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
             ms[ms.len() - 1],
             cpu.map_or_else(|| "n/a".to_string(), |c| c.to_string())
         );
-        // The build's phases, when the binary reports them (#1774): where the
-        // eleven seconds go, before anyone guesses.
+        // The build's phases, when the binary reports them.
         if let Some(ph) = v
             .get("buildPhasesMs")
             .and_then(serde_json::Value::as_object)
@@ -1023,13 +948,12 @@ pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
 ///
 /// Each turn takes the day a read queued (`decode_freshness`), else the newest
 /// stale day among the stored decodes in `window_days` and today, and decodes
-/// it in a CHILD `decode-day` process: one process over many days retained
-/// memory until it was killed, and a day per
-/// process held flat. After a write, that day's presence row. A day that fails
-/// counts an attempt in the queue, so a day that keeps failing stops being
-/// tried.
+/// it in a child `decode-day` process: one process over many days held memory
+/// until killed, one per day stays flat. After a write, that day's presence
+/// row. A failure counts an attempt in the queue, so a day that keeps failing
+/// stops being tried.
 ///
-/// ⚠ NO `migrate()` here: `backend serve` performs it, in the same pod.
+/// No `migrate()` here: `backend serve` does it, in the same pod.
 pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Result<()> {
     use backend::decode_freshness as fresh;
     use backend::fetch_queue as queue;
