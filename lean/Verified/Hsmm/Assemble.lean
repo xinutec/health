@@ -686,9 +686,6 @@ def transAt (c : ModelContext) (a b t : Nat) : Float :=
 /-- Quantised emission tensor `emit[t][s]`. -/
 def buildEmit (c : ModelContext) : Array (Array (Option Float)) :=
   Assembly.buildCellTensor c.obs.size c.states.size (emitAt c)
-/-- Quantised entry tensor `entry[t][s]`. -/
-def buildEntry (c : ModelContext) : Array (Array (Option Float)) :=
-  Assembly.buildCellTensor c.obs.size c.states.size (entryAt c)
 /-- Quantised initial vector `init[s]`. -/
 def buildInit (c : ModelContext) : Array (Option Float) :=
   Assembly.buildVector c.states.size (initAt c)

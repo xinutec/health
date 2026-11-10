@@ -14,7 +14,6 @@ request the day fold may put questions of its own on the same pipe
 and every Lean decision it makes crosses here (#1709).
 -/
 
-
 /-!
 # `verified_cli` — JSON decode interface
 
@@ -330,7 +329,7 @@ private def parseWays (j : Json) : Except String (Array Verified.Geo.QWay) := do
 private def parseBuildings (j : Json) : Except String (Array (Array Verified.Geo.QPt)) := do
   (← j.getArr?).mapM parseLatLon
 
-/-- `verified_cli match` input: fixes (`[la, lo, ts]`), ways, buildings. -/
+/-- `verified_cli matchprof` input: fixes (`[la, lo, ts]`), ways, buildings. -/
 private def parseMatch (j : Json) :
     Except String (Array Verified.Geo.QPt × Array Verified.Geo.QWay ×
       Array (Array Verified.Geo.QPt)) := do
@@ -338,48 +337,6 @@ private def parseMatch (j : Json) :
   let ways ← parseWays (← j.getObjVal? "ways")
   let buildings ← parseBuildings (← j.getObjVal? "buildings")
   return (fixes, ways, buildings)
-
-private inductive GeoReq where
-  | simplify (pts : Array Verified.Geo.QPt) (tol : Nat)
-  | hold (pts : Array Verified.Geo.QPt) (cap : Nat)
-  | spikes (pts : Array Verified.Geo.QPt)
-  | splice (coarse route : Array Verified.Geo.QPt) (tol drop : Nat)
-  | dedupe (pts : Array Verified.Geo.QPt)
-  | spurs (pts : Array Verified.Geo.QPt) (ret span : Nat)
-  | despike (pts raw : Array Verified.Geo.QPt) (apex excess : Nat)
-  | trim (path fixes : Array Verified.Geo.QPt)
-
-private def parseGeo (j : Json) : Except String GeoReq := do
-  match ← (← j.getObjVal? "op").getStr? with
-  | "simplify" =>
-    return .simplify (← parsePts (← j.getObjVal? "pts"))
-      (← (← j.getObjVal? "tol").getNat?)
-  | "hold" =>
-    return .hold (← parsePts (← j.getObjVal? "pts"))
-      (← (← j.getObjVal? "cap").getNat?)
-  | "spikes" => return .spikes (← parsePts (← j.getObjVal? "pts"))
-  | "splice" =>
-    return .splice (← parsePts (← j.getObjVal? "coarse"))
-      (← parsePts (← j.getObjVal? "route"))
-      (← (← j.getObjVal? "tol").getNat?)
-      (← (← j.getObjVal? "drop").getNat?)
-  | "dedupe" => return .dedupe (← parsePts (← j.getObjVal? "pts"))
-  | "spurs" =>
-    return .spurs (← parsePts (← j.getObjVal? "pts"))
-      (← (← j.getObjVal? "ret").getNat?)
-      (← (← j.getObjVal? "span").getNat?)
-  | "despike" =>
-    return .despike (← parsePts (← j.getObjVal? "pts"))
-      (← parsePts (← j.getObjVal? "raw"))
-      (← (← j.getObjVal? "apex").getNat?)
-      (← (← j.getObjVal? "excess").getNat?)
-  | "trim" =>
-    return .trim (← parsePts (← j.getObjVal? "path"))
-      (← parsePts (← j.getObjVal? "fixes"))
-  | op => throw s!"unknown geo op {op}"
-
-private def ptJson (p : Verified.Geo.QPt) : Json :=
-  Json.arr #[Lean.toJson p.la, Lean.toJson p.lo, Lean.toJson p.ts]
 
 /-- Run one pure JSON→JSON handler in one-shot mode: parse stdin, print the
 result, exit non-zero iff it carries an `error`. -/
@@ -392,65 +349,6 @@ private def runOne (f : Json → Json) (input : String) : IO UInt32 := do
     let out := f j
     IO.println out.compress
     return (if (out.getObjVal? "error").toOption.isSome then 1 else 0)
-
-/-- One display pass over quantised points as a pure result — the Lean side
-of the `compare-geo` harness, and a `serve`-mode handler. -/
-private def geoResult (j : Json) : Json :=
-  match parseGeo j with
-  | .error e => Json.mkObj [("error", Json.str e)]
-  | .ok req =>
-      match req with
-      | .simplify pts tol =>
-        Json.mkObj [("keep", Json.arr
-          ((Verified.Geo.qSimplify (fun i => pts.getD i default) pts.size
-            tol).toArray.map Lean.toJson))]
-      | .hold pts cap =>
-        Json.mkObj [("pts", Json.arr
-          ((Verified.Geo.qHoldSpeed cap (fun i => pts.getD i default)
-            pts.size).toArray.map ptJson))]
-      | .spikes pts =>
-        Json.mkObj [("pts", Json.arr
-          ((Verified.Geo.qRejectSpikes (fun i => pts.getD i default)
-            pts.size).toArray.map ptJson))]
-      | .splice coarse route tol drop =>
-        Json.mkObj [("pts", Json.arr
-          ((Verified.Geo.qSplice (fun i => route.getD i default) route.size
-            tol drop (fun i => coarse.getD i default)
-            coarse.size).toArray.map ptJson))]
-      | .dedupe pts =>
-        Json.mkObj [("pts", Json.arr
-          ((Verified.Geo.qDedupe (fun i => pts.getD i default)
-            pts.size).toArray.map ptJson))]
-      | .spurs pts ret span =>
-        Json.mkObj [("pts", Json.arr
-          ((Verified.Geo.qRemoveSpurs ret span pts.toList).toArray.map ptJson))]
-      | .despike pts raw apex excess =>
-        Json.mkObj [("pts", Json.arr
-          ((Verified.Geo.qDespike apex excess raw.toList
-            (fun i => pts.getD i default) pts.size).toArray.map ptJson))]
-      | .trim path fixes =>
-        Json.mkObj [("pts", Json.arr
-          ((Verified.Geo.qTrim (fun i => fixes.getD i default) fixes.size
-            (fun i => path.getD i default) path.size).toArray.map ptJson))]
-
-private def geoMain (input : String) : IO UInt32 :=
-  runOne geoResult input
-
-/-- The walk map-matcher over quantised input as a pure result — the Lean
-side of the `compare-match` harness, and a `serve`-mode handler. -/
-private def matchResult (j : Json) : Json :=
-  match parseMatch j with
-  | .error e => Json.mkObj [("error", Json.str e)]
-  | .ok (fixes, ways, buildings) =>
-    match Verified.Geo.qMatchWalkSegment fixes ways buildings with
-    | none => Json.mkObj [("none", Json.bool true)]
-    | some r =>
-      Json.mkObj [
-        ("path", Json.arr (r.path.map ptJson)),
-        ("coarse", Json.arr (r.coarsePath.map ptJson))]
-
-private def matchMain (input : String) : IO UInt32 :=
-  runOne matchResult input
 
 /-- `verified_cli matchprof` — the matcher's phases run one at a time with
 wall-clock between them, plus the shape of the graph they produced. Attributes a
@@ -607,16 +505,12 @@ private def railResult (j : Json) : Json :=
 private def railMain (input : String) : IO UInt32 :=
   runOne railResult input
 
-/-! ## Assemble mode (`verified_cli assemble`)
+/-! ## Assembling the model
 
-Build the HSMM model FROM PARSED INPUTS in Lean — the `buildHsmmModel` twin
-(`Verified.Hsmm.Assemble`) — and emit the quantised tensors, so the marshalled
-`QuantProblem` payload is no longer produced TS-side. Input is the post-boundary
-structured day (past the tz / WKT / `toFixed` boundary the shell owns): the
-observation tensor, the parsed route edges, the focus places, the train-generator
-coverage map, continuity, and the C4 flags. Output is the dense quantised
-`emit`/`entry`/`init`/`trans`/`dur` tensors, compared cell-for-cell against TS
-`quantizeModel` by a comparison harness deleted with the TypeScript backend.
+Build the HSMM model FROM PARSED INPUTS in Lean (`Verified.Hsmm.Assemble`).
+Input is the post-boundary structured day (past the tz / WKT / `toFixed`
+boundary the shell owns): the observation tensor, the parsed route edges, the
+focus places, the train-generator coverage map, continuity, and the C4 flags.
 
   { "maxD": n,
     "obs": [{ts, gps:{lat,lon,speedKmh}|null, hr, cadence, hourLocal, dayOfWeekLocal,
@@ -626,9 +520,7 @@ coverage map, continuity, and the C4 flags. Output is the dense quantised
     "coverage": [[ts, [lines]]],                         // ts → generator-vouched lines
     "continuity": {priorPlaceId, priorPlaceCoord:[lat,lon]|null, hoursSince, priorPosterior}|null,
     "flags": {chainContext, segEmission, …} }
-
-Output: { T, S, maxD, emit[t][s], entry[t][s], init[s], trans[t][a][b], dur[s][d-1][e] }
-(all quantised ints, `null` = -∞). -/
+ -/
 
 private def parseObsRow (j : Json) : Except String Verified.Hsmm.Observation.ObsRow := do
   let gps : Option Verified.Hsmm.Observation.GpsAgg ←
@@ -1088,27 +980,6 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let (pairPref, pairBoundary) := Verified.Hsmm.Assemble.pairTables ctx
   let stayMoveCorr := Verified.Hsmm.Assemble.stayMoveTable ctx maxD
   return ({ ctx with lineProxBest, pairPref, pairBoundary, stayMoveCorr }, maxD)
-
-/-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
-private def qCell : Option Float → Json
-  | none => Json.null
-  | some v => Lean.toJson (Float.toInt64 v).toInt
-
-/-- `[[a,b,t], …]` probe triples for the sparse `trans`/`dur` checks (the dense
-    tensors are `S·maxD·T` — too large to ship for a full 1440-minute day). -/
-private def triplesOf (j : Json) (k : String) : Array (Nat × Nat × Nat) :=
-  match j.getObjVal? k >>= (·.getArr?) with
-  | .ok arr => arr.filterMap fun e =>
-      match e.getArr? with
-      | .ok a =>
-        match a[0]?, a[1]?, a[2]? with
-        | some x, some y, some z =>
-          match x.getNat?, y.getNat?, z.getNat? with
-          | .ok xn, .ok yn, .ok zn => some (xn, yn, zn)
-          | _, _, _ => none
-        | _, _, _ => none
-      | .error _ => none
-  | .error _ => #[]
 
 /-! ## Coverage mode (`verified_cli coverage`)
 
@@ -2055,22 +1926,6 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat)
     Except String (PData × Option Verified.Hsmm.Journey.Tables) := do
   buildPDataFrom c maxD g? rels? (← buildPre c maxD g? rels?)
 
-
-/-- Assemble the model from parsed inputs, build `PData`, and DECODE it with
-    `sDecode` — the full raw-inputs → path serve path, no marshalled payload. -/
-private def assembleDecodeResult (j : Json) : Json :=
-  match parseAssemble j with
-  | .error e => Json.mkObj [("error", Json.str e)]
-  | .ok (c, maxD) =>
-    match buildPData c maxD with
-    | .error e => Json.mkObj [("error", Json.str e)]
-    | .ok (pd, _) =>
-      match Verified.Hsmm.sDecode pd with
-      | none => Json.mkObj [("degenerate", Json.bool true)]
-      | some r => Json.mkObj [
-          ("path", Json.arr (r.path.map fun s => Lean.toJson s)),
-          ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
-
 /-- `verified_cli decodetrace` — the per-minute line evidence over a window,
 for reading WHY a ride took the line it took (#238). An `assemblesegments`
 request plus `"window": [tsFrom, tsTo]`; for every minute inside it: the
@@ -2222,12 +2077,9 @@ private def decodeProfMain (input : String) : IO UInt32 := do
 
 /-! ## `assemblesegments` — assemble, decode, and return SEGMENTS
 
-⚠ `assembledecode` above returns a path of STATE INDICES and nothing else, which
-is enough to measure a decode and not enough to persist one: the caller has no
-way to map an index to `{mode, placeId, lineName}` because `parseAssemble` builds
-`c.states` internally and never emits it.
-
-The fix is NOT to emit the state table. That table is an internal representation,
+A decode is a path of STATE INDICES, which the caller cannot map to
+`{mode, placeId, lineName}`: `parseAssemble` builds `c.states` internally and
+never emits it. The answer is NOT to emit the state table. That table is an internal representation,
 and shipping it would invite every consumer to reimplement the run-grouping — the
 `groupStates` logic — against it. So the grouping happens HERE, once, and what
 crosses the wire is what `decoded_days` stores.
@@ -3017,23 +2869,6 @@ private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × O
           (Json.mkObj [("frontier", Lean.toJson f), ("resumedAt", Lean.toJson t0),
             ("by", Json.str why)])
 
-/-- Assemble the model from parsed inputs and emit the quantised tensors: dense
-    `emit`/`entry`/`init`, and `trans`/`dur` at the requested probe indices. -/
-private def assembleResult (j : Json) : Json :=
-  match parseAssemble j with
-  | .error e => Json.mkObj [("error", Json.str e)]
-  | .ok (c, maxD) =>
-    let q := Verified.Hsmm.Quantize.quantize
-    Json.mkObj [
-      ("T", Lean.toJson c.obs.size), ("S", Lean.toJson c.states.size), ("maxD", Lean.toJson maxD),
-      ("emit", Json.arr ((Verified.Hsmm.Assemble.buildEmit c).map (fun r => Json.arr (r.map qCell)))),
-      ("entry", Json.arr ((Verified.Hsmm.Assemble.buildEntry c).map (fun r => Json.arr (r.map qCell)))),
-      ("init", Json.arr ((Verified.Hsmm.Assemble.buildInit c).map qCell)),
-      ("transP", Json.arr ((triplesOf j "transProbes").map
-        (fun (a, b, t) => qCell (q (Verified.Hsmm.Assemble.transAt c a b t))))),
-      ("durP", Json.arr ((triplesOf j "durProbes").map
-        (fun (s, d, e) => qCell (q (Verified.Hsmm.Assemble.durAt c s d e)))))]
-
 /-! ## Float bit transport
 
 Every other mode quantises before it emits (`qCell`, `ptJson`) because its
@@ -3052,7 +2887,6 @@ decimal STRING rather than a JSON number: it reaches 2^64, well past the 2^53
 JS integers are exact to, and a bare number would simply be re-rounded by
 `JSON.parse` one layer down. Round-tripping is then exact by construction,
 including `1e-7` and `-0.0`. The TS twin is `src/lean/float-bits.ts`. -/
-
 
 /-! ## Kalman mode (`verified_cli kalman`)
 
@@ -3421,7 +3255,6 @@ private def parseLabelFix (j : Json) : Except String Verified.Geo.BiometricLabel
   | some ts, some la, some lo => return ⟨← ts.getInt?, ← jBits la, ← jBits lo⟩
   | _, _, _ => throw "label fix must be [ts, latBits, lonBits]"
 
-
 private def parseLabelSeg (j : Json) : Except String Verified.Geo.BiometricLabels.LabelSeg := do
   let kinds ← match j.getObjVal? "kinds" with
     | .error _ => pure #[]
@@ -3558,7 +3391,6 @@ an oversight: its input is a vote tally over OSM venue NAMES, produced by
 would mean this referee carrying another module's oracle, and a fabricated
 tally would check nothing. It stays guard-pinned; `lean-coverage.mts` counts
 that honestly rather than crediting it to this gate. -/
-
 
 /-! ## `stationchain` — the C4.3 chained-triple resolver (#672)
 
@@ -3760,7 +3592,6 @@ private def batteryResult (j : Json) : Json :=
   match parsed with
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
-
 
 /-! ## `watchbattery` — the watch trace for one day (#982)
 
@@ -4231,11 +4062,7 @@ subprocess protocol is a consequence of `verified_cli` being a separate
 process, not part of what the handlers are. -/
 def dispatch (j : Json) : Json :=
   match (j.getObjVal? "mode" >>= (·.getStr?)) with
-  | .ok "geo" => geoResult j
-  | .ok "match" => matchResult j
   | .ok "rail" => railResult j
-  | .ok "assemble" => assembleResult j
-  | .ok "assembledecode" => assembleDecodeResult j
   | .ok "assemblesegments" => assembleSegmentsResult j
   | .ok "proximityqueries" => proximityQueriesResult j
   | .ok "proximitytable" => proximityTableResult j
@@ -4330,12 +4157,9 @@ def cliMain (args : List String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
   let input ← (← IO.getStdin).readToEnd
   if args.contains "rail" then return ← railMain input
-  if args.contains "geo" then return ← geoMain input
   if args.contains "matchprof" then return ← matchProfMain input
   if args.contains "decodeprof" then return ← decodeProfMain input
   if args.contains "decodetrace" then return ← runOne decodeTraceResult input
-  if args.contains "match" then return ← matchMain input
-  if args.contains "assembledecode" then return ← runOne assembleDecodeResult input
   if args.contains "coverage" then return ← runOne coverageResult input
   if args.contains "kalman" then return ← runOne kalmanResult input
   if args.contains "rankvenues" then return ← runOne rankVenuesResult input
@@ -4347,7 +4171,6 @@ def cliMain (args : List String) : IO UInt32 := do
   if args.contains "day" then return ← runOne Day.dayResult input
   if args.contains "focus" then return ← runOne Focus.focusResult input
   if args.contains "stationchain" then return ← runOne StationChain.stationChainResult input
-  if args.contains "assemble" then return ← runOne assembleResult input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with
   | .error e =>

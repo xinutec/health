@@ -81,7 +81,6 @@ def qPointInRing (p : QPt) (ring : Array QPt) : Bool := Id.run do
     xj := xi
   return inside
 
-
 /-- Newton's descent for the floor square root, as the twin's BigInt loop
 (`while (y < x) { x = y; y = (x + n/x)/2 }`). The iterate strictly decreases,
 and the fixed point of the loop is `⌊√n⌋` from any start `x₀ ≥ √n`. -/
@@ -296,7 +295,6 @@ on EVERY evaluation. `cosQ` paid two per bridge pair (sampled 2026-10-06);
 @[noinline] def COS_D : UInt64 := 10485760000000
 @[noinline] def COS_K_N : Nat := 19190098069
 @[noinline] def COS_D_N : Nat := 10485760000000
-
 
 /-- The one wide multiply inside `cosQ`: `|la| · 19190098069` reaches ≈ 2⁶³
 (for a real latitude `|la| ≤ 9·10⁸`), which tips `Nat` off its unboxed range
@@ -679,18 +677,6 @@ def qSpeedOk (cap : Nat) (a b : QPt) : Bool :=
 /-- `holdImplausibleSpeed` over the pinned metric. -/
 def qHoldSpeed (cap : Nat) (fixes : Nat → QPt) (n : Nat) : List QPt :=
   holdSpeed (qSpeedOk cap) fixes n
-
-/-- The TS spike test: `through > 3·direct ∧ through − direct > 500 m`
-(5·10⁸ µm; `Nat` truncation on the difference agrees with the TS since
-the first conjunct forces `through > direct`). -/
-def qSpike (prev cur next : QPt) : Bool :=
-  let direct := qDistA prev next
-  let through := qDistA prev cur + qDistA cur next
-  through > 3 * direct && through - direct > 500000000
-
-/-- `rejectSpikes` over the pinned metric. -/
-def qRejectSpikes (pts : Nat → QPt) (n : Nat) : List QPt :=
-  rejectSpikes qSpike pts n
 
 /-- `dedupeConsecutive` over the pinned metric (strict `< 0.5 m`). -/
 def qDedupe (pts : Nat → QPt) (n : Nat) : List QPt :=
