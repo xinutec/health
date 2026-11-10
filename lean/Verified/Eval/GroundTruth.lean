@@ -1,39 +1,28 @@
 import Verified.Civil
 /-!
-# Ground-truth narrative parser (port of `src/eval/ground-truth.ts`, #1290)
+# Ground-truth narrative parser
 
 `tests/golden/ground-truth/YYYY-MM-DD.md` carries a free-text narrative and then
-an `## Audit of …` table. That table is the only NON-SELF-REFERENTIAL truth
-signal in the corpus: every other check compares the pipeline against itself or
-against previously-blessed pipeline output. Each row says what ACTUALLY
-happened, and the status says how the pipeline relates to it.
+an `## Audit of …` table. That table is the corpus's only truth signal that is
+not self-referential: every other check compares the pipeline against itself or
+its blessed output. Each row says what actually happened, and the status says
+how the pipeline relates to it. It feeds `routeCorr`, the walk referee's by-name
+metric, and `score-decoder`, whose oracle is this narrative.
 
-Two consumers need it back, and both are blocked without it:
+## Civil time, not instants
 
-* `routeCorr` — the walk referee's only by-NAME metric, dark on 45 floor
-  entries (#1048, `rust/backend/tests/walk_gate.rs`);
-* `score-decoder`, the second Group B gate, whose oracle IS this narrative.
+`Row` carries the anchored civil fields (`startDay`, `startHh`, `startMm`, and
+the same for the end) and the shell resolves them with
+`rust/backend/src/timezone.rs`'s `wall_clock_to_unix`: a wall clock in a named
+zone needs the tz database, which is data, not logic. Which day and clock time a
+row anchors to is decided here and pinned by the `#guard`s.
 
-## ⚠ THIS PORT STOPS AT CIVIL TIME, ON PURPOSE
+## No regex
 
-The TypeScript called `fitbitTsToUnix(day + " " + hh:mm:ss, tz)` and returned
-unix seconds. Resolving a wall clock in a named zone needs the tz DATABASE,
-which is data and IO — not logic. So `Row` carries the anchored civil fields
-(`startDay`, `startHh`, `startMm`, and the same for the end) and the shell
-resolves them: `rust/backend/src/timezone.rs` already has `wall_clock_to_unix`.
-
-That is an INTERFACE divergence, not a logic one. Every decision the TypeScript
-made about WHICH day and WHICH clock time a row anchors to is reproduced here,
-and the `#guard`s below pin exactly the `(day, hh, mm)` pairs it computed.
-
-## ⚠ NO REGEX. Every pattern below is hand-written, and that is the risk.
-
-The original is nine regular expressions. Lean has none, so each is rewritten as
-explicit string walking, and a rewrite is where a port silently drifts — a
-non-greedy `(.+?)` and a greedy `(.+)` differ only on the inputs that have two
-candidate splits. The witnesses at the foot are drawn from the REAL corpus (105
-distinct parse shapes over 395 rows in 32 files) rather than invented, because
-invented cells exercise the shapes I already thought of.
+Each pattern is explicit string walking, documented with the regex it
+implements; greedy and non-greedy splits differ only on inputs with two
+candidate splits, which is where a hand-written matcher drifts. The witnesses
+cover every parse shape the real corpus produces.
 -/
 
 namespace Verified.Eval.GroundTruth
@@ -47,10 +36,9 @@ inductive Status where
 
 /-- How a verdict is KNOWN — the provenance ladder, strongest first.
 
-⚠ `inferred` is read back from the pipeline's own output and is NOT truth; the
-2026-04-29 "hair appointment" was this, wearing a `correct` badge. `unspecified`
-gets the same treatment so an un-annotated legacy row cannot silently gate a
-regression check. -/
+⚠ `inferred` is read back from the pipeline's own output and is not truth: a
+"hair appointment" once wore a `correct` badge that way. `unspecified` is
+treated the same, so an unannotated legacy row cannot gate a regression check. -/
 inductive Provenance where
   | corroborated | user | derived | inferred | unspecified
   deriving BEq, Repr, Inhabited
@@ -84,7 +72,7 @@ structure Truth where
 
 /-- One audit row.
 
-⚠ The times are CIVIL and already day-anchored — see the module header. -/
+The times are civil and already day-anchored; see the module header. -/
 structure Row where
   windowText : String
   startDay : String
@@ -123,9 +111,8 @@ def stripStars (s : String) : String :=
 
 /-- `text.replace(/\{[^}]*\}/g, "")` — drop brace runs.
 
-⚠ `[^}]*` cannot span a `}`, so an unclosed `{` swallows the REST of the
-string only if no `}` follows; with one following, the run ends there. Walked
-explicitly so both cases behave as the regex did. -/
+⚠ `[^}]*` cannot span a `}`, so an unclosed `{` swallows the rest of the string
+only if no `}` follows. -/
 def stripBraceRuns (s : String) : String := Id.run do
   let mut out : String := ""
   let mut inBrace := false
@@ -157,8 +144,8 @@ def findSub (hay needle : String) : Option Nat := Id.run do
 
 /-- Split off a trailing ` (qualifier)` — the `(?:\s+\(([^)]+)\))?$` suffix.
 
-Returns the body and the qualifier. ⚠ `[^)]+` forbids a `)` inside, and the
-`\s+` requires whitespace before the `(`, so `"Miné Mané"` keeps its name and
+Returns the body and the qualifier. `[^)]+` forbids a `)` inside, and `\s+`
+requires whitespace before the `(`, so `"Miné Mané"` keeps its name and
 `"ORAC (waste_disposal)"` splits. -/
 def splitTrailingParen (s : String) : String × Option String := Id.run do
   let cs := s.toList
@@ -193,8 +180,8 @@ private def modeWords : Array (String × Mode) := #[
 
 /-- `/^(verb)\b\s*(.*)$/` — the leading mode word and what follows it.
 
-⚠ `\b` matters: it is why "buses" does not read as `bus`. The character after
-the word must be a non-word character or end of string. -/
+`\b` is why "buses" does not read as `bus`: the next character must be a
+non-word character or the end. -/
 def splitVerb (t : String) : Option (Mode × String) := Id.run do
   for (w, m) in modeWords do
     if t.startsWith w then
@@ -205,10 +192,9 @@ def splitVerb (t : String) : Option (Mode × String) := Id.run do
 
 /-- `/^(.+?)\s+→\s+([^·]+?)(?:\s*·\s*(.+))?$/` — a transit leg.
 
-⚠ THE ARROW SPLIT IS THE FIRST ONE and the middle dot split is also the first:
-`(.+?)` is non-greedy and `[^·]` cannot cross a `·`. A station name containing
-either character would therefore split early — none in the corpus does, and a
-greedy rewrite would silently disagree on the first that did. -/
+⚠ The arrow split and the middle-dot split are both the first: `(.+?)` is
+non-greedy and `[^·]` cannot cross a `·`. A station name containing either
+would split early; none in the corpus does. -/
 def splitTransit (rest : String) : Option (String × String × Option String) := Id.run do
   let some arrowAt := findSub rest " → " | return none
   let from_ := (rest.take arrowAt).toString.trimAscii.toString
@@ -235,8 +221,8 @@ def parseTruthCell (text : String) : Option Truth := Id.run do
     | some (f, to, line) =>
       return some { mode, trainFrom := some f, trainTo := some to, lineName := line }
     | none =>
-      -- ⚠ ASYMMETRIC ON PURPOSE. "train on X" names the LINE, mirroring the
-      -- pipeline's bare-line rendering; a bus's "on X" names the ROAD and falls
+      -- Asymmetric on purpose: "train on X" names the line, as the pipeline's
+      -- bare-line rendering does; a bus's "on X" names the road and falls
       -- through to the generic way shape below.
       if mode == .train && rest.startsWith "on " then
         return some { mode, lineName := some ((rest.drop 3).toString.trimAscii.toString) }
@@ -281,10 +267,9 @@ def parseProvenance (text : String) : Provenance := Id.run do
 
 /-- Free-text status to one of four canonical values.
 
-⚠ The provenance tag is stripped BEFORE matching, because the doc allows it in
-the status cell and `parseProvenance` reads it independently — leaving it in
-would make `correct {user}` fall through to `unclear`. Anything qualified
-("likely correct") is `unclear`: it cannot be scored against. -/
+The provenance tag is stripped before matching, since `parseProvenance` reads
+it separately and `correct {user}` would otherwise fall through to `unclear`.
+Anything qualified ("likely correct") is `unclear`: it cannot be scored. -/
 def normaliseStatus (text : String) : Status :=
   let t := (stripBraceRuns (stripStars text)).trimAscii.toString.toLower
   if t == "wrong" then .wrong
@@ -296,21 +281,10 @@ def normaliseStatus (text : String) : Status :=
 
 /-- `line.split("|")` with the leading and trailing empties of `| … |` dropped.
 
-The original drops the trailing empty ONLY when the line really ends with `|`,
-its comment reasoning that otherwise the last cell is REAL — free-text notes
-that overflowed past a closing pipe.
-
-⚠ THAT SECOND TEST IS PROVABLY REDUNDANT, and it is kept anyway because this is
-a port. `splitOn "|"` yields a trailing empty part EXACTLY when the string ends
-with `|`; if it ends with `|` plus whitespace the last part is that whitespace,
-which trims to empty and `trimRight` still ends with `|`; and if the last
-non-space character is anything else, the last part contains it and is not
-empty. So the two conditions agree on every input.
-
-Established by ablation: removing the `endsWith` test changes no witness,
-which would otherwise read as an untested branch. It is neither — it is
-unreachable disagreement. Do not "simplify" it away (it is what the original
-did) and do not add a witness for it (there cannot be one). -/
+The trailing empty is dropped only when the line ends with `|`, since
+otherwise the last cell is real: free-text notes that overflowed past a closing
+pipe. (`splitOn "|"` yields a trailing empty part exactly then, so the test is
+redundant; no witness can tell the difference.) -/
 def splitTableRow (line : String) : Array String := Id.run do
   let mut parts := (line.splitOn "|").toArray
   if (parts[0]?.map (·.trimAscii.toString.isEmpty)).getD false then
@@ -329,8 +303,8 @@ private def two (cs : List Char) (i : Nat) : Option Nat :=
 
 /-- `/^(\d{2}):(\d{2})\s*[–-]\s*(\d{2}):(\d{2})$/`.
 
-⚠ BOTH DASHES. The corpus uses an EN DASH; a plain hyphen also matches, and a
-port that accepted only one would drop rows without failing. -/
+⚠ Both dashes: the corpus uses an en dash, and a plain hyphen also matches;
+accepting only one would drop rows without failing. -/
 def parseWindow (t : String) : Option (Nat × Nat × Nat × Nat) := Id.run do
   let cs := t.toList
   let some sh := two cs 0 | return none
@@ -370,15 +344,14 @@ private def isSeparatorRow (cells : Array String) : Bool :=
 
 /-- Parse one narrative into structured, day-anchored rows.
 
-⚠ THE DAY CURSOR IS THE SUBTLE PART. Rows are walked in table order; when a
-row's start time DECREASES relative to the previous row, the cursor advances a
-day. That is how a table encodes tonight's sleep at the bottom.
+⚠ The day cursor is the subtle part. Rows are walked in table order; when a
+row's start time decreases from the previous row's, the cursor advances a day.
+That is how a table puts tonight's sleep at the bottom.
 
-The first row anchors to the PREVIOUS day only when it is an overnight stay that
-wraps past midnight — after noon AND ending at or before its own start. An
-after-noon activity that does not wrap ("19:27 – 20:40 dinner") anchors to
-`date`. Without the wrap test a table whose only row is an evening activity was
-anchored a full day early and could never match a state. -/
+The first row anchors to the previous day only when it is an overnight stay
+that wraps past midnight: after noon and ending at or before its own start. An
+evening activity that does not wrap ("19:27 – 20:40 dinner") anchors to `date`,
+or a table holding only that row would sit a day early and match nothing. -/
 def parseGroundTruth (markdown : String) (date : String) (tz : String) : Day := Id.run do
   let tz := (declaredTz markdown).getD tz
   let mut raw : Array (String × Nat × Nat × Nat × Nat × String × String × Option String) := #[]
@@ -440,16 +413,13 @@ def parseGroundTruth (markdown : String) (date : String) (tz : String) : Day := 
 
 /-! ## Witnesses
 
-⚠ **EVERY CELL BELOW IS SYNTHETIC, AND THAT IS NOT LAZINESS.**
-`tests/golden/ground-truth/` is GITIGNORED (`tests/golden/*`) — the narratives
-name real places, clinics and hotels, and these repos are public (#860). So the
-shapes are reproduced with invented names, and the real corpus is checked by a
-local-only harness that announces a skip.
+⚠ Every cell below is synthetic: `tests/golden/ground-truth/` is gitignored,
+since the narratives name real places, clinics and hotels and these repos are
+public. The shapes are reproduced with invented names, and the real corpus is
+checked by a local-only harness that announces a skip.
 
-The 18 categories below are not invented either. They are every structural shape
-the real corpus produces, counted over its 395 rows by running the ORIGINAL
-TypeScript (recovered at `06346bd^`) and grouping by which fields came back
-non-null. The counts are what each shape is worth:
+The categories are every structural shape the real corpus's rows produce,
+grouped by which fields come back non-null, with their counts:
 
     23 walking:way      22 stationary:place     20 train:fromTo+line
     11 stationary:place+qual   10 train:fromTo   3 sleeping:place+qual
@@ -566,7 +536,7 @@ private def row (st : Status) (pv : Provenance) : Row :=
 /-! ### The table walk
 
 Synthetic narratives, for the same reason as the cells above: the real ones are
-gitignored (#860). Each exercises one decision of the day cursor. -/
+gitignored. Each exercises one decision of the day cursor. -/
 
 private def doc (rows : List String) : String :=
   String.intercalate "\n" (["# A day", "", "Some narrative prose.", "",

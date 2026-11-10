@@ -1,54 +1,28 @@
-//! The schema, applied at startup (#982).
+//! The schema, applied at startup.
 //!
-//! ⚠ THE ARRAY INDEX IS THE VERSION NUMBER. `schema_migrations` records which
-//! indices have run, so INSERTING a statement anywhere but the end renumbers
-//! every migration after it: already-applied ones look unapplied and re-run,
-//! and the new one is recorded under a version that already exists. APPEND
-//! ONLY, forever.
+//! ⚠ The array index is the version number. `schema_migrations` records which
+//! indices have run, so inserting a statement anywhere but the end renumbers
+//! every later migration: applied ones look unapplied and re-run, and the new
+//! one is recorded under a version that already exists, never applied, while
+//! the log says "schema is up to date". Append only, forever. The repeats and
+//! placeholders below are what breaking this rule has cost.
 //!
-//! ⚠ An inserted statement is silently never applied and the log still says
-//! "schema is up to date" — nothing fails and nothing is logged. See the repeat
-//! at index 77 for a case this rule already cost.
-//!
-//! ⚠ Transcribed from `schema.ts` MECHANICALLY — its template literals
-//! extracted in order, with a check that nothing but commas sat between them.
-//! A hand copy of 67 statements is a transcription error waiting to happen, and
-//! the failure would be a column that quietly exists in one implementation and
-//! not the other.
-//!
-//! ⚠ The extraction had to strip `//` comments FIRST. Several of them contain
-//! backticks (`ALTER TABLE …`), and a naive scan for backtick pairs split
-//! across comment text and produced 101 "statements" instead of 67. The gap
-//! check is what caught it; without one the generated file would have been
-//! confidently wrong.
-//!
-//! ⚠ MariaDB DDL is NOT transactional, so a half-applied statement stays
-//! half-applied. The advisory lock is what stops two pods racing during a
-//! rolling deploy and each applying half of one.
+//! ⚠ MariaDB DDL is not transactional, so a half-applied statement stays
+//! half-applied; the advisory lock stops two pods racing during a rolling
+//! deploy.
 
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;
 
 /// Apply anything not yet recorded in `schema_migrations`.
 pub async fn migrate(pool: &MySqlPool) -> Result<()> {
-    // ⚠ An advisory lock, because MariaDB DDL is non-transactional and a
-    // rolling deploy can put two pods here at once. Today there is one replica
-    // and sync is a separate cron, so this is insurance rather than a fix — but
-    // it is cheap and the failure it prevents is a half-applied schema.
-    // ⚠ ONE PINNED CONNECTION for the whole lock lifetime. `GET_LOCK` and
-    // `RELEASE_LOCK` are PER-CONNECTION in MariaDB, and running them as two
-    // pool queries can take the lock on connection A and release it on
-    // connection B — where the release is a silent no-op returning NULL, and A
-    // holds `health_migrate` for as long as it stays in the pool. That is
-    // FOREVER for a server process.
+    // ⚠ An advisory lock: MariaDB DDL is non-transactional and a rolling deploy
+    // can put two pods here at once.
     //
-    // Measured in production 2026-08-23: the Rust backend served fine, and the
-    // node pod behind it could not start — "could not acquire the migration
-    // lock within 30s" — because this process was still holding it. The
-    // rollback deadlocked (node would not start until Rust exited, Rust would
-    // not be terminated until node was ready) and needed manual intervention.
-    //
-    // `schema.ts` gets this right with `withConnection`; this did not.
+    // ⚠ One pinned connection for the lock's lifetime. `GET_LOCK` and
+    // `RELEASE_LOCK` are per-connection, so as two pool queries the release can
+    // land on another connection as a silent no-op, and a server process holds
+    // `health_migrate` forever; the next pod then cannot start.
     let mut conn = pool
         .acquire()
         .await
@@ -64,12 +38,9 @@ pub async fn migrate(pool: &MySqlPool) -> Result<()> {
 
     let result = apply(pool).await;
 
-    // ⚠ Released even when a migration FAILED. Holding it would block every
-    // later pod from trying, turning one bad statement into a stuck deployment.
-    //
-    // ⚠ And a FAILED RELEASE IS LOUD. Swallowing it (`.unwrap_or(None)`) is how
-    // the defect above hides: the release runs on the wrong connection, returns
-    // NULL, and is discarded. A lock this process still holds is not a detail.
+    // ⚠ Released even when a migration failed, or one bad statement becomes a
+    // stuck deployment. A failed release is loud: swallowing it is how a lock
+    // held on the wrong connection hides.
     let released: Option<i64> = sqlx::query_scalar("SELECT RELEASE_LOCK('health_migrate')")
         .fetch_one(&mut *conn)
         .await
@@ -85,13 +56,11 @@ pub async fn migrate(pool: &MySqlPool) -> Result<()> {
 }
 
 async fn apply(pool: &MySqlPool) -> Result<()> {
-    // ⚠ A fn-local literal array, NOT a module const. `DL-SQLX-SCHEMA-TRUTH`
-    // resolves an inline or fn-local array and replays it as the schema —
-    // which is what lets it type-check every other query in this crate against
-    // the real columns. It found two genuine unsigned-decode bugs the moment
-    // this file existed. A const path is opaque to it.
+    // ⚠ A fn-local literal array, not a module const: `DL-SQLX-SCHEMA-TRUTH`
+    // replays an inline or fn-local array as the schema and type-checks every
+    // other query in this crate against it. A const path is opaque to it.
     //
-    // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
+    // Oldest first; the index is the version. Append only.
     let migrations: [&str; 100] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
@@ -514,42 +483,24 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
   )"#,
         r#"ALTER TABLE bus_route_cache ADD COLUMN IF NOT EXISTS tile_key VARCHAR(32) NULL"#,
         r#"ALTER TABLE bus_route_cache ADD INDEX IF NOT EXISTS idx_bus_route_tile (tile_key)"#,
-        // ⚠ RAIL GETS THE SAME TILE OWNERSHIP BUS HAS HAD, 2026-08-25. Without
-        // it the rail mirror DELETEs the whole table and rewrites what it
-        // found, so a partial run drops every relation living only in a tile
-        // that failed — measured that day at 10 of 18 tiles, 441 relations
-        // found against 268 cached. The count going UP is what makes it
-        // invisible: the summary reads like a healthy refresh that found MORE
-        // data (#1134, #1153).
+        // Rail gets the tile ownership bus has: without it the rail mirror
+        // rewrites the whole table, and a partial run drops every relation in
+        // a tile that failed while the summary reads like a healthy refresh.
         r#"ALTER TABLE rail_stops_cache ADD COLUMN IF NOT EXISTS tile_key VARCHAR(32) NULL"#,
         r#"ALTER TABLE rail_stops_cache ADD INDEX IF NOT EXISTS idx_rail_stops_tile (tile_key)"#,
-        // ⚠ `is_main_sleep` had no business in an IDENTITY key. Google writes a
-        // session while it is still in progress, with no `metadata/mainSleep`
-        // yet, which the parser reads as `false`; when the night is scored and
-        // the flag becomes true, the revision no longer matches the row it is
-        // revising, so it can only ever INSERT a contradictory twin. Nothing in
-        // the system could repair the first row. One person cannot begin two
-        // sleeps at the same instant, so the start instant IS the identity.
+        // ⚠ `is_main_sleep` does not belong in an identity key. Google writes a
+        // session in progress with no `metadata/mainSleep` (read as `false`),
+        // and once scored the revision no longer matches its row, so it can
+        // only insert a contradictory twin. One person cannot begin two sleeps
+        // at the same instant, so the start instant is the identity. The
+        // collapse below is a guard; production had no duplicate starts.
         //
-        // Verified before narrowing (2026-09-08, prod): 1266 sleep rows, ZERO
-        // start instants carrying more than one row — so the collapse below is a
-        // guard for other databases, not a change to anything here.
-        //
-        // ⚠ VERSIONS 69-72 ARE BURNED. The four sleep statements below were first
-        // written NEXT TO the index they replace, in the middle of the array,
-        // against the APPEND ONLY rule at the top of this file. The startup run of
-        // 2026-09-08T21:03Z is what that costs: it logged `ran=4 already=69
-        // total=73`, which reads like success, while all four were renumbered into
-        // already-applied versions and SKIPPED — and versions 69-72 instead
-        // re-ran the four `IF NOT EXISTS` statements that had shifted into them.
-        // Those are idempotent and nothing moved (osm_coverage 1116,
-        // bus_route_cache 1000, rail_stops_cache 466, counted afterwards).
-        //
-        // The ledger is not rewritten to undo this. Deleting rows 69-72 by hand
-        // would have worked once, but hand-editing `schema_migrations` is the
-        // habit this file exists to prevent. These four placeholders consume the
-        // burned numbers instead, so the real statements after them get fresh
-        // versions. Append below them, never above.
+        // ⚠ Versions 69-72 are burned. These four sleep statements were first
+        // inserted mid-array, so a database recorded 69-72 without applying
+        // them (re-running four idempotent `IF NOT EXISTS` statements instead).
+        // The placeholders consume those numbers so the real statements get
+        // fresh versions; `schema_migrations` is not edited by hand. Append
+        // below them, never above.
         r#"DO 0"#,
         r#"DO 0"#,
         r#"DO 0"#,
@@ -573,35 +524,25 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
    WHERE s.log_id <> dup.keep_id"#,
         r#"ALTER TABLE sleep ADD UNIQUE INDEX IF NOT EXISTS uniq_sleep_user_start (user_id, start_time)"#,
         r#"ALTER TABLE sleep DROP INDEX IF EXISTS uniq_sleep_user_start_main"#,
-        // ⚠ A DELIBERATE REPEAT OF INDEX 76 — do not tidy it away. Databases
+        // ⚠ A deliberate repeat of index 76; do not tidy it away. Databases
         // that ran an earlier build recorded version 77 without applying what
-        // now sits there, so the statement below must live at 78 or it would be
-        // skipped exactly where it matters. `IF EXISTS` makes the repeat safe
-        // on a fresh database. See health #1405 and dev-lint #1613.
+        // now sits there, so this must live at 78. `IF EXISTS` makes it safe on
+        // a fresh database.
         r#"ALTER TABLE sleep DROP INDEX IF EXISTS uniq_sleep_user_start_main"#,
-        // The mined prior AS IT STOOD at an anchor date, so a past day can be
-        // named from what was known then (#1405).
+        // The mined prior as it stood at an anchor date, so a past day is named
+        // from what was known then.
         //
-        // ⚠ A SEPARATE TABLE RATHER THAN A COLUMN ON `venue_type_priors`, and
-        // deliberately so twice over. `CREATE TABLE IF NOT EXISTS` adds nothing
-        // to a table that already exists, so a new column there needs an ALTER
-        // that every fresh-built test would pass without ever exercising; and
-        // what the change really wants is a different PRIMARY KEY, which is
-        // surgery on a live table. This is additive — the old row and its read
-        // path are untouched, so a pod predating this keeps working.
+        // A separate table, not a column on `venue_type_priors`: it wants a
+        // different primary key, and an additive table leaves the old row and
+        // its read path untouched for a pod predating it.
         //
-        // ⚠ `as_of` IS A DATE, NOT A TIMESTAMP. It names the day the mining
-        // window ENDED, which is the grain a snapshot is taken at and the grain
-        // a day-level read asks for. A timestamp would invite two snapshots for
-        // one day differing by minutes, with no rule for which one that day
-        // means.
+        // `as_of` is a DATE: the day the mining window ended, the grain a
+        // day-level read asks for. A timestamp would allow two snapshots a day
+        // with no rule for which one the day means.
         //
-        // ⚠ WHY THE HISTORY IS WORTH KEEPING: mining RE-CLUSTERS from scratch,
-        // so re-running it changes what PAST days were called even with no new
-        // evidence. Measured over 42 days it moved three labels, broke one that
-        // was right, and improved none. Freezing each run is what makes a past
-        // label stable — the prior that named a day correctly was right by luck
-        // of that run's clustering, and nothing preserved it.
+        // Mining re-clusters from scratch, so re-running it changes what past
+        // days were called even with no new evidence; freezing each run keeps
+        // a past label stable.
         r#"CREATE TABLE IF NOT EXISTS venue_type_prior_snapshots (
     user_id     VARCHAR(64) NOT NULL,
     as_of       DATE NOT NULL,
@@ -610,23 +551,19 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, as_of)
   )"#,
-        // ⚠ APPEND ONLY — see the header. This is the last statement; the next
-        // one goes BELOW it, never above.
+        // ⚠ Append only; see the header.
         //
-        // What the serving path could not answer, so a job can fetch it later
-        // (#1076, #1658). The fold declines rather than guessing, and a decline
-        // used to leave no trace at all: the same coordinate went unanswered on
-        // every fold, forever, because nothing recorded that anyone had asked.
+        // What the serving path could not answer, so a job can fetch it later.
+        // The fold declines rather than guesses, and without a record the same
+        // coordinate went unanswered on every fold.
         //
-        // ⚠ `kind` IS `osm_cache.query_type` for the geocode kinds
-        // (`nominatim_z16`, `nominatim_z18`), deliberately — the drain writes
-        // straight back into the cache the fold reads, and two vocabularies for
-        // one thing is how a queue fills with entries nothing consumes.
+        // `kind` is `osm_cache.query_type` for the geocode kinds
+        // (`nominatim_z16`, `nominatim_z18`): the drain writes straight back
+        // into the cache the fold reads, in one vocabulary.
         //
-        // ⚠ `attempts` and `last_error` exist so a key that CANNOT be fetched
-        // stops being retried forever while staying visible. Deleting a failed
-        // key would make it reappear on the next fold and be retried anyway —
-        // an invisible infinite loop against a rate-limited public service.
+        // `attempts` and `last_error` let a key that cannot be fetched stop
+        // being retried while staying visible; deleting it would bring it back
+        // on the next fold, an invisible loop against a rate-limited service.
         r#"CREATE TABLE IF NOT EXISTS osm_fetch_queue (
     kind        VARCHAR(32) NOT NULL,
     fetch_key   VARCHAR(160) NOT NULL,
@@ -638,12 +575,9 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     PRIMARY KEY (kind, fetch_key),
     INDEX idx_ofq_due (kind, attempts, last_seen)
   )"#,
-        // ⚠ The OwnTracks proxy's decision, one row per POST (#1730). It used
-        // to live only in the pod's stdout, and a rollout deletes that: the
-        // three rollouts of 2026-09-23 erased the lines that would have shown
-        // why the phone was demoted that morning. No coordinates here — those
-        // are `motion_log`'s; this is what the phone REPORTED and what it was
-        // TOLD.
+        // The OwnTracks proxy's decision, one row per POST; pod stdout does not
+        // survive a rollout. No coordinates here (those are `motion_log`'s):
+        // this is what the phone reported and what it was told.
         r#"CREATE TABLE IF NOT EXISTS owntracks_decisions (
     id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
     user_id      VARCHAR(64) NOT NULL,
@@ -659,22 +593,22 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     PRIMARY KEY (id),
     INDEX idx_od_user_ts (user_id, ts)
   )"#,
-        // The battery reading's INSTANT, when the source gives one: Google's
+        // The battery reading's instant, when the source gives one: Google's
         // `pairedDevices` does (UTC), Fitbit's devices.json gave only the
-        // watch's wall clock. The reader prefers it (#260, 2026-10-01).
+        // watch's wall clock. The reader prefers it.
         r#"ALTER TABLE device_battery_log ADD COLUMN IF NOT EXISTS ts_utc DATETIME NULL"#,
-        // A named `building=hotel` is a venue (`Landmarks.VENUE_BUILDINGS`,
-        // 2026-10-02): the rows fetched before that rule move to the landmark
-        // bucket, as a refetch would put them.
+        // A named `building=hotel` is a venue (`Landmarks.VENUE_BUILDINGS`):
+        // rows fetched before that rule move to the landmark bucket, as a
+        // refetch would put them.
         r#"UPDATE osm_lines SET feature_type = 'landmark'
    WHERE feature_type = 'building' AND subtype = 'hotel' AND name IS NOT NULL"#,
         r#"UPDATE osm_points SET feature_type = 'landmark'
    WHERE feature_type = 'building' AND subtype = 'hotel' AND name IS NOT NULL"#,
         // SpO2 readings carry their instant, as steps and heart rate do: a
-        // reading served under two offsets is one reading (#1886, 2026-10-02).
+        // reading served under two offsets is one reading.
         r#"ALTER TABLE spo2_intraday ADD COLUMN IF NOT EXISTS ts_utc DATETIME NULL"#,
-        // Recorded workouts from Google (#1886, 2026-10-02): typed summary plus
-        // the whole point in `raw`, keyed by Google's point id.
+        // Recorded workouts from Google: typed summary plus the whole point in
+        // `raw`, keyed by Google's point id.
         r#"CREATE TABLE IF NOT EXISTS exercise_sessions (
     user_id       VARCHAR(64) NOT NULL,
     point_id      VARCHAR(32) NOT NULL,
@@ -697,8 +631,8 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     PRIMARY KEY (user_id, point_id),
     INDEX idx_exercise_start (user_id, start_utc)
   )"#,
-        // The raw archive of every Google type with no table of its own (#1886,
-        // 2026-10-02): time in columns, the rest of the point in `payload`.
+        // The raw archive of every Google type with no table of its own: time
+        // in columns, the rest of the point in `payload`.
         r#"CREATE TABLE IF NOT EXISTS google_points (
     user_id        VARCHAR(64) NOT NULL,
     data_type      VARCHAR(48) NOT NULL,
@@ -715,18 +649,14 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // activity-level): the key gains their number (`archive::number_points`).
         r#"ALTER TABLE google_points ADD COLUMN IF NOT EXISTS seq SMALLINT NOT NULL DEFAULT 0,
    DROP PRIMARY KEY, ADD PRIMARY KEY (user_id, data_type, start_utc, source, seq)"#,
-        // ⚠ A REPEAT OF 87, ON PURPOSE. On 2026-10-03 the exercise_routes CREATE
-        // below was INSERTED at 87 instead of appended; prod skipped it (87 was
-        // recorded) and ran this ALTER again as 88, recording 88. Prod's record
-        // therefore says 88 ran, and the only statement whose effect prod has at
-        // 88 is this one. A fresh database runs it twice, harmlessly. The rule
-        // this slot exists to remember: migrations are versioned by ARRAY INDEX —
-        // append, never insert.
+        // ⚠ A repeat of 87, on purpose. The exercise_routes CREATE below was
+        // once inserted at 87, so production skipped it and recorded this
+        // ALTER as 88. A fresh database runs it twice, harmlessly.
         r#"ALTER TABLE google_points ADD COLUMN IF NOT EXISTS seq SMALLINT NOT NULL DEFAULT 0,
    DROP PRIMARY KEY, ADD PRIMARY KEY (user_id, data_type, start_utc, source, seq)"#,
         // The GPS track of a recorded workout, as Google's TCX export, one row
-        // per session asked (#1886, 2026-10-03). A refusal keeps its status
-        // with a NULL document, so a session is asked once.
+        // per session asked. A refusal keeps its status with a NULL document,
+        // so a session is asked once.
         r#"CREATE TABLE IF NOT EXISTS exercise_routes (
     user_id     VARCHAR(64) NOT NULL,
     point_id    VARCHAR(32) NOT NULL,
@@ -739,15 +669,14 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     PRIMARY KEY (user_id, point_id)
   )"#,
         // A landmark box remembers the venue-tag vocabulary it was fetched
-        // under (`osm_mirror::venue_vocab`, #1891 2026-10-03): a box fetched
-        // before a tag joined the list has none of that tag's features, and
-        // counting it as coverage would keep them out of the mirror for 180
-        // days. Rows keep their dates; a read under another vocabulary simply
-        // does not see them.
+        // under (`osm_mirror::venue_vocab`): a box fetched before a tag joined
+        // has none of that tag's features, and counting it as coverage would
+        // keep them out for 180 days. A read under another vocabulary does not
+        // see it.
         r#"ALTER TABLE osm_coverage ADD COLUMN IF NOT EXISTS vocab VARCHAR(16) NULL"#,
-        // A walk's drawn result, keyed by a hash of every input the fold's walk
-        // drawing reads and by the code that drew it (`walk_memo`, #1921). Rows
-        // of another code version are cleared when a server starts.
+        // A walk's drawn result, keyed by a hash of every input the drawing
+        // reads and by the code that drew it (`walk_memo`). Rows of another
+        // code version are cleared when a server starts.
         r#"CREATE TABLE IF NOT EXISTS walk_memo (
     code_version CHAR(32) NOT NULL,
     memo_key CHAR(32) NOT NULL,
@@ -760,9 +689,8 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         r#"ALTER TABLE share_tokens
      ADD COLUMN IF NOT EXISTS share_location BOOLEAN NOT NULL DEFAULT TRUE"#,
         // `stationsOnLine` reads every distinct railway line name once per fold
-        // (`MirrorSource::rail_line_names`). With `feature_type` and `name`
-        // indexed separately that was a 130 ms row scan on the pod every fold
-        // (#1921, 2026-10-06); together they serve it from the index alone.
+        // (`MirrorSource::rail_line_names`); a composite index serves it from
+        // the index alone instead of a row scan.
         r#"ALTER TABLE osm_lines ADD INDEX IF NOT EXISTS idx_osm_lines_type_name (feature_type, name)"#,
         // When each tile of a route mirror last answered (`cli::mirror`): a
         // refresh fetches only the tiles that are due. Its own table because a
@@ -808,12 +736,9 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
 
     let mut ran = 0usize;
     let mut version: i64 = -1;
-    // ⚠ A plain `for` over the const literal array, so `DL-SQLX-SCHEMA-TRUTH`
-    // can resolve every statement and replay the schema. That replay is what
-    // lets it type-check every OTHER query in this crate against the real
-    // columns — it found two genuine unsigned-decode bugs the moment this file
-    // existed. `.iter().enumerate()` defeated it, so the index is counted here
-    // instead.
+    // ⚠ A plain `for` over the literal array, so `DL-SQLX-SCHEMA-TRUTH` can
+    // resolve every statement; `.iter().enumerate()` defeats it, so the index
+    // is counted here.
     for stmt in migrations {
         version += 1;
         if applied.contains(&version) {

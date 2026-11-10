@@ -31,11 +31,9 @@ use cli::session::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // ⚠ BEFORE ANYTHING ELSE, AND FATAL IF IT FAILS. The rate-limit policy and
-    // the backfill cursor arithmetic live in Lean, so a process that could not
-    // start the runtime cannot decide anything — and a sync that ran without
-    // being able to decide would spend a budget nobody checked and walk a cursor
-    // nobody bounded. Refusing to start is the safe failure; limping is not.
+    // ⚠ First, and fatal if it fails: the rate-limit policy and the backfill
+    // cursor arithmetic live in Lean, and a sync that cannot decide would spend
+    // an unchecked budget and walk an unbounded cursor.
     lean::init().context("starting the Lean runtime")?;
 
     use backend::argv::Command as C;
@@ -53,9 +51,8 @@ async fn main() -> Result<()> {
         // oracle is the frozen capture in the same file as its `inputs`.
         C::Head { fixture } => head(&fixture),
         C::Day { fixture } => day(&fixture),
-        // ⚠ THE CLI MUST BE ABLE TO ASK FOR THE RAW ARM. `?walkMatch=0` is the
-        // map's A/B baseline, and unreachable from here it went unnoticed that
-        // the parameter reached nothing at all (#1619).
+        // The CLI can ask for the raw arm: `?walkMatch=0` is the map's A/B
+        // baseline.
         C::Velocity {
             day: d,
             no_walk_match,
@@ -66,8 +63,8 @@ async fn main() -> Result<()> {
         // The CronJob passes `90`; the default of 30 is part of the contract for
         // anyone running it by hand.
         C::RefreshPresenceLog { lookback_days } => {
-            // ⚠ `DbConfig::from_env`, NOT `Config::from_env`: this touches only
-            // the database, so it asks for nothing else.
+            // `DbConfig::from_env`, not `Config::from_env`: this touches only
+            // the database.
             let dbcfg =
                 backend::config::DbConfig::from_env().context("reading database configuration")?;
             let pool = db::connect(&dbcfg.url())
@@ -101,8 +98,8 @@ async fn main() -> Result<()> {
                         .and_utc()
                 }),
             };
-            // ⚠ `DbConfig::from_env`, NOT `Config::from_env`: the Nextcloud
-            // credentials come from the database, so this asks for DB_* alone.
+            // `DbConfig::from_env`, not `Config::from_env`: the Nextcloud
+            // credentials come from the database.
             let dbcfg =
                 backend::config::DbConfig::from_env().context("reading database configuration")?;
             let pool = db::connect(&dbcfg.url())
@@ -123,12 +120,12 @@ async fn main() -> Result<()> {
         }
         // The nightly HSMM decoder.
         //
-        // ⚠ THE DATE IS POSITIONAL: a numeric second argument is a day COUNT and
-        // anything else is a date.
+        // The date is positional: a numeric second argument is a day count,
+        // anything else a date.
         //
-        // ⚠ `--dry-run` DECODES AND PRINTS, writing nothing. `decoded_days` is
-        // keyed `(user_id, date)` and the write is an OVERWRITE, so a run made to
-        // check the port would destroy the row it is being checked against.
+        // ⚠ `--dry-run` decodes and prints, writing nothing; the write
+        // overwrites `(user_id, date)`, so a checking run would destroy the
+        // row it checks against.
         C::DecodeDay {
             user,
             when,
@@ -143,19 +140,19 @@ async fn main() -> Result<()> {
             };
             decode_day(user.as_deref(), &dates, days, dry_run).await
         }
-        // The deferred half of the geocode port (#1076): the serving path
-        // RECORDS what it could not answer, this FETCHES it. Never inline.
+        // The serving path records what it could not geocode; this fetches it.
+        // Never inline.
         C::FetchGeocodes { dry_run, limit } => fetch_geocodes(dry_run, limit).await,
-        // The Overpass half of the same queue (#1658). ⚠ The default limit is
-        // LOWER than the geocode drain's: ~5 MB requests against a two-slot
-        // public endpoint, and one box usually clears many keys.
+        // The Overpass half of the same queue. Its default limit is lower than
+        // the geocode drain's: ~5 MB requests against a two-slot public
+        // endpoint, and one box usually clears many keys.
         C::FetchOsm {
             dry_run,
             limit,
             kind,
         } => fetch_osm(dry_run, limit, kind.as_deref()).await,
-        // Both halves, continuously, beside the serving pod (#1889): what a
-        // fold declined, and the ground around fixes as they arrive.
+        // Both halves, continuously, beside the serving pod: what a fold
+        // declined, and the ground around fixes as they arrive.
         C::WatchFetchQueue { interval_s } => watch_fetch_queue(interval_s).await,
         // The decodes, continuously, beside the serving pod: what a read
         // found stale, then the newest stale day held; one process per day.
@@ -163,8 +160,8 @@ async fn main() -> Result<()> {
             interval_s,
             window_days,
         } => watch_decode_queue(interval_s, window_days).await,
-        // #1071's instrument: several days in ONE process, so the arena's
-        // high-water is visible; `velocity` restarts the process each time.
+        // Several days in one process, so the arena's high-water is visible;
+        // `velocity` restarts the process each time.
         C::VelocityMany { user, dates } => velocity_many(&user, &dates).await,
         C::RefreshRailStops { dry_run } => refresh_rail_stops(dry_run).await,
         C::RefreshBusRoutes { dry_run } => refresh_bus_routes(dry_run).await,
@@ -177,11 +174,11 @@ async fn main() -> Result<()> {
             pool.close().await;
             r
         }
-        // #1730: the decision line survives the pod.
+        // The decision line, surviving the pod.
         C::OwntracksLog { user, limit } => owntracks_log(&user, limit).await,
         C::GoogleProbe => backend::google::probe::run().await,
         C::Coverage => coverage().await,
-        // #1733: the case file's heart-rate pages read these through prod-db.sh.
+        // The case file's heart-rate pages read these through prod-db.sh.
         C::RestHr {
             json,
             user,
@@ -201,7 +198,7 @@ async fn main() -> Result<()> {
         C::VenuePriorSnapshots { user, out_dir } => venue_prior_snapshots(&user, &out_dir).await,
         C::Freshness => freshness().await,
         C::MirrorCheck { fixture } => mirror_check(&fixture).await,
-        // #1660: the golden-day writer.
+        // The golden-day writer.
         C::CaptureDay {
             user,
             date,
@@ -210,7 +207,7 @@ async fn main() -> Result<()> {
         } => capture_day(&user, &date, display_tz.as_deref(), &out).await,
         C::RecaptureWalkable { user, fixture } => recapture_walkable(&user, &fixture).await,
         C::RecaptureAsks { user, fixture } => recapture_asks(&user, &fixture).await,
-        // #1714: the decoder's cost, apart from its model build.
+        // The decoder's cost, apart from its model build.
         C::DecodeBench { runs, days } => decode_bench(runs, &days),
         C::DayLive(d) => day_live(&d.user, &d.date, d.display_tz.as_deref(), false).await,
         C::DayMirror(d) => day_live(&d.user, &d.date, d.display_tz.as_deref(), true).await,
@@ -219,23 +216,12 @@ async fn main() -> Result<()> {
 
 /// Run one Google Health ingestion pass: weight, then every stream.
 ///
-/// # It does NOT migrate the schema
+/// ⚠ It does not migrate the schema: two processes racing to apply migrations
+/// is worse than a missing one, and the server migrates on every start. So
+/// this must not be the first thing run against a fresh database.
 ///
-/// Named here rather than left to be discovered from a diff, because it is a
-/// silent absence: the run would look healthy and simply not do it. The
-/// TypeScript this was once measured against called `migrate()` on startup, so
-/// whichever of the sync cron and the server started first brought the schema
-/// up. This does not, because
-/// two processes racing to apply migrations is a worse failure than a missing
-/// one, and `health-auth` already migrates on every start. ⚠ That means this
-/// binary must not be the FIRST thing to run against a fresh database.
-///
-/// # The zone lookup is built once
-///
-/// `tzf-rs` decompresses its polygon set on construction, which is the
-/// expensive part; the finder is then queried per fix. Building it per user, or
-/// per row, is how a lookup that costs microseconds becomes one that costs
-/// hundreds of milliseconds.
+/// The zone lookup is built once: `tzf-rs` decompresses its polygon set on
+/// construction, the expensive part, and is then queried per fix.
 async fn sync() -> Result<()> {
     cli::init_tracing();
 
@@ -251,26 +237,16 @@ async fn sync() -> Result<()> {
 
 /// Serve the HTTP surface.
 ///
-/// ⚠ THIS IS PRODUCTION'S SERVER. It answers `health.xinutec.org`, and there is
-/// no TypeScript server left beside it — `server.ts` went with the TS arm
-/// (#975).
-///
-/// It binds `AUTH_PORT`, which is what the manifest sets; see the note in the
-/// body. The 8081 default is a local-run convenience and is not what production
-/// uses.
+/// Production's server, answering `health.xinutec.org`. It binds `AUTH_PORT`,
+/// which the manifest sets; the 8081 default is for local runs.
 async fn serve() -> Result<()> {
     cli::init_tracing();
 
     let cfg = Config::from_env()?;
     let pool = db::connect(&cfg.db.url()).await?;
-    // ⚠ `AUTH_PORT`, which is what the manifest sets. `PORT` is NOT set in
-    // production, so reading it would bind 8081 while the Service and the
-    // readiness probe expect 3000 — a pod that looks healthy from inside while
-    // the rollout stalls (#982).
-    //
-    // One name, not two with a fallback: a second accepted spelling is how the
-    // two arms drift apart again, and the parity harness must run the same
-    // environment production does.
+    // ⚠ `AUTH_PORT`, not `PORT`: production does not set `PORT`, and binding
+    // 8081 would leave a pod healthy from inside while the Service and the
+    // readiness probe expect 3000. One name, no fallback spelling.
     let port: u16 = std::env::var("AUTH_PORT")
         .ok()
         .filter(|s| !s.is_empty())
@@ -287,21 +263,20 @@ async fn serve() -> Result<()> {
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
 
-    // ⚠ BEFORE serving. A pod that answers requests against a schema it has not
-    // finished applying returns errors that look like data problems.
+    // Before serving: errors against a half-applied schema look like data
+    // problems.
     backend::schema::migrate(&pool)
         .await
         .context("applying the schema")?;
 
-    // Remembered walks (#1921), for this process only. A failure costs speed,
-    // not answers: every walk is then drawn, as before.
+    // Remembered walks, for this process only. A failure costs speed, not
+    // answers: every walk is then drawn.
     if let Err(e) = backend::walk_memo::init(&pool).await {
         tracing::warn!(error = %format!("{e:#}"), "walk memo off");
     }
 
-    // ⚠ A sweep, because the per-request path only deletes a session when its
-    // owner comes back with the cookie. Dormant accounts would otherwise
-    // accumulate rows forever, and the table would grow with people who left.
+    // A sweep, because the per-request path deletes a session only when its
+    // owner returns with the cookie; dormant accounts would keep rows forever.
     let sweep_pool = pool.clone();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
@@ -323,7 +298,7 @@ async fn serve() -> Result<()> {
     backend::rail_route::start(pool.clone());
 
     let state = AppState::new(pool, cfg, http);
-    // Warm the walk memo a minute after start, once the pod has settled (#1921).
+    // Warm the walk memo a minute after start, once the pod has settled.
     let warm = state.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -355,14 +330,12 @@ async fn serve() -> Result<()> {
 /// Prove the config and the pool against the real database, and read nothing
 /// anybody's privacy depends on.
 ///
-/// This is the same shape of evidence `mirror.rs` was landed with: the port was
-/// only believable once a query had run against the live server, because
-/// nothing in a unit test executes SQL and "it compiles" says nothing about
-/// bind order, credentials, or whether the schema is what the code thinks.
+/// Nothing in a unit test executes SQL, and compiling says nothing about bind
+/// order, credentials, or whether the schema is what the code thinks.
 ///
-/// ⚠ It prints COUNTS and never values. `sync_state` holds cursors keyed by
-/// user; the row count and the distinct-key count prove the table is reachable
-/// and the decode path works without putting anyone's data on a terminal.
+/// ⚠ It prints counts, never values: the row and distinct-key counts prove
+/// `sync_state` is reachable and decodes, without putting anyone's data on a
+/// terminal.
 async fn check() -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;
     println!(
@@ -419,14 +392,10 @@ async fn check() -> Result<()> {
     }
     println!("sync_state: absent-key read decodes as None");
 
-    // The day-input loaders (#982). Counts, not contents: this runs against
-    // PRODUCTION and the rows are real places and real movement.
-    //
-    // ⚠ The point is that the SQL EXECUTES — column names, bind order, and the
-    // decode of every DECIMAL and every nullable. None of that is exercised by
-    // compiling, and none of it is exercised by a unit test, because no unit
-    // test in this crate runs SQL. It is the same bar `sync_state` above is
-    // held to, and for the same reason.
+    // The day-input loaders. Counts, not contents: this runs against production
+    // and the rows are real places and movement. The point is that the SQL
+    // executes: column names, bind order, the decode of every DECIMAL and
+    // nullable.
     // dev-lint: allow-pii the one account the service holds
     let user = std::env::var("CHECK_USER").unwrap_or_else(|_| "pippijn".into());
     let places = classification_inputs::known_places(&pool, &user).await?;
@@ -437,11 +406,9 @@ async fn check() -> Result<()> {
     let priors =
         classification_inputs::venue_priors(&pool, &user, chrono::Utc::now().timestamp()).await?;
     let len = |v: &serde_json::Value| v.as_array().map_or(0, Vec::len);
-    // ⚠ VALUES, NOT JUST COUNTS. `focus_places.centroid_lat` is DECIMAL, which
-    // the driver hands back as a STRING — the TypeScript wraps every one in
-    // `Number(...)` for exactly that reason. A row count proves the query ran;
-    // it does not prove one coordinate decoded, and 117 rows of 0.0 print
-    // identically to 117 real ones. This check had that hole when it was written.
+    // ⚠ Values, not just counts. `focus_places.centroid_lat` is DECIMAL, which
+    // the driver hands back as a string; rows of 0.0 print the same count as
+    // real ones.
     let zero_centroids = places.as_array().map_or(0, |a| {
         a.iter()
             .filter(|p| p["centroidLat"].as_f64() == Some(0.0))
@@ -458,9 +425,8 @@ async fn check() -> Result<()> {
             "present"
         },
     );
-    // ⚠ A read that returns NOTHING is not a read that worked. Every one of
-    // these is populated in production, so an empty answer means a query that
-    // ran against the wrong column or the wrong user and said so quietly.
+    // ⚠ An empty read is not a working read: each of these is populated in
+    // production, so empty means the wrong column or user.
     if len(&places) == 0 || len(&modes) == 0 || len(&rail) == 0 {
         anyhow::bail!(
             "a day-input loader came back empty for {user} — production has rows in all three,              so this is a query that ran and found nothing, not an empty database"
@@ -478,15 +444,12 @@ async fn check() -> Result<()> {
         len(&places) - zero_centroids
     );
 
-    // The watch-battery trace (#982). ⚠ Here for the DECODES, which fail only on
-    // real rows: `battery_level` is `TINYINT UNSIGNED` and `last_sync_time` is a
+    // The watch-battery trace, here for its decodes, which fail only on real
+    // rows: `battery_level` is `TINYINT UNSIGNED` and `last_sync_time` a
     // `DATETIME` that sqlx will not hand back as text.
     //
-    // ⚠ The assertion is that levels are NOT ALL ZERO, and that is the whole
-    // point of putting it here. The first version of the loader defaulted a
-    // failed decode to 0, which draws a watch reporting EMPTY at every sync — a
-    // well-formed chart, indistinguishable from a real flat battery, and a row
-    // count would have printed OK for it.
+    // ⚠ Asserts levels are not all zero: a failed decode defaulted to 0 draws a
+    // watch empty at every sync, a well-formed chart a row count passes.
     let home_tz = sync_state::get(&pool, &user, "home_tz")
         .await?
         .unwrap_or_else(|| "Europe/Amsterdam".into());
@@ -510,10 +473,9 @@ async fn check() -> Result<()> {
                 series.len(),
                 levels.len()
             );
-            // ⚠ An EMPTY series is not a failure: the newest row's own civil day
-            // in the home zone may hold only that one reading, and the collapse
-            // can leave it. What cannot happen on real data is every level
-            // reading zero.
+            // An empty series is not a failure: the newest row's civil day may
+            // hold only that one reading. Every level reading zero cannot
+            // happen on real data.
             if !series.is_empty() && levels == std::collections::BTreeSet::from([0]) {
                 anyhow::bail!(
                     "every watch-battery level decoded to 0 — an integer that did not decode \
@@ -523,12 +485,10 @@ async fn check() -> Result<()> {
         }
     }
 
-    // ⚠ THE SAME HAZARD ONE COLUMN OVER, and it was live: `hour_profile` is a
-    // comma-separated per-mille list, the first port read it as JSON, and all
-    // 117 profiles decoded to "absent" while this check printed OK — because
-    // the check looked at centroids and nothing else. A place legitimately has
-    // no profile before it is mined, so SOME nulls are right and ALL nulls is
-    // the shape a format error takes here.
+    // ⚠ The same hazard one column over: `hour_profile` is a comma-separated
+    // per-mille list, and read as JSON every profile decodes as absent. A
+    // place has no profile before it is mined, so some nulls are right; all
+    // nulls is a format error.
     let profiled = places.as_array().map_or(0, |a| {
         a.iter()
             .filter(|p| p["hourProfile"].as_array().is_some_and(|h| h.len() == 24))
@@ -543,15 +503,10 @@ async fn check() -> Result<()> {
     }
     println!("inputs[{user}]: hour profiles with 24 buckets: {profiled}");
 
-    // The second tranche (#982). These need a DATE, and picking one by hand
-    // would be a check that rots: the corpus moves and a hardcoded day
-    // eventually has no decode, at which point the assertions below turn into
-    // "production is empty" and get deleted by whoever is unblocking a deploy.
-    //
-    // So the date is CHOSEN FROM THE DATA — the newest day this user has a
-    // current-version decode for. That makes `hsmm_decode` non-null BY
-    // CONSTRUCTION, which is the point: a loader that returned null for every
-    // day would otherwise be indistinguishable from a day that has no decode.
+    // These need a date, chosen from the data: the newest day with a
+    // current-version decode. A hardcoded day would rot into "production is
+    // empty"; this one makes `hsmm_decode` non-null by construction, so a
+    // loader returning null for every day shows.
     let check_date: Option<String> = sqlx::query_scalar(
         "SELECT DATE_FORMAT(MAX(date), '%Y-%m-%d') FROM decoded_days \
          WHERE user_id = ? AND classifier_version = ?",
@@ -574,9 +529,8 @@ async fn check() -> Result<()> {
     let buses = classification_inputs::bus_route_cache(&pool).await?;
     let rail_stops = classification_inputs::rail_stops_cache(&pool).await?;
     let decode = classification_inputs::hsmm_decode(&pool, &user, &check_date).await?;
-    // ⚠ This probe prints what the loader produces, so it must resolve the zone
-    // the same way. Passing `None` would print UTC-read windows and report a
-    // healthy day while production reads them an hour later (#1633).
+    // ⚠ This resolves the zone as the loader does: `None` would print UTC-read
+    // windows and look healthy while production reads them an hour later.
     let home_tz = crate::sync_state::get(&pool, &user, "home_tz").await?;
     let sleeps =
         classification_inputs::sleep_windows(&pool, &user, &check_date, home_tz.as_deref()).await?;
@@ -602,9 +556,8 @@ async fn check() -> Result<()> {
         );
     }
 
-    // ⚠ VALUES AGAIN, and the same hazard as the centroids: a BIGINT that fails
-    // to decode reads as 0, and 995 routes numbered zero print the same count
-    // as 995 real ones.
+    // ⚠ Values again: a BIGINT that fails to decode reads as 0, and routes
+    // numbered zero print the same count as real ones.
     let zero_ids = |v: &serde_json::Value| {
         v.as_array().map_or(0, |a| {
             a.iter()
@@ -642,9 +595,8 @@ async fn check() -> Result<()> {
         len(&sleeps)
     );
 
-    // The last of the SQL loaders (#982). `biometrics` is the one that COMPUTES
-    // — six queries, three of them a wall-clock fallback — so an empty stream
-    // is the shape most of its failure modes take.
+    // The last SQL loader. `biometrics` computes (six queries, three of them a
+    // wall-clock fallback), so an empty stream is how most failures look.
     let home_tz = sync_state::get(&pool, &user, "home_tz")
         .await?
         .unwrap_or_else(|| "Europe/Amsterdam".into());
@@ -667,19 +619,16 @@ async fn check() -> Result<()> {
         len(&bio["steps"]),
         if bracket.is_null() { "none" } else { "present" },
     );
-    // ⚠ HR is the one that cannot legitimately be empty on a decoded day: the
-    // date was chosen because it HAS an HSMM decode, and the decoder reads
-    // these streams. Sleep and steps can be genuinely empty (a watch off the
-    // wrist, a day sat still), so they are reported and not enforced.
+    // ⚠ HR cannot be empty on a decoded day: the decoder reads these streams.
+    // Sleep and steps can be (a watch off the wrist, a still day), so they are
+    // reported, not enforced.
     if len(&bio["hr"]) == 0 {
         anyhow::bail!(
             "no heart rate for {user} on {check_date}, a day that HAS a decode — the window \
              bounds or the ts_utc filter, not a missing watch"
         );
     }
-    // ⚠ A bpm of 0 is what a DECIMAL that did not decode looks like, and
-    // `ROUND(AVG(bpm))` returns a DECIMAL. This is the third column in this
-    // file to hit that trap.
+    // ⚠ A bpm of 0 is an undecoded DECIMAL, and `ROUND(AVG(bpm))` returns one.
     let dead_bpm = bio["hr"]
         .as_array()
         .map_or(0, |a| a.iter().filter(|p| p["bpm"] == 0).count());
@@ -687,15 +636,12 @@ async fn check() -> Result<()> {
         anyhow::bail!("{dead_bpm} heart-rate minute(s) decoded to 0 bpm — nobody survives that");
     }
 
-    // PhoneTrack — the only input that is not SQL, and the only one this check
-    // cannot reach without the network. Run last so a Nextcloud outage does not
-    // hide a database problem behind it.
+    // PhoneTrack: the only input that is not SQL and needs the network. Last,
+    // so a Nextcloud outage cannot hide a database problem.
     //
-    // ⚠ ZERO FIXES IS NOT PROOF OF A WORKING FETCH. A revoked app password, a
-    // wrong base URL and a phone left at home all produce an empty array, and
-    // the pipeline reads an empty day as "stationary at the bracketed place".
-    // So this asserts fixes exist on a day that HAS a decode — the decoder runs
-    // on GPS, so a decoded day had fixes when the TypeScript looked.
+    // ⚠ Zero fixes is not a working fetch: a revoked app password, a wrong base
+    // URL and a phone left at home all return an empty array. So this asserts
+    // fixes on a day with a decode, which the decoder built from GPS.
     let base_url = cfg
         .nextcloud_base_url
         .clone()
@@ -724,9 +670,8 @@ async fn check() -> Result<()> {
              decoder runs on GPS, so the TypeScript saw fixes here and this arm did not"
         );
     }
-    // ⚠ A partial walk is a FAILED check here, not a warning. Unlike the loader
-    // — which prefers a partial day to none — this exists to say the path works,
-    // and a path that half works is the case it is meant to catch.
+    // ⚠ A partial walk fails the check: unlike the loader, which prefers a
+    // partial day to none, this exists to say the path works.
     if fetched.failed_devices > 0 {
         anyhow::bail!(
             "{} PhoneTrack device(s) failed — these fixes are a subset, and a gap in them is \

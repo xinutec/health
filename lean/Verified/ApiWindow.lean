@@ -1,20 +1,20 @@
 import Verified.Civil
 /-!
-# How far back an API read may see (port of `src/routes/api.ts`)
+# How far back an API read may see
 
 Two rules in front of every multi-day read. One is a convenience and one is a
 security boundary, and they are here together because the second is three lines.
 
-## `days` is VALIDATED, not clamped
+## `days` is validated, not clamped
 
-`z.coerce.number().int().min(1).max(365).default(30)`. Zod's `.min`/`.max`
-REJECT — they do not narrow — so `days=400` is an error, not a year. That
-distinction is the whole reason this is written down: a clamp answers a bad
-request with a plausible window, and the caller never learns it asked for
-something impossible.
+An integer in `[1, 365]`, default 30. Out of range is rejected, not narrowed,
+so `days=400` is an error, not a year: a clamp would answer a bad request with
+a plausible window, and the caller would never learn it asked for the
+impossible.
 
-⚠ Absent is the only input that becomes the default. `""` is NOT absent: JS
-coerces it to `0`, which fails the minimum. A host that maps an empty query
+⚠ Absent is the only input that becomes the default. `""` is not absent: it
+reads as `0` and fails the minimum. A host mapping an empty parameter to "no
+parameter" turns a rejection into a 30-day read.
 parameter to "no parameter" turns a rejection into a 30-day read.
 
 ## The share window CAPS the read, whatever `days` says
@@ -26,8 +26,8 @@ A recipient asking for 365 days gets their window and nothing more.
 history, and the response looks entirely normal** — same shape, same columns,
 just more of them. There is no error to notice.
 
-Pure and total. UNPROVEN; every `#guard` is what `src/routes/api.ts` and its zod
-schema produced under Node — see `lean/experiments/apiwindow-refs.mts`.
+Pure and total. UNPROVEN; the `#guard`s pin the original implementation's
+answers.
 -/
 namespace Verified.ApiWindow
 
@@ -55,10 +55,8 @@ def validateDays (v : Option Float) : Option Int :=
 
 /-- `today - days`, as a civil date. `none` when `today` does not parse.
 
-⚠ Counting in DAYS, through the civil calendar — the TypeScript uses
-`Date.setDate`, which rolls months and years and handles a leap day. The guards
-below pin exactly those cases, because they are the ones a hand-rolled
-subtraction gets wrong. -/
+Counted in days through the civil calendar, so it rolls months and years and
+handles a leap day; the guards pin exactly those cases. -/
 def sinceDate (today : String) (days : Int) : Option String :=
   match Verified.Civil.parseDate today with
   | none => none

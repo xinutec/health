@@ -1,6 +1,6 @@
 import Verified.Civil
 /-!
-# The raw recovery picture (port of `src/stats.ts` and `src/routes/internal.ts`)
+# The raw recovery picture
 
 `/internal/recovery` answers another service — coach — with three daily streams
 and, for each, the freshest value plus the baseline it should be judged against.
