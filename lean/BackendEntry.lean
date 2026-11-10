@@ -265,6 +265,13 @@ def dispatch (j : Json) : Json :=
       | some (f, to) =>
         Json.mkObj [("value", Json.mkObj [("from", Json.str f), ("to", Json.str to)])]
     | _, _ => err "shareableDateRange: today, daysBack required"
+  | some "renewedExpiry" =>
+    match int? j "expiresAtMs", int? j "nowMs" with
+    | some e, some n =>
+      match Verified.Session.renewedExpiry e n with
+      | none => Json.mkObj [("value", Json.null)]
+      | some v => Json.mkObj [("value", Json.num v)]
+    | _, _ => err "renewedExpiry: expiresAtMs, nowMs required"
   | some "sessionTtlMs" =>
     Json.mkObj
       [ ("value", Json.num Verified.Session.SESSION_TTL_MS)

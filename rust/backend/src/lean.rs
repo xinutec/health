@@ -289,6 +289,19 @@ pub fn earliest_visible(
     Ok(w.value)
 }
 
+/// `Verified.Session.renewedExpiry` — a used session's new expiry, or `None`
+/// when it would move by an hour or less.
+pub fn renewed_expiry(expires_at_ms: i64, now_ms: i64) -> Result<Option<i64>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Option<i64>,
+    }
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "renewedExpiry", "expiresAtMs": expires_at_ms, "nowMs": now_ms,
+    }))?;
+    Ok(w.value)
+}
+
 /// The session lifetime, and the cookie spelling that must agree with it.
 pub struct SessionPolicy {
     pub ttl_ms: i64,
@@ -296,9 +309,7 @@ pub struct SessionPolicy {
     pub cookie_name: String,
 }
 
-/// `Verified.Session`'s constants. Fetched rather than restated so the row's TTL
-/// and the cookie's `Max-Age` cannot drift — a cookie outliving its row is a
-/// user who appears logged in and is not.
+/// `Verified.Session`'s constants, fetched rather than restated.
 pub fn session_policy() -> Result<SessionPolicy> {
     #[derive(Deserialize)]
     struct Wire {

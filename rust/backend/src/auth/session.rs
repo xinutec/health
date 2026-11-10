@@ -116,9 +116,7 @@ pub async fn create(
     now_ms: i64,
 ) -> Result<String> {
     let id = mint_id()?;
-    // ⚠ The row's lifetime comes from Lean, and the cookie's `Max-Age` comes
-    // from the SAME call. A cookie outliving its row is a user who appears
-    // logged in and is not.
+    // The row's lifetime comes from Lean (`Verified.Session`).
     let ttl_ms = lean::session_policy()?.ttl_ms;
     let expires = expires_at(now_ms + ttl_ms)?;
     sqlx::query("INSERT INTO sessions (id, user_id, display_name, expires_at) VALUES (?, ?, ?, ?)")
@@ -178,6 +176,15 @@ pub async fn get(
             .await
             .context("retiring an expired session")?;
         return Ok(None);
+    }
+    // A used session lasts a month from now (`Verified.Session.renewedExpiry`).
+    if let Some(fresh_ms) = lean::renewed_expiry(expires.and_utc().timestamp_millis(), now_ms)? {
+        sqlx::query("UPDATE sessions SET expires_at = ? WHERE id = ?")
+            .bind(expires_at(fresh_ms)?)
+            .bind(&id)
+            .execute(pool)
+            .await
+            .context("renewing a session")?;
     }
     Ok(Some(UserSession {
         user_id,

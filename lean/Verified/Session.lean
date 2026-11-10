@@ -20,14 +20,27 @@ Pure and total. UNPROVEN; pinned by the `#guard`s, and the framing cases are wha
 
 namespace Verified.Session
 
-/-- A week. Long enough that a phone kept in a pocket stays logged in across a
-holiday, short enough that a forgotten browser on a borrowed machine stops
-working. -/
-def SESSION_TTL_MS : Int := 7 * 24 * 60 * 60 * 1000
+/-- How long a session lasts UNUSED: a month (his call, 2026-11-10). Every use
+moves the expiry forward (`renewedExpiry`), so a login in use never ends, and a
+forgotten browser on a borrowed machine stops working a month after its last
+visit. -/
+def SESSION_TTL_MS : Int := 30 * 24 * 60 * 60 * 1000
 
-/-- The cookie's `Max-Age`, in seconds — the TTL the row is written with, so the
-browser forgets the cookie at the same moment the row stops being honoured. -/
-def SESSION_COOKIE_MAX_AGE_S : Int := SESSION_TTL_MS / 1000
+/-- The expiry is rewritten only when it would move by more than this, so a page
+load is not a database write. -/
+def RENEW_INTERVAL_MS : Int := 60 * 60 * 1000
+
+/-- The cookie's `Max-Age`, in seconds: 400 days, the most a browser keeps. The
+ROW decides when a session ends; a cookie whose row has lapsed is answered as
+logged out. A cookie as short as the row would end a renewed session at its
+first expiry. -/
+def SESSION_COOKIE_MAX_AGE_S : Int := 400 * 24 * 60 * 60
+
+/-- The renewed expiry of a session used at `nowMs`, or `none` when it would
+move by `RENEW_INTERVAL_MS` or less. -/
+def renewedExpiry (expiresAtMs nowMs : Int) : Option Int :=
+  let fresh := nowMs + SESSION_TTL_MS
+  if fresh - expiresAtMs > RENEW_INTERVAL_MS then some fresh else none
 
 def SESSION_COOKIE_NAME : String := "session"
 
@@ -122,6 +135,13 @@ The framing cases are what `verifyValue` returned under Node; regenerate with
 #guard sessionIsValid 1000 999 == true
 #guard sessionIsValid 1000 1000 == true
 #guard sessionIsValid 1000 1001 == false
+
+-- Used an hour or less after the last write: no write. Later: a month from now.
+#guard renewedExpiry SESSION_TTL_MS 0 == none
+#guard renewedExpiry SESSION_TTL_MS RENEW_INTERVAL_MS == none
+#guard renewedExpiry SESSION_TTL_MS (RENEW_INTERVAL_MS + 1) == some (RENEW_INTERVAL_MS + 1 + SESSION_TTL_MS)
+-- The cookie outlives the idle limit, so the row decides.
+#guard SESSION_COOKIE_MAX_AGE_S * 1000 > SESSION_TTL_MS
 
 -- The owner is unrestricted.
 #guard mayProceed false "POST" "/api/settings" == true

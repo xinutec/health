@@ -86,18 +86,24 @@ fn the_owner_is_unrestricted() {
 }
 
 #[test]
-fn the_cookie_lifetime_matches_the_rows() {
+fn a_used_session_slides_and_the_cookie_outlives_it() {
     lean::init().expect("the Lean runtime must start");
     let p = lean::session_policy().expect("the policy crosses");
-    assert_eq!(p.ttl_ms, 7 * 24 * 60 * 60 * 1000);
+    let month = 30 * 24 * 60 * 60 * 1000;
+    let hour = 60 * 60 * 1000;
+    assert_eq!(p.ttl_ms, month);
     assert_eq!(p.cookie_name, "session");
-    // ⚠ The cookie must not outlive the row. A browser still sending a cookie
-    // whose row has expired is a user who appears logged in and is not, and the
-    // two numbers live in different places precisely often enough to drift.
+    // ⚠ The ROW decides when a session ends, so the cookie must outlive it: a
+    // cookie as short as the row would end a renewed session at its first expiry.
+    assert!(
+        p.cookie_max_age_s * 1000 > p.ttl_ms,
+        "the cookie must outlive the session's idle limit"
+    );
+    // Within an hour of the last write: no write; later: a month from now.
+    assert_eq!(lean::renewed_expiry(month, hour).unwrap(), None);
     assert_eq!(
-        p.cookie_max_age_s * 1000,
-        p.ttl_ms,
-        "the cookie's Max-Age and the session row's TTL must be the same window"
+        lean::renewed_expiry(month, hour + 1).unwrap(),
+        Some(hour + 1 + month)
     );
 }
 
