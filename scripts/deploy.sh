@@ -167,6 +167,15 @@ dead_gates_banner() {
 }
 
 cd "$HEALTH_DIR"
+# Production decodes with the Secret's record, the gates with the repo's: a
+# deploy that ships one while the other differs measures a model production
+# does not run. Before any gate time is spent.
+step "precondition: production's decoder record is the repo's"
+if ! scripts/check-decoder-record.sh; then
+	echo "deploy: write the Secret health-decoder from tests/golden/fits/decoder-params.json" >&2
+	echo "        (then restart deploy/health-auth), or deploy the record the Secret holds." >&2
+	exit 1
+fi
 if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
 	step "[1/7] the full gate: pnpm run verify:deploy (gate.json, corpus replay included)"
 	dead_gates_banner
