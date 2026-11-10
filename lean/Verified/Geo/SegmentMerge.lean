@@ -225,8 +225,8 @@ structure AccFix where
   acc : Float := 0
   deriving Inhabited, BEq, Repr
 
-/-- The stays' own fixes a visit's extent is read from: up to an hour of each
-stay beside the run. -/
+/-- The last stretch of each stay beside the run the visit's recent extent is
+read from. -/
 def EXTENT_WINDOW_S : Int := 3600
 /-- Too few of the stays' fixes to read an extent from: nothing is absorbed. -/
 def EXTENT_MIN_FIXES : Nat := 5
@@ -271,15 +271,22 @@ def absorbMoveInsidePlace (segments : Array Seg) (fixes : Array AccFix) : Array 
         if !(i > 0 && effectiveMode prev == "stationary" && samePlace prev next) then none else
         let run := fixes.filter fun f => f.ts ≥ seg.startTs && f.ts < next.startTs
         if run.isEmpty then some "no fix between two stays at" else
-        let own := fixes.filter fun f =>
+        -- Inside the visit as its last hour either side shows it, or as the
+        -- whole of both stays does: a hospital visit spans buildings (its
+        -- whole centre sits away from the last hour's), and an evening at home
+        -- whose phone went quiet keeps its arrival's fixes earlier on.
+        let insideOf := fun (own : Array AccFix) =>
+          if own.size < EXTENT_MIN_FIXES then false else
+          let cLat := quantile (own.map (·.lat)) MEDIAN
+          let cLon := quantile (own.map (·.lon)) MEDIAN
+          let extent := quantile (own.map fun f => haversineMeters cLat cLon f.lat f.lon) EXTENT_SHARE
+          run.all fun f => haversineMeters cLat cLon f.lat f.lon - f.acc ≤ extent
+        let recent := fixes.filter fun f =>
           (f.ts ≥ max prev.startTs (prev.endTs - EXTENT_WINDOW_S) && f.ts < prev.endTs)
             || (f.ts ≥ next.startTs && f.ts < min next.endTs (next.startTs + EXTENT_WINDOW_S))
-        if own.size < EXTENT_MIN_FIXES then none else
-        let cLat := quantile (own.map (·.lat)) MEDIAN
-        let cLon := quantile (own.map (·.lon)) MEDIAN
-        let extent := quantile (own.map fun f => haversineMeters cLat cLon f.lat f.lon) EXTENT_SHARE
-        if run.all fun f => haversineMeters cLat cLon f.lat f.lon - f.acc ≤ extent
-        then some "every fix inside" else none
+        let whole := fixes.filter fun f =>
+          (f.ts ≥ prev.startTs && f.ts < prev.endTs) || (f.ts ≥ next.startTs && f.ts < next.endTs)
+        if insideOf recent || insideOf whole then some "every fix inside" else none
       | _, _ => none
     if let some why := verdict then
       let prev := out[i - 1]!
