@@ -36,7 +36,8 @@ use crate::state::AppState;
 /// header names are case-insensitive, so the spelling here is documentation.
 pub const SHARE_HEADER: &str = "x-share-token";
 
-/// Who is asking, or `None`.
+/// Who is asking, and the session cookie to send back when its session was
+/// just renewed, or `None`.
 ///
 /// ⚠ A FAILED LOOKUP IS `None`, NOT AN ERROR — a bad cookie and an unknown token
 /// are ordinary traffic, not faults. A DATABASE failure IS an error and
@@ -49,7 +50,7 @@ pub async fn resolve(
     headers: &HeaderMap,
     now_ms: i64,
     today: &str,
-) -> anyhow::Result<Option<UserSession>> {
+) -> anyhow::Result<Option<(UserSession, Option<String>)>> {
     let secret = st
         .cfg
         .session_secret
@@ -64,9 +65,9 @@ pub async fn resolve(
 
     let policy = crate::lean::session_policy()?;
     if let Some(cookie) = jar.get(&policy.cookie_name)
-        && let Some(s) = session::get(&st.pool, secret, cookie.value(), now_ms).await?
+        && let Some((s, renewed)) = session::get(&st.pool, secret, cookie.value(), now_ms).await?
     {
-        return Ok(Some(s));
+        return Ok(Some((s, renewed.then(|| cookie.value().to_string()))));
     }
 
     // ⚠ Only reached when the cookie did NOT authenticate. See the module note.
@@ -82,7 +83,7 @@ pub async fn resolve(
     if let Err(e) = share::touch_last_accessed(&st.pool, token).await {
         tracing::warn!(error = %e, "share_tokens.last_accessed_at bump failed");
     }
-    Ok(Some(s))
+    Ok(Some((s, None)))
 }
 
 /// 401 unless the request carries a session.
@@ -117,9 +118,22 @@ pub async fn require_session(
             axum::Json(json!({ "error": "unauthorized" })),
         )
             .into_response(),
-        Ok(Some(s)) => {
+        Ok(Some((s, renewed))) => {
             req.extensions_mut().insert(s);
-            next.run(req).await
+            let mut res = next.run(req).await;
+            // A renewed session's cookie goes back with a fresh `Max-Age`, so a
+            // cookie set with a shorter one is not dropped while its row lives.
+            if let Some(signed) = renewed
+                && let Ok(policy) = crate::lean::session_policy()
+                && let Ok(v) = format!(
+                    "{}={signed}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={}",
+                    policy.cookie_name, policy.cookie_max_age_s
+                )
+                .parse()
+            {
+                res.headers_mut().append(axum::http::header::SET_COOKIE, v);
+            }
+            res
         }
     }
 }

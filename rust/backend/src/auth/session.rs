@@ -139,7 +139,8 @@ fn expires_at(ms: i64) -> Result<String> {
         .to_string())
 }
 
-/// Who this cookie belongs to, or `None`.
+/// Who this cookie belongs to, and whether its session was renewed just now
+/// (so the cookie goes back with a fresh `Max-Age`), or `None`.
 ///
 /// ⚠ An EXPIRED row is deleted on the way past. The sweep below only reaches
 /// sessions whose owner never returns; this is what retires the ones that do.
@@ -148,7 +149,7 @@ pub async fn get(
     secret: &str,
     signed: &str,
     now_ms: i64,
-) -> Result<Option<UserSession>> {
+) -> Result<Option<(UserSession, bool)>> {
     let Some(id) = verify_value(secret, signed)? else {
         return Ok(None);
     };
@@ -178,7 +179,8 @@ pub async fn get(
         return Ok(None);
     }
     // A used session lasts a month from now (`Verified.Session.renewedExpiry`).
-    if let Some(fresh_ms) = lean::renewed_expiry(expires.and_utc().timestamp_millis(), now_ms)? {
+    let renewed = lean::renewed_expiry(expires.and_utc().timestamp_millis(), now_ms)?;
+    if let Some(fresh_ms) = renewed {
         sqlx::query("UPDATE sessions SET expires_at = ? WHERE id = ?")
             .bind(expires_at(fresh_ms)?)
             .bind(&id)
@@ -186,12 +188,15 @@ pub async fn get(
             .await
             .context("renewing a session")?;
     }
-    Ok(Some(UserSession {
-        user_id,
-        display_name,
-        share_viewer: None,
-        hides_location: false,
-    }))
+    Ok(Some((
+        UserSession {
+            user_id,
+            display_name,
+            share_viewer: None,
+            hides_location: false,
+        },
+        renewed.is_some(),
+    )))
 }
 
 /// Log out. A cookie that does not verify deletes nothing — and says so by
