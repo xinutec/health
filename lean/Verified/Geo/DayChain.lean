@@ -327,6 +327,82 @@ def bridgeSamePlaceHoles (states : Array DayState)
     | none => pure ()
   return out
 
+private def MINUTE_S : Int := 60
+private def KMH_PER_MS : Float := 3.6
+
+/-- The fastest a person covers ground in each mode, km/h: on foot (a run, with
+fix noise), by bike, by car or bus in a city, by train or plane. -/
+private def reachKmh (mode : String) : Float :=
+  match mode with
+  | "walking" => 15
+  | "cycling" => 30
+  | "driving" | "bus" | "vehicle" => 130
+  | "train" | "plane" | "unknown" | "journey" => 200
+  | _ => 0
+
+/-- A stay reached by a trip nothing saw, which what is drawn on the way could
+not have covered, is a guess until its first fix: the previous stay was at
+another place, there is no fix at all from leaving it to arriving (the phone
+silent on the way), and the moving states between, at their modes' fastest,
+fall short of the distance between the two places (a 12-minute walk
+drawn for 11 km). Where he was and when he got there are then the decoder's
+reading of steps alone: the part of the stay before its first fix is inferred
+— the best guess, marked as one (his rule) — and the rest observed; a stay with
+no fix at all is inferred whole. A trip with a fix on it was seen, and one the
+drawn travel covers (a five-minute walk between neighbouring places) stands. -/
+def markUnseenArrivals (states : Array DayState)
+    (points : Array Verified.Geo.EpisodeGeometry.Fix) : Array DayState := Id.run do
+  let still := fun (s : DayState) => s.mode == "stationary" || s.mode == "sleeping"
+  let mut out : Array DayState := #[]
+  let mut prevStill : Option DayState := none
+  let mut reachM : Float := 0
+  for s in states do
+    let unseen := match prevStill, s.placeAt with
+      | some a, some (la, lo) =>
+        s.mode == "stationary" && s.place.isSome && s.inferred != some true
+          && a.place.isSome && a.place != s.place
+          && !(points.any fun p => p.ts ≥ a.endTs && p.ts < s.startTs + MINUTE_S)
+          && (match a.placeAt with
+              | some (pa, po) => Verified.Hsmm.FloatScore.haversineMeters pa po la lo > reachM
+              | none => false)
+      | _, _ => false
+    if unseen then
+      match points.find? (fun p => p.ts ≥ s.startTs && p.ts < s.endTs) with
+      | some f =>
+        let t := f.ts - f.ts % MINUTE_S
+        if t > s.startTs then
+          out := out.push { s with endTs := t, inferred := some true }
+          out := out.push { s with startTs := t }
+        else out := out.push s
+      | none => out := out.push { s with inferred := some true }
+    else out := out.push s
+    if still s then
+      prevStill := some s
+      reachM := 0
+    else
+      reachM := reachM + reachKmh s.mode / KMH_PER_MS * Float.ofInt (s.endTs - s.startTs)
+  return out
+
+-- Home, a walk nothing saw, the hospital from 09:30, its first fix at 11:41:
+-- the hospital before 11:41 is a guess.
+private def homeHosp : Array DayState :=
+  #[{ startTs := 0, endTs := 33480, mode := "stationary", place := some "Home", placeAt := some (51.570, -0.279) },
+    { startTs := 33480, endTs := 34200, mode := "walking" },
+    { startTs := 34200, endTs := 42600, mode := "stationary", place := some "Macmillan", placeAt := some (51.524, -0.136) }]
+private def fx (t : Int) : Verified.Geo.EpisodeGeometry.Fix := ⟨t, 51.52, -0.13, 0⟩
+#guard (markUnseenArrivals homeHosp #[fx 41,  fx 42070]).map (fun s => (s.startTs, s.endTs, s.inferred))
+  == #[(0, 33480, none), (33480, 34200, none), (34200, 42060, some true), (42060, 42600, none)]
+-- A fix on the way: the arrival was seen.
+#guard (markUnseenArrivals homeHosp #[fx 33900, fx 42070]) == homeHosp
+-- No fix in the stay at all: a guess whole.
+#guard ((markUnseenArrivals homeHosp #[]).map (·.inferred)) == #[none, none, some true]
+-- A neighbouring place 150 m off, the 12-minute walk covers it: it stands.
+#guard (markUnseenArrivals (homeHosp.set! 2 { homeHosp[2]! with placeAt := some (51.5713, -0.279) }) #[]) ==
+  homeHosp.set! 2 { homeHosp[2]! with placeAt := some (51.5713, -0.279) }
+-- Back at the same place: not an arrival anywhere new.
+#guard (markUnseenArrivals (homeHosp.set! 2 { homeHosp[2]! with place := some "Home" }) #[]) ==
+  homeHosp.set! 2 { homeHosp[2]! with place := some "Home" }
+
 /-- The served timeline and its geometry.
 
 Returns both because they are one decision: the episodes are 1:1 with the FINAL
@@ -349,9 +425,9 @@ def dayChain (e : Env) :
     | some st => (#[st], #[])
     | none => (#[], #[])
   else
-  let continued := bridgeSamePlaceHoles
+  let continued := markUnseenArrivals (bridgeSamePlaceHoles
     (Verified.Geo.DwellContinuation.applyDwellContinuation
-      states e.segments e.dwellPlaces e.dayEndTs) e.points e.dayEndTs
+      states e.segments e.dwellPlaces e.dayEndTs) e.points e.dayEndTs) e.points
   -- ⚠ CITY IS STAMPED LAST, over the FINAL states (#339). The client it
   -- replaces ran over the served list, so an INFERRED stay — created by the
   -- dwell continuation, after `segmentsToDayStates` has returned — got a header
