@@ -874,6 +874,71 @@ private def rbPts : Array Verified.SpeedFix :=
 #guard refineBoundary rbPts 970 false == 970
 #guard refineBoundary #[] 970 true == 970
 
+/-- The fastest anyone walks, km/h: the worldline's hard bound on a walk's true
+speed (`docs/design/probabilistic-principles.md`, C2). -/
+def WALK_MAX_KMH : Float := 12
+/-- The fewest pairs of fixes a walk's speed is read from. -/
+private def WALK_SPEED_MIN_PAIRS : Nat := 3
+
+/-- A walk between two trains that touch it, whose own fixes move faster than
+anyone walks, is the train: steps taken aboard (along the carriage) split one
+ride. The three become that ride, boarding where the first boarded and
+alighting where the second alighted. Read over consecutive fixes, from
+`WALK_SPEED_MIN_PAIRS` or more: the slowest quarter of them must still be
+faster than walking, so a real change whose first minute holds the end of the
+ride before it (a quarter or more of slow pairs) stays a change. -/
+def joinRidesAcrossAboardWalks (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
+    (pts : Array Verified.SpeedFix) : Array Verified.Geo.PlaceOverride.HmmSeg := Id.run do
+  let mut out : Array Verified.Geo.PlaceOverride.HmmSeg := #[]
+  let mut i := 0
+  while i < hmm.size do
+    let h := hmm[i]!
+    let joined : Option Verified.Geo.PlaceOverride.HmmSeg := match out.back?, hmm[i + 1]? with
+      | some prev, some next =>
+        if h.mode == "walking" && prev.mode == "train" && next.mode == "train"
+            && prev.endTs == h.startTs && h.endTs == next.startTs then
+          let w := (pts.filter fun p => p.ts ≥ h.startTs && p.ts ≤ h.endTs).toList
+          let speeds := ((w.zip (w.drop 1)).filterMap fun (a, b) =>
+            if b.ts > a.ts then
+              some (Verified.Hsmm.FloatScore.haversineMeters a.lat a.lon b.lat b.lon
+                / Float.ofInt (b.ts - a.ts) * MS_TO_KMH)
+            else none).toArray.qsort (· < ·)
+          if speeds.size ≥ WALK_SPEED_MIN_PAIRS && speeds[speeds.size / 4]! > WALK_MAX_KMH then
+            some { prev with endTs := next.endTs, alightStation := next.alightStation,
+                             alightTs := next.alightTs }
+          else none
+        else none
+      | _, _ => none
+    match joined with
+    | some r =>
+      out := out.pop.push r
+      i := i + 2
+    | none =>
+      out := out.push h
+      i := i + 1
+  return out
+
+private def ride (a b : Int) (bd al : String) : Verified.Geo.PlaceOverride.HmmSeg :=
+  { startTs := a, endTs := b, mode := "train", lineName := some "Metropolitan Line",
+    boardStation := some bd, alightStation := some al }
+private def aboard : Array Verified.Geo.PlaceOverride.HmmSeg :=
+  #[ride 0 600 "Farringdon" "Kilburn", { startTs := 600, endTs := 780, mode := "walking" },
+    ride 780 900 "Finchley Road" "Wembley Park"]
+-- 280 m every 10 s along the walk (100 km/h): one ride, Farringdon → Wembley Park.
+#guard (joinRidesAcrossAboardWalks aboard ((List.range 10).toArray.map fun k =>
+    rbFix (600 + 10 * Int.ofNat k) (51.5 + 0.0025 * Verified.FloatConst.natToFloat k))).map
+    (fun h => (h.startTs, h.endTs, h.boardStation, h.alightStation))
+  == #[(0, 900, some "Farringdon", some "Wembley Park")]
+-- 15 m every 10 s (5 km/h): a change of trains, kept.
+#guard (joinRidesAcrossAboardWalks aboard ((List.range 10).toArray.map fun k =>
+    rbFix (600 + 10 * Int.ofNat k) (51.5 + 0.000135 * Verified.FloatConst.natToFloat k))).size == 3
+-- Half of the pairs at train speed (the ride before, its edge late), half at a
+-- walk: a change of trains, kept.
+#guard (joinRidesAcrossAboardWalks aboard ((List.range 10).toArray.map fun k =>
+    rbFix (600 + 10 * Int.ofNat k) (51.5 + (if k < 5 then 0.0025 else 0.000135) * Verified.FloatConst.natToFloat k))).size == 3
+-- No fixes to read a speed from: kept.
+#guard (joinRidesAcrossAboardWalks aboard #[]).size == 3
+
 /-- The decoder's segments with each vehicle ↔ walk-or-stay boundary at fix
 resolution (`refineBoundary`). The head's segments AND every pass that reads
 the decode take these, so no two readers disagree about where a ride ended. -/
@@ -981,7 +1046,8 @@ def dayResult (j : Json) : Json :=
     -- decode is not folded — the server answers that it is being decoded.
     if env.hmmDecode.isEmpty then
       throw "the day has no decode: a day folds from its decode"
-    let env := { env with hmmDecode := refineDecoderBoundaries env.hmmDecode env.points }
+    let env := { env with hmmDecode :=
+      refineDecoderBoundaries (joinRidesAcrossAboardWalks env.hmmDecode env.points) env.points }
     let segs := decoderSegs env.hmmDecode env.points env.hsmmPlaces
     let namer ← namerOf envJson
     let enrichReads : Verified.Geo.EnrichFold.Reads :=
