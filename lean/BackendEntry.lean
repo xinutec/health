@@ -30,26 +30,22 @@ import Verified.VelocityCache
 /-!
 # The backend's C ABI entry point
 
-`rust/backend` links this the way `rust/day-shell` links `DayEntry`, so the
-decisions in `Verified.Session` and its siblings are called by the running backend rather than
-reimplemented beside it.
+`rust/backend` links this as `rust/day-shell` links `DayEntry`, so the
+decisions in `Verified.Session` and its siblings are called by the backend
+rather than reimplemented beside it.
 
-⚠ IT IS A `lean_lib` AND NOT A `lean_exe`, for the reason `DayEntry`'s comment
-gives: an exe's root module also emits `main`, and an archive carrying `_main`
-wins the link in a foreign host SILENTLY — it builds, runs, and answers from the
-wrong entry point. Nothing here defines `main`, so there is nothing to collide.
+⚠ A `lean_lib`, not a `lean_exe`: an exe's root module emits `main`, and an
+archive carrying `_main` silently wins the link in a foreign host, answering
+from the wrong entry point.
 
-String in, string out, matching `DayEntry`: the narrowest C ABI that still
-carries a request, with no structs to keep in sync across three languages. These
-particular calls are small enough that a JSON round trip is invisible next to
-the HTTP request or the database round trip that surrounds them — the rate-limit
-decision runs once per Fitbit call, and the cursor walk once per backfilled day.
+String in, string out, as `DayEntry`: the narrowest C ABI that carries a
+request, with no structs to keep in sync across three languages. These calls
+are small enough that the JSON round trip is invisible beside the HTTP or
+database work around them.
 
-# Why a dispatch rather than one export per function
-
-One symbol to declare in the shim, one to keep working across a toolchain bump.
-Adding a decision here costs a `match` arm and nothing in C or Rust, which is
-the property that matters while the port is still moving.
+One dispatch rather than one export per function: one symbol to declare and
+keep working across toolchain bumps, and a new decision costs only a `match`
+arm.
 -/
 
 namespace BackendEntry
@@ -84,10 +80,9 @@ private def optStr : Option String → Json
 
 /-- `[{"date": …, "grams": …, "ts": …}, …]`.
 
-⚠ EVERY field is required and a malformed element refuses the whole call rather
-than being dropped. A dropped weigh-in is not a smaller answer: it can move the
-`replaceFrom` boundary later, leaving the stale forward-filled rows it was
-supposed to delete. -/
+⚠ Every field is required, and a malformed element refuses the whole call: a
+dropped weigh-in can move the `replaceFrom` boundary later, leaving stale
+forward-filled rows it should have deleted. -/
 private def weighIns? (j : Json) : Option (List Verified.Weight.Weigh) :=
   match j.getObjVal? "weighIns" with
   | .error _ => none
@@ -117,9 +112,8 @@ private def weighJson (w : Verified.Weight.Weigh) : Json :=
 
 /-- A required array of strings.
 
-⚠ A non-string element refuses the WHOLE array rather than being skipped. These
-are column type names, and a skipped one would shift every later column's shape
-onto the wrong column — a silent, well-formed, entirely wrong response. -/
+⚠ A non-string element refuses the whole array: these are column type names,
+and a skipped one would shift every later column onto the wrong shape. -/
 private def strs? (j : Json) (k : String) : Option (List String) :=
   match j.getObjVal? k with
   | .error _ => none
@@ -168,12 +162,11 @@ def dispatch (j : Json) : Json :=
         | none => Json.null
         | some s => Json.num s)]
     | none => err "midnightUtc: date required"
-  -- `/velocity`'s cache policy (#982). The map and the in-flight dedup stay in
-  -- the host; what crosses here is how long a result may be reused.
+  -- `/velocity`'s cache policy: the map and the in-flight dedup stay in the
+  -- host; what crosses here is how long a result may be reused.
   --
-  -- ⚠ `today` must be the VIEWER's local civil date, not UTC's. Lean has no zone
-  -- database, so this cannot check the caller got that right — see
-  -- `Verified.VelocityCache` for what a UTC date silently asks instead.
+  -- ⚠ `today` must be the viewer's local civil date, not UTC's; Lean has no
+  -- zone database to check it (see `Verified.VelocityCache`).
   | some "velocityTtlMs" =>
     match str? j "date", str? j "today" with
     | some d, some t =>
@@ -186,20 +179,18 @@ def dispatch (j : Json) : Json :=
     | some c, some n, some t =>
       Json.mkObj [("value", Json.bool (Verified.VelocityCache.isFresh c n t))]
     | _, _, _ => err "velocityCacheFresh: cachedAtMs, nowMs, ttlMs required"
-  -- ⚠ Answers "is it in the window" only. A session with NO share-viewer must
-  -- not reach this: it is not a viewer with an empty window, and asking here
-  -- would turn a missing window into an admitted date.
+  -- ⚠ Answers "is it in the window" only. A session with no share viewer must
+  -- not reach this, or a missing window would admit the date.
   | some "dateInShareWindow" =>
     match str? j "date", str? j "from", str? j "to" with
     | some d, some f, some t =>
       Json.mkObj [("value", Json.bool (Verified.Share.dateInShareWindow d f t))]
     | _, _, _ => err "dateInShareWindow: date, from, to required"
-  -- Session and share-viewer rules (#982). The HMAC, the CSPRNG and the
-  -- constant-time compare stay in the host — there is nothing to prove about
-  -- them beyond that they were asked for.
+  -- Session and share-viewer rules. The HMAC, the CSPRNG and the constant-time
+  -- compare stay in the host.
   --
-  -- ⚠ `splitSigned` splits on the LAST separator: the signature is base64url,
-  -- which has no `.`, so a value containing dots round-trips whole.
+  -- `splitSigned` splits on the last separator: base64url has no `.`, so a
+  -- value containing dots round-trips whole.
   | some "splitSigned" =>
     match str? j "signed" with
     | some sgn =>
@@ -213,9 +204,8 @@ def dispatch (j : Json) : Json :=
     | some e, some n =>
       Json.mkObj [("value", Json.bool (Verified.Session.sessionIsValid e n))]
     | _, _ => err "sessionIsValid: expiresAtMs, nowMs required"
-  -- ⚠ Answers "may this session do this", NOT "is there a session". An
-  -- unauthenticated request is not a share viewer, and `true` here is not
-  -- permission — the caller's own session gate runs first.
+  -- ⚠ Answers "may this session do this", not "is there a session": `true` is
+  -- not permission, and the caller's own session gate runs first.
   | some "mayProceed" =>
     match j.getObjVal? "isShareViewer" >>= (·.getBool?) |>.toOption,
           j.getObjVal? "hidesLocation" >>= (·.getBool?) |>.toOption,
@@ -223,20 +213,14 @@ def dispatch (j : Json) : Json :=
     | some sv, some hl, some m, some p =>
       Json.mkObj [("value", Json.bool (Verified.Session.mayProceedSharing sv hl m p))]
     | _, _, _, _ => err "mayProceed: isShareViewer, hidesLocation, method, path required"
-  -- ⚠ `daysBack ≤ 0` and an unparsable `today` BOTH answer null, and the caller
-  -- must treat that as "share disabled" rather than "no window". The TypeScript
-  -- produced `NaN`-shaped garbage for the second, which formatted as
-  -- "NaN-NaN-NaN" and reached the database as a string.
-  -- The multi-day API window (#982).
+  -- The multi-day API window.
   --
-  -- ⚠ `days` is VALIDATED, not clamped: `null` out means REJECT the request.
-  -- Answering a `days=400` with a narrowed window would tell the caller nothing
-  -- about having asked for something impossible.
+  -- ⚠ `days` is validated, not clamped: `null` out means reject the request,
+  -- since a narrowed window would hide that the ask was impossible.
   --
-  -- ⚠ `days` arrives as what JS `Number(...)` made of the parameter — ABSENT is
-  -- `null`, and a present-but-unparseable value is NaN, which JSON cannot carry.
-  -- The host sends `daysNaN: true` for that case rather than dropping it, since
-  -- a dropped NaN would read as absent and become the default.
+  -- `days` follows JS `Number(...)`: absent is `null`, and an unparseable value
+  -- is NaN, which JSON cannot carry, so the host sends `daysNaN: true` rather
+  -- than letting it read as absent.
   | some "validateDays" =>
     let raw : Option Float :=
       if (j.getObjVal? "daysNaN" >>= (·.getBool?)).toOption == some true then some (0.0 / 0.0)
@@ -246,9 +230,8 @@ def dispatch (j : Json) : Json :=
     match Verified.ApiWindow.validateDays raw with
     | none => Json.mkObj [("value", Json.null)]
     | some n => Json.mkObj [("value", Json.num n)]
-  -- ⚠ `shareFrom` absent = the OWNER, who is bounded only by `days`. A host that
-  -- sent the owner an empty string here would compare against it and win, which
-  -- is the same answer by luck rather than by rule.
+  -- `shareFrom` absent is the owner, bounded only by `days`; the host must not
+  -- send the owner an empty string.
   | some "earliestVisible" =>
     match str? j "today", int? j "days" with
     | some t, some d =>
@@ -257,6 +240,8 @@ def dispatch (j : Json) : Json :=
       | none => Json.mkObj [("value", Json.null)]
       | some s => Json.mkObj [("value", Json.str s)]
     | _, _ => err "earliestVisible: today, days required"
+  -- ⚠ `daysBack ≤ 0` and an unparsable `today` both answer null, which the
+  -- caller must treat as "share disabled", not "no window".
   | some "shareableDateRange" =>
     match str? j "today", int? j "daysBack" with
     | some t, some d =>
@@ -277,12 +262,9 @@ def dispatch (j : Json) : Json :=
       [ ("value", Json.num Verified.Session.SESSION_TTL_MS)
       , ("cookieMaxAgeS", Json.num Verified.Session.SESSION_COOKIE_MAX_AGE_S)
       , ("cookieName", Json.str Verified.Session.SESSION_COOKIE_NAME) ]
-  -- The day after `date`, for the half-open `[date, nextDay)` bound a single-day
-  -- read uses.
-  --
-  -- ⚠ Through the civil calendar, so it rolls a month, a year and a leap day.
-  -- The TypeScript uses `Date.setDate`, which does too; a host adding 86400
-  -- seconds would agree with it on most days and not on a DST boundary.
+  -- The day after `date`, for the half-open `[date, nextDay)` bound of a
+  -- single-day read. Through the civil calendar, so it rolls months, years and
+  -- leap days; adding 86400 seconds would be wrong across DST.
   | some "nextDay" =>
     match str? j "date" with
     | some d =>
@@ -290,16 +272,15 @@ def dispatch (j : Json) : Json :=
       | none => err s!"nextDay: {d} is not YYYY-MM-DD"
       | some nx => Json.mkObj [("value", Json.str nx)]
     | none => err "nextDay: date required"
-  -- How hard a phone should look for itself (#982).
+  -- How hard a phone should look for itself.
   --
-  -- ⚠ Takes the WHOLE pruned history, because the decision is about a
-  -- trajectory rather than a fix. Coordinates cross as IEEE-754 bit patterns:
-  -- the straightness ratio divides two haversine distances, and a re-rounded
-  -- coordinate moves it across the walking threshold.
+  -- Takes the whole pruned history, since the decision is about a trajectory.
+  -- ⚠ Coordinates cross as IEEE-754 bit patterns: the straightness ratio
+  -- divides two haversine distances, and re-rounding moves it across the
+  -- walking threshold.
   --
-  -- ⚠ Answers a CONCRETE profile every time, never "no change". The phone gets
-  -- the full config on every fix and treats it as idempotent, which is what
-  -- removes the need for anti-flap state that could be lost.
+  -- Always a concrete profile, never "no change": the phone applies the full
+  -- config idempotently on every fix, so there is no anti-flap state to lose.
   | some "owntracksConfig" =>
     let fixes : List Verified.Owntracks.Fix :=
       match j.getObjVal? "history" with
@@ -333,16 +314,12 @@ def dispatch (j : Json) : Json :=
       , ("moveModeLocatorInterval", match interval with
           | none => Json.null
           | some i => Json.num i) ]
-  -- The two halves of `stationsOnLine`, split where the TypeScript splits it
-  -- (#1075). The SQL between them is the host's: resolve the substring match
-  -- against a cached name list HERE, fetch that geometry with an indexed
-  -- `name IN (…)` there, then filter by proximity back here.
+  -- The two halves of `stationsOnLine`, with the SQL between them in the host:
+  -- resolve the substring match against a cached name list here, fetch that
+  -- geometry with an indexed `name IN (…)` there, then filter by proximity.
   --
-  -- ⚠ The split is not stylistic. A leading-wildcard `LIKE '%base%'` cannot use
-  -- the name index and scans every railway row; the TypeScript measured ~28 s
-  -- per call that way, and one leg fanning fifty of them serially is where its
-  -- 24-minute pathology came from. Handing the host an exact name list is what
-  -- keeps the query indexed.
+  -- ⚠ The split keeps the query indexed: a leading-wildcard `LIKE '%base%'`
+  -- scans every railway row, ~28 s a call, and one leg can fan out fifty.
   | some "lineNamesMatching" =>
     match str? j "line", j.getObjVal? "allNames" with
     | some line, .ok v =>
@@ -355,14 +332,11 @@ def dispatch (j : Json) : Json :=
           Json.mkObj [("value", Json.arr
             ((Verified.Geo.LineStations.lineNamesMatching line names).map Json.str))]
     | _, _ => err "lineNamesMatching: needs line and allNames"
-  -- ⚠ ORDER IS PART OF THE ANSWER. Downstream journey resolution reads
-  -- positional relationships out of this list, so a set-equal-but-reordered
-  -- result is a DIFFERENT result — see the port's own note. The station array
-  -- must reach here in the order the host read it.
+  -- ⚠ Order is part of the answer: journey resolution reads positions out of
+  -- this list, so the stations must arrive in the order the host read them.
   --
-  -- ⚠ Coordinates cross as IEEE-754 bit patterns. The proximity test compares a
-  -- computed distance against 300 m, and a re-rounded coordinate moves which
-  -- stations a line is held to serve.
+  -- ⚠ Coordinates cross as IEEE-754 bit patterns: the proximity test compares
+  -- a distance against 300 m, and re-rounding moves which stations qualify.
   | some "filterStationsByLineProximity" =>
     let stationsOf : Except String (Array Verified.Geo.LineStations.StationCandidate) := do
       let arr ← (← j.getObjVal? "stations").getArr?
@@ -394,13 +368,10 @@ def dispatch (j : Json) : Json :=
             [ ("name", Json.str st.name)
             , ("latBits", Json.str (toString st.lat.toBits))
             , ("lonBits", Json.str (toString st.lon.toBits)) ]))]
-  -- One day's decoded segments rolled up into a `presence_log` row (#982,
-  -- Tier 2). The first CronJob's logic to move off node.
+  -- One day's decoded segments rolled up into a `presence_log` row.
   --
-  -- ⚠ ORDER IS PART OF THE ANSWER. A tie on minutes keeps the place seen FIRST,
-  -- because the TypeScript accumulates into a `Map` and JS iterates one in
-  -- insertion order. The segment array must arrive in the order the decoder
-  -- emitted it, and the host must not sort it on the way here.
+  -- ⚠ Order is part of the answer: a tie on minutes keeps the place seen
+  -- first, so the segments must arrive in the decoder's order, unsorted.
   | some "presenceRow" =>
     let segsOf : Except String (List Verified.PresenceLog.Segment) := do
       let arr ← (← j.getObjVal? "segments").getArr?
@@ -408,9 +379,8 @@ def dispatch (j : Json) : Json :=
         let startTs ← (← e.getObjVal? "startTs").getInt?
         let endTs ← (← e.getObjVal? "endTs").getInt?
         let mode ← (← e.getObjVal? "mode").getStr?
-        -- ⚠ ABSENT and NULL both mean "no mined place", and neither is an
-        -- error: `placeId` is null for every non-stationary segment, which is
-        -- most of them.
+        -- Absent and null both mean "no mined place": `placeId` is null for
+        -- every non-stationary segment.
         let placeId : Option Int := match e.getObjVal? "placeId" with
           | .ok v => (v.getInt?).toOption
           | .error _ => none
@@ -419,9 +389,9 @@ def dispatch (j : Json) : Json :=
     | .error e => err s!"presenceRow: segments: {e}"
     | .ok segs =>
       match Verified.PresenceLog.computeRow segs with
-      -- ⚠ NO ROW is a legitimate answer, not a failure: a day that decoded
-      -- nothing, or whose segments all round to zero minutes, is omitted rather
-      -- than written as a row claiming 0% of nothing.
+      -- No row is a legitimate answer: a day that decoded nothing, or whose
+      -- segments all round to zero minutes, is omitted rather than written as
+      -- 0% of nothing.
       | none => Json.mkObj [("value", Json.null)]
       | some r =>
         Json.mkObj
@@ -434,28 +404,18 @@ def dispatch (j : Json) : Json :=
               , ("endOfDayTs", match r.endOfDayTs with
                   | none => Json.null | some i => Lean.toJson i)
               , ("endOfDayPosteriorBits", Json.str (toString r.endOfDayPosterior.toBits)) ]) ]
-  -- The venues near a stay (#982, and the gap that blocked the cutover).
-  --
-  -- ⚠ This is what puts a VENUE NAME on a timeline instead of a bare
-  -- "stationary". While the host declined this table, four venue names per day
-  -- silently vanished from the served answer — measured against production
-  -- 2026-08-23 before the arm existed.
+  -- The venues near a stay, which put a venue name on a timeline instead of a
+  -- bare "stationary".
   --
   -- ⚠ Distances cross as IEEE-754 bit patterns: the enclosing-institution rule
-  -- compares one against 80 m, and a re-rounded value moves that boundary.
+  -- compares one against 80 m.
   | some "shapeLandmarks" =>
-    -- ⚠ A TAG PAIR IS A TWO-ELEMENT ARRAY, `["amenity", "restaurant"]`. That is
-    -- what `ServeEntry.tagsJson` writes, and reading it as a `{k, v}` OBJECT
-    -- parses every pair to nothing. A feature with no tags spawns no landmark,
-    -- so this op then answers `[]` for every stay — which CLAIMS "no venues
-    -- here" instead of failing. It did exactly that: measured 2026-08-23 on
-    -- 2026-05-22, all six `nearbyLandmarks` asks answered and all six empty,
-    -- costing two venue names on the day while every count read as answered
-    -- (#1054).
-    --
-    -- So a pair that does not parse is an ERROR, not an empty tag list. The two
-    -- spellings are both well-formed JSON and neither side can detect the other
-    -- by shape, which is precisely why this must not degrade quietly.
+    -- ⚠ A tag pair is a two-element array, `["amenity", "restaurant"]`, as
+    -- `ServeEntry.tagsJson` writes it. Read as a `{k, v}` object every pair
+    -- parses to nothing, no feature spawns a landmark, and every stay answers
+    -- `[]`, claiming "no venues here" while every count reads as answered.
+    -- Neither spelling can be told from the other by shape, so a pair that
+    -- does not parse is an error.
     let pairOf (pair : Json) : Except String (String × String) := do
       let kv ← pair.getArr?
       match kv[0]? >>= (·.getStr?.toOption), kv[1]? >>= (·.getStr?.toOption) with
@@ -493,34 +453,14 @@ def dispatch (j : Json) : Json :=
             , ("openingHours", match l.openingHours with
                 | none => Json.null
                 | some h => Json.str h) ]).toArray) ]
-  -- The place picker's projection of one focus place (#982).
+  -- The venue-type prior, mined from every cluster's attributed stays.
   --
-  -- ⚠ `label` and `named` are DIFFERENT questions. A bare "Stay" gets a label
-  -- (so the row renders) but is not `named` (so a picker can hide it): several
-  -- Stays are indistinguishable to a person choosing one.
-  -- The focus cron's amenity vote for ONE cluster (#982 Tier 2).
+  -- A full recompute every run, so a re-mine after a gate change is
+  -- reproducible.
   --
-  -- ⚠ Landmarks arrive in `shapeLandmarks`' OUTPUT shape, so the shell hands
-  -- back what it already fetched rather than re-deriving it — including the raw
-  -- `openingHours` tag, which `toLandmark` resolves against this stay's
-  -- `samples`. Resolving hours shell-side would be a second implementation of
-  -- `Verified.Geo.OpeningHours` living in Rust.
-  --
-  -- ⚠ The CENTROID's landmarks are resolved with `hasStay := false`: the
-  -- centroid is a place, not an interval, so it has no window to be open
-  -- during. The centroid gate asks only "is this a label-worthy venue here",
-  -- which reads neither hours nor `openFraction`.
-  -- The venue-type prior, mined from every cluster's attributed stays (#982).
-  --
-  -- ⚠ A FULL RECOMPUTE, never incremental — the cron rebuilds the blob from
-  -- scratch on every run so that a re-mine after a gate change is reproducible.
-  --
-  -- ⚠ The output object's KEY ORDER is first-seen order, because
-  -- `Verified.Geo.VenuePrior.minePriors` accumulates into an insertion-ordered
-  -- list and the TypeScript accumulates into a JS object, which is the same
-  -- order for string keys. The blob lands in `venue_type_priors.priors_json` as
-  -- TEXT, so two arms that agree on the numbers but not the order still write
-  -- different rows and a byte comparison of the two would read as a mismatch.
+  -- ⚠ The output's key order is first-seen order. The blob is stored as TEXT
+  -- in `venue_type_priors.priors_json`, so the same numbers in another order
+  -- write a different row.
   | some "minePriors" =>
     let stayOf (e : Json) : Except String Verified.Geo.VenuePrior.AttributedStay := do
       let sub ← match str? e "subtype" with
@@ -532,10 +472,8 @@ def dispatch (j : Json) : Json :=
       let lh ← match int? e "localHour" with
         | some i => pure i
         | none => throw "minePriors: a stay has no localHour"
-      -- ⚠ REQUIRED, not defaulted. A missing `startUnix` defaulted to 0 would
-      -- make every stay look like 1970 evidence, so an as-of-the-day prior
-      -- would silently include all of it and the anachronism this field exists
-      -- to remove would be back with nothing to show for it (#1405).
+      -- ⚠ Required, not defaulted: a `startUnix` of 0 would make every stay
+      -- 1970 evidence, and an as-of-the-day prior would include all of it.
       let su ← match int? e "startUnix" with
         | some i => pure i
         | none => throw "minePriors: a stay has no startUnix"
@@ -564,20 +502,16 @@ def dispatch (j : Json) : Json :=
             [ ("bySubtype", tableJson p.bySubtype)
             , ("byCategory", tableJson p.byCategory)
             , ("totalVisitsBits", Json.str (toString p.totalVisits.toBits))
-            -- ⚠ THE EVIDENCE RIDES ALONGSIDE THE AGGREGATE, and the aggregate
-            -- is NOT dropped. It is what every pre-#1405 reader expects, and a
-            -- stored blob must stay readable by code that has never heard of
-            -- `events` — including the running pod during a rollout.
+            -- The evidence rides alongside the aggregate, which stays: a
+            -- stored blob must remain readable by code that has never heard
+            -- of `events`, including the running pod during a rollout.
             , ("events", Json.arr
                 ((Verified.Geo.VenuePrior.eventsOfAttributed stays).map eventJson).toArray) ]) ]
-  -- The stored evidence, re-aggregated as it stood at the end of one day
-  -- (#1405). The reply is the SAME shape `minePriors` returns, so the fold, the
-  -- payload encoder and `shapeScore` are all unchanged — the only difference is
-  -- which stays were counted.
+  -- The stored evidence, re-aggregated as it stood at the end of one day. The
+  -- reply has `minePriors`' shape, so everything downstream is unchanged.
   --
-  -- ⚠ THE CUT BELONGS TO THE CALLER. The shell knows the day being served and
-  -- its timezone; deriving a day boundary here would mean a second copy of the
-  -- tz arithmetic that `localHour` already comes pre-resolved from.
+  -- The cut is the caller's: the shell knows the day served and its zone, and
+  -- `localHour` already arrives resolved.
   | some "priorsAsOf" =>
     let eventOf (e : Json) : Except String Verified.Geo.VenuePrior.PriorEvent := do
       let sub ← match str? e "subtype" with
@@ -616,16 +550,14 @@ def dispatch (j : Json) : Json :=
             [ ("bySubtype", tableJson' p.bySubtype)
             , ("byCategory", tableJson' p.byCategory)
             , ("totalVisitsBits", Json.str (toString p.totalVisits.toBits)) ]) ]
-  -- Raw OSM rows → the `{edges, nodes}` the assemble modes consume (#982).
+  -- Raw OSM rows → the `{edges, nodes}` the assemble modes consume.
   --
-  -- ⚠ The shell parses WKT and reads tag JSON — format concerns — and decides
-  -- NOTHING. `isUnderground`, `parseLineMemberships`, the 5-dp `nodeKey` that
-  -- fuses two ways meeting at a junction into ONE node, and the 150 m station
-  -- merge are all below.
+  -- The shell parses WKT and tag JSON and decides nothing: `isUnderground`,
+  -- `parseLineMemberships`, the 5-dp `nodeKey` that fuses ways meeting at a
+  -- junction, and the 150 m station merge are all below.
   | some "buildWireGraph" =>
-    -- ⚠ Floats cross as IEEE-754 bit patterns in decimal strings, as everywhere
-    -- else here. A coordinate re-rounded on the wire moves a node's 5-dp key,
-    -- which is its IDENTITY — two ways that met at a junction would stop fusing.
+    -- ⚠ Floats cross as IEEE-754 bit patterns: a re-rounded coordinate moves a
+    -- node's 5-dp key, its identity, and junctions stop fusing.
     let jb (v : Json) : Except String Float :=
       match v.getStr? with
       | .ok s => pure (Float.ofBits s.toNat!.toUInt64)
@@ -680,6 +612,16 @@ def dispatch (j : Json) : Json :=
               , ("stationName", match n.stationName with
                   | none => Json.null | some s => Json.str s)
               , ("edgeIds", Json.arr ((n.edgeIds.map Json.str).toArray)) ])) ]
+  -- The focus cron's amenity vote for one cluster.
+  --
+  -- Landmarks arrive in `shapeLandmarks`' output shape, including the raw
+  -- `openingHours` tag, which `toLandmark` resolves against this stay's
+  -- `samples`; resolving hours in Rust would be a second
+  -- `Verified.Geo.OpeningHours`.
+  --
+  -- The centroid's landmarks are resolved with `hasStay := false`: a centroid
+  -- has no interval to be open during, and its gate reads neither hours nor
+  -- `openFraction`.
   | some "mineCluster" =>
     let poiOf (e : Json) : Except String Verified.Geo.BestPlace.Poi := do
       let need (k : String) : Except String String :=
@@ -689,12 +631,10 @@ def dispatch (j : Json) : Json :=
       let nm ← need "name"
       let ty ← need "type"
       let sub ← need "subtype"
-      -- ⚠ THE FIELD IS `distanceM`, AND IT IS A BIT-PATTERN STRING. The Rust
-      -- `shape_landmarks` wrapper REMAPS `shapeLandmarks`' own `distanceMBits`
-      -- onto this name, because `DayEntry.parsePoi` and the trace-fed fold both
-      -- read it as `distanceM` with `jBits`. Reading `distanceMBits` here found
-      -- nothing and refused every landmark — measured against production on
-      -- 2026-08-24, after the cluster half had already answered correctly.
+      -- ⚠ The field is `distanceM`, a bit-pattern string: the Rust
+      -- `shape_landmarks` wrapper renames `shapeLandmarks`' `distanceMBits` to
+      -- it, because `DayEntry.parsePoi` and the trace-fed fold read that name.
+      -- Reading `distanceMBits` here refused every landmark.
       let db ← need "distanceM"
       pure { name := nm, type := ty, subtype := sub
            , distanceM := Float.ofBits db.toNat!.toUInt64
@@ -745,16 +685,13 @@ def dispatch (j : Json) : Json :=
                   [ ("subtype", Json.str a.subtype)
                   , ("durationSecBits", Json.str (toString a.durationSec.toBits))
                   , ("localHour", Lean.toJson a.localHour)
-                  -- ⚠ A PLAIN INTEGER, not bits. It is a unix second the shell
-                  -- already holds as an integer, never a measured double, so
-                  -- keying it on float bits would invent a spelling both sides
-                  -- must agree on for nothing. Same reasoning as `zoom`.
+                  -- A plain integer, not bits: a unix second the shell holds
+                  -- as an integer, as with `zoom`.
                   , ("startUnix", Lean.toJson a.startUnix) ]).toArray)) ]) ]
-  -- The SOFT twin of `minePriors` (#343 P0). Same stay wire as `mineCluster`;
-  -- responsibilities come from `stayResponsibilities` — evidence independent
-  -- of the shape prior being trained — and the reply carries the honesty
-  -- numbers the measurement loop demands: effective sample size, how many
-  -- stays teach at all, and the mean `other` mass.
+  -- The soft twin of `minePriors`. Same stay wire as `mineCluster`;
+  -- responsibilities come from `stayResponsibilities`, independent of the
+  -- shape prior being trained, and the reply carries the honesty numbers:
+  -- effective sample size, how many stays teach, and the mean `other` mass.
   | some "minePriorsSoft" =>
     let poiOf (e : Json) : Except String Verified.Geo.BestPlace.Poi := do
       let need (k : String) : Except String String :=
@@ -821,6 +758,11 @@ def dispatch (j : Json) : Json :=
             , ("staysTotal", Lean.toJson stays.length)
             , ("staysTeaching", Lean.toJson teaching.length)
             , ("meanOtherBits", Json.str (toString meanOther.toBits)) ]) ]
+  -- The place picker's projection of one focus place.
+  --
+  -- `label` and `named` differ: a bare "Stay" gets a label so the row renders,
+  -- but is not `named`, so a picker can hide it; several Stays are
+  -- indistinguishable to a person choosing one.
   | some "placeProjection" =>
     let dn := str? j "displayName"
     let al := str? j "amenityLabel"
@@ -832,9 +774,8 @@ def dispatch (j : Json) : Json :=
           | some k => Json.str (Verified.Geo.VenuePrior.categoryOfSubtype k)) ]
   -- Which mined place is the user standing in?
   --
-  -- ⚠ NEAREST within the radius, not highest-ranked. Coordinates cross as
-  -- IEEE-754 bit patterns for the same reason the Kalman mode uses them: the
-  -- seventh decimal of a fix moves the answer.
+  -- Nearest within the radius, not highest-ranked. ⚠ Coordinates cross as
+  -- IEEE-754 bit patterns: the seventh decimal of a fix moves the answer.
   | some "pickCurrentPlace" =>
     match str? j "latBits", str? j "lonBits" with
     | some la, some lo =>
@@ -867,14 +808,13 @@ def dispatch (j : Json) : Json :=
               , ("centroidLonBits", Json.str (toString cp.centroidLon.toBits))
               , ("distanceMBits", Json.str (toString cp.distanceM.toBits)) ]) ]
     | _, _ => err "pickCurrentPlace: latBits, lonBits required"
-  -- The raw recovery picture for one morning (#982).
+  -- The raw recovery picture for one morning.
   --
-  -- ⚠ Answers NUMBERS, never a readiness score. Coach owns that judgment; two
-  -- apps scoring it would drift on what a bad day is.
+  -- Numbers, never a readiness score: coach owns that judgement, and two apps
+  -- scoring it would drift.
   --
-  -- ⚠ Floats cross as IEEE-754 BIT PATTERNS in decimal strings, the convention
-  -- `ServeEntry` documents: `Lean.JsonNumber` is a decimal that prints six
-  -- places, so a JSON number here would re-round every value on the way out.
+  -- ⚠ Floats cross as IEEE-754 bit patterns: `Lean.JsonNumber` prints six
+  -- places, so a JSON number would re-round every value.
   | some "recoveryAsOf" =>
     match str? j "day" with
     | some day =>
@@ -912,18 +852,17 @@ def dispatch (j : Json) : Json :=
         , ("hrv", statJson (statOf "hrv"))
         , ("restingHr", statJson (statOf "rhr")) ]
     | none => err "recoveryAsOf: day required"
-  -- ⚠ A REFUSAL, not a truncation: answering a decade-wide request with 400
-  -- days would look complete to a caller who asked for more.
+  -- A refusal, not a truncation: a decade-wide request answered with 400 days
+  -- would look complete.
   | some "recoverySpan" =>
     match str? j "from", str? j "to" with
     | some f, some t =>
       Json.mkObj [("value", Json.bool (Verified.Recovery.spanIsAnswerable f t))]
     | _, _ => err "recoverySpan: from, to required"
-  -- The post-login redirect target (#982).
+  -- The post-login redirect target.
   --
-  -- ⚠ An OPEN-REDIRECT guard. Anything not clearly an internal path answers
-  -- "/", so the caller can redirect unconditionally rather than carrying a
-  -- branch someone might forget.
+  -- ⚠ An open-redirect guard: anything not clearly an internal path answers
+  -- "/", so the caller redirects unconditionally.
   | some "validateReturnTo" =>
     Json.mkObj [("value", Json.str (Verified.Login.validateReturnTo (str? j "returnTo")))]
   -- The pending-login cookie's payload.
@@ -945,9 +884,8 @@ def dispatch (j : Json) : Json :=
               , ("retried", Json.bool r)
               , ("returnTo", match rt with | none => Json.null | some r => Json.str r) ]) ]
     | none => err "decodePending: raw required"
-  -- ⚠ `state` absent means Nextcloud DROPPED it, which is normal for a
-  -- cookie-less browser: retried once, never accepted. Present-and-wrong is a
-  -- refusal.
+  -- `state` absent means Nextcloud dropped it, normal for a cookie-less
+  -- browser: retried once, never accepted. Present and wrong is a refusal.
   | some "acceptPending" =>
     match int? j "expiresAt", str? j "nonce", bool? j "retried", int? j "nowMs" with
     | some e, some n, some r, some now =>
@@ -955,45 +893,39 @@ def dispatch (j : Json) : Json :=
     | _, _, _, _ => err "acceptPending: expiresAt, nonce, retried, nowMs required"
   | some "pendingTtlMs" =>
     Json.mkObj [("value", Json.num Verified.Login.PENDING_TTL_MS)]
-  -- The PhoneTrack filter's start date (#982).
+  -- The PhoneTrack filter's start date.
   --
-  -- ⚠ `hour` must be the LOCAL hour and `(y, m, d)` the LOCAL date. Lean has no
-  -- zone database, so the host resolves them; passing UTC parts would shift the
-  -- 06:00 boundary by the offset.
+  -- ⚠ `hour` and `(y, m, d)` are local: Lean has no zone database, so the host
+  -- resolves them, and UTC parts would shift the 06:00 boundary.
   | some "phonetrackDatemin" =>
     match int? j "y", int? j "m", int? j "d", int? j "hour" with
     | some y, some m, some d, some h =>
       Json.mkObj [("value", Json.str (Verified.PhoneTrackPrefs.dateminDate y m d h))]
     | _, _, _, _ => err "phonetrackDatemin: y, m, d, hour required"
-  -- Flatten client text into one log field (#982).
+  -- Flatten client text into one log field.
   --
-  -- ⚠ A SECURITY BOUNDARY, not formatting. `/api/telemetry` writes this into a
-  -- log line, so a newline in the input forges further lines attributed to
-  -- someone else. A host that skipped this call would make the log unusable as
-  -- evidence exactly when it matters.
+  -- ⚠ A security boundary: `/api/telemetry` writes this into a log line, and a
+  -- newline in the input would forge further lines.
   | some "oneLine" =>
     match str? j "raw", int? j "max" with
     | some raw, some max =>
       Json.mkObj [("value", Json.str (Verified.LogLine.oneLine raw max.toNat))]
     | _, _ => err "oneLine: raw, max required"
-  -- The public share URL for a token (#982).
+  -- The public share URL for a token.
   | some "buildShareUrl" =>
     match str? j "baseUrl", str? j "token" with
     | some b, some t => Json.mkObj [("value", Json.str (Verified.Share.buildShareUrl b t))]
     | _, _ => err "buildShareUrl: baseUrl, token required"
-  -- ⚠ CLAMPS. The mirror of `validateDays`, which REJECTS — two day-windows in
-  -- one API with opposite behaviour, and both are the TypeScript's. `null` here
-  -- means the value was not a finite number at all, NOT that it was out of
-  -- range; out of range is silently narrowed.
+  -- ⚠ Clamps, where `validateDays` rejects. `null` here means the value was not
+  -- a finite number; out of range is narrowed.
   | some "clampShareDaysBack" =>
     match Verified.Share.clampShareDaysBack (optInt? j "daysBack") with
     | none => Json.mkObj [("value", Json.null)]
     | some n => Json.mkObj [("value", Json.num n)]
-  -- Whether a linked account is working (#982).
+  -- Whether a linked account is working.
   --
-  -- ⚠ `stored` absent means NO ROW, which is `not_linked`. A host that sent an
-  -- empty string for a missing row would get `active` back — the fall-through —
-  -- and report a connection that does not exist as fine.
+  -- ⚠ `stored` absent means no row, `not_linked`; an empty string would fall
+  -- through to `active`.
   | some "connectionStatus" =>
     let st := Verified.Connection.statusOf (str? j "stored")
     Json.mkObj
@@ -1009,27 +941,25 @@ def dispatch (j : Json) : Json :=
       | none => err s!"prevDay: {d} is not YYYY-MM-DD"
       | some pv => Json.mkObj [("value", Json.str pv)]
     | none => err "prevDay: date required"
-  -- The live-map constants (#982).
+  -- The live-map constants.
   | some "locationPolicy" =>
     Json.mkObj
       [ ("tailMaxPoints", Json.num Verified.LocationTail.TAIL_MAX_POINTS)
       , ("latestFixTtlMs", Json.num Verified.LocationTail.LATEST_FIX_TTL_MS)
       , ("tailTtlMs", Json.num Verified.LocationTail.TAIL_TTL_MS) ]
-  -- ⚠ The REFERENCE tail, for the host's drift test only. The serving path
-  -- filters inline — a tail buffer is thousands of points and shipping them all
-  -- across the FFI per poll would cost more than the fetch it saves.
+  -- The reference tail, for the host's drift test only: the serving path
+  -- filters inline, since shipping thousands of tail points across the FFI per
+  -- poll would cost more than the fetch.
   | some "tailAfter" =>
     match ints? j "tss", int? j "since" with
     | some tss, some since =>
       Json.mkObj
         [ ("value", Json.arr ((Verified.LocationTail.tailAfter tss since).map (fun t => Json.num (Lean.JsonNumber.fromInt t))).toArray) ]
     | _, _ => err "tailAfter: tss, since required"
-  -- The wire shape of a `selectAll()` row (#982).
+  -- The wire shape of a `selectAll()` row, asked once per column.
   --
-  -- ⚠ Asked ONCE PER COLUMN of a result set, not per value: the shape is a
-  -- property of the column type. `null` in the answer means REFUSE THE REQUEST,
-  -- not "render it as null" — an unmapped type is one whose rendering nobody
-  -- has checked, and guessing produces a well-formed response of the wrong type.
+  -- ⚠ `null` means refuse the request, not render a null: an unmapped type's
+  -- rendering has never been checked.
   | some "rowShapes" =>
     match strs? j "types" with
     | some ts =>
@@ -1041,25 +971,22 @@ def dispatch (j : Json) : Json :=
     | none => err "rowShapes: types required"
   -- The ISO rendering of a date/datetime column.
   --
-  -- ⚠ The HOST formats these on the serving path — a day of intraday heart rate
-  -- is thousands of values and a call each would be thousands of round trips.
-  -- This op exists so `tests/row_shape.rs` can hold the host's formatter against
-  -- this one over a corpus. If the two ever disagree, LEAN IS RIGHT.
+  -- The host formats these on the serving path (thousands of values a day);
+  -- this op lets `tests/row_shape.rs` hold the host's formatter against it. If
+  -- the two disagree, Lean is right.
   | some "formatIso" =>
     match ints? j "parts" with
     | some [y, m, d] => Json.mkObj [("value", Json.str (Verified.RowShape.formatDateIso y m d))]
     | some [y, m, d, h, mi, s, ms] =>
       Json.mkObj [("value", Json.str (Verified.RowShape.formatDateTimeIso y m d h mi s ms))]
     | _ => err "formatIso: parts must be [y,m,d] or [y,m,d,h,mi,s,ms]"
-  -- The two Overpass mirrors' whole judgement (#982 Tier 2). The shell does
-  -- HTTP and SQL; every decision below — which region, which tiles, which
-  -- relations, and whether the run may write at all — is Lean's.
+  -- The two Overpass mirrors' whole judgement: which region, which tiles,
+  -- which relations, and whether the run may write. The shell does HTTP and
+  -- SQL.
   --
-  -- ⚠ THE RAW OVERPASS RESPONSE COMES IN HERE, not a pre-parsed shape. A tile is
-  -- ~5 MB and parsing it in Rust to hand Lean a narrowed structure would mean
-  -- two parses and a second definition of what an element is. `Verified.Geo.Osm*`
-  -- stays pure over its own types, and this is the only place that knows what
-  -- Overpass JSON looks like — the same split as every other op here.
+  -- The raw Overpass response comes in here, so `Verified.Geo.Osm*` stays pure
+  -- over its own types and there is one definition of an element, not a Rust
+  -- parse narrowing a ~5 MB tile first.
   | some "mirrorRegion" =>
     -- Focus-place coordinates in, the home metro's tiles out. `points` are
     -- [latBits, lonBits] pairs; the cutoff that made them "recent" is the
@@ -1114,10 +1041,8 @@ def dispatch (j : Json) : Json :=
       | _ => #[]
     let fb (x : Float) : Json := Json.str (toString x.toBits)
     let stopJson := fun (s : Verified.Geo.OsmRouteMembers.RouteStop) =>
-      -- ⚠ FIELD ORDER IS name, lat, lon, seq — `stops_json` is compared row for
-      -- row against the TypeScript arm's, and `JSON.stringify` follows the
-      -- object literal's order. The shell renders the floats; it must keep this
-      -- order when it does.
+      -- Field order is name, lat, lon, seq; the shell keeps it when it renders
+      -- the floats, so a re-fetched tile writes the same `stops_json`.
       Json.mkObj [("name", optStr s.name), ("lat", fb s.lat), ("lon", fb s.lon),
                   ("seq", Json.num s.seq)]
     let run : Except String Json := do

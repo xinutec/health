@@ -5,27 +5,8 @@ use super::mirror::*;
 use anyhow::{Context, Result};
 use backend::db;
 
-/// Rebuild `focus_places` and `venue_type_priors` from PhoneTrack history.
-///
-/// Ported from `refresh-focus-places.ts` (#982); the CronJob runs Sundays
-/// 04:00. The geometry (stays, clusters, splitting, hour profiles,
-/// identity) is `ServeEntry`'s `focus` mode; the amenity vote is
-/// `Verified.Geo.FocusMining.mineCluster`; everything here is the IO around
-/// them.
-///
-/// ⚠ NOT ported, deliberately: `--explain`, `--dry-run`'s census listings and
-/// `--emit-known-places`. They are ~400 of the TypeScript's 754 lines and are
-/// diagnostics for decisions the guards now pin.
-///
-/// ⚠ `radius_m` is written as the LITERAL 25, on both the INSERT and the
-/// UPDATE, because that is what the TypeScript writes and what all 128 prod
-/// rows carry. `clusterSpreadM` feeds a console report and nothing else — it is
-/// deliberately not ported, and writing a measured spread here would be a
-/// behaviour change four call sites can see.
-/// The #343 P0 measurement sinks: extra outputs riding the prod mining path,
-/// so the A/B population can never drift from what the cron actually mines
-/// (the July harness mined 528 stays where prod mines 306 — this is why the
-/// loop is not a separate harness).
+/// Extra outputs riding the production mining path, so a measured population
+/// is exactly what the cron mines rather than a separate harness's guess.
 pub(crate) struct MineSinks {
     pub(crate) soft_out: Option<String>,
     pub(crate) hard_out: Option<String>,
@@ -34,15 +15,20 @@ pub(crate) struct MineSinks {
     /// centroid, the visit count and spread — before the amenity vote; a dry
     /// run with no other sink stops there.
     pub(crate) places_out: Option<String>,
-    /// Mine as the window stood on this instant rather than now (#1405).
+    /// Mine as the window stood on this instant rather than now.
     ///
-    /// ⚠ A MEASUREMENT FLAG, and it must stay one until somebody has costed
-    /// it. Answering a day this way means re-clustering per day served, and one
-    /// 730-day mine is 272,977 points into 372 clusters — that cannot go near
-    /// the serving path.
+    /// ⚠ A measurement flag: answering a day this way re-clusters per day
+    /// served (one 730-day mine is ~273,000 points), far too slow to serve.
     pub(crate) as_of: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// Rebuild `focus_places` and `venue_type_priors` from PhoneTrack history.
+///
+/// The geometry (stays, clusters, splitting, hour profiles, identity) is
+/// `ServeEntry`'s `focus` mode; the amenity vote is
+/// `Verified.Geo.FocusMining.mineCluster`; this is the IO around them.
+///
+/// `radius_m` is always [`FOCUS_RADIUS_M`].
 pub(crate) async fn refresh_focus_places(
     pool: &sqlx::MySqlPool,
     only_user: Option<&str>,
@@ -65,9 +51,8 @@ pub(crate) async fn refresh_focus_places(
 
     for user_id in &users {
         if let Err(e) = refresh_focus_places_one(pool, user_id, lookback_days, sinks).await {
-            // ⚠ One user's failure must not strand the others, and must not
-            // read as success either. The TypeScript lets the whole process
-            // die here.
+            // One user's failure must neither strand the others nor read as
+            // success.
             eprintln!("refresh-focus-places: [{user_id}] FAILED: {e:#}");
             return Err(e);
         }
@@ -84,14 +69,9 @@ pub(crate) async fn refresh_focus_places_one(
     use sqlx::Row as _;
 
     // ── 1. the point history ────────────────────────────────────────────────
-    // ⚠ `Config::nextcloud_base_url` is None IN PRODUCTION (#1037) — the sync
-    // path types it nullable because "no PhoneTrack source" is a real state
-    // there. THIS cron did not share that: the TypeScript it replaced defaulted
-    // the host to `https://dash.xinutec.org`, so it always fetched there whether
-    // or not `NC_BASE_URL` was set.
-    //
-    // Reading the shared config here would quietly fetch nothing in the very
-    // deployment the cron has always worked in.
+    // ⚠ Not `Config::nextcloud_base_url`: that is None in production, where
+    // "no PhoneTrack source" is a real state for the sync, and this cron has
+    // always fetched from the default host.
     let nc_base_url = backend::config::focus_nc_base_url();
     let ctx = backend::nextcloud::phonetrack::PhoneTrack::open(
         reqwest::Client::new(),
@@ -102,12 +82,10 @@ pub(crate) async fn refresh_focus_places_one(
     .await
     .with_context(|| format!("opening PhoneTrack for {user_id}"))?;
 
-    // ⚠ THE WINDOW'S ANCHOR IS A PARAMETER (#1405). Mining always counted back
-    // from NOW, which is why an as-of-the-day prior could not be reconstructed:
-    // filtering the mined events by timestamp cuts their COUNTS but not their
-    // LABELS, because every stay's subtype comes from a cluster built over the
-    // whole window — including the part after the cut. Anchoring the window
-    // itself is the only way to ask what was knowable on a past day.
+    // ⚠ The window's anchor is a parameter. Filtering mined events by time
+    // cuts their counts but not their labels, since each stay's subtype comes
+    // from a cluster built over the whole window; only anchoring the window
+    // asks what was knowable on a past day.
     let anchor = sinks.as_of.unwrap_or_else(chrono::Utc::now);
     let day = |n: i64| -> String {
         (anchor - chrono::Duration::days(n))
@@ -128,8 +106,7 @@ pub(crate) async fn refresh_focus_places_one(
             .with_context(|| format!("fetching PhoneTrack {start}..{end}"))?;
         failed_devices += fetched.failed_devices;
         for p in fetched.points {
-            // The TypeScript's dedup key, verbatim: chunk bounds are shared, so
-            // the same fix arrives twice.
+            // Chunk bounds are shared, so the same fix arrives twice.
             let k = format!("{}/{:.6}/{:.6}", p.ts, p.lat, p.lon);
             if seen.insert(k) {
                 points.push((p.ts, p.lat, p.lon, p.accuracy));
@@ -139,14 +116,10 @@ pub(crate) async fn refresh_focus_places_one(
     }
     points.sort_by_key(|p| p.0);
 
-    // ⚠ REFUSE TO WRITE ON A PARTIAL HISTORY (#1140). The write path below ends
-    // in `DELETE FROM focus_places`, and a device whose points call failed makes
-    // `points` a SUBSET — real places then match nothing, and get deleted. The
-    // The TypeScript did not check this: it logged a per-device warning and
-    // carried on, so one flaky device on one Sunday silently dropped rows and the
-    // run still reported success.
-    //
-    // Skipping a week is strictly better: the previous snapshot stands.
+    // ⚠ Refuse to write on a partial history. The write below ends in
+    // `DELETE FROM focus_places`, and with a failed device `points` is a
+    // subset: real places match nothing and are deleted. Skipping a week
+    // keeps the previous snapshot.
     if failed_devices > 0 {
         anyhow::bail!(
             "[{user_id}] {failed_devices} PhoneTrack device(s) failed — refusing to rebuild \
@@ -181,18 +154,13 @@ pub(crate) async fn refresh_focus_places_one(
     );
 
     // ── 3. the existing rows, for identity matching ─────────────────────────
-    // ⚠ TWO sqlx traps in one row, both of which fail on REAL rows only and
-    // neither of which a fixture would show:
+    // ⚠ Two sqlx traps, both seen only on real rows:
     //
-    //   * `centroid_lat`/`centroid_lon` are DECIMAL(9,6). sqlx cannot hand back
-    //     a MySQL DECIMAL at all without `rust_decimal`, so they are CAST to
-    //     CHAR and parsed — the same thing `classification_inputs` does, for
-    //     the same reason.
-    //   * `id` and `first_seen_ts` are INT UNSIGNED, which is a DISTINCT sqlx
-    //     type that decodes as none of the signed forms. Reading `id` as `i64`
-    //     failed in production on 2026-08-24 with "Rust type `i64` (as SQL type
-    //     `BIGINT`) is not compatible with SQL type `INT UNSIGNED`" — after the
-    //     job had already fetched 79,262 points.
+    //   * `centroid_lat`/`centroid_lon` are DECIMAL(9,6), which sqlx cannot
+    //     decode without `rust_decimal`, so they are cast to CHAR and parsed,
+    //     as in `classification_inputs`.
+    //   * `id` and `first_seen_ts` are INT UNSIGNED, which decodes as none of
+    //     the signed types; reading `id` as `i64` failed in production.
     let old_rows = sqlx::query(
         "SELECT id, CAST(centroid_lat AS CHAR) AS centroid_lat, \
          CAST(centroid_lon AS CHAR) AS centroid_lon, first_seen_ts \
@@ -220,9 +188,8 @@ pub(crate) async fn refresh_focus_places_one(
 
     // ── 4. the geometry, from Lean ──────────────────────────────────────────
     // The request build, the decode and the one-assignment-per-cluster
-    // invariant are `lean::focus_places`, moved there so a test can reach them
-    // (#1424) — this function is DB-backed and lives in the binary crate, which
-    // put the whole of `focus` out of reach of every gate.
+    // invariant are in `lean::focus_places`, in the library so tests reach
+    // them.
     let focus = backend::lean::focus_places(&points, &sleep_windows, &old)?;
     let mined = &focus.mined;
     let names = &focus.names;
@@ -261,14 +228,11 @@ pub(crate) async fn refresh_focus_places_one(
     }
 
     // ── 5. the amenity vote, per cluster ────────────────────────────────────
-    // ⚠ TWO PHASES, and the split is forced by the mirror. `MirrorSource` may
-    // only be touched from a blocking thread — constructing it on a runtime
-    // worker and letting a query reach it ABORTS THE PROCESS — so every OSM
-    // lookup has to happen inside `with_mirror_answerer`'s closure, which is
-    // `FnOnce + Send + 'static` and cannot await.
-    //
-    // So: resolve the timezones first (pure CPU, no IO), hand a plain data
-    // structure across, and bring the labels back out.
+    // ⚠ Two phases, forced by the mirror. `MirrorSource` may only be touched
+    // from a blocking thread (a query from a runtime worker aborts the
+    // process), so every OSM lookup happens inside `with_mirror_answerer`'s
+    // closure, which cannot await. So: resolve the timezones first (pure CPU),
+    // hand plain data across, and bring the labels back.
     let zones = backend::tz_lookup::PolygonLookup::new();
 
     struct PendingStay {
@@ -294,22 +258,14 @@ pub(crate) async fn refresh_focus_places_one(
         let empty = Vec::new();
         let stays = c.get("stays").and_then(|v| v.as_array()).unwrap_or(&empty);
 
-        // ⚠ GATE 0, THE RESIDENCE GATE. A cluster the user SLEEPS at is not
-        // mined at all — `amenity_label` stays null and the runtime falls
-        // through to the residential-address lookup. Populating it would be
-        // dead data an older code path could mis-pick up.
+        // ⚠ The residence gate. A cluster the user sleeps at is not mined:
+        // `amenity_label` stays null and the runtime falls through to the
+        // residential-address lookup. Without the gate, hotels and a clinic
+        // the user slept at were labelled, writing where the user slept and
+        // what kind of place it was, and it read as better coverage.
         //
-        // ⚠ ITS ABSENCE IS NOT VISIBLE AS A SHORTFALL: without it the arm
-        // labels 88 of 128 clusters
-        // where production labels 82. Every one of the six extra was a place
-        // with 6-36 sleep hours — hotels, a guest house, a clinic. So the miss
-        // wrote WHERE HE SLEPT AND WHAT KIND OF PLACE IT WAS into a column the
-        // TypeScript deliberately leaves empty, and it read as better coverage.
-        //
-        // ⚠ The skip is BEFORE the per-stay loop in the TypeScript, so these
-        // stays train NO prior either — that is the 95-vs-77 attributed-stay
-        // gap, not a separate bug. An empty `stays` list here reproduces both:
-        // `mineCluster` casts no vote and attributes nothing.
+        // The skip comes before the per-stay loop, so these stays train no
+        // prior either; an empty `stays` list does both.
         let cluster_sleep_h = if has_fitbit_sleep {
             c.get("sleepFitbitH").and_then(bitsf)
         } else {
@@ -343,10 +299,9 @@ pub(crate) async fn refresh_focus_places_one(
                 .get(5)
                 .and_then(serde_json::Value::as_i64)
                 .context("stay durationSec")?;
-            // ⚠ A stay with no resolvable zone is SKIPPED, not defaulted to
-            // UTC. `localHour` and the opening-hours samples are both
-            // venue-local, and a wrong clock votes for the wrong venue rather
-            // than declining to vote.
+            // ⚠ A stay with no resolvable zone is skipped, not defaulted to
+            // UTC: `localHour` and the opening-hours samples are venue-local,
+            // and a wrong clock votes for the wrong venue.
             let Some(tz) = zones.zone(slat, slon) else {
                 continue;
             };
@@ -373,18 +328,17 @@ pub(crate) async fn refresh_focus_places_one(
             let mut out: Vec<backend::lean::MinedCluster> = Vec::with_capacity(pending.len());
             // Per cluster: did the mirror fail to answer for any of its stays?
             let mut unanswered: Vec<bool> = Vec::with_capacity(pending.len());
-            // #343 P0: the soft-mining population is BY CONSTRUCTION the stays the
-            // hard miner sees — collected inside the same loop, after the residence
-            // skip (empty `stays`) and the mirror-could-not-answer skip.
+            // The soft-mining population is by construction the stays the hard
+            // miner sees: collected in the same loop, after the residence skip
+            // and the mirror-could-not-answer skip.
             let mut flat: Vec<backend::lean::MineStay> = Vec::new();
             for c in pending {
                 let mut ms: Vec<backend::lean::MineStay> = Vec::with_capacity(c.stays.len());
                 let mut missed = false;
                 for s in c.stays {
-                    // ⚠ `None` means the MIRROR could not answer, which is NOT
-                    // "no venues here". This stay then casts no vote, rather than
-                    // a vote for nothing (#976, and the empty-landmarks day of
-                    // #1054).
+                    // ⚠ `None` means the mirror could not answer, not "no
+                    // venues here", so the stay casts no vote rather than a
+                    // vote for nothing.
                     let Some(shaped) = ans.nearby_landmarks(s.lat, s.lon)? else {
                         missed = true;
                         continue;
@@ -440,7 +394,7 @@ pub(crate) async fn refresh_focus_places_one(
     // ── 6. the priors blob — a full recompute, never incremental ────────────
     let priors = backend::lean::mine_priors(&attributed_all)?;
 
-    // ── #343 P0 sinks, before any write ─────────────────────────────────────
+    // ── the measurement sinks, before any write ─────────────────────────────
     if let Some(path) = &sinks.hard_out {
         std::fs::write(path, serde_json::to_string_pretty(&priors)?)
             .with_context(|| format!("writing {path}"))?;
@@ -468,18 +422,11 @@ pub(crate) async fn refresh_focus_places_one(
         return Ok(());
     }
 
-    // ⚠ **A BACKFILL WRITES THE SNAPSHOT AND NOTHING ELSE (#1405).**
-    //
-    // `--as-of` in the PAST re-mines history to manufacture a snapshot for a day
-    // that never had one. Everything else this function writes describes NOW:
-    // `venue_type_priors` is the current blob every present-day request reads,
-    // and `focus_places` is DELETED and rewritten below. Letting a backfill
-    // through both would replace today's clusters and today's prior with May's
-    // — it would corrupt the present in order to describe the past, which is
-    // the exact inversion of what the caller asked for.
-    //
-    // `--as-of` set to TODAY is not a backfill: it is an ordinary run that
-    // happens to name its own anchor, and it writes everything.
+    // ⚠ A backfill writes the snapshot and nothing else. `--as-of` in the past
+    // re-mines history for a day that never had a snapshot; everything else
+    // here describes now (`venue_type_priors` is what every request reads,
+    // `focus_places` is rewritten below), and a backfill would replace the
+    // present with the past. `--as-of` today is an ordinary run.
     let backfill = sinks
         .as_of
         .is_some_and(|d| d.date_naive() < chrono::Utc::now().date_naive());
@@ -507,22 +454,15 @@ pub(crate) async fn refresh_focus_places_one(
         .context("writing venue_type_priors")?;
     }
 
-    // The same blob, FROZEN at the day this run's window ended (#1405).
+    // The same blob, frozen at the day this run's window ended, beside the row
+    // above (which every reader expects), never instead of it.
     //
-    // ⚠ BESIDE the row above, never instead of it. That row is what every
-    // reader predating this expects, including a pod mid-rollout, and the
-    // snapshot is additive history.
+    // ⚠ This is what keeps a past label stable: mining re-clusters from
+    // scratch, so re-running it rewrites what past days were called. Only a
+    // stored anchor keeps the answer.
     //
-    // ⚠ THIS IS THE HALF THAT MAKES A PAST LABEL STABLE. Mining re-clusters
-    // from scratch, so the prior is not a stable function of its own window —
-    // re-running it rewrites what past days were called. Filtering the mined
-    // events by timestamp does NOT fix that, because each stay's subtype comes
-    // from a cluster built across the whole window; only anchoring the window
-    // does, and only a stored anchor keeps the answer.
-    //
-    // `ON DUPLICATE KEY UPDATE` so re-mining the same anchor replaces it rather
-    // than failing: the newest run for a date is the one to keep, and a refresh
-    // that cannot write is worse than one that overwrites its own earlier try.
+    // An upsert, so re-mining an anchor replaces it: the newest run for a date
+    // is the one to keep.
     let anchor = sinks
         .as_of
         .unwrap_or_else(chrono::Utc::now)
@@ -547,11 +487,9 @@ pub(crate) async fn refresh_focus_places_one(
     );
 
     if backfill {
-        // ⚠ STOPS HERE, and the reason is the DELETE below. `focus_places` is
-        // rewritten from THIS run's clusters, and a backfill's clusters are
-        // May's — applying them would delete the places the user goes to now
-        // and replace them with where they went in the spring. The snapshot
-        // above is the entire product of a backfill.
+        // ⚠ Stops here because of the DELETE below: a backfill's clusters are
+        // the past's, and applying them would replace the places the user goes
+        // to now. The snapshot is all a backfill produces.
         eprintln!(
             "[{user_id}] backfill as of {anchor}: snapshot only — NOT touching \
              venue_type_priors or focus_places, which describe now"
@@ -562,9 +500,8 @@ pub(crate) async fn refresh_focus_places_one(
 
     // ── 7. the places ───────────────────────────────────────────────────────
     if !deleted.is_empty() {
-        // ⚠ `QueryBuilder`, not `format!`: a interpolated SQL string trips the
-        // audit lint, and this is the one statement here with a
-        // variable-length parameter list.
+        // `QueryBuilder`, not `format!`: an interpolated SQL string trips the
+        // audit lint, and this statement has a variable-length parameter list.
         let mut qb: sqlx::QueryBuilder<sqlx::MySql> =
             sqlx::QueryBuilder::new("DELETE FROM focus_places WHERE id IN (");
         let mut sep = qb.separated(", ");
@@ -597,7 +534,7 @@ pub(crate) async fn refresh_focus_places_one(
         let detected = c.get("label").and_then(|v| v.as_str()).unwrap_or("other");
         let profile = c.get("profile").and_then(|v| v.as_str()).unwrap_or("");
         // Fitbit-confirmed hours when there are any, else the local-clock
-        // 02:00–06:00 heuristic — the TypeScript's choice, on the same test.
+        // 02:00–06:00 heuristic.
         let sleep_h: f64 = if has_fitbit_sleep {
             c.get("sleepFitbitH").and_then(bitsf)
         } else {
@@ -622,19 +559,16 @@ pub(crate) async fn refresh_focus_places_one(
         let display_name = names.get(&id);
         let (amenity_label, amenity_kind) = &labels[i];
 
-        // ⚠ A cluster the mirror could not answer for KEEPS its stored label
-        // when this vote came out empty: no answer is not "no venue". The
-        // re-mine of 2026-10-04 04:01Z ran while landmark boxes refiled under
-        // a new vocabulary were still unfetched and stored 45 labels where a
-        // run hours later finds 59, so 04-29's Bustan stay read as its street
-        // (#1909). A vote that ANSWERED empty still clears the label.
+        // ⚠ A cluster the mirror could not answer for keeps its stored label
+        // when this vote came out empty: no answer is not "no venue". A re-mine
+        // during a mirror refile once stored 45 labels where a later run found
+        // 59. A vote that answered empty still clears the label.
         let keep_label = amenity_label.is_none() && unanswered.get(i).copied().unwrap_or(false);
 
         if let Some(old_id) = assignments[i] {
-            // ⚠ UPDATE preserves `id` and `first_seen_ts` — the original "first
-            // time we observed this place". Rewriting either would break the
-            // foreign-key references downstream consumers hold, and would make
-            // a re-mine look like a new place.
+            // ⚠ The UPDATE preserves `id` and `first_seen_ts`: downstream
+            // references hold the id, and a re-mine must not look like a new
+            // place.
             sqlx::query(
                 "UPDATE focus_places SET centroid_lat = ?, centroid_lon = ?, radius_m = ?, \
                    total_dwell_sec = ?, visit_count = ?, unique_days = ?, last_seen_ts = ?, \
@@ -690,17 +624,16 @@ pub(crate) async fn refresh_focus_places_one(
             .context("inserting a focus_place")?;
         }
 
-        // The residence zone, for read-time fallback. First Home wins, as in
-        // the TypeScript; if no cluster qualifies, the stored value is left
-        // alone rather than cleared.
+        // The residence zone, for read-time fallback. The first Home wins; if
+        // no cluster qualifies, the stored value is left alone.
         if home_tz.is_none() && display_name.map(String::as_str) == Some("Home") {
             home_tz = zones.zone(clat, clon);
         }
     }
 
     if let Some(tz) = &home_tz {
-        // ⚠ Inside the transaction, so a half-failed refresh rolls the zone
-        // back with the rows it was derived from.
+        // In the transaction, so a failed refresh rolls the zone back with the
+        // rows it was derived from.
         backend::sync_state::set_with(&mut *tx, user_id, "home_tz", tz)
             .await
             .context("writing home_tz")?;
@@ -712,36 +645,27 @@ pub(crate) async fn refresh_focus_places_one(
     Ok(())
 }
 
-/// ⚠ The LITERAL the TypeScript writes, and what all 128 prod rows carry. Four
-/// call sites read this column and one of them only notices values above 40 m,
-/// so writing a measured cluster spread here would be a behaviour change, not a
-/// refinement (#789).
+/// ⚠ A constant, not a measured spread: four call sites read this column, one
+/// only notices values above 40 m, and every stored row carries 25.
 pub(crate) const FOCUS_RADIUS_M: i64 = 25;
 
 /// Fitbit-confirmed sleep hours at or above which a cluster is a RESIDENCE and
 /// is not mined for a venue name at all. See the gate-0 note at its use.
 pub(crate) const RESIDENCE_SLEEP_THRESHOLD_H: f64 = 5.0;
-/// The TypeScript's `FETCH_CHUNK_DAYS`. Shared chunk bounds are why the fetch
-/// above dedups.
+/// Days per PhoneTrack request. Shared chunk bounds are why the fetch dedups.
 pub(crate) const FOCUS_FETCH_CHUNK_DAYS: i64 = 7;
-/// The TypeScript's `DEFAULT_LOOKBACK_DAYS`. ⚠ 180, not the 90 its own header
-/// comment claims — the cron passes no argument, so this is what production
-/// actually mines.
+/// Days of history mined when the cron passes none.
 pub(crate) const FOCUS_DEFAULT_LOOKBACK_DAYS: i64 = 180;
 
 /// Pool each rail route's historic GPS corridor and snap it, filling
 /// `rail_route_cache`.
 ///
-/// Ported from `refresh-rail-routes.ts` (#982); the CronJob runs nightly
-/// at 05:00. Two passes, as there: walk the window pooling every train leg's
-/// fixes per route key, then snap each pooled cloud once.
+/// Two passes: walk the window pooling every train leg's fixes per route key,
+/// then snap each pooled cloud once.
 ///
-/// ⚠ THE SNAP IS ENTIRELY LEAN. `Verified.Geo.RailSnap` holds `buildRailGraph`,
-/// `edgeWeight`, `bridgeGaps`, `shortestPath` and `nearestVertex` (123 guards),
-/// and the `railsnap` serve mode hands it the RAW ways. The TypeScript builds
-/// the graph shell-side and asks Lean only for `dijkstraC`; rebuilding it in
-/// Rust would put the vertex fusion and the corridor weighting back on this
-/// side of the boundary, which is the half that drifts (#1003).
+/// The snap is all Lean: `Verified.Geo.RailSnap` builds the graph, fuses
+/// vertices and finds the path, and the `railsnap` serve mode gets the raw
+/// ways, so none of that can drift on this side of the boundary.
 pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
     // This pod sets DB_* and NC_* and nothing else. A config that demanded
     // more is what failed `refresh-presence-log` and `refresh-focus-places` in
@@ -771,12 +695,11 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
         start_ts: f64,
         end_ts: f64,
     }
-    // ⚠ INSERTION-ORDERED. A `HashMap` here would make the upsert order — and
-    // so the log — vary run to run for no reason, and this job's output is read
-    // by eye when a route looks wrong.
+    // Ordered, so the upsert order and the log are stable run to run; this
+    // job's output is read by eye when a route looks wrong.
     let mut by_route: std::collections::BTreeMap<String, RouteAcc> =
         std::collections::BTreeMap::new();
-    // ⚠ Counted so an EMPTY result can be told apart from a BROKEN one.
+    // Counted so an empty result can be told apart from a broken one.
     let (mut days_attempted, mut days_failed) = (0u32, 0u32);
 
     for user_id in &users {
@@ -790,10 +713,9 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
             let date = (chrono::Utc::now() - chrono::Duration::days(offset))
                 .format("%Y-%m-%d")
                 .to_string();
-            // ⚠ A day that will not compute is SKIPPED with a warning, not an
-            // abort — one bad day must not cost the other twenty. The
-            // The TypeScript did the same, and the pooled corridor degrades
-            // gracefully because it is a union over many days.
+            // A day that will not compute is skipped with a warning: the
+            // pooled corridor is a union over many days and degrades
+            // gracefully.
             days_attempted += 1;
             let result =
                 match backend::routes::velocity::compute(&st, user_id, &date, Some(&tz)).await {
@@ -815,7 +737,7 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
                 .unwrap_or(&empty);
 
             for seg in segments {
-                // `refinedMode ?? mode`, the TypeScript's precedence.
+                // `refinedMode`, else `mode`.
                 let mode = seg
                     .get("refinedMode")
                     .and_then(serde_json::Value::as_str)
@@ -861,16 +783,11 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
         by_route.len()
     );
 
-    // ⚠ REFUSE rather than report success on nothing. Zero routes is a
-    // LEGITIMATE answer — three weeks without a train ride — but it is
-    // indistinguishable from every day having failed, and the two need opposite
-    // responses. That is #1134's shape (`refresh-bus-routes` reports success
-    // after refreshing 2 of 18 tiles), and THIS subcommand reproduced it on its
-    // first run: 2026-08-25, all 22 days died with "Read-only file system"
-    // (#1106 — the batch pods lack the `/tmp` emptyDir the Deployment has), it
-    // pooled 0 routes, upserted 0, and exited SUCCEEDED.
-    //
-    // The discriminator is the FAILURE count, never the route count.
+    // ⚠ Refuse rather than report success on nothing. Zero routes is a real
+    // answer (weeks without a train) but looks the same as every day failing;
+    // this job once had all its days die on a read-only `/tmp`, pooled 0
+    // routes and exited SUCCEEDED. So the test is the failure count, never the
+    // route count.
     if days_failed > 0 && days_failed == days_attempted {
         pool.close().await;
         anyhow::bail!(
@@ -917,10 +834,9 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
         routes.len()
     );
     if !routes.is_empty() {
-        // ⚠ UPSERT, never a wipe-and-rebuild. A DELETE-all here silently dropped
-        // every route key not ridden inside the scan window, so browsing an
-        // older day drew its rides raw forever — and it would also discard the
-        // serving path's miss-driven fills for routes that never recur.
+        // ⚠ Upsert, never wipe-and-rebuild: a DELETE-all dropped every route
+        // not ridden inside the window, so older days drew their rides raw, and
+        // it would discard the serving path's miss-driven fills.
         let mut tx = pool.begin().await.context("opening the rail transaction")?;
         for (key, geom) in &routes {
             sqlx::query(
@@ -954,10 +870,9 @@ pub(crate) const RELATION_TIMEOUT_MS: u64 = 120_000;
 /// One Overpass request through the shared client and its mirror fallback; the
 /// body's `elements`, or an error the caller turns into "leave it raw".
 ///
-/// ⚠ ASKS FOR A SLOT FIRST AND RETRIES A REFUSAL ONCE, as the tile mirror does.
-/// Unpaced, a night's lookups (a station query and up to three track fetches
-/// per ride) fired back to back at a two-slot allowance and came back 429 and
-/// 504 on four rides of seven, while the same query alone answers in ~20 s.
+/// ⚠ Asks for a slot first and retries a refusal once, as the tile mirror
+/// does. Unpaced, a night's lookups at a two-slot allowance came back 429 and
+/// 504 on most rides.
 async fn overpass_elements(
     client: &reqwest::Client,
     query: &str,
@@ -1001,11 +916,12 @@ async fn overpass_elements(
 /// TGV across France).
 ///
 /// One request finds both stations by the label's names near the fixes and
-/// the train relations stopping at each; their intersection are the services
-/// that ran between them. Each candidate's ways are fetched and routed over by
-/// `RailSnap.snapOnRelation`, and the path the pooled fixes lie closest to (by
-/// median distance, `RailSnap.medianDistanceToPath`) is kept. `None` means LEAVE IT RAW: no relation serves
-/// both, Overpass failed, or none joins the two stations.
+/// the train relations stopping at each; their intersection is the services
+/// that ran between them. Each candidate's ways are routed over by
+/// `RailSnap.snapOnRelation`, and the path closest to the pooled fixes (by
+/// median distance, `RailSnap.medianDistanceToPath`) is kept. `None` means
+/// leave it raw: no relation serves both, Overpass failed, or none joins the
+/// two stations.
 pub(crate) async fn relation_route_geometry(
     key: &str,
     start_ts: f64,
@@ -1122,23 +1038,18 @@ pub(crate) async fn relation_route_geometry(
     Ok(best.map(|(_, p)| p))
 }
 
-/// The TypeScript's `DEFAULT_WINDOW_DAYS`.
+/// Days of history the rail pass pools by default.
 pub(crate) const RAIL_DEFAULT_WINDOW_DAYS: i64 = 21;
 
 /// Rebuild `presence_log` from `decoded_days` over a bounded window.
 ///
-/// Tier 2 of #982 — the first CronJob logic to leave node. The rule is
-/// `Verified.PresenceLog.computeRow`; everything here is the IO around it.
+/// The rule is `Verified.PresenceLog.computeRow`; this is the IO around it.
 ///
-/// ⚠ AN UPSERT, not the DELETE+INSERT its TypeScript header claims. The code
-/// there does `onDuplicateKeyUpdate` and always did; the comment is wrong and
-/// mirroring the comment instead of the code would drop rows outside the
-/// window on every run.
+/// An upsert: a DELETE+INSERT would drop the rows outside the window every run.
 ///
-/// ⚠ Rows are processed in the order the query returns them, and each day's
-/// segments in the order they were stored. The rollup's tie-break keeps the
-/// place seen FIRST, so re-ordering either changes which place a day is
-/// attributed to.
+/// ⚠ Rows are processed in query order and each day's segments in stored
+/// order. The rollup's tie-break keeps the place seen first, so re-ordering
+/// either changes which place a day is attributed to.
 pub(crate) async fn refresh_presence_log(
     pool: &sqlx::MySqlPool,
     lookback: i64,
@@ -1148,8 +1059,7 @@ pub(crate) async fn refresh_presence_log(
 
     backend::schema::migrate(pool).await?;
 
-    // The TypeScript builds this from `Date.now()` and slices the ISO string, so
-    // the cutoff is a UTC civil date regardless of anyone's zone.
+    // The cutoff is a UTC civil date, whatever anyone's zone.
     let cutoff = (chrono::Utc::now() - chrono::Duration::days(lookback))
         .format("%Y-%m-%d")
         .to_string();
@@ -1184,9 +1094,8 @@ pub(crate) async fn refresh_presence_log(
 
     for row in days {
         let user_id: String = row.try_get("user_id").context("decoded_days.user_id")?;
-        // ⚠ `date` is a DATE column; read it as a string the same way the rest
-        // of this binary does rather than through chrono, so the value written
-        // back is the value read.
+        // `date` is a DATE column, read as a string like the rest of this
+        // binary does, so the value written back is the value read.
         let date: String = row
             .try_get::<chrono::NaiveDate, _>("date")
             .map(|d| d.format("%Y-%m-%d").to_string())
@@ -1211,8 +1120,8 @@ pub(crate) async fn refresh_presence_log(
         }
         let tz = &tz_by_user[&user_id];
 
-        // ⚠ Bad JSON is SKIPPED with a warning, not an abort — one corrupt day
-        // must not stop the other 89. The TypeScript did the same.
+        // Bad JSON is skipped with a warning; one corrupt day must not stop
+        // the rest.
         let Ok(segments) = serde_json::from_str::<serde_json::Value>(&segments_json) else {
             eprintln!("refresh-presence-log: bad JSON for {user_id} {date}");
             skipped += 1;
@@ -1255,7 +1164,7 @@ pub(crate) async fn refresh_presence_log(
     Ok(())
 }
 
-/// Ported from `refresh-rail-stops.ts` (#982).
+/// Refresh `rail_stops_cache` from OSM.
 ///
 /// Fetches only the DUE tiles (`due_tiles`) and replaces each one that answered;
 /// every other tile keeps what it had. The run fails when most of the area has
@@ -1273,12 +1182,9 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
         return Ok(());
     };
 
-    // ⚠ BEFORE THE FETCH, deliberately. Retiring a key the plan can no longer
-    // emit needs the PLAN and nothing else: such a key can never be refreshed by
-    // any future run, whatever the mirrors say tonight, so it cannot wait behind
-    // a successful refresh.
-    //
-    // Its own transaction, because it is its own decision.
+    // ⚠ Before the fetch: a key the plan can no longer emit will never be
+    // refreshed, whatever the mirrors say tonight, so retiring it needs only
+    // the plan. Its own transaction, because it is its own decision.
     if !dry_run {
         retire_unplannable(&pool, &plan, "rail").await?;
     }
@@ -1297,9 +1203,8 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
         mirror_coverage_line(h.succeeded.len(), due.len())
     );
 
-    // ⚠ THE DRY RUN STOPS HERE, BEFORE the transaction — so it exercises the
-    // selection, the fetch and the extraction, which is everything a real run
-    // decides before it writes.
+    // The dry run stops here, before the transaction, having run everything a
+    // real run decides before it writes.
     if dry_run {
         eprintln!(
             "DRY RUN — this run would replace {} of {} due tiles with {} relation(s)",
@@ -1330,9 +1235,8 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
             .with_context(|| format!("clearing tile {key}"))?;
     }
     for (tile, r) in h.routes.values() {
-        // ⚠ UPSERT, not a plain insert: a relation crossing tiles can be held
-        // under a tile not fetched tonight and still come back from one that
-        // answered.
+        // Upsert: a relation crossing tiles can be held under a tile not
+        // fetched tonight and still come back from one that answered.
         sqlx::query(
             "INSERT INTO rail_stops_cache (osm_relation_id, route_type, line_ref, line_name, stops_json, tile_key) \
              VALUES (?, ?, ?, ?, ?, ?) \
@@ -1376,20 +1280,15 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
 
 /// Retire the rows no future run can reach: keys the plan can no longer emit.
 ///
-/// ⚠ THE TILE GRID MOVES, which is what makes this necessary. The plan is derived
-/// from mined focus places and `tile_key` is the south-west corner to four
-/// decimals, so a shifted bbox renames every tile. The merge's per-tile `DELETE`
-/// names keys from the CURRENT plan, so rows under the old names are unreachable
-/// for ever — as are `tile_key IS NULL` rows from before the column existed.
+/// ⚠ The tile grid moves. The plan comes from mined focus places and
+/// `tile_key` is the south-west corner to four decimals, so a shifted bbox
+/// renames every tile, and the merge's per-tile `DELETE` names only current
+/// keys. Rows under old names, and `tile_key IS NULL` rows from before the
+/// column, would stay forever; `classification_inputs::bus_route_cache` reads
+/// the table unfiltered, so they reached the bus matcher (a third of the rows
+/// when measured).
 ///
-/// Measured on production 2026-09-12: `bus_route_cache` held 318 of 998 rows
-/// under such names — 274 pre-column NULLs and 44 under a retired latitude band
-/// — and `classification_inputs::bus_route_cache` reads the table with NO
-/// filter, so every one reached the bus matcher.
-///
-/// ⚠ INDEPENDENT OF COVERAGE, which is why the caller runs it before the
-/// refusal. A key outside the plan is one no future run can refresh, so retiring
-/// it is as correct at 44% coverage as at 100%.
+/// Independent of coverage, so the caller runs it before the refusal.
 pub(crate) async fn retire_unplannable(
     pool: &sqlx::MySqlPool,
     plan: &backend::lean::MirrorPlan,
@@ -1400,7 +1299,7 @@ pub(crate) async fn retire_unplannable(
         plan.tiles.iter().map(lean::tile_key).collect();
     let mut tx = pool.begin().await.context("opening the retirement")?;
 
-    // ⚠ The table name cannot be bound and the SQL must stay literal for
+    // The table name cannot be bound and the SQL must stay literal for
     // `DL-SQLX-SCHEMA-TRUTH`, so each arm names its own statements.
     let present: Vec<String> = match mode {
         "bus" => sqlx::query_scalar(
@@ -1462,10 +1361,8 @@ pub(crate) async fn retire_unplannable(
     }
 
     tx.commit().await.context("committing the retirement")?;
-    // ⚠ SAY SO EVEN WHEN IT IS ZERO. A run that retires nothing and a run that
-    // never reached the retirement look identical in a log that only speaks up
-    // when it acts — and "never reached it" is exactly the bug this placement
-    // fixes.
+    // Logged even at zero: a run that retires nothing and one that never
+    // reached the retirement must look different.
     eprintln!(
         "{mode}: retired {retired} unplannable row(s) across {} planned tile(s)",
         planned.len()
@@ -1473,7 +1370,7 @@ pub(crate) async fn retire_unplannable(
     Ok(())
 }
 
-/// Ported from `refresh-bus-routes.ts` (#982).
+/// Refresh `bus_route_cache` from OSM.
 ///
 /// The rail arm's shape: only the due tiles, each replaced if it answered, and a
 /// failure when most of the area has gone stale.
@@ -1490,12 +1387,7 @@ pub(crate) async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
         return Ok(());
     };
 
-    // ⚠ BEFORE THE FETCH, deliberately. Retiring a key the plan can no longer
-    // emit needs the PLAN and nothing else: such a key can never be refreshed by
-    // any future run, whatever the mirrors say tonight, so it cannot wait behind
-    // a successful refresh.
-    //
-    // Its own transaction, because it is its own decision.
+    // ⚠ Before the fetch, as in the rail arm.
     if !dry_run {
         retire_unplannable(&pool, &plan, "bus").await?;
     }
@@ -1542,8 +1434,7 @@ pub(crate) async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
             .with_context(|| format!("clearing tile {key}"))?;
     }
     for (tile, r) in h.routes.values() {
-        // ⚠ UPSERT, not a plain insert: a route crossing tiles can be held under
-        // a tile not fetched tonight and still come back from one that answered.
+        // Upsert, as in the rail arm.
         sqlx::query(
             "INSERT INTO bus_route_cache (osm_relation_id, route_ref, route_name, stops_json, tile_key) \
              VALUES (?, ?, ?, ?, ?) \
