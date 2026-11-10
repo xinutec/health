@@ -1,11 +1,10 @@
 //! Google leaves a fragment behind when it records a night while it is still in
 //! progress and then never revises it. That fragment carries the SAME start
 //! instant as the full night, which is the column `uniq_sleep_user_start` keys
-//! on, so a backfill upsert does not land beside the night — it overwrites it
-//! (#1536).
+//! on, so a backfill upsert does not land beside the night — it overwrites it.
 //!
 //! ⚠ THE DURATIONS HERE ARE SYNTHETIC. A real sleep length is a biometric value
-//! and this repo is public (#860), so the night is a round ten hours and each
+//! and this repo is public, so the night is a round ten hours and each
 //! stub is the fragment its ratio implies. The RATIOS are the measured fact,
 //! and they are the only thing the bound is calibrated against.
 

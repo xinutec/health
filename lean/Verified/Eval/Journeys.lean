@@ -1,6 +1,6 @@
 import Verified.Eval.GroundTruth
 /-!
-# Ground-truth journey structure (port of `groundTruthJourneys`, #1048)
+# Ground-truth journey structure (port of `groundTruthJourneys`)
 
 The `score-decoder` gate compares ten counts per day against
 `tests/golden/decoder-scoreboard.json`. Every one of them is computed from
@@ -204,7 +204,7 @@ def groundTruthJourneys (rows : Array JRow) : Array Journey := Id.run do
 
 /-! ## Witnesses
 
-Synthetic, because the real narratives are gitignored (#860). The SHAPES are
+Synthetic, because the real narratives are gitignored. The SHAPES are
 not: the recovered TypeScript was run over the corpus first and produced 92
 journeys and 228 legs, and the Lean port reproduces both exactly, every leg
 field included. These pin the six rules individually so a failure names one.

@@ -1,4 +1,4 @@
-//! Two-hop reachability for the Lean mode table (#1003).
+//! Two-hop reachability for the Lean mode table.
 //!
 //! # The gap this closes
 //!

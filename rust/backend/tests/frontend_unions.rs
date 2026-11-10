@@ -1,4 +1,4 @@
-//! The frontend's hand-copied string unions must match the backend's (#337, #975).
+//! The frontend's hand-copied string unions must match the backend's.
 //!
 //! Two vocabularies cross to the browser and are RESTATED there by hand: a
 //! day-state's `mode` and an episode geometry's `kind`. The frontend keys a

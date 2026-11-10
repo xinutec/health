@@ -1,4 +1,4 @@
-//! The probe's only pure part: does it report SHAPE and never a value? (#260)
+//! The probe's only pure part: does it report SHAPE and never a value?
 
 use backend::google::probe::shape_of;
 

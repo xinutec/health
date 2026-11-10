@@ -83,7 +83,7 @@ The strictness is load-bearing. `seg.endTs` equals the NEXT segment's `startTs`
 — the classifier lays segments back to back — so the fix on the boundary is the
 first fix of what follows, not the last of this. Including it made the boarding
 lookup resolve to wherever the train was passing instead of the platform the
-rider stood on (#131). -/
+rider stood on. -/
 def samplesInWindowExclusiveEnd (points : Array Fix) (s : Seg) : Array Fix :=
   points.filter fun p => p.ts ≥ s.startTs && p.ts < s.endTs
 
@@ -130,7 +130,7 @@ Platforms and entrances are dropped — not because they name the place wrongly,
 which is why `pickBestStation` keeps them as tiers, but because the sweep asks a
 COORDINATE question, and a gate or a platform end sits tens of metres off the
 node whose corridor membership is being tested. A terminus has a dozen platform
-nodes strung along its trainshed (#373); admitting them would make the sweep
+nodes strung along its trainshed; admitting them would make the sweep
 answer about whichever one happened to be captured.
 
 The chosen pick leads REGARDLESS of tier, so the sweep's first iteration is
@@ -262,7 +262,7 @@ station the Victoria line does not reach, and erased the line too, since the
 terminus node sits on the mainline corridor. The erasure is what made it
 self-concealing: with no line on the leg, `checkRailTriples` had nothing to
 assert against, so the invariant that would have caught the impossible pair was
-disabled by the very defect it should catch (#380).
+disabled by the very defect it should catch.
 
 So: take the first candidate sharing ANY line with the boarding station — the
 #377 veto shape, membership deciding the label instead of proximity. A nearer
@@ -382,7 +382,7 @@ def resolveRailRunLabel (env : Env) (run : RailRun) (segments : Array Seg)
           -- lookup, and with the alight still resolved to the National Rail
           -- terminus the retry returned a confident singleton of the WRONG line
           -- while the honest answer was "two candidates, and the track knows
-          -- which" (#374).
+          -- which".
           --
           -- The BOARDING side keeps the single-node retry. Its station is chosen
           -- from the preceding stationary under a walking-pace gate — anchored

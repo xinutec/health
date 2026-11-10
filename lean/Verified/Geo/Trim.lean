@@ -12,7 +12,7 @@ the GPS corridor, then a rebuild:
    barely moved past. Gap-fills survive (their corridor advances in
    step); real there-and-backs survive (the fixes polyline contains the
    excursion, so corridor arc advances too).
-2. *Temporal* (#362): a doubling-back over just-walked street is
+2. *Temporal*: a doubling-back over just-walked street is
    spatially supported but its corridor position is frozen — any
    stretch travelling ≥ `minStall` with corridor advance below `stall`
    of it that returns near its start (net displacement < `return` of
@@ -150,7 +150,7 @@ def stallScan (P : TrimP) (pd : π → π → Nat) (path : Nat → π) (n : Nat)
   else found
 termination_by n - b
 
-/-- Pass 2 (temporal, #362). -/
+/-- Pass 2 (temporal). -/
 def pass2 (P : TrimP) (pd : π → π → Nat) (path : Nat → π) (n : Nat)
     (cum : Nat → Nat) (cp : Nat → Int) : Nat → Nat → Array Bool → Array Bool
   | 0, _, rm => rm

@@ -1,4 +1,4 @@
-//! Every corpus grader, over ONE replay of each golden day (#1359).
+//! Every corpus grader, over ONE replay of each golden day.
 //!
 //! ```text
 //!   fixture → trace → fold ─┬→ day      (the last blessed timeline, state by state)
@@ -11,7 +11,7 @@
 //! ⚠ **THE REPLAY IS PAID ONCE, NOT ONCE PER HARNESS.** With the walk matcher
 //! on, four replays cost `user` 2934 s against 718 s wall (measured 2026-09-08,
 //! one gate row), the matcher's ~305 s charged to `walk_gate` alone. What was
-//! unaffordable was paying for it four times, not the matcher (#1418).
+//! unaffordable was paying for it four times, not the matcher.
 //!
 //! ⚠ **SO #1418 IS NOT A FLAG HERE, IT IS THE STRUCTURE.** `load_trace` runs
 //! before the replay every day that captured one, exactly as production does,
@@ -32,8 +32,8 @@
 //! By day, index modulo, so no shard draws one contiguous stretch. Every
 //! grader is sound under it: `day` is per-day outright, and `truth`,
 //! `journeys`, `walks` and `feasibility` each filter their floor (or ceiling)
-//! to the days the run actually reported and announce the rest as unchecked
-//! (#408). Between the shards every key is checked exactly once.
+//! to the days the run actually reported and announce the rest as unchecked.
+//! Between the shards every key is checked exactly once.
 //!
 //! ⚠ A BLESS IS SINGLE-SHARD. Each grader's bless path measures ALL days from
 //! shard 0 and stands the others down — a floor written from half the corpus
@@ -41,7 +41,7 @@
 //!
 //! # Local-only
 //!
-//! `tests/golden/{days,ground-truth}` is gitignored (#860); the baselines are
+//! `tests/golden/{days,ground-truth}` is gitignored; the baselines are
 //! tracked and carry timestamps and metrics, never a place. Announces a skip
 //! rather than passing quietly.
 
@@ -54,8 +54,8 @@ const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/da
 /// How many ways the corpus is split.
 ///
 /// ⚠ This row's wall clock is its SLOWEST SINGLE TEST, not its total work — the
-/// shards run concurrently beside `hsmm_decode_corpus`'s. Measured 2026-09-30
-/// (#1654): with the decoder replay split four ways (it had been one ~140 s
+/// shards run concurrently beside `hsmm_decode_corpus`'s. Measured:
+/// with the decoder replay split four ways (it had been one ~140 s
 /// test and the row's whole critical path), the row's slowest test fell to
 /// 76–90 s. Six fold shards against four, two alternating runs each: 84 and 76 s
 /// against 84 and 90 — within noise, since ten tests now share ten cores; six
@@ -63,8 +63,8 @@ const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/da
 /// Re-measure before raising it: the row is CPU-bound now, not shard-bound.
 ///
 /// ⚠ It was stuck at two because two shards in one process CORRUPTED each
-/// other — the trace was a process global and the replays interleaved
-/// (#1560). It is a value each replay borrows now, so shard count is a
+/// other — the trace was a process global and the replays interleaved.
+/// It is a value each replay borrows now, so shard count is a
 /// scheduling choice rather than a correctness one.
 ///
 /// ⚠ The ceiling is MEMORY, not cores. The walk referee is ~1.6 GB per
@@ -101,7 +101,7 @@ fn every_golden_day_grades_shard_f() {
     run(5, SHARDS);
 }
 
-/// ⚠ TWO SHARDS IN ONE PROCESS USED TO REGRADE THE CORPUS SILENTLY (#1560).
+/// ⚠ TWO SHARDS IN ONE PROCESS USED TO REGRADE THE CORPUS SILENTLY.
 ///
 /// Measured 2026-09-12, same commit and same archives, one variable at a time:
 ///
@@ -286,7 +286,7 @@ fn run(shard: usize, of: usize) {
 
 /// The name-confidence table the app shows (`Verified.Geo.NameConfidence.COUNTS`)
 /// is the SUM of its blessed per-day measurement — two copies of one number
-/// must not drift (#325, 2026-09-30).
+/// must not drift.
 #[test]
 fn the_name_confidence_table_is_its_measurement() {
     let Ok(raw) = std::fs::read_to_string(corpus::truth::NAME_CONFIDENCE) else {

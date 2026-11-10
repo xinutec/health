@@ -1,6 +1,6 @@
 //! The MariaDB connection pool.
 //!
-//! sqlx, matching the six sibling repos (#982).
+//! sqlx, matching the six sibling repos.
 //!
 //! # Eager, and `await`ed
 //!

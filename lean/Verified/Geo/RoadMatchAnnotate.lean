@@ -19,7 +19,7 @@ the leg reads from the mirror, and whether the drawn line changes.
 
 The **matcher** is injected. Its Lean counterpart is `Verified.Geo.Match`'s
 `qMatchRoadSegment`, the QUANTISED arm, which is measured and ceilinged against
-the TS rather than bit-identical to it (#395 / #403); wiring it in directly
+the TS rather than bit-identical to it; wiring it in directly
 would make these guards assert the ceiling instead of the orchestration. The
 **mirror read** is injected for the usual reason: it is the shell.
 
@@ -82,7 +82,7 @@ abbrev Seg := Verified.Geo.SegmentMerge.Seg
 structure Env where
   /-- `osm.drivableRoads(lat, lon, radiusM)`. `none` is a DECLINE — the mirror
   does not cover this disc — and is not the same answer as `some #[]`, which is
-  "asked, and there is no road here" (#1667). -/
+  "asked, and there is no road here". -/
   drivableRoads : Float → Float → Float → Option (Array Way)
   /-- `matchRoadSegment(fixes, { ways })` — `none` is the TS `null`, i.e. "draw
   the raw fixes". -/
@@ -168,7 +168,7 @@ def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array
         -- ⚠ A DECLINED CORRIDOR AND AN EMPTY ONE LEAVE THE LEG RAW ALIKE, and
         -- they should: there is no network to match against either way. The
         -- difference the type now carries is spent upstream, where the host
-        -- RECORDS the declined discs so the ground is fetched (#1667) — not
+        -- RECORDS the declined discs so the ground is fetched — not
         -- here, where acting differently would mean inventing a road.
         let ways := ways?.getD #[]
         if ways.isEmpty then
@@ -182,7 +182,7 @@ def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array
             -- Match first, then decide on the DRAWN line.
             let d := matchImprovesDisplay (fixes.map PathPt.pt) (path.map PathPt.pt)
               (ways.map (·.coords)) NEEDS_MATCH_M MATCH_MAX_STRAY_M
-              -- ⚠ NO DETOUR VETO ON THE ROAD MATCHER (#1497): a pedometer is
+              -- ⚠ NO DETOUR VETO ON THE ROAD MATCHER: a pedometer is
               -- not a witness for a vehicle, and this pass has no steps. `none`
               -- fails open, so the verdict is exactly what it was.
               (path.map PathPt.pt) none 200 1.5

@@ -62,7 +62,7 @@ fn a_retry_skips_the_mirror_that_has_never_answered() {
     }
 }
 
-// --- a ban must not be retried (#1153) ------------------------------------
+// --- a ban must not be retried ------------------------------------
 
 use backend::overpass::Outcome;
 

@@ -3,8 +3,8 @@
 
 The TypeScript gave every pass module its own `Fix` interface and the port
 kept them: twelve records with the same three fields (and three with a speed
-too), converted field by field at the cascade's `Env`. They are one type now
-(#1937); each module's `Fix` is an `abbrev` of these (named `GeoFix`, not `Fix`, so a bare `Fix` inside a `Verified.*` namespace still means the module's own), so its name, its
+too), converted field by field at the cascade's `Env`. They are one type now;
+each module's `Fix` is an `abbrev` of these (named `GeoFix`, not `Fix`, so a bare `Fix` inside a `Verified.*` namespace still means the module's own), so its name, its
 constructor and its field access read exactly as before.
 -/
 

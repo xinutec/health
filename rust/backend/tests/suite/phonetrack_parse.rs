@@ -1,4 +1,4 @@
-//! The PhoneTrack wire shapes (#982).
+//! The PhoneTrack wire shapes.
 //!
 //! These points decide which timezone a Fitbit wall clock is stamped with, and
 //! that decision is written to a column and never revisited. So the parser's

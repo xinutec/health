@@ -1,4 +1,4 @@
-//! Which API owns each biometric stream, and why (#260).
+//! Which API owns each biometric stream, and why.
 //!
 //! # Why this is a table and not a set of call sites
 //!

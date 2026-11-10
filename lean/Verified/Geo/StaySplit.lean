@@ -277,7 +277,7 @@ end FootArrival
 
 A walk that stops for a few minutes — a shop, a queue, a bench — and carries on
 is one walking segment, because the tumbling grid finds a dwell shorter than
-about two windows only when it happens to dominate one (#1694). Re-phasing the
+about two windows only when it happens to dominate one. Re-phasing the
 grid was measured four ways and lost confirmed rows every time; the dwell is
 found from the walk's own fixes instead.
 
@@ -337,7 +337,7 @@ def DWELL_WALKING_CADENCE : Float := 40
 /-- Next to a train, a stop is carved only when the stretch between it and the
     train was itself WALKED — at least this long, at `PEDESTRIAN_MIN_CADENCE_SPM`.
     A platform wait sits against its train; a shop is reached on foot. 05-12's
-    Lidl stop (#185, 2026-09-30) came after four minutes at ~100 steps/min from
+    Lidl stop came after four minutes at ~100 steps/min from
     the Wembley Park train and was refused by the old blanket rule. -/
 def DWELL_TRAIN_SIDE_WALK_S : Int := 120
 

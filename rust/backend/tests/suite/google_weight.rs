@@ -1,4 +1,4 @@
-//! The Google Health weight feed and its dedup (#260, #982).
+//! The Google Health weight feed and its dedup.
 //!
 //! ⚠ ONE `#[test]`, for the reason `lean_ffi.rs` gives: `health_backend_init`
 //! starts a process-global runtime and cargo does not serialise tests within a

@@ -12,7 +12,7 @@
 //!
 //! ⚠ MOST JOURNEYS DO NOT MATCH, AND THAT IS THE DESIGN. The floor is the
 //! current non-zero set of working ones, so the standing failures are a floor
-//! that can only shrink — the measurement the joint mode+position model (#257)
+//! that can only shrink — the measurement the joint mode+position model
 //! is built against. A journey that never worked is not in the floor and does
 //! not fail; one that used to work and stopped is a hard failure.
 //!
@@ -20,7 +20,7 @@
 //!
 //! Measured 2026-08-11: five of the corpus's fifteen unmatched journeys
 //! reconstruct their EXACT expected mode shape and fail on coverage instead,
-//! one of them an enforced regression nobody could attribute (#752). So this
+//! one of them an enforced regression nobody could attribute. So this
 //! prints `uncovered … of … (slack …)` and the match's ENDS beside every
 //! failure, and lists every pipeline journey touching the window — because
 //! `bestOverlap` grades ONE journey, and a trip the pipeline split in two is
@@ -46,15 +46,15 @@
 //! `Verified.Eval.JourneyShape`; the ratchet is `Verified.Eval.FloorGate`,
 //! already built for the truth floor. This module replays, resolves and prints.
 //!
-//! ⚠ **SHARDING IS SOUND HERE** (#1359) and it is not obvious: the floor gate
+//! ⚠ **SHARDING IS SOUND HERE** and it is not obvious: the floor gate
 //! is fed `measured_baseline`, the floor filtered to the days this run actually
-//! reported, and it ANNOUNCES the rest as unchecked (#408). A shard that grades
+//! reported, and it ANNOUNCES the rest as unchecked. A shard that grades
 //! half the corpus therefore ratchets half the floor and says so, and between
 //! the shards every floor key is checked exactly once.
 //!
 //! # Local-only
 //!
-//! `tests/golden/{days,ground-truth}` is gitignored (#860). `journey-baseline`
+//! `tests/golden/{days,ground-truth}` is gitignored. `journey-baseline`
 //! IS tracked: unix timestamps and nothing else. Announces a skip rather than
 //! passing quietly, and prints modes and times, never a place.
 
@@ -281,7 +281,7 @@ impl Journey {
             return out;
         }
 
-        // Both sides lose the unmeasured days, or their floors read as lost (#408).
+        // Both sides lose the unmeasured days, or their floors read as lost.
         let unmeasured: Vec<&String> = self
             .baseline
             .keys()

@@ -27,7 +27,7 @@
 //!   The `TIMESTAMP` columns (`updated_at`, `synced_at`, …) and every `_utc`
 //!   sibling ARE UTC, so for those the suffix is honest.
 //!
-//!   ⚠ FIXED AT THE ROUTE, NOT HERE (#1532). No `/api` read hands this module a
+//!   ⚠ FIXED AT THE ROUTE, NOT HERE. No `/api` read hands this module a
 //!   wall clock any more: `sleep`, `sleep/stages` and `heartrate/intraday` name
 //!   their columns and serve `COALESCE(<col>_utc, CONVERT_TZ(<col>, tz, 'UTC'))`
 //!   plus `tz`, so the instant is repaired where the meaning is known and the
@@ -303,7 +303,7 @@ pub fn js_number_opt(v: Option<f64>) -> Value {
 /// both distinctions are live on this row.
 ///
 /// ⚠ ORDER IS A FORMAT CONCERN AND NOTHING ELSE IS DECIDED HERE. `stops_json` is
-/// rebuilt shell-side for exactly this reason (#1189). What the fields ARE stays
+/// rebuilt shell-side for exactly this reason. What the fields ARE stays
 /// in Lean; an unknown key would be a Lean change this has not been told about,
 /// so it is carried through rather than dropped.
 pub fn render_segments(segments: &Value) -> Result<Value> {

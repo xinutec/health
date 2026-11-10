@@ -1,4 +1,4 @@
-//! Answering the fold from a golden fixture's recorded `osmTrace` (#1709).
+//! Answering the fold from a golden fixture's recorded `osmTrace`.
 //!
 //! A fixture carries two things the fold can be answered from: `osmRowSet`, the
 //! raw mirror rows the answerer scores through Lean
@@ -23,7 +23,7 @@
 //! 2026-08-12 carries all three matcher sections as EMPTY objects. Count the
 //! entries ([`TraceAnswerer::has_walk_capture`]) before calling a day
 //! measurable for walks; a harness that never answers the walk reads measures
-//! the matcher by not running it (#1418).
+//! the matcher by not running it.
 
 use std::collections::HashMap;
 
@@ -34,8 +34,8 @@ use crate::fold_payload::{bits, lookup_rows};
 use crate::lean::{Answerer, Ask};
 
 /// The three lookups the walk and road matchers make. Counted apart because a
-/// harness that never answers them measures the matchers by not running them
-/// (#1418), and that has to be visible.
+/// harness that never answers them measures the matchers by not running them,
+/// and that has to be visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MatcherRead {
     Walkable,
@@ -281,7 +281,7 @@ impl Answerer for &TraceAnswerer {
 }
 
 /// Record the three matcher reads' answers as an `osmTrace` while another
-/// answerer supplies them — the writer for a new golden day (#1660). The other
+/// answerer supplies them — the writer for a new golden day. The other
 /// seven sections come from `rowset_capture`, which records the ROWS.
 pub struct RecordingAnswerer<A> {
     inner: A,
@@ -374,7 +374,7 @@ impl<A: Answerer> Answerer for RecordingAnswerer<A> {
 /// ⚠ **A FIXTURE THAT DOES NOT RECORD THESE CANNOT NOTICE THEM MOVING.** Each
 /// one changes what the mirror is ASKED or what it may return, and none of
 /// them is part of any key a fixture holds — so a change to one alters
-/// production and alters nothing a gate replays (#1071, #328).
+/// production and alters nothing a gate replays.
 #[must_use]
 pub fn capture_inputs() -> Value {
     json!({

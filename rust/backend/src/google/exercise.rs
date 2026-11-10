@@ -1,4 +1,4 @@
-//! Recorded workouts: Google's `exercise` points into `exercise_sessions` (#1886).
+//! Recorded workouts: Google's `exercise` points into `exercise_sessions`.
 //!
 //! Fitbit's history had no table for these. Google serves every one — the
 //! watch's (walks, runs, rides, workouts back to 2023) and the Fit app's —

@@ -1,4 +1,4 @@
-//! The three live-map reads (#982).
+//! The three live-map reads.
 //!
 //! `/locations` is one day's fixes, `/location/latest` is the marker, and
 //! `/location/tail` is the raw trajectory since the caller's last point. All

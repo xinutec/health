@@ -1,4 +1,4 @@
-//! `assemblesegments` building the observation tensor itself (#982, #411).
+//! `assemblesegments` building the observation tensor itself.
 //!
 //! ⚠ THIS FILE EXISTS BECAUSE ITS ABSENCE WAS THE DEFECT. `decode-day` shipped
 //! with a request that `assemblesegments` could never accept — it sent
@@ -132,7 +132,7 @@ fn the_day_tenant_obs_object_is_refused() {
 /// spelled — the shell has no basis for an opinion about it, and a second copy in
 /// Rust is a second thing to drift. This pins the default against the TypeScript
 /// twin, `DEFAULT_MAX_DURATION` in `src/hmm/hsmm-viterbi.ts`, while that twin
-/// still exists to compare with (#975).
+/// still exists to compare with.
 #[test]
 fn an_absent_max_d_is_the_models_own_240() {
     setup();

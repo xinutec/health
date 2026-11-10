@@ -1,4 +1,4 @@
-//! The `/velocity` cache's mechanics (#982).
+//! The `/velocity` cache's mechanics.
 //!
 //! `tests/velocity_cache.rs` covers the POLICY — Lean's TTL, freshness and
 //! window. This covers the parts the host owns: the LRU order, eviction, and

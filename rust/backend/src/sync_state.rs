@@ -51,7 +51,7 @@ pub async fn set(pool: &MySqlPool, user_id: &str, key: &str, value: &str) -> Res
 
 /// The same upsert against ANY executor, so it can join a caller's transaction.
 ///
-/// ⚠ EXISTS FOR `refresh-focus-places` (#982). It derives `home_tz` from the
+/// ⚠ EXISTS FOR `refresh-focus-places`. It derives `home_tz` from the
 /// Home cluster and writes it alongside the `focus_places` rows; through the
 /// pool that write would land OUTSIDE the transaction, so a half-failed refresh
 /// would leave a residence zone derived from rows that were rolled back. The

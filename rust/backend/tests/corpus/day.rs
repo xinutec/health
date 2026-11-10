@@ -6,8 +6,7 @@
 //!
 //! ⚠ `build_day_request` and `RowSetAnswerer` read a `FOLD_CAPTURE` shape that
 //! nothing in this repo could produce until `head::capture` did. That is what closes
-//! the chain: a day replays from the fixture alone, with no external producer
-//! (#982).
+//! the chain: a day replays from the fixture alone, with no external producer.
 //!
 //! The oracle is `expected.statesOut` — this pipeline's own last blessed
 //! output.
@@ -21,7 +20,7 @@
 //!
 //! That boundary is invisible from the pass line, and it has already misled
 //! once: a change to `classification_inputs::load` on 2026-08-30 was reported
-//! green by 339 tests that never executed it (#1273). A change to what the fold
+//! green by 339 tests that never executed it. A change to what the fold
 //! is FED must land on the replay path above, or be covered by something else
 //! that is named — a loader is the most dangerous place for this, because it
 //! moves the answer while every assertion here still holds.
@@ -59,7 +58,7 @@ use super::Replay;
 ///
 /// ⚠ THIS LIST MAY ONLY SHRINK. Listing a day keeps the other 41 checkable
 /// instead of one red day hiding them all; re-capturing a day to make a miss
-/// go away is forbidden (#1054).
+/// go away is forbidden.
 ///
 /// RETIRED 2026-09-03: the oracle stopped being the TS's output (see the
 /// header), so the 08-09 bless wrote Morr into `statesOut` and the entry
@@ -96,49 +95,21 @@ const UNANSWERED_KINDS: [&str; 6] = [
 /// a budget.
 ///
 /// What it holds is the two tables declined ON PURPOSE: `reverseGeocode` is a
-/// Nominatim call whose keys are coordinates the pipeline DERIVES (#1076), and
+/// Nominatim call whose keys are coordinates the pipeline DERIVES, and
 /// `transitStops` is injected rather than computed from rows. Neither falls
 /// without porting something.
 ///
-/// ⚠ **PER DAY, NOT A TOTAL, AND THAT IS WHAT MAKES IT SHARDABLE** (#1359).
-/// The ceiling was one corpus-wide number (16, measured 2026-09-03) until the
-/// graders moved behind a sharded runner. A shard cannot check a corpus-wide
-/// total — asserting `≤ 16` on each half passes at 32 — and pasting the bound
-/// onto a smaller denominator is exactly the failure mode that silences the
-/// question. Keyed by day it shards exactly, and it also says WHICH day grew,
-/// which the total never did.
+/// ⚠ **PER DAY, NOT A TOTAL, AND THAT IS WHAT MAKES IT SHARDABLE**.
+/// A shard cannot check a corpus-wide total (asserting `≤ 16` on each half
+/// passes at 32), so the bound is per day; it also says which day grew.
 ///
-/// ⚠ Re-blessed 2026-09-09 together with the matcher flip (#1418): the matched
-/// geometry moves stay boundaries, and a moved boundary DERIVES a different
-/// `reverseGeocode` key. Blessing this while the gate ran the other arm is the
-/// mistake that made day_corpus red in its own configuration (backed out at
-/// `c226cb9`) — the flip and this table move together or not at all.
-/// `DAY_UNANSWERED_OUT=<path>` prints the table this run measured.
-///
-/// Re-blessed 2026-09-23 with the walk-dwell pass (#1694): a stop carved out
-/// of a walk is a new stay, and a new stay DERIVES a `reverseGeocode` key at
-/// its centroid that the capture never asked — 04-30 and 08-08 each gained
-/// one. The pass and these two entries move together.
-///
-/// Re-blessed 2026-09-27 with the frozen-fix filter and the anchor rename
-/// (#327): dropped fixes move walk boundaries, and a walk re-anchored to another
-/// station is renamed from its own window — both DERIVE geocode keys the capture
-/// never asked. 05-22, 06-15, 07-17 rose and 08-05, 08-13 joined; the six days
-/// that had already fallen were ratcheted down with them.
-///
-/// Re-blessed 2026-09-29 with the naming coordinate (#325): a stay that
-/// elected a mined place is now named where its own fixes put it, so nearly
-/// every such stay DERIVES a `reverseGeocode` key the capture (which asked at
-/// the stored centroid) never recorded — 40 days carry holes and every moved
-/// stay reads `city: null` in its blessed states. The holes close when the
-/// days are re-captured (#1076); the fold is right to ask. Raised again the
-/// same evening when daytime stays at a residence joined the rule, and once
-/// more for the base-rate pseudo-count (06-09: a renamed stay, a new key).
-///
-/// 2026-10-04 with the far Home/Work ask (#325): a stay of 30 minutes or more
-/// that elected Home or Work from 1.2σ away asks the resolver at its own
-/// centroid. 04-29 gained that key (live, the answer moves no stay); 09-30 was
-/// re-captured for it and answers every key; 05-20 had fallen to 3.
+/// ⚠ A change that moves stays or walks derives `reverseGeocode` keys the
+/// capture never asked (a moved boundary, a carved-out stop, a stay named at
+/// its own fixes rather than the stored centroid), so such a change and this
+/// table move together, in one commit that says which days moved. Blessing it
+/// while the gate runs another arm turns day_corpus red in its own
+/// configuration. The holes close when a day is re-captured; the fold is right
+/// to ask. `DAY_UNANSWERED_OUT=<path>` prints the table this run measured.
 const UNANSWERED_BY_DAY: [(&str, usize); 44] = [
     ("2026-04-29", 8),
     ("2026-04-30", 6),
@@ -154,7 +125,7 @@ const UNANSWERED_BY_DAY: [(&str, usize); 44] = [
     ("2026-06-09", 6),
     ("2026-06-12", 5),
     ("2026-06-15", 9),
-    ("2026-06-16", 5), // +1 2026-10-05: the pharmacy stop the walkDwell fix carves asks its own naming geocode
+    ("2026-06-16", 5), // +1: the pharmacy stop the walkDwell fix carves asks its own naming geocode
     ("2026-06-17", 2),
     ("2026-06-18", 6),
     ("2026-06-22", 2),
@@ -259,7 +230,7 @@ impl Day {
 
         // ⚠ EVERY ORACLE HERE CATCHES A REGRESSION AND NONE CATCHES "it was
         // always wrong". The ground-truth narratives are the only thing in the
-        // corpus that grades CORRECTNESS rather than change (#1660) — when this
+        // corpus that grades CORRECTNESS rather than change — when this
         // gate goes red it means the ANSWER MOVED, which is not the same as the
         // answer getting worse.
         let Some(want) = fx.pointer("/expected/statesOut").cloned() else {

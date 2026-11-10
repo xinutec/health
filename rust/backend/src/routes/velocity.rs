@@ -1,4 +1,4 @@
-//! `GET /velocity` — a day, computed (#982).
+//! `GET /velocity` — a day, computed.
 //!
 //! The route the whole port was for. Everything it needs already exists; this
 //! parses, calls, and serialises, and decides nothing:
@@ -47,7 +47,7 @@ pub struct Params {
 /// it), then again at 472 MiB with two in flight once the arenas of the first
 /// burst were resident. A fold's working set is its OSM answers as JSON trees —
 /// 10,000–20,000 ways per walkable-roads ask over a London walk — and two of
-/// those do not fit beside what the previous one leaves behind (#1071).
+/// those do not fit beside what the previous one leaves behind.
 ///
 /// Requests QUEUE here rather than stack. The permit is taken inside the
 /// cache-miss path, so a day already seated is served while another folds, and
@@ -70,7 +70,7 @@ pub fn fold_slot_free() -> bool {
 
 /// One day's fold AS PRODUCTION RUNS IT: the slot, the compute, the heap
 /// handed back. The route's cache-miss path and `backend velocity-many` both
-/// come through here, so what the smoke job measures is what serves (#1071).
+/// come through here, so what the smoke job measures is what serves.
 pub async fn fold_day(
     st: &AppState,
     user_id: &str,
@@ -185,7 +185,7 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
 }
 
 /// After a start, fold each user's today and yesterday once in the background,
-/// so the walk memo (`crate::walk_memo`, #1921) is warm before anyone loads a
+/// so the walk memo (`crate::walk_memo`) is warm before anyone loads a
 /// page: a deploy changes the code version and every remembered walk with it,
 /// and without this the first load after each deploy drew every walk again.
 /// One day at a time through the fold slot, so a request never waits behind
@@ -381,7 +381,7 @@ pub async fn compute_with(
         ledger.insert(format!("fold.{label}.n"), json!(n));
     }
 
-    // ⚠ THE SIGNAL THAT WAS MISSING FOR WEEKS (#1619). `walkableRoads`,
+    // ⚠ THE SIGNAL THAT WAS MISSING FOR WEEKS. `walkableRoads`,
     // `buildingsNear` and `drivableRoads` answer an EMPTY Vec when the mirror
     // refuses or fails, and empty is a legitimate answer — "no roads here". So a
     // fold with every OSM read refused produced a well-formed day, a normal
@@ -394,7 +394,7 @@ pub async fn compute_with(
     //
     // ⚠ A GATE CANNOT CARRY THIS CHECK. Every gate answers from a captured
     // trace with no mirror configured, so `pool()` returns before the counter is
-    // touched and the count is zero for the wrong reason (#1627). The assertion
+    // touched and the count is zero for the wrong reason. The assertion
     // only means something where a mirror is real, which is here.
     mark(&mut timing, "fold");
 
@@ -468,7 +468,7 @@ pub async fn compute_with(
         // ⚠ DECODED, not forwarded. See `decode_episode_bits` — the fold's
         // bit-string coordinates hung the Android app for a full day.
         "episodes": decode_episode_bits(out.get("episodes").cloned().unwrap_or_else(|| json!([]))),
-        // The timeline's collapsible journeys, assembled server-side (#229). The
+        // The timeline's collapsible journeys, assembled server-side. The
         // client folded its own until #339 put `city` on a state and made the two
         // rules agree; measured over 41 replayable days, both produce the same 102
         // journeys.
@@ -547,7 +547,7 @@ fn rail_fill_candidates(out: &Value, h: &head::Head) -> Result<Vec<lean::FillCan
 }
 
 /// Decode the fold's IEEE-754 bit-string coordinates into the numbers the
-/// client's wire type declares (#1616).
+/// client's wire type declares.
 ///
 /// ⚠ **THE CLIENT MUST NEVER SEE A BIT STRING.** The fold encodes coordinates
 /// that way so nothing is re-rounded on its internal wire; forwarding them made

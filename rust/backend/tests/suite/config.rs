@@ -1,4 +1,4 @@
-//! The config layer REFUSES rather than defaults (#982).
+//! The config layer REFUSES rather than defaults.
 //!
 //! This is the whole value of the layer, and the failure it guards against is
 //! silent by construction. A config that turns a missing `DB_PASSWORD` into
@@ -226,7 +226,7 @@ fn the_config_layer_refuses_rather_than_defaults() {
     }
     backend::config::DbConfig::from_env()
         .expect("the focus cron's env must satisfy the config it actually uses");
-    // ⚠ NC_BASE_URL is UNSET in production (#1037). The focus cron must still
+    // ⚠ NC_BASE_URL is UNSET in production. The focus cron must still
     // reach the real Nextcloud, because its TypeScript defaults rather than
     // nullifying. A `None` here would mean fetching nothing and reporting
     // success.

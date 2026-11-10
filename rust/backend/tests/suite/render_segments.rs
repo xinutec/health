@@ -1,4 +1,4 @@
-//! `decoded_days.segments_json` in the field order node writes it in (#1189).
+//! `decoded_days.segments_json` in the field order node writes it in.
 //!
 //! ⚠ THIS EXISTS TO MAKE ONE DIFF POSSIBLE. `segments_json` is TEXT and the only
 //! real check on the decode-day port is a comparison against the row node wrote.

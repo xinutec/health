@@ -1,4 +1,4 @@
-//! Dump the fold request for one golden day, as the fold receives it (#975).
+//! Dump the fold request for one golden day, as the fold receives it.
 //!
 //! ⚠ THIS REPLACES `DAY_REQ_DUMP=… pnpm run day-gate`. That was the only way to
 //! get the request `rust-host-check.sh` feeds to both arms, and it ran
@@ -71,7 +71,7 @@ fn main() -> Result<()> {
     //
     // ⚠ BUT THREE TABLES ARE DECLINED ON PURPOSE and must not count: the same
     // list `tests/corpus/day.rs` holds, and for the same reason — `reverseGeocode`
-    // is a Nominatim call over coordinates the pipeline DERIVES (#1076),
+    // is a Nominatim call over coordinates the pipeline DERIVES,
     // `transitStops` is injected rather than computed from rows, and
     // `nearbyLandmarks` declines where the row set cannot vouch for a coordinate.
     // A first pass here refused this day over one of them, which would have made

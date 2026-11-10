@@ -130,7 +130,7 @@ interrupted walk can actually answer.
 
 ⚠ WHOLE minutes, as the sentence above always claimed: the window test is
 `stepMinuteInside`, which is containment rather than the TS's membership of the
-start instant. See that function for the stay it cost (#185). -/
+start instant. See that function for the stay it cost. -/
 def walkingMinutesInSegment (seg : Seg) (stepPoints : List StepPoint) : Nat :=
   stepPoints.foldl (fun n sp =>
     if Verified.Geo.BiometricWindows.stepMinuteInside sp seg

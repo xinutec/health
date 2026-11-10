@@ -1,4 +1,4 @@
-//! Share management's gate (#982).
+//! Share management's gate.
 //!
 //! ⚠ NO DATABASE. The pool here can never answer, so nothing below tests what a
 //! share row becomes — that is what `backend rows-check` and the handlers'

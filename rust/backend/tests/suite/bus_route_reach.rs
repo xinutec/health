@@ -1,4 +1,4 @@
-//! `busRouteCache` is filtered to what the day can reach (#1071).
+//! `busRouteCache` is filtered to what the day can reach.
 //!
 //! # Why a filter here is sound, and why that has to be TESTED rather than argued
 //!
@@ -17,8 +17,8 @@
 use backend::fold_payload::reachable_bus_routes;
 use serde_json::{Value, json};
 
-/// A public central-London coordinate, deliberately not anywhere the user goes
-/// (#860). Only the arithmetic matters here.
+/// A public central-London coordinate, deliberately not anywhere the user goes.
+/// Only the arithmetic matters here.
 const LAT: f64 = 51.5080;
 const LON: f64 = -0.1281;
 

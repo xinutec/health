@@ -1,4 +1,4 @@
-//! The two sign-in guards (#982).
+//! The two sign-in guards.
 //!
 //! Both are small, both are security boundaries, and both fail in ways nobody
 //! would notice from the outside: an open redirect looks like a working login,

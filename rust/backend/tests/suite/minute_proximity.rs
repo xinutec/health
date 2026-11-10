@@ -1,4 +1,4 @@
-//! Per-minute rail/road proximity across the FFI (#982, #238).
+//! Per-minute rail/road proximity across the FFI.
 //!
 //! ⚠ THE POINT OF THIS FILE IS THE SEAM, not the arithmetic. `railRoadDistFromWays`,
 //! the median, the ~11 m key and the join all have `#guard`s in
@@ -78,7 +78,7 @@ fn the_table_is_ts_then_road_then_rail() {
 /// ⚠ A DECLINED QUERY IS COUNTED, NOT INVENTED. `nearby_ways` answering `None`
 /// means the mirror could not vouch for the coordinate; sending it back as an
 /// empty way list would tell the decoder there is no railway within 300 m, which
-/// is evidence against rail rather than the absence of evidence (#976).
+/// is evidence against rail rather than the absence of evidence.
 #[test]
 fn a_declined_query_leaves_no_row_and_is_counted() {
     setup();

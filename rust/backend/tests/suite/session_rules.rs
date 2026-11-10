@@ -1,4 +1,4 @@
-//! Session and share-viewer rules through the linked Lean host (#982).
+//! Session and share-viewer rules through the linked Lean host.
 //!
 //! `Verified.Session`'s `#guard`s settle the rules; the framing cases among them
 //! are what `verifyValue` returned under Node. These re-ask them across the

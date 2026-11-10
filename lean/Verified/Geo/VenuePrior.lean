@@ -95,7 +95,7 @@ structure VenuePriors where
   totalVisits : Float
   -- `BEq` so the as-of path can be pinned against `minePriors` as a WHOLE
   -- blob. Comparing field by field would let the key ORDER differ unnoticed,
-  -- and that order is what `shapeScore` reads as the universe size (#1405).
+  -- and that order is what `shapeScore` reads as the universe size.
   deriving Inhabited, BEq
 
 structure VenueScoreParts where
@@ -133,7 +133,7 @@ def CATEGORY_VISIT_CAP : Float := 12
     "never seen" becomes evidence: at 0.5 an unseen subtype already costs 1.4
     nats after 20 mined stays and the −2 clamp binds by 47, so a thin period
     prior spoke like a year's. Fitted 2026-09-29 on the 56 confirmed corpus
-    stays under each day's own prior snapshot (20–47 stays, #1845): 0.5 →
+    stays under each day's own prior snapshot (20–47 stays): 0.5 →
     49 right, 1 → 53, 2 → 54, 4 → 54, and the two that stay wrong are
     geometry (04-29) and a dry cleaner beside a restaurant (06-09). At 2 an
     unseen subtype costs 0.6 nats at 20 stays, 1.0 at 47, the clamp at ~400. -/
@@ -395,9 +395,8 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
        -- ⚠ Near-field dominance is a VETO over the summed evidence, so it may
        -- only go to a candidate whose own evidence is at least neutral. A
        -- bookmaker at 10.9 m with −1.09 nats (never visited, wrong dwell,
-       -- wrong hour) used to out-rank the restaurant at 13.4 m with +2.79
-       -- (09-06 18:20 local, #325). Fitted 2026-09-28 on the 56 confirmed
-       -- corpus stays: 48 → 49 right, nothing lost.
+       -- wrong hour) would out-rank a restaurant at 13.4 m with +2.79.
+       -- Fitted on the confirmed corpus stays: one more right, none lost.
        nearField := isNearField l && decide (total ≥ NEAR_FIELD_MIN_NATS) } : VenueCandidateScore))
   sortStable (fun a b =>
     let ea := a.landmark.enclosing
@@ -410,7 +409,7 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
       -- Two near-field venues: one whose opening hours say it was open beats
       -- one OSM gives no hours for — inside 12 m the metres are GPS noise, and
       -- a bike shop at 5 m beat an open café at 10 m for an 85-min midday stay
-      -- (10-05, #325). (A near-field candidate WITH hours scored them ≥ 0.)
+      -- (10-05). (A near-field candidate WITH hours scored them ≥ 0.)
       -- Otherwise the nearer one is what you are sitting on. ⚠ Not the summed
       -- evidence: that put a phone shop over the 09-30 dinner and broke 05-18.
       else if na && nb && a.parts.hours.isSome != b.parts.hours.isSome then
@@ -513,7 +512,7 @@ structure AttributedStay where
   localHour : Int
   /-- When the stay STARTED.
 
-  ⚠ Carried so a prior can be taken AS OF a past day (#1405). Without it a day
+  ⚠ Carried so a prior can be taken AS OF a past day. Without it a day
   in May is scored against a prior mined over a window ending TODAY, which is
   how re-mining silently rewrites historical labels. Measured over 42 days,
   re-mining changed three labels, broke one that was right and improved none.
@@ -539,7 +538,7 @@ structure SoftAttributedStay where
   responsibilities : StayResponsibilities
   durationSec : Float
   localHour : Int
-  /-- When the stay STARTED — see `AttributedStay.startUnix` (#1405). -/
+  /-- When the stay STARTED — see `AttributedStay.startUnix`. -/
   startUnix : Int
   deriving Inhabited
 
@@ -565,7 +564,7 @@ def minePriorsSoft (stays : List SoftAttributedStay) : VenuePriors := Id.run do
       total := total + r
   return ⟨bySubtype, byCategory, total⟩
 
-/-! ## As-of-the-day priors (#1405)
+/-! ## As-of-the-day priors
 
 A day in May must be named from evidence that existed in May. The blob is one
 row per user, overwritten in place with no history, so a historical day is
@@ -748,7 +747,7 @@ private def LMH (name type subtype : String) (d : Float) (frac : Option Float) :
   ⟨name, type, subtype, d, frac, false, false⟩
 
 -- Near-field is a VETO over the summed evidence, so it goes only to a candidate
--- whose own evidence is at least neutral (#325, 2026-09-28). 09-06 18:20 local:
+-- whose own evidence is at least neutral. 09-06 18:20 local:
 -- a bookmaker at 10.9 m the user never visits (base rate −2) against the
 -- restaurant at 13.4 m his history is full of. With no priors at all the
 -- bookmaker's evidence is neutral-plus and near-field still decides.
@@ -818,7 +817,7 @@ private def priors : VenuePriors := minePriors attributed
        | some s => s.hours.getD 21 0 == 1
        | none => false
 
-/-! ### As-of-the-day priors (#1405)
+/-! ### As-of-the-day priors
 
 ⚠ THE FIRST GUARD IS THE ONE THAT MAKES THIS SAFE TO LAND. Re-aggregating the
 events with no cut must reproduce `minePriors` EXACTLY — same numbers, same keys,

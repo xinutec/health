@@ -1,4 +1,4 @@
-//! `backend::fetch_drain`: the pure parts of the continuous drain (#1889).
+//! `backend::fetch_drain`: the pure parts of the continuous drain.
 
 use backend::fetch_drain::{FIX_CELL_DEG, Fix, cells_of};
 

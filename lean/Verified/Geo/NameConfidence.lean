@@ -1,5 +1,5 @@
 /-!
-# How often each naming rule has been right (#325, 2026-09-30)
+# How often each naming rule has been right
 
 The user's call, 2026-09-15: a stay's name is a guess, and the guess is shown
 with "the certainty percentage from our own calculation". The calculation that carries

@@ -1,7 +1,7 @@
 import Std.Data.HashSet
 import Verified.Geo.LineStations
 /-!
-# Served-station sets (port of `src/hmm/served-stations.ts`, #672)
+# Served-station sets (port of `src/hmm/served-stations.ts`)
 
 Does a line actually stop at a candidate station? `station-chain.ts` uses this to
 refuse a (board, alight) pair the mirrored OSM route relations say the line does
@@ -76,7 +76,7 @@ structure RailStopRelation where
     Until 2026-09-29 this was CONTAINMENT of the token in the ref or the name
     (`rail-stops-cache.ts`), and for the Victoria line the token `victoria`
     matched every Southern service terminating at London Victoria: 38 relations
-    and 147 stations for a line with 16 (#238). Measured on a fixture's cache:
+    and 147 stations for a line with 16. Measured on a fixture's cache:
     Victoria 38 → 4, Northern 41 → 26, Central 32 → 12; Jubilee, Circle and
     Metropolitan unchanged. The tube carries its designation in the ref
     (`Victoria`); National Rail carries an operator code (`SN7.2`), so a
@@ -115,7 +115,7 @@ def stationNameServed (served : Std.HashSet String) (stationName : String) : Boo
   else if norm.length < MIN_CONTAINMENT_CHARS then false
   else
     -- Order-independent: any match answers `true`. See the module docstring.
-    -- ⚠ NOT with a National Rail "London " prefix stripped (#238, 2026-10-06):
+    -- ⚠ NOT with a National Rail "London " prefix stripped:
     -- "London King's Cross" vs the relation's "King's Cross St. Pancras" is a
     -- real miss, but stripping the prefix on either side (length-guarded) took
     -- the live scoreboard's stations from 15 to 7 — at the mainline complexes
@@ -138,7 +138,7 @@ def stopIndexOf (rel : RailStopRelation) (stationName : String) : Option Nat :=
     (either direction; the FEWEST hops wins, since a semi-fast variant is still
     the line). `none` when no relation of the line calls at both. The decoder's
     twin of `LineStoppingPattern.intermediateStopCount`, over this module's
-    relation type and name rule (#238). -/
+    relation type and name rule. -/
 def intermediateCalls (relations : Array RailStopRelation) (line a b : String) :
     Option (Array RailStop) :=
   (railRelationsForLine relations line).foldl (init := (none : Option (Array RailStop))) fun acc rel =>
@@ -223,7 +223,7 @@ private def probe : Std.HashSet String :=
 #guard stationNameServed probe "Barbican Station" == false
 #guard stationNameServed probe "Kings Cross" == false
 
--- The calls BETWEEN a pair, either direction, fewest hops (#238).
+-- The calls BETWEEN a pair, either direction, fewest hops.
 private def metFive : RailStopRelation := rel (some "Metropolitan") none FIVE
 #guard (intermediateCalls #[metFive] "Metropolitan Line" "Aldgate" "Euston Square").map
   (·.toList.map (·.name)) == some [some "Barbican", some "Baker Street"]

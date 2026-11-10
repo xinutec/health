@@ -41,7 +41,7 @@ structure WindowFeatures where
   centroidLon : Float := 0
   pointCount : Nat := 0
   /-- Whether this window MOVED FARTHER THAN ITS OWN GPS ERROR, so `linearity`
-      means something (#185).
+      means something.
 
       ⚠ `linearity` is a net/path ratio and reads 1.0 — maximally directed — for
       any path with one effective hop, so a fix landing elsewhere inside the
@@ -90,7 +90,7 @@ def scoreWalking (f : WindowFeatures) : Float := Id.run do
   if decide (f.netDisplacement < 30) then score := score * 0.2
   return score
 
-/-- ⚠ **THE LOW-SPEED FLOOR IS WHY A WALK STOPS READING AS A RIDE (#1659).**
+/-- ⚠ **THE LOW-SPEED FLOOR IS WHY A WALK STOPS READING AS A RIDE.**
 Every other locomotion scorer has one — `scoreDriving` below `10`, `scoreTrain`
 below `30` — and cycling had none, while `scoreWalking` carries a `maxSpeed > 15`
 veto that a SINGLE GPS spike trips. So a spiky walk lost a factor of ten on the
@@ -195,7 +195,7 @@ private def approxRel (a b : Float) : Bool :=
 -- Mode ORDER pinned exactly; top score / normalise fields ≤1 ULP (relative).
 --
 -- ⚠ **THESE NUMBERS CANNOT BE REGENERATED.** `segments-refs.mts` produced them
--- and went with the TypeScript (#975), so touching one is a deliberate choice,
+-- and went with the TypeScript, so touching one is a deliberate choice,
 -- not a re-derivation. Take a new value from the evaluator's BIT PATTERN:
 -- `toString` on a Float gives six decimals and `approxRel` compares at 1e-9.
 --

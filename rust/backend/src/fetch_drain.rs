@@ -1,4 +1,4 @@
-//! The fetch queue's drain, running continuously beside the serving pod (#1889).
+//! The fetch queue's drain, running continuously beside the serving pod.
 //!
 //! The fold DECLINES a lookup it has no data for and records it in
 //! `osm_fetch_queue` (`fetch_queue`). Until 2026-10-03 the Nominatim half was
@@ -19,7 +19,7 @@
 //! ⚠ NOT IN THE SERVING PROCESS. It runs as a sidecar container of the
 //! `health-auth` pod (kubes: `dhall/apps/health.dhall`), from the same image.
 //! An Overpass body is ~5 MB of JSON and a fold peaks around 320 MiB under a
-//! 512 MiB limit (#1071); the two must not share a cgroup, and nothing here is
+//! 512 MiB limit; the two must not share a cgroup, and nothing here is
 //! on a response path.
 //!
 //! ⚠ POLITE BY CONSTRUCTION, on the terms the CronJobs ran under: Nominatim one
@@ -119,7 +119,7 @@ impl OsmDrain {
     }
 }
 
-/// Drain the geocode half of `osm_fetch_queue` (#1076).
+/// Drain the geocode half of `osm_fetch_queue`.
 ///
 /// ⚠ **RATE LIMITED TO ONE REQUEST PER SECOND, and that is Nominatim's stated
 /// policy rather than a politeness.** Exceeding it earns an IP-level ban, which
@@ -207,7 +207,7 @@ pub async fn drain_geocodes(
 }
 
 /// Drain `osm_fetch_queue`'s Overpass half: fill the base OSM mirror with the
-/// areas the serving path could not answer (#1658).
+/// areas the serving path could not answer.
 ///
 /// ⚠ **THE SKIP IS THE POINT, and it is decided by the coverage gate rather
 /// than by a grid.** A day on new ground records dozens of declines a few
@@ -324,7 +324,7 @@ pub async fn drain_osm(
             let written = osm_mirror::upsert_features(pool, &features).await?;
             // ⚠ AFTER the rows. A coverage row is a promise the area can be
             // answered from the mirror; written first, a crash mid-insert would
-            // look like a fetched area with no roads in it (#976).
+            // look like a fetched area with no roads in it.
             osm_mirror::record_coverage(pool, &bucket, &bbox, bucket_vocab).await?;
             boxes.push(lean::CoverageRow {
                 min_lat: bbox.min_lat,

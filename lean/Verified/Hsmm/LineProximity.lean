@@ -47,7 +47,7 @@ def lineProximityFactor (s : State) (isCovered gpsPresent : Bool)
         -- is as far from its track as a named line is from its own, and pays
         -- the same. Left at 0 it rode a taxi for free — 05-25's 30-minute
         -- drive decoded as `unknown_rail`, cheaper per minute than `driving`
-        -- on the mode prior alone (2026-09-29, #238).
+        -- on the mode prior alone.
         else if !railNear then FAR_PENALTY
         else match roadDistM, railDistM with
           | some rd, some rl => if rd < rl then ROAD_NEARER_PENALTY else 0.0

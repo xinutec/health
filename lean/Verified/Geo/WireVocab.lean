@@ -14,7 +14,7 @@ comparing the frontend's union against the TypeScript backend's.
 ## ⚠ THIS FILE EXISTS BECAUSE THAT COMPARISON LOST ITS OTHER SIDE
 
 `src/sleep/day-state.ts` held the only closed `DayStateMode` anywhere. Deleting
-the TypeScript backend (#975) removes it, and Lean has no replacement to point
+the TypeScript backend removes it, and Lean has no replacement to point
 at: `Verified.Geo.DayState.Mode` is `abbrev Mode := String`, and the eleven
 members live as bare literals across ten files.
 

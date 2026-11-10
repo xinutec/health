@@ -2,7 +2,7 @@ import Verified.Eval.GroundTruth
 import Verified.Eval.Journeys
 
 /-!
-# Decoder scoreboard — the ten per-day journey-structure counts (#1048)
+# Decoder scoreboard — the ten per-day journey-structure counts
 
 Port of the scoring half of `src/eval/journey-score.ts` (`decoderJourneys`,
 `scoreJourneys`'s counters) and the whole of

@@ -1,10 +1,9 @@
-//! A fixture carries what it was captured under, and a moved constant REFUSES
-//! (#1660).
+//! A fixture carries what it was captured under, and a moved constant REFUSES.
 //!
 //! ⚠ WHY THIS TEST AND NOT JUST THE CODE: the thing being guarded against is a
 //! change that leaves every gate green. `ROAD_CORRIDOR_MARGIN_M` is applied
 //! inside `query_ways`, AFTER the trace key is formed, so moving it changes what
-//! production fetches and changes nothing any fixture answers (#1071). A guard
+//! production fetches and changes nothing any fixture answers. A guard
 //! against that failure mode is itself invisible unless something makes it fire
 //! — which is the whole lesson of #1418 and of this ticket's own morning.
 

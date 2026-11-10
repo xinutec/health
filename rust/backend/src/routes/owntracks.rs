@@ -1,4 +1,4 @@
-//! The Owntracks → PhoneTrack proxy, and the remote-config decision (#982).
+//! The Owntracks → PhoneTrack proxy, and the remote-config decision.
 //!
 //! The phone posts every fix here on its way to PhoneTrack, and the response
 //! carries a configuration patch telling it how hard to look for itself next
@@ -10,8 +10,8 @@
 //! how often it locates — hourly at night when still, every 30 s by day,
 //! faster in a vehicle — and must never take it out.
 //!
-//! Every decision is written to `owntracks_decisions` as well as logged
-//! (#1730): a rollout replaces the pod and its stdout with it, and the one
+//! Every decision is written to `owntracks_decisions` as well as logged:
+//! a rollout replaces the pod and its stdout with it, and the one
 //! line that says WHY the phone was told something is the line a diagnosis
 //! needs. `backend owntracks-log <user>` reads it back.
 //!
@@ -402,7 +402,7 @@ struct MotionRow {
     acc: Option<i64>,
 }
 
-/// The motion witness for PDR (#296). Best-effort by design.
+/// The motion witness for PDR. Best-effort by design.
 async fn persist_motion(st: &AppState, device: &str, messages: &[Location]) {
     let rows: Vec<MotionRow> = messages
         .iter()

@@ -1,4 +1,4 @@
-//! The Lean process, and the pipe every decision crosses (#1709).
+//! The Lean process, and the pipe every decision crosses.
 //!
 //! `verified_cli serve` reads one NDJSON request per line and writes one reply
 //! per line. This module keeps a pool of those processes and drives the
@@ -27,7 +27,7 @@
 //! the nesting depth (two, in practice) and never deadlocks on itself. Idle
 //! workers beyond `MAX_IDLE` are dropped when returned, so memory stays bounded,
 //! and a worker that has served `LEAN_WORKER_RECYCLE_CALLS` requests (default
-//! 500) is dropped too: the day fold's heap grows across days (#1071) and a
+//! 500) is dropped too: the day fold's heap grows across days and a
 //! fresh process is the only reset that is known to work.
 //!
 //! # Failure is loud and local
@@ -293,7 +293,7 @@ impl Worker {
         loop {
             let line = self.next_line(timeout)?;
             if let Some(ask) = parse_ask(&line)? {
-                // A remembered walk (#1921): answered from the store, and NOT
+                // A remembered walk: answered from the store, and NOT
                 // recorded — it is not a question about the world, so no count,
                 // capture or fetch queue may see it.
                 if ask.what.starts_with("memo.") {

@@ -1,5 +1,5 @@
 /-!
-# `Array.ofFn` as a loop the compiler specialises (#1362)
+# `Array.ofFn` as a loop the compiler specialises
 
 Core's `Array.ofFn` is a private recursion over a closure: every element is
 one `lean_apply_1` of the `Fin n → α` argument. On the HSMM trellis — the

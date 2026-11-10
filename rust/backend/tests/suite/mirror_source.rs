@@ -1,4 +1,4 @@
-//! Is the mirror's pre-filter box a SUPERSET of what Lean scores? (#982)
+//! Is the mirror's pre-filter box a SUPERSET of what Lean scores?
 //!
 //! `MirrorSource` selects candidates with `MBRIntersects` against a box and
 //! hands every one of them to Lean, which does the distance, the ordering and

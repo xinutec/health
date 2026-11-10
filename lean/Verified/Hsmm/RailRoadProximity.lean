@@ -5,7 +5,7 @@ import Verified.JsNum
 # Is this fix on the track, or on a road?
 
 The per-minute `roadDistM` / `railDistM` the observation tensor carries, and the
-single source of truth for the rail-vs-road call (#238). The decoder never
+single source of truth for the rail-vs-road call. The decoder never
 credits a tube line to a fix that hugs a road, and this is what lets it tell the
 difference (#982 Tier 2).
 

@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use backend::db;
 
-/// What span of history does each biometric table actually hold? (#260)
+/// What span of history does each biometric table actually hold?
 ///
 /// # Why this exists
 ///
@@ -42,7 +42,7 @@ use backend::db;
 /// ⚠ **THIS WILL FIRE BY DESIGN IN SEPTEMBER** for every stream still owned by
 /// Fitbit — the Web API is decommissioned and they stop. That is a true alarm,
 /// not a false one: it is the migration's remaining scope going quiet, and it
-/// should be read as "these streams are now gone" rather than muted (#260).
+/// should be read as "these streams are now gone" rather than muted.
 pub(crate) async fn freshness() -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
@@ -114,7 +114,7 @@ pub(crate) async fn freshness() -> Result<()> {
     )
 }
 
-/// What shape is `heart_rate_zones` actually in? (#1223)
+/// What shape is `heart_rate_zones` actually in?
 ///
 /// ⚠ THE ROW COUNT ALONE CANNOT TELL JUNK FROM DUPLICATION. `backend coverage`
 /// read 24,332 rows starting 2010-01-01, where every other biometric table
@@ -314,7 +314,7 @@ pub(crate) async fn coverage() -> Result<()> {
 ///
 /// `resp` is Google's daily figure, which is the deep-sleep rate when there is
 /// one (see `google::sync::sync_breathing_rate`); the three stage rates beside
-/// it are null where Google had no reading for that stage (#1908).
+/// it are null where Google had no reading for that stage.
 const HR_TREND_SOURCES: [(&str, &str, &str); 6] = [
     ("daily_activity", "resting_heart_rate", "rhr"),
     ("hrv_daily", "daily_rmssd", "rmssd"),
@@ -338,7 +338,7 @@ fn is_iso_date(s: &str) -> bool {
 /// `[{"date", "rhr", "rmssd", "resp", "resp_deep", "resp_light", "resp_rem"}]`, a key present only where that table
 /// has a row for the day, `null` where the row holds no value. Replaces the
 /// Node probe deleted in 045bcbe; `~/Code/dicom-scan/refresh_hr_data.py` reads
-/// it through `scripts/prod-db.sh` (#1733).
+/// it through `scripts/prod-db.sh`.
 ///
 /// ⚠ DECIMAL columns are read as CHAR and parsed here — sqlx refuses them on a
 /// real row ([[reference_sqlx_mysql_type_traps]]).
@@ -412,7 +412,7 @@ pub(crate) async fn hr_trend(since: &str, json: bool) -> Result<()> {
 /// "postop"}` where `preop` covers `[FROM, BOUNDARY)` and `postop`
 /// `[BOUNDARY, now)`, each `{key: {"avg", "n"}}`. `resp` also carries
 /// `without_deep`: how many of its `n` nights had no deep-sleep reading, so
-/// their figure is Google's fallback rather than the deep-sleep rate (#1908).
+/// their figure is Google's fallback rather than the deep-sleep rate.
 /// The dates are the CALLER's:
 /// this repository is public, and which day divides the two windows belongs
 /// to the case file that asks, not here.
@@ -507,7 +507,7 @@ pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> 
 /// present in either table, ascending; an empty cell is a missing reading.
 ///
 /// `backend hrv-history` replaces the Node probe deleted in 045bcbe; it backs
-/// the long-term chart in the case file (#1733). ⚠ A recorded ZERO counts as
+/// the long-term chart in the case file. ⚠ A recorded ZERO counts as
 /// missing: an RMSSD of 0 ms is a failed reading, not a measurement. Dropped
 /// here and not at ingest — `hrv_daily` keeps what Fitbit recorded, verbatim.
 pub(crate) async fn hrv_history() -> Result<()> {
@@ -549,7 +549,7 @@ pub(crate) async fn hrv_history() -> Result<()> {
     Ok(())
 }
 
-/// The OwnTracks proxy's decisions, newest last (#1730).
+/// The OwnTracks proxy's decisions, newest last.
 ///
 /// The same fields as the `owntracks …` log line, read from the table the
 /// route writes beside it, so the answer survives a rollout. ⚠ `CAST(... AS
@@ -607,7 +607,7 @@ pub(crate) async fn owntracks_log(user: &str, limit: i64) -> Result<()> {
 /// (`classification_inputs::venue_priors`: the newest snapshot at or before the
 /// day, else the current row). Read-only. The corpus harness reads the directory
 /// back through `VENUE_PRIORS_DIR` and resolves per fixture date by the same
-/// rule, so a replay under it names a day the way the pod does (#1845).
+/// rule, so a replay under it names a day the way the pod does.
 ///
 /// Prints one line per file: the anchor, the mined stay count and the size.
 /// A prior is subtype statistics — no place, no coordinate.

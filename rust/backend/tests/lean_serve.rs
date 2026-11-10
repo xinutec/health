@@ -1,5 +1,5 @@
-//! The backend reaches the Lean algorithm mode table over the worker's pipe
-//! (#1709), and gets back exactly what `verified_cli serve` writes.
+//! The backend reaches the Lean algorithm mode table over the worker's pipe,
+//! and gets back exactly what `verified_cli serve` writes.
 //!
 //! # What this is evidence FOR
 //!
@@ -77,7 +77,7 @@ fn the_mode_table_answers_over_the_pipe() {
     // routes to it. An empty corpus is the cheapest question that distinguishes
     // "reached the handler" from "fell through" — a missing arm answers
     // `unknown mode walkgate` here, which is exactly how the OTHER gates were
-    // found to be dead only after three days (#975).
+    // found to be dead only after three days.
     let walkgate = lean::serve(r#"{"mode":"walkgate"}"#).expect("walkgate must answer");
     assert_eq!(
         walkgate,

@@ -19,7 +19,7 @@ pinned by the `#guard`s against Node/V8.
 
 That "≤1-ULP close" was MEASURED rather than predicted (`compare-kalman`,
 2026-07-29, all 32 golden days). ⚠ THAT COMMAND NO LONGER RUNS — its TypeScript
-arm went at 06346bd and the script was deleted 2026-09-01 (#1301), so the
+arm went at 06346bd and the script was deleted 2026-09-01, so the
 figures below are a RECORD and cannot be re-derived without restoring the arm. Row counts agree everywhere — the two arms keep
 the same fixes. `lat` is bit-identical everywhere; `lon` differs on ~0.5% of rows
 by ≤1 ULP (worst day 19, where the recursion compounds a run of them); the few

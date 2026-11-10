@@ -1,4 +1,4 @@
-//! Wall-clock → UTC, at the boundaries where it can be wrong (#982).
+//! Wall-clock → UTC, at the boundaries where it can be wrong.
 //!
 //! Fitbit sends a wall clock with no offset, so every intraday row's `ts_utc`
 //! depends on this. The interesting cases are the two an hour a year each:

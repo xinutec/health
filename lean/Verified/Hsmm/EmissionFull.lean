@@ -18,7 +18,7 @@ Mirrors `buildHsmmModel`'s parameterisation, so it is faithful to the served
 decode. The
 TypeScript also passed the generator's per-minute `isCovered` here and switched
 the two line factors OFF on a covered minute, leaving the entry prior as the
-only line signal. Since 2026-09-29 (#238) the factors stay live there: measured
+only line signal. Since 2026-09-29 the factors stay live there: measured
 on the eleven decoder days, a covered fix-less ride earned nothing per minute
 and lost to `stationary` on the mode prior (06-12's Victoria ride shrank to one
 minute), and every line the generator vouched at entry scored identically

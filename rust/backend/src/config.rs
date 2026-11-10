@@ -82,7 +82,7 @@ pub struct DbConfig {
 /// The Nextcloud base URL the FOCUS cron uses.
 ///
 /// ⚠ NOT `Config::nextcloud_base_url`, which is `Option` and is `None` in
-/// production because `NC_BASE_URL` is unset there (#1037). The sync path types
+/// production because `NC_BASE_URL` is unset there. The sync path types
 /// it nullable because "no PhoneTrack source" is a real state for it. The focus
 /// cron did not share that: the TypeScript it replaced defaulted the host to
 /// `https://dash.xinutec.org`, so it always fetched there whether or not the

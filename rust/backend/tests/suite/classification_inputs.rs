@@ -1,4 +1,4 @@
-//! The day-input loaders' parsing decisions (#982).
+//! The day-input loaders' parsing decisions.
 //!
 //! ⚠ NOTHING HERE TOUCHES A DATABASE, and that is a limit worth stating rather
 //! than hiding: the queries are proven by `backend check` against production,
@@ -73,7 +73,7 @@ fn an_empty_bucket_is_zero_because_that_is_what_number_does() {
 }
 
 // ---------------------------------------------------------------------------
-// The mirror caches' drop rule (#982, second tranche)
+// The mirror caches' drop rule (second tranche)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -138,7 +138,7 @@ fn a_date_that_is_not_a_date_is_an_error_not_a_guess() {
 }
 
 // ---------------------------------------------------------------------------
-// JS number rendering (#982)
+// JS number rendering
 // ---------------------------------------------------------------------------
 
 #[test]

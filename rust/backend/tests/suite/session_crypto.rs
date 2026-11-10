@@ -1,4 +1,4 @@
-//! The signing half of auth (#982) — the part that is NOT in Lean.
+//! The signing half of auth — the part that is NOT in Lean.
 //!
 //! # ⚠ The expected signatures come from Node, not from this implementation
 //!

@@ -1,5 +1,5 @@
 //! `/velocity`'s cache policy and the share window, asked through the linked
-//! Lean host (#982).
+//! Lean host.
 //!
 //! # Why this exists as well as the `#guard`s
 //!

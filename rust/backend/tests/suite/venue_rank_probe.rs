@@ -1,11 +1,9 @@
 //! `rankvenues` — read the venue ranking's own terms instead of modelling them.
 //!
-//! ⚠ THIS TEST IS THE MODE'S CALLER, and that is deliberate (#1003). #325 built
-//! this probe and REVERTED it rather than land a serve mode nothing exercised.
-//! It is back because #1405 needed it: a hand-computed `shapeScore` disagreed
-//! with what the fold actually served, and a model that disagrees with the
-//! artefact is worth nothing. The mode has to stay reachable for the next such
-//! question, so it ships with this.
+//! ⚠ This test is the mode's caller, deliberately: a serve mode nothing
+//! exercises does not land. A hand-computed `shapeScore` once disagreed with
+//! what the fold served, and a model that disagrees with the artefact is worth
+//! nothing, so the mode stays reachable for the next such question.
 //!
 //! ⚠ `rankvenues` is registered in BOTH dispatch surfaces — `dispatch`
 //! (`serve`) and `cliMain` (argv). Registering only the

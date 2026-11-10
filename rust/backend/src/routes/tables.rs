@@ -1,4 +1,4 @@
-//! The twelve `/api` reads that are a table and a window (#982).
+//! The twelve `/api` reads that are a table and a window.
 //!
 //! Eight are "the last N days of one table", two are "one day of one table",
 //! and two are a whole table with no window at all.
@@ -153,7 +153,7 @@ fn empty() -> Response {
 /// a time axis at all, so it is dropped rather than served as a null a chart
 /// would render as `NaN`. ⚠ The count is WARNED rather than swallowed: a
 /// silently shorter series reads as a real statement about the day, when what it
-/// actually says is that the server has no zone tables (#1532).
+/// actually says is that the server has no zone tables.
 ///
 /// ⚠ Only for rows that ARE a position in time. A `sleep` row is mostly not —
 /// see the note on [`SQL_SLEEP`], which keeps the night and nulls the instant.
@@ -235,7 +235,7 @@ days_back_handler!(
     "SELECT * FROM daily_activity WHERE user_id = ? AND date >= ? ORDER BY date"
 );
 // ⚠ THE WALL CLOCK DOES NOT SHIP, and the instant is REPAIRED rather than
-// served beside it (#1532). `start_time`/`end_time` are the clock the watch
+// served beside it. `start_time`/`end_time` are the clock the watch
 // showed, which `row_json` stamps with a `Z` they have not earned; `CONVERT_TZ`
 // recovers the true instant from the wall clock and the zone whenever the stored
 // `_utc` is missing, which is the same repair `/sleep/stages` makes.
@@ -589,7 +589,7 @@ async fn sleep_stages_run(st: &AppState, session: &UserSession, p: DateParams) -
     let log_id: i64 = log.try_get("log_id").context("sleep.log_id")?;
 
     // ⚠ THE WALL CLOCK DOES NOT SHIP, and the instant is REPAIRED rather than
-    // served nullable (#1532). `sleep_stages.ts` is the clock the watch showed,
+    // served nullable. `sleep_stages.ts` is the clock the watch showed,
     // which `row_json` renders with a `Z` it has not earned — one wire carrying
     // two meanings under one suffix. Dropping it costs nothing, because a row
     // missing `ts_utc` is not missing information: `ts` and `tz` determine the
@@ -616,7 +616,7 @@ async fn sleep_stages_run(st: &AppState, session: &UserSession, p: DateParams) -
 /// deliberately different columns. `[date, nextDay)` against `ts` is what "his
 /// Tuesday" means; running the bound against `ts_utc` would shift the day's
 /// edges by the offset for anyone not living in UTC. What SHIPS is the instant,
-/// because `row_json` stamps a `Z` on `ts` that it has not earned (#1532), and
+/// because `row_json` stamps a `Z` on `ts` that it has not earned, and
 /// `tz`, because that is what turns the instant back into the clock he saw.
 ///
 /// ⚠ `CONVERT_TZ` RETURNS NULL when the server has no zone tables. Such a row

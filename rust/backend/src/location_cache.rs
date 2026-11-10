@@ -1,4 +1,4 @@
-//! The two ten-second caches behind the live map (#982).
+//! The two ten-second caches behind the live map.
 //!
 //! `/location/latest` and `/location/tail` both answer from PhoneTrack, and the
 //! Map tab polls both. Without a cache each poll is a nested walk of one HTTP

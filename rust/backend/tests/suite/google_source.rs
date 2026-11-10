@@ -1,4 +1,4 @@
-//! The per-stream ownership roster (#260).
+//! The per-stream ownership roster.
 
 use backend::google::source::{Owner, STREAMS};
 
@@ -342,7 +342,7 @@ mod paired_devices {
     }
 }
 
-/// Blood-oxygen samples (#1886): one per instant, filed under the wall clock
+/// Blood-oxygen samples: one per instant, filed under the wall clock
 /// Google serves beside it.
 mod spo2_samples {
     use backend::google::sync::spo2_samples;
@@ -373,7 +373,7 @@ mod spo2_samples {
     }
 }
 
-/// Recorded workouts (#1886): one row per Google point, the summary typed and
+/// Recorded workouts: one row per Google point, the summary typed and
 /// the whole point kept.
 mod exercise_sessions {
     use backend::google::exercise::parse_exercise;
@@ -437,7 +437,7 @@ mod exercise_sessions {
     }
 }
 
-/// The raw archive (#1886): every remaining type as `google_points` rows, the
+/// The raw archive: every remaining type as `google_points` rows, the
 /// time normalised into columns and the rest of the payload kept.
 mod google_points {
     use backend::google::archive::parse_point;
@@ -536,7 +536,7 @@ mod google_points {
     }
 }
 
-/// Active minutes per day from Google's `active-minutes` rollup (#260): the
+/// Active minutes per day from Google's `active-minutes` rollup: the
 /// replacement for Fitbit's lightly/fairly/very active columns, which the
 /// summary card's "active minutes" reads. Measured 2026-10-02 against 1,253
 /// Fitbit days: moderate + vigorous equals fairly + very on EVERY day.

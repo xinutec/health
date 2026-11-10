@@ -1,7 +1,7 @@
 //! Build `verified_cli`, and tell the crate where it is.
 //!
 //! The backend does not link Lean; it spawns `verified_cli serve` and talks to
-//! it over a pipe (`src/lean_worker.rs`, #1709). What this script does is keep
+//! it over a pipe (`src/lean_worker.rs`). What this script does is keep
 //! the dev tree honest: a `cargo build` after a `.lean` edit rebuilds the
 //! binary the tests will spawn, so a test cannot run yesterday's Lean against
 //! today's Rust. Production sets `VERIFIED_CLI` and never reaches the path

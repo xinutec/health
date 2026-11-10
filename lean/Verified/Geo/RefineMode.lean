@@ -235,7 +235,7 @@ Both callers ask the same question of a leg — what ways lie along it — in th
 same two steps: take evenly spaced samples, then dedup the union keeping each
 way's MINIMUM distance. Shared rather than copied, because the ORDER the dedup
 produces is what `pickBestHighway` reads, and two copies of an order-sensitive
-helper is how a port drifts (#426). -/
+helper is how a port drifts. -/
 
 /-- Evenly spaced indices into a run of `n` points: first, last, and
 `count - 2` between. `Math.floor(i * (n - 1) / max(1, count - 1))` — `Nat`

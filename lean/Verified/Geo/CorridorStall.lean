@@ -14,7 +14,7 @@ corridor advances) or a there-and-back the GPS actually traced.
 It began in `Verified.Eval.WalkMetrics`, which is where the walk referee was
 ported. That is the wrong home for it: it is a geometry primitive over two
 polylines, and the DECISION gate needs it too — `matchImprovesDisplay` accepts
-detours precisely because it has no path→fixes term (#1497). `Verified.Geo`
+detours precisely because it has no path→fixes term. `Verified.Geo`
 imports `Verified.Eval` nowhere and must not start; the direction is Eval → Geo.
 So the primitive moved DOWN and the referee calls it.
 

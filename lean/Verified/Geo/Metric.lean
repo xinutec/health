@@ -246,7 +246,7 @@ guess misses (a sum past 2^53 rounds in the `Float`, or a float `sqrt` is off by
 one). The bracket pins the value (`IsSqrt.unique`), so this IS `isqrt` — the
 float is never trusted, only tried. Newton from the power-of-two seed cost ~4
 big divisions and a `log2` per call, and `qDist` is called several times per
-graph edge (#1921). -/
+graph edge. -/
 def isqrtFrom (r n : Nat) : Nat :=
   if r * r ≤ n ∧ n < (r + 1) * (r + 1) then r
   else if (r + 1) * (r + 1) ≤ n ∧ n < (r + 1 + 1) * (r + 1 + 1) then r + 1

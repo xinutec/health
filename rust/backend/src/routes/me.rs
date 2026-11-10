@@ -1,4 +1,4 @@
-//! `GET /me` — who this request is, and what it is connected to (#982).
+//! `GET /me` — who this request is, and what it is connected to.
 //!
 //! The SPA's first call. It decides which "connect your account" prompts to
 //! show, and — for a share link — how far the date arrows may move.

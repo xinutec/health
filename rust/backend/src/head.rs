@@ -5,7 +5,7 @@
 //! `#guard`-pinned Lean twin reachable through `lean::serve`. What was missing
 //! was the sequencing: which fixes each stage is handed, in what order, and
 //! with which filter between them. That lived in `velocity.ts` and is
-//! what this module ports (#982).
+//! what this module ports.
 //!
 //! ```text
 //!   inputs.phonetrack.today
@@ -57,8 +57,8 @@ pub struct Smoothed {
     ///
     /// ⚠ Carried through the filter so the segmenter can tell a real straight
     /// walk from a single jump inside the noise: `linearity` is a net/path
-    /// ratio and reads 1.0 — maximally directed — for a path that did not move
-    /// (#185). `None` means the fix reported none, never "perfect".
+    /// ratio and reads 1.0 — maximally directed — for a path that did not move.
+    /// `None` means the fix reported none, never "perfect".
     pub accuracy: Option<f64>,
 }
 
@@ -269,7 +269,7 @@ pub fn kalman(pts: &[Fix]) -> Result<Vec<Smoothed>> {
     // The Kalman runs in Lean and its reply is a SUBSEQUENCE of the input —
     // duplicate timestamps and innovation-gated fixes are dropped — so every
     // output row's `ts` is an input row's `ts` and the join is exact. That
-    // keeps the accuracy plumbing out of the filter entirely (#185).
+    // keeps the accuracy plumbing out of the filter entirely.
     let acc_by_ts: std::collections::HashMap<i64, Option<f64>> =
         pts.iter().map(|p| (p.ts, p.accuracy)).collect();
     rows.iter()

@@ -15,7 +15,7 @@ Port of `buildPlaceNearLine` in `src/cli/decode-day.ts`.
 `parseAssemble` reads it as OPTIONAL, and an absent one is the empty set, which
 reads to the transition matrix as "no place is near any line". That removes
 every hard zero rather than adding them: the decode runs, produces a plausible
-timeline, and allows boardings the TypeScript forbids (#982).
+timeline, and allows boardings the TypeScript forbids.
 
 ## The shell's half
 

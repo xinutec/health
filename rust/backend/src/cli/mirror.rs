@@ -49,7 +49,7 @@ pub(crate) struct MirrorHarvest {
 
 /// How long to wait between tiles, so the mirror stops rate-limiting itself.
 ///
-/// ⚠ THE 429s WERE OURS, NOT THE ENDPOINT'S FAULT (#1153). The mirror issues 18
+/// ⚠ THE 429s WERE OURS, NOT THE ENDPOINT'S FAULT. The mirror issues 18
 /// back-to-back queries of ~5 MB each with no pacing; the first few answer in
 /// ~1.5 s and then `overpass-api.de` starts refusing. `OVERPASS_CONCURRENCY = 2`
 /// cannot help — these are already sequential, and the limit being hit is a
@@ -242,7 +242,7 @@ pub(crate) async fn mirror_fetch(
     let mut failures = 0usize;
     // How often a tile's first attempt was refused, and how often trying again
     // rescued it. Printed so the retry has to justify its cost out of its own
-    // numbers rather than out of the argument that introduced it (#1153).
+    // numbers rather than out of the argument that introduced it.
     let mut retried = 0usize;
     let mut retries_won = 0usize;
     let mut breaker = lean::BreakerState::new();
@@ -505,8 +505,8 @@ pub(crate) async fn fetch_osm(dry_run: bool, limit: i64, only: Option<&str>) -> 
     Ok(())
 }
 
-/// `backend watch-fetch-queue`: the drain as a process, beside the serving pod
-/// (#1889). See `backend::fetch_drain`.
+/// `backend watch-fetch-queue`: the drain as a process, beside the serving pod.
+/// See `backend::fetch_drain`.
 ///
 /// ⚠ NO `migrate()` here, on purpose: `backend serve` performs it, and this
 /// starts in the same pod at the same moment.

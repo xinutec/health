@@ -7,7 +7,7 @@ import DayEntry.Host
 
 `walkableRoads`, `buildingsNear` and `drivableRoads` are the reads the walk and
 road matchers make mid-fold, on discs the fold itself chooses. Each is one
-`DayEntry.Host.ask` (#1709); before that they were `@[extern]` C callbacks into
+`DayEntry.Host.ask`; before that they were `@[extern]` C callbacks into
 an in-process host, and before THAT they were shells that answered empty.
 
 # The rows
@@ -29,7 +29,7 @@ unnamed way and a way named `""` must stay distinct across the wire.
 
 See `Host`. The walk pass bails on empty ways either way, so a decline changes no
 drawing — what it changes is that the gap is a fact the host can record and
-fetch against, instead of an absence shaped exactly like data (#976, #1667).
+fetch against, instead of an absence shaped exactly like data.
 
 # Deliberately not in `Verified`
 

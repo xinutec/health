@@ -1,11 +1,10 @@
-//! What the serving path could not answer, so the drain beside it can fetch it
-//! (#1076, #1658, #1889).
+//! What the serving path could not answer, so the drain beside it can fetch it.
 //!
 //! # Why a queue and not a fetch
 //!
 //! The fold reaches OSM through lookups it DECLINES when it has no data — an
 //! honest decline, never an empty answer, because "nothing is there" is a claim
-//! about the world (#976). Declining is right and it is also a dead end: the
+//! about the world. Declining is right and it is also a dead end: the
 //! same coordinate went unanswered on every fold forever, because nothing
 //! recorded that anyone had asked.
 //!
@@ -31,7 +30,7 @@
 //! # One writer
 //!
 //! Every decline — the seven answerer tables and the three matcher reads —
-//! comes through `MirrorSource`'s coverage gate (#1709), so there is one
+//! comes through `MirrorSource`'s coverage gate, so there is one
 //! `INSERT` and one key vocabulary. The drain is `crate::fetch_drain`, which
 //! the `health-fetch` sidecar runs continuously and `backend fetch-osm` /
 //! `fetch-geocodes` run by hand.
@@ -42,7 +41,7 @@ use sqlx::{MySqlPool, Row};
 /// The queue `kind` for a feature bucket.
 ///
 /// ⚠ NAMESPACED. `osm_fetch_queue` already holds the geocode's `nominatim_z<n>`
-/// kinds (#1076); a bare `highway` beside those reads as a third vocabulary.
+/// kinds; a bare `highway` beside those reads as a third vocabulary.
 #[must_use]
 pub fn queue_kind(bucket: &str) -> String {
     format!("osm_{bucket}")

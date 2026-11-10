@@ -8,7 +8,7 @@ stay it left or arrived at contributes its centroid, and the train it alighted
 from or boarded contributes the snapped track's terminal vertex — which sits at
 the station to about platform precision. A post-tunnel reacquire smear
 contradicts both, so these anchors pin the reconstruction between the known
-truths (#319).
+truths.
 
 Only a TEMPORALLY ADJACENT neighbour testifies. Across a long unknown gap the
 endpoint is genuinely unknown, so a neighbour more than three minutes away says
@@ -49,7 +49,7 @@ def ANCHOR_MAX_GAP_S : Int := 180
 precision. -/
 def STATION_ANCHOR_SIGMA_M : Float := 15
 /-- A stay centroid is softer: a poor-GPS indoor stay's centroid can itself be
-biased by the very smear these anchors exist to correct (#244). -/
+biased by the very smear these anchors exist to correct. -/
 def STAY_ANCHOR_SIGMA_M : Float := 25
 
 /-- Which end of the NEIGHBOUR touches the walk. `end` means the walk FOLLOWS

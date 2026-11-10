@@ -1,4 +1,4 @@
-//! The rollup's civil-day keying and its chunking arithmetic (#260).
+//! The rollup's civil-day keying and its chunking arithmetic.
 //!
 //! ⚠ The HTTP half is not tested here — it needs the live API. What IS testable
 //! is the part that silently files data on the wrong day, which is the failure

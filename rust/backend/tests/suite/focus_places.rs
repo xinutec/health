@@ -1,4 +1,4 @@
-//! `lean::focus_places` — the `focus` mode's production caller (#1424).
+//! `lean::focus_places` — the `focus` mode's production caller.
 //!
 //! # Why this exists
 //!

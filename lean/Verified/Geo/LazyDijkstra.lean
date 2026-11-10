@@ -69,7 +69,7 @@ def relaxStep (u p : Nat) (s : LState) (tw : Nat × Nat) : LState :=
         heap := s.heap.push (p + tw.2) tw.1 }
     else s
 
-/-! ## The step, compiled in place (#1921)
+/-! ## The step, compiled in place
 
 `relaxStep` and `lstep` read `s.dist`, `s.heap`, … while `s` still holds them,
 so each write found its array shared and copied it — `dist` and `prev` are one

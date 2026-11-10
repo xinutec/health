@@ -1,4 +1,4 @@
-//! `biolabels` — the cadence passes, exercised rather than probed (#1424).
+//! `biolabels` — the cadence passes, exercised rather than probed.
 //!
 //! # Why this is not the probe it resembles
 //!

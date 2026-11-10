@@ -1,4 +1,4 @@
-//! Has each stream actually stopped arriving? (#1231)
+//! Has each stream actually stopped arriving?
 //!
 //! # Why an outcome check and not an error check
 //!

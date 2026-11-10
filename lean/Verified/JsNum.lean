@@ -131,7 +131,7 @@ private def TIE_BAND : Float := 1e-6
 2.2·10⁻⁷ of the exact one and `y + 0.5` is exact; away from a tie — `y`'s
 fraction more than 10⁻⁶ from ½ — `⌊y + 0.5⌋` is the exact answer, and nearer
 it the exact arithmetic decides. The exact path's big-integer division was the
-walk graph's dominant cost (#1921): two keys per segment, 33,000 segments on a
+walk graph's dominant cost: two keys per segment, 33,000 segments on a
 long walk. -/
 def toFixedN (x : Float) (f : Nat) : Nat :=
   if f == 7 && x.abs < 200 then

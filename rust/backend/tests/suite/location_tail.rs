@@ -1,4 +1,4 @@
-//! The live-map rules (#982).
+//! The live-map rules.
 //!
 //! `/location/tail` filters and caps its buffer inline rather than asking Lean
 //! per poll — a tail is thousands of points and shipping them across the FFI

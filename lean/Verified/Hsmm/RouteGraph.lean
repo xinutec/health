@@ -148,7 +148,7 @@ def pointToSegmentMeters (lat lon : Float) (a b : LatLon) : Float :=
 def pointToPolylineMeters (lat lon : Float) (geometry : List LatLon) : Float :=
   -- One pass carrying the previous vertex: the same segments in the same
   -- order as zipping the list with its tail, without building that list —
-  -- this runs per edge near a fix, per minute (#1774).
+  -- this runs per edge near a fix, per minute.
   match geometry with
   | [] => posInf
   | a0 :: rest =>

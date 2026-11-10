@@ -1,4 +1,4 @@
-//! Flattening client text into one log field (#982).
+//! Flattening client text into one log field.
 //!
 //! ⚠ This is the security boundary of `/api/telemetry`, not formatting. A label
 //! is verbatim UI text written into a line as `label=…`, so a newline inside it

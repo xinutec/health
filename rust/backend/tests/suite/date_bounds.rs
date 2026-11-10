@@ -1,4 +1,4 @@
-//! `date_bounds_utc` against the TypeScript it was transliterated from (#982).
+//! `date_bounds_utc` against the TypeScript it was transliterated from.
 //!
 //! The cases in `fixtures/date-bounds-ts.json` were produced by RUNNING
 //! `dist/geo/timezone.js`, not by writing down what I believed it did — see

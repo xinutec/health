@@ -1,4 +1,4 @@
-//! The watch-battery series through the linked Lean host (#982).
+//! The watch-battery series through the linked Lean host.
 //!
 //! `Verified.Geo.Velocity`'s `#guard`s settle the shaping — each is what
 //! `src/fitbit/watch-battery.ts` produced under Node. These re-ask a few of them

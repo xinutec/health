@@ -1,4 +1,4 @@
-//! Running the day fold: one request, every lookup asked and answered (#1709).
+//! Running the day fold: one request, every lookup asked and answered.
 //!
 //! The fold is a pure function of its inputs and of the answers to the
 //! questions it asks mid-run — the OSM tables, the zone at a coordinate, a
@@ -36,8 +36,7 @@ pub const OSM_READS: [&str; 3] = ["walkableRoads", "buildingsNear", "drivableRoa
 /// process-wide, read and reset per request by the route that reports it.
 ///
 /// ⚠ Exists because `foldDbMs` and `foldLeanMs` left ~1.7 s of a heavy day's
-/// asks unaccounted for (#1921, 2026-10-06: asks 3.5 s, SQL 1.3 s, scoring
-/// 0.5 s). A total that two timers do not add up to is a question; this is
+/// asks unaccounted for (asks 3.5 s, SQL 1.3 s, scoring 0.5 s). A total that two timers do not add up to is a question; this is
 /// where it is answered rather than guessed at. Labels: `db.<query>` for each
 /// statement kind, `cover` for the coverage gate's nested Lean calls,
 /// `answer.<table>` for the whole of one ask's answer, `reply` for serialising
@@ -164,7 +163,7 @@ pub fn run_day(cap: &Value, inputs: &Value, answerer: &mut dyn Answerer) -> Resu
     if split {
         // ⚠ Per-phase RSS is THIS process's, and the fold now runs in another:
         // what grows here is the request and the answers, not the Lean heap.
-        // The worker's own size is what `ps` on its pid says (#1071).
+        // The worker's own size is what `ps` on its pid says.
         let declined = folded.declined().len();
         eprintln!(
             "  fold: build {build_ms}ms · serve {serve_ms}ms · body {} KiB · {} ask(s), \
@@ -194,8 +193,8 @@ pub fn run_day(cap: &Value, inputs: &Value, answerer: &mut dyn Answerer) -> Resu
 /// ⚠ Measured from the node, 2026-09-25, with folds already running ONE AT A
 /// TIME: a fresh pod folded two heavy days and the backend kept 191–389 MiB of
 /// anonymous memory at idle — glibc's arenas hold what a fold freed — and the
-/// third fold was OOM-killed at 403 MiB backend plus a 100 MiB Lean worker
-/// (#1071). `malloc_trim(0)` walks every arena and returns the free top and
+/// third fold was OOM-killed at 403 MiB backend plus a 100 MiB Lean worker.
+/// `malloc_trim(0)` walks every arena and returns the free top and
 /// every wholly free page; it costs milliseconds against a fold that costs
 /// seconds. Linux/glibc only: no pod runs anywhere else, and macOS's allocator
 /// has no equivalent — there this logs the same figure twice.
@@ -220,7 +219,7 @@ pub fn trim_heap() {
 /// from `/sys/fs/cgroup/memory.peak` and `memory.events`. `None` off cgroup v2
 /// (macOS, a bare shell). In a pod this is the container's cgroup, i.e. the
 /// number the OOM killer judges — `rss_mib` is one process's share of it and
-/// misses the Lean workers beside it (#1071).
+/// misses the Lean workers beside it.
 pub fn cgroup_memory() -> Option<(u64, u64)> {
     let peak = std::fs::read_to_string("/sys/fs/cgroup/memory.peak")
         .ok()?
@@ -241,7 +240,7 @@ pub fn cgroup_memory() -> Option<(u64, u64)> {
 
 /// Resident set size of this process (MiB), or 0 if nothing can say.
 ///
-/// ⚠ `/proc` FIRST, because `ps` READ ZERO IN THE CONTAINER (#1071): the
+/// ⚠ `/proc` FIRST, because `ps` READ ZERO IN THE CONTAINER: the
 /// serving image is alpine, whose busybox `ps` does not take `-o rss= -p`.
 /// `/proc/self/statm` needs no fork and exists on every Linux; `ps` stays as
 /// the macOS fallback.

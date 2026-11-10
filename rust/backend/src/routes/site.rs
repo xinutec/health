@@ -1,4 +1,4 @@
-//! Everything the browser needs that is not the API (#982).
+//! Everything the browser needs that is not the API.
 //!
 //! The built Angular app, the two unauthenticated status endpoints, and the
 //! SPA fallback. No decisions here — it is entirely plumbing, and it is the
@@ -180,7 +180,7 @@ fn is_content_hashed(name: &str) -> bool {
 /// between "the deploy is wrong" and "the app is broken".
 ///
 /// ⚠ **EVERY OTHER PATH IS A 404, and answering 200 here was a silent
-/// production bug (#1489).** `ServeDir`'s fallback is reached for any file it
+/// production bug.** `ServeDir`'s fallback is reached for any file it
 /// cannot find, so `GET /media/nope.woff2` answered **200 text/html** — the
 /// explanation page, handed to a browser that asked for a font. It renders
 /// broken icons and reports nothing, on both sides: a 200 is not an error to

@@ -101,7 +101,7 @@ def findDominantStationaryPlaceId (segStart segEnd : Int) (hmm : List HmmSeg) : 
   | some (id, _) => return some id
   | none => return none
 
-/-- Doorstep-consistency gate (#244): the HSMM place is a refinement only if its
+/-- Doorstep-consistency gate: the HSMM place is a refinement only if its
     centroid is within `MAX_PLACE_OVERRIDE_DISTANCE_M` of the stay's own GPS. -/
 def doorstepConsistent (segLat segLon placeLat placeLon : Float) : Bool :=
   decide (haversineMeters segLat segLon placeLat placeLon ≤ MAX_PLACE_OVERRIDE_DISTANCE_M)
@@ -240,7 +240,7 @@ def maybeOverrideMovementToTrain (seg : Seg) (hmm : List HmmSeg) : Seg :=
       -- `vehicleKind` must go for the same reason and one more: it is the bus
       -- passes' judgement of the leg AS a road vehicle, and the day-state
       -- flattening ranks it ABOVE refinedMode — left in place it renders this
-      -- train as a bus (#365).
+      -- train as a bus.
       { seg with
         mode := "train", refinedMode := some "train",
         refinedReason := some s!"hsmm route evidence — {line}",
@@ -334,7 +334,7 @@ private def PLACES : List (Int × PlaceLookup) := [
     #[⟨1751000000, 1751000300, "stationary", none, none, none, none, none, none⟩, ⟨1751000300, 1751000600, "walking", none, (some 9), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Work"), none, none, none)]
 
--- H11: a DRIVING leg the HSMM calls a train on a known line, at ride speed and off any road corridor. Promoted: mode AND refinedMode both become train, the reason is rewritten, the line becomes the wayName — and `vehicleKind` is CLEARED, because the day-state flattening ranks it above refinedMode and would otherwise render this train as a bus (#365).
+-- H11: a DRIVING leg the HSMM calls a train on a known line, at ride speed and off any road corridor. Promoted: mode AND refinedMode both become train, the reason is rewritten, the line becomes the wayName — and `vehicleKind` is CLEARED, because the day-state flattening ranks it above refinedMode and would otherwise render this train as a bus.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "driving", refinedMode := none, avgSpeed := 25.0, place := none, wayName := none, refinedReason := (some "cadence says vehicle"), centroidLat := none, centroidLon := none, vehicleKind := (some "bus"), roadCorridorFraction := (some 0.1) }]
     #[⟨1751000000, 1751000600, "train", (some "Victoria"), none, none, none, none, none⟩] PLACES).map projSeg ==
   #[("train", (some "train"), none, (some "Victoria"), (some "hsmm route evidence — Victoria"), none)]

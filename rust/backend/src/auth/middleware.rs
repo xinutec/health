@@ -1,4 +1,4 @@
-//! Turning a request into a session, and refusing the ones that should be (#982).
+//! Turning a request into a session, and refusing the ones that should be.
 //!
 //! Two ways in, tried in the TypeScript's order:
 //!

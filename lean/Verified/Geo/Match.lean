@@ -788,7 +788,7 @@ def QBuildings.factor (bld : QBuildings) (a b : QPt) : Nat := bld.factorLen a b 
 /-- `factorLen` with the two END samples read from a per-vertex memo
 (`badA = sampleBad a`, `badB = sampleBad b`) and only the interior sampled. The
 scan is a disjunction over the samples, so where it starts does not matter —
-and in a graph every vertex ends many edges (24 on a dense walk, #1921), so its
+and in a graph every vertex ends many edges (24 on a dense walk), so its
 own verdict is worth computing once. Same value as `factorLen` whenever the
 memo is honest; `#guard`ed below, and the corpus gate re-verifies. -/
 def QBuildings.factorMemo (bld : QBuildings) (a b : QPt) (len : Nat) (badA badB : Bool) : Nat :=
@@ -1772,7 +1772,7 @@ structure QMatchResult where
   /-- Arc length attributed per way NAME along the chosen route, in `qDist`
   units — the matcher REPORTING the identity it resolved, so naming never has
   to re-derive "which way" by nearest-neighbour over a line that is snapped
-  onto the network and equidistant from everything near it (#445). `none`
+  onto the network and equidistant from everything near it. `none`
   collects the unnamed ways; edges the graph cannot attribute (gap bridges)
   are charged to nothing. -/
   wayUm : Array (Option String × Nat) := #[]
@@ -1886,7 +1886,7 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
     -- Only an entry this layer searched from, or one kept before, can be
     -- `some`: clear those not kept and remember the rest. The same array
     -- `mapIdx` produced, without rebuilding all `n` entries a layer (40k × 85
-    -- on a dense walk, #1921).
+    -- on a dense walk).
     let sources : Array Nat := prev.cands.foldl (init := live) fun acc c =>
       let s := graph.segments.getD c.si default
       (acc.push s.u).push s.v
@@ -1930,7 +1930,7 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
   let chosen : Array Nat := (decoded.getD []).toArray
 
   -- Assemble the interpolated route detail, attributing each route edge to the
-  -- way it runs along as it goes (#445). Interior edges are graph edges and are
+  -- way it runs along as it goes. Interior edges are graph edges and are
   -- looked up by their endpoint coordinates (`vertices` is deduped on exactly
   -- that pair, so the key is exact, not a tolerance). The FIRST and LAST edge
   -- of a hop touch a candidate FOOT — a projection that is on a segment but is

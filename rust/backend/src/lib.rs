@@ -1,4 +1,4 @@
-//! The Rust backend skeleton (#982).
+//! The Rust backend skeleton.
 //!
 //! # What this is, and what it is NOT
 //!
@@ -16,13 +16,13 @@
 //!
 //! Where it stands:
 //!
-//!   * the TS↔Lean per-tenant A/B retired with the TypeScript backend (#975,
+//!   * the TS↔Lean per-tenant A/B retired with the TypeScript backend (
 //!     2026-08-26). `state.rs` still names `setVerifiedCoreOverride`; that
 //!     symbol exists nowhere but in prose.
 //!   * this crate serves `/api` — see `routes/`, which answers `/api/me`,
 //!     `/api/locations` and the biometric tables. `dist/server.js` is gone.
-//!   * the ingestion IS Rust, and the Fitbit→Google cutover it was written for
-//!     landed and was verified in prod on 2026-09-01 (#260).
+//!   * the ingestion is Rust, and the Fitbit→Google cutover it was written for
+//!     is verified in prod.
 //!
 //! The paragraph below is kept because the RULE it states outlived the plan.
 //!

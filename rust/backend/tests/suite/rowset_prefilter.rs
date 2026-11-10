@@ -1,4 +1,4 @@
-//! Does the row-set prefilter change any ANSWER? (#982)
+//! Does the row-set prefilter change any ANSWER?
 //!
 //! `RowSetAnswerer` drops rows before shipping them to Lean, because asking
 //! about one coordinate otherwise sends an entire feature bucket — 26,812

@@ -1,4 +1,4 @@
-//! Splitting a capped PhoneTrack window loses no second and repeats none (#1032).
+//! Splitting a capped PhoneTrack window loses no second and repeats none.
 //!
 //! ⚠ PhoneTrack truncates at `maxPoints` and puts NOTHING in the response to say
 //! so, and a truncated week is shaped exactly like a quiet one. The fetch reacts

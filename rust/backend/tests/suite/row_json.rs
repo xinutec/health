@@ -1,4 +1,4 @@
-//! The wire shape of a `selectAll()` row (#982).
+//! The wire shape of a `selectAll()` row.
 //!
 //! The twelve table endpoints have almost no logic, so what is worth testing is
 //! not what they decide but what they RENDER. Three things are pinned here:

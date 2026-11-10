@@ -142,7 +142,7 @@ def STEP_MINUTE_S : Int := 60
 /-- Does a step row's whole minute lie inside the window?
 
 ⚠ **CONTAINMENT, NOT MEMBERSHIP OF THE START INSTANT**, and the difference is a
-real defect (#185). A segment ending at 18:54:12 shares twelve seconds with the
+real defect. A segment ending at 18:54:12 shares twelve seconds with the
 minute beginning 18:54; testing `sp.ts ≤ seg.endTs` charges it that whole
 minute's steps. On 2026-06-24 that is what destroyed a five-minute shop stay:
 the 82 steps belonged to the walk to the NEXT shop, they cleared

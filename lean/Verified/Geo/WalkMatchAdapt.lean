@@ -44,7 +44,7 @@ is 0.00–0.14 m on all but two legs.
 ⚠ SO WIRING THIS IS NOT EXPECTED TO LEAVE THE DAY GATE UNCHANGED, and the day
 gate compares exactly. `RoadMatchAnnotate.lean`'s header says the same thing
 about the road twin: the quantised arm is "measured and ceilinged against the TS
-rather than bit-identical to it (#395 / #403)". Judge a change here with
+rather than bit-identical to it". Judge a change here with
 `compare-match --gate`, and do NOT quiet a divergence by widening the
 accepted-delta manifest — `deploy.sh:139`.
 

@@ -1,4 +1,4 @@
-//! A walk's drawn result, remembered across folds (#1921).
+//! A walk's drawn result, remembered across folds.
 //!
 //! Drawing a walk — the matcher, the building corrector, the reconstruction —
 //! was most of a fold, and a page load drew every walk of the day again: the
@@ -77,7 +77,7 @@ thread_local! {
 /// What the in-memory store has been asked, for the test that proves the
 /// second replay READ it: `memo.walkGet`s served, `memo.walkGet`s missed,
 /// `memo.walkPut`s. A clock cannot say that — once drawing is fast, "four
-/// times faster when remembered" is noise (#1921).
+/// times faster when remembered" is noise.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MemStats {
     pub served: u64,

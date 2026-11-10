@@ -1,4 +1,4 @@
-//! The lat/lon → IANA zone lookup (#982).
+//! The lat/lon → IANA zone lookup.
 //!
 //! ⚠ The coordinates here are public landmarks and coastlines with no time
 //! attached to any of them. Nowhere anybody has been, and no (place, time) pair:

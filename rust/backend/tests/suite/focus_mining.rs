@@ -1,9 +1,9 @@
-//! `mineCluster` answers, and answers the gates the cron depends on (#982).
+//! `mineCluster` answers, and answers the gates the cron depends on.
 //!
 //! ⚠ THE POINT IS THAT IT ANSWERS AT ALL. A `match` arm added to
 //! `BackendEntry` links against a STALE archive perfectly happily and then
 //! replies "unknown op" at runtime — the same shape as `nearbyLandmarks`
-//! answering `[]` for every stay while every count read as answered (#1054).
+//! answering `[]` for every stay while every count read as answered.
 //! A test that only checked the label could pass on a build where the arm does
 //! not exist, if the label it expected were `None`.
 
@@ -67,7 +67,7 @@ fn a_long_stay_on_one_venue_takes_the_label() {
 fn the_near_field_exemption_survives_the_ffi() {
     init();
     // 10 minutes against a 30-minute floor, but seen from 10 m — inside the
-    // 12 m near field (#1003). Pinned here so the wire carries it too, not
+    // 12 m near field. Pinned here so the wire carries it too, not
     // only the Lean guard.
     let cafe = lm("Cafe", "amenity", "cafe", 10.0);
     let out = mine_cluster(&[stay(600, vec![cafe.clone()])], &serde_json::json!([cafe]))

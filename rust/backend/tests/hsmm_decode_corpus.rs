@@ -19,7 +19,7 @@
 
 use serde_json::Value;
 
-/// How many ways the decoded days are split (2026-09-30, #1654). This test
+/// How many ways the decoded days are split. This test
 /// decoded its days one after another and was the SLOWEST test of the deploy
 /// gate's corpus row (~140 s against 50–85 s for the fold shards beside it), so
 /// it alone set that row's wall. Days are independent and each decode holds
@@ -101,7 +101,7 @@ fn run_corpus(shard: usize) {
         let fx: Value = backend::decode_fixture::read(name).expect("fixture parses");
         let req = backend::decode_fixture::request(&fx).unwrap_or_else(|e| panic!("{name}: {e:#}"));
         // `DECODE_REQUEST_OUT=<dir>`: the request itself, one file per day —
-        // what `verified_cli decodetrace` reads by hand (2026-09-29, #238).
+        // what `verified_cli decodetrace` reads by hand.
         if let Ok(dir) = std::env::var("DECODE_REQUEST_OUT") {
             std::fs::write(
                 std::path::Path::new(&dir).join(name),
@@ -134,10 +134,10 @@ fn run_corpus(shard: usize) {
         // heads with, so `boardTs` and whatever else Lean grows reach the
         // corpus gate as they reach production; the comparison below reads the
         // named fields only. For landing a decoder change the scoreboard's
-        // live arm has already judged (#366). Tab-indented like the capture.
+        // live arm has already judged. Tab-indented like the capture.
         // `DECODE_DUMP_OUT=<path>`: the Lean decode per day, one JSON line each,
         // APPENDED — for laying an arm's segments against the narrative without
-        // blessing anything (2026-09-29, #366).
+        // blessing anything.
         if let Ok(path) = std::env::var("DECODE_DUMP_OUT") {
             use std::io::Write;
             let line = format!("{}\n", serde_json::json!({ "name": name, "segments": got }));

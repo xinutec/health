@@ -1,5 +1,4 @@
-//! The raw archive: every Google type we hold no table for, into `google_points`
-//! (#1886).
+//! The raw archive: every Google type we hold no table for, into `google_points`.
 //!
 //! Fitbit's Web API ends on 2026-10-30, and with it the only other copy of this
 //! history. Measured 2026-10-02: activity-level 1.12M points, distance 402k,

@@ -1,4 +1,4 @@
-//! Authentication: the crypto and the storage (#982).
+//! Authentication: the crypto and the storage.
 //!
 //! ⚠ THE RULES ARE NOT HERE. When a session has expired, how a signed cookie is
 //! framed, and what a share recipient may do are `Verified.Session`, reached

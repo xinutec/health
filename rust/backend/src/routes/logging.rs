@@ -1,4 +1,4 @@
-//! The two endpoints that write to the log and nowhere else (#982).
+//! The two endpoints that write to the log and nowhere else.
 //!
 //! `/telemetry` records what a person did — navigations and taps the browser
 //! sees and the API does not. `/client-log` records what broke. Neither stores

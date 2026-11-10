@@ -19,7 +19,7 @@ Pure and total. UNPROVEN; the thresholds and the tie-break are the TypeScript's.
 so two places with equal minutes resolve to whichever the day's segments
 mentioned first. That is a real decision about a real day, not an artefact, and
 it is why this carries an insertion-ordered array rather than a hash map. The
-same trap is open on the PhoneTrack device map (#1073).
+same trap is open on the PhoneTrack device map.
 
 ⚠ **A ZERO-MINUTE SEGMENT IS SKIPPED ENTIRELY**, before it can contribute to the
 denominator. `Math.round` sends anything under 30 seconds to zero, so a day of

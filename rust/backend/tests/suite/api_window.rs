@@ -1,4 +1,4 @@
-//! The multi-day API window, through the linked Lean host (#982).
+//! The multi-day API window, through the linked Lean host.
 //!
 //! One of these is a convenience and one is a security boundary. The boundary is
 //! `earliest_visible`: a share recipient's read is capped by their window

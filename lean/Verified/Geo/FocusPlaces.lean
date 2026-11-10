@@ -479,7 +479,7 @@ says nothing about which of two contested names is right.
 TypeScript grew it on 2026-08-15 (`c506a7b`). Nothing caught it: this is the
 one focus-mining export no live comparison reaches (`ServeEntry.lean`), so its
 only check was the guards below — and a guard cannot fail for a parameter that
-does not exist yet (#1003).
+does not exist yet.
 -/
 def pickWinningAmenity (votes : List (String × Float)) (minWeight minFraction : Float)
     (weightExempt : List String := []) : Option String := Id.run do
@@ -808,7 +808,7 @@ private def workC : Cluster := mkCluster 2 51.53 (-38.13) (workdays 25 51.53 (-3
 #guard pickWinningAmenity [("Cafe A", 300), ("Cafe B", 700)] 100 0.5 == some "Cafe B"
 -- An exact tie keeps the first-seen name (strict `>` in the argmax).
 #guard pickWinningAmenity [("A", 500), ("B", 500)] 100 0.5 == some "A"
--- The near-field exemption (#1003): the winner was seen from inside the venue,
+-- The near-field exemption: the winner was seen from inside the venue,
 -- so the dwell floor does not withhold its name.
 #guard pickWinningAmenity [("Cafe A", 90)] 100 0.5 ["Cafe A"] == some "Cafe A"
 -- The exemption is keyed on the WINNER, not on membership: exempting a name

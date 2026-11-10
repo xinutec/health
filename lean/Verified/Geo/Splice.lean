@@ -1,5 +1,5 @@
 /-!
-# `spliceRouteDetail` (#369) — the display-pass layer, part 2
+# `spliceRouteDetail` — the display-pass layer, part 2
 
 The pass that fixed #369: for each chord of the cleaned `coarse` line,
 re-insert the assembled route's vertices between the chord's endpoints
@@ -312,7 +312,7 @@ def splice (cd : π → π → π → Nat) (same near : π → π → Bool)
   else (spliceLoop cd same near clampTs route m tol dropM coarse n 1
     (indexFrom same route m (coarse 0) 0) [coarse 0]).reverse
 
-/-- **Splice soundness** (#369): every output vertex is a coarse vertex,
+/-- **Splice soundness**: every output vertex is a coarse vertex,
 or a route vertex — timestamp-clamped into its chord's window — whose
 deviation from its chord is at most `dropM`. In particular a window
 whose deviation exceeds `dropM` (a deliberate excision) contributes

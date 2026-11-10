@@ -1,7 +1,7 @@
-//! The base mirror's write half — bucketing, box sizing and the query (#1658).
+//! The base mirror's write half — bucketing, box sizing and the query.
 //!
 //! The rows these queries write sit BESIDE rows the TypeScript wrote before it
-//! was deleted (#975), so the shapes are pinned against
+//! was deleted, so the shapes are pinned against
 //! `06346bd^:src/geo/osm-local.ts` rather than trusted. A bucket that disagrees
 //! with its neighbours does not fail: it fills the mirror with rows the reader's
 //! `feature_type` filter never selects.
@@ -131,7 +131,7 @@ fn a_named_beach_is_a_landmark() {
 
 /// ⚠ NODES ONLY. A way tagged `highway=bus_stop` is not a stop, and letting one
 /// into `transit_stop` would put a line in a bucket the bus/car discriminator
-/// reads as point evidence (#328).
+/// reads as point evidence.
 #[test]
 fn a_bus_stop_node_is_furniture_and_a_bus_stop_way_is_not() {
     let node = json!({"type": "node", "id": 3, "lat": 51.5, "lon": -0.1,
@@ -281,7 +281,7 @@ fn a_key_that_is_not_three_numbers_is_refused() {
 }
 
 /// ⚠ NAMESPACED, so the Overpass kinds cannot be confused with the geocode
-/// drain's `nominatim_z<n>` rows in the same table (#1076).
+/// drain's `nominatim_z<n>` rows in the same table.
 #[test]
 fn a_kind_round_trips_and_a_geocode_kind_is_not_one_of_ours() {
     for bucket in BUCKETS {

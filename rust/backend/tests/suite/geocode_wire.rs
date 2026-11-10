@@ -1,5 +1,4 @@
-//! `nominatim::Geocode` must round-trip every geocode the corpus already holds
-//! (#1076).
+//! `nominatim::Geocode` must round-trip every geocode the corpus already holds.
 //!
 //! # Why a real-data test and not another mock
 //!
@@ -14,7 +13,7 @@
 //! field serde does not know about, and a dropped field is exactly how a
 //! re-capture would come back subtly poorer than the day it replaced.
 //!
-//! Local-only, and announces a skip: the corpus is gitignored (#860).
+//! Local-only, and announces a skip: the corpus is gitignored.
 
 use std::path::Path;
 
@@ -50,7 +49,7 @@ fn every_recorded_geocode_round_trips_through_the_ported_shape() {
         days += 1;
         for (key, recorded) in section {
             answers += 1;
-            // ⚠ The KEY is a coordinate and this repo is public (#860). A
+            // ⚠ The KEY is a coordinate and this repo is public. A
             // failure names the day and the key's ZOOM, never its position.
             let zoom = key.rsplit('|').next().unwrap_or("?");
             match serde_json::from_value::<Geocode>(recorded.clone()) {
@@ -81,7 +80,7 @@ fn every_recorded_geocode_round_trips_through_the_ported_shape() {
 }
 
 /// A source that declines everything spatial but HAS one geocode to hand — the
-/// shape `MirrorSource` takes once it can reach `osm_cache` (#1076).
+/// shape `MirrorSource` takes once it can reach `osm_cache`.
 struct OneGeocode(serde_json::Value);
 
 impl backend::rowset_answerer::RowSource for OneGeocode {

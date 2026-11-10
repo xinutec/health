@@ -82,7 +82,7 @@ structure Seg where
   centroidLon : Option Float := none
   focusPlaceId : Option Int := none
   /-- Whether `linearity` MEANS anything for this segment — whether it moved
-  farther than its own GPS error (#185). See
+  farther than its own GPS error. See
   `Verified.Geo.Segments.WindowFeatures.directionResolvable`.
 
   ⚠ DEFAULT `true`. Every existing construction omits it and must keep its
@@ -97,13 +97,13 @@ structure Seg where
   from its own geometry, but leave its mode alone. Set by
   `claimStayArrivalFromWalk`, whose carve changes a walk's window but never what
   it IS — so the inherited name is stale while the inherited mode is still
-  right. Asking for the full re-derivation instead cost a mode on 2026-04-29
-  (#782). -/
+  right. Asking for the full re-derivation instead cost a mode on 2026-04-29.
+  -/
   needsRename : Bool := false
   /-- The bus passes' judgement of a road-vehicle leg: which KIND of vehicle it
   is. The day-state flattening gives this precedence over `refinedMode`, so a
   pass that promotes a leg to `train` must CLEAR it or the timeline renders the
-  train as a bus (#365). `Verified.Geo.PlaceOverride` is the pass that does. -/
+  train as a bus. `Verified.Geo.PlaceOverride` is the pass that does. -/
   vehicleKind : Option String := none
   /-- The share of this leg's GPS samples that sit nearer a drivable road than
   any rail — the evidence weighed against the HSMM's line support in
@@ -126,8 +126,8 @@ structure Seg where
   attached only where the reconstruction is substantially shorter. Takes
   precedence over `walkMatchedPath` when present. -/
   walkSmoothedPath : Option (Array PathPt) := none
-  /-- Whether the walk annotation had building outlines for THIS leg's ground
-  (#1501, #1678): `some true` when the `buildingsNear` read answered (possibly
+  /-- Whether the walk annotation had building outlines for THIS leg's ground:
+  `some true` when the `buildingsNear` read answered (possibly
   with no rings: ground with none), `some false` when it was DECLINED, `none`
   when no read was made (no ways to draw on, or the pass did not run). The
   wall metric means something only when this is `some true`: over unmeasured
@@ -137,7 +137,7 @@ structure Seg where
   `biomEnrich` pass. `none` until it runs — distinct from an enrichment whose
   own fields are empty because Fitbit had nothing for the day. -/
   biometrics : Option BiometricEnrichment := none
-  /-- **A DEBUG SURFACE, AND NOTHING READS IT (#1464).** The walk matcher's
+  /-- **A DEBUG SURFACE, AND NOTHING READS IT.** The walk matcher's
   identity report for this leg: how much of the chosen route ran along each NAMED
   way, longest first. Unnamed arcs are dropped.
 
@@ -146,7 +146,7 @@ structure Seg where
   nobody measured.
 
   ⚠ **UNGATED, AND DELIBERATELY WIDER THAN `wayName`.** `drawMatcher` adopts a
-  route name only on an unnamed, unspliced leg inside the stray bar (#445). A
+  route name only on an unnamed, unspliced leg inside the stray bar. A
   diagnostic filtered the same way could not show a route riding the wrong way
   on a leg that kept its cascade name. -/
   walkWayUm : Array (String × Nat) := #[]

@@ -144,7 +144,7 @@ def ROAD_SAMPLES_MAX : Nat := 240
 abbrev Pt := Verified.GeoFix
 
 /-- A railway names a train leg only when it lies near at least half the leg's
-    sampled points (#238, 2026-09-30). The pick is the nearest railway merged
+    sampled points. The pick is the nearest railway merged
     across the samples, so on a long ride that leaves the mapped network one
     sample's railway named the whole leg: the Eurostar on 2026-09-30, 2 h 19 m
     from St Pancras, read "Circle, Hammersmith & City and Metropolitan Lines" —

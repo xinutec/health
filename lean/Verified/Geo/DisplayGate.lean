@@ -180,7 +180,7 @@ def NearGrid.nearestDist (g : NearGrid) (lat lon : Float) (clampM : Float := pos
     -- …and rings CLOSER than the box cannot either: a ring at Chebyshev distance
     -- `k` meets the occupied box only once `k` reaches the box's own Chebyshev
     -- distance. Starting there is exact — the skipped rings hold no buckets — and
-    -- it is what stops a far probe walking every empty ring in between (#416).
+    -- it is what stops a far probe walking every empty ring in between.
     let minK :=
       max 0 (max (g.minCy - cy) (max (cy - g.maxCy) (max (g.minCx - cx) (cx - g.maxCx))))
     let p : Pt := ⟨lat, lon⟩
@@ -303,13 +303,13 @@ structure DisplayMatchDecision where
   matchedOffRoadM : Float
   strayM : Float
   /-- How far the MATCHED line travels while making no progress along the GPS
-  corridor — the path→fixes direction `strayM` cannot see (#1497). -/
+  corridor — the path→fixes direction `strayM` cannot see. -/
   stallM : Float
   /-- True when the match both stalls badly AND draws more than the pedometer
   justifies. Only the conjunction rejects; see `matchImprovesDisplay`. -/
   detour : Bool
   /-- Building-crossing badness of the RAW line and of the MATCHED line (m), and
-  whether the BUILDING ground alone admitted this match (#1501).
+  whether the BUILDING ground alone admitted this match.
 
   ⚠ Defaulted, so a caller that passes no buildings — the road matcher — gets
   `buildingGround = false` and is bit-for-bit unchanged. -/
@@ -370,7 +370,7 @@ def matchImprovesDisplay (fixes matchedPath : Array Pt) (ways : Ways)
     | some b => b > 0 && polylineLength stallPath > b * overBudgetRatio
     | none => false
   let detour := stallM > maxStallM && overBudget
-  -- ⚠ **TWO GROUNDS, AND THE SECOND IS NOT A LOOSENED FIRST (#1501).** The
+  -- ⚠ **TWO GROUNDS, AND THE SECOND IS NOT A LOOSENED FIRST.** The
   -- off-road ground asks whether the match moves the line back onto the
   -- network. A line can already be on the network and still cut a building
   -- corner, and that line's off-road figure has nothing left to improve — so

@@ -1,4 +1,4 @@
-//! The GPS track of a recorded workout, into `exercise_routes` (#1886).
+//! The GPS track of a recorded workout, into `exercise_routes`.
 //!
 //! Google serves a session's route as a TCX document, one request per
 //! session: `GET …/dataTypes/exercise/dataPoints/{id}:exportExerciseTcx?alt=media`

@@ -1,5 +1,5 @@
 /-!
-# The one-way floor (port of `src/eval/floor-gate.ts`, #1052)
+# The one-way floor (port of `src/eval/floor-gate.ts`)
 
 The shared mechanism behind every "this used to work and must not stop working"
 gate in the golden harness. A floor is a committed per-day set of

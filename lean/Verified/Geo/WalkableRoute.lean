@@ -169,7 +169,7 @@ structure Snap where
 def snapToEdge (p : Pt) (ways : Ways) (graph : WalkGraph) : Option Snap := Id.run do
   -- The builder's own index when it has one: each node was created from a
   -- unique key, so it is the map below, and rebuilding it — 29,000 exact keys
-  -- on a long walk, twice per route — was most of a route's cost (#1921).
+  -- on a long walk, twice per route — was most of a route's cost.
   let mut index : Std.HashMap Verified.JsNum.CoordKey Nat :=
     if graph.index.size == graph.nodes.size then graph.index else {}
   if index.size != graph.nodes.size then

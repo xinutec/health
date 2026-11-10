@@ -7,7 +7,7 @@
 //! against production on a day where all six asks answered and all six were
 //! empty.
 //!
-//! ⚠ The fixture here is SYNTHETIC on purpose (#860): a tracked test must not
+//! ⚠ The fixture here is SYNTHETIC on purpose: a tracked test must not
 //! carry a real coordinate and a real venue, which together record where
 //! someone was. The defect does not need real data to reproduce — it is an
 //! encoding mismatch, and it fires on any tagged feature at any coordinate.

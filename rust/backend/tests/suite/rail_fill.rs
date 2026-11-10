@@ -1,4 +1,4 @@
-//! `railfill` through the linked Lean host (#982, #363).
+//! `railfill` through the linked Lean host.
 //!
 //! `Verified.Geo.RailRouteFill`'s `#guard`s settle whether the SCAN is right —
 //! each one is what `src/geo/rail-route-fill.ts` produced under Node. What they

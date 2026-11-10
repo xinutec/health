@@ -22,7 +22,7 @@
 //! `deploy.sh`'s full gate — and never in the `CORPUS_DAYS=` replays a change is
 //! developed against. On 2026-09-27 a rail-anchor change passed every replay
 //! it was checked with and failed the deploy tree on 07-16's ceiling, 0 → 1,
-//! an hour later (#1654). Behind the shared replay it costs one Lean question
+//! an hour later. Behind the shared replay it costs one Lean question
 //! per day already folded, so it is judged on every day anyone replays.
 //!
 //! # A CEILING, not a floor, and the ratchet is the other way
@@ -249,7 +249,7 @@ impl Feasibility {
         let measured_v: Vec<&String> = self.measured.iter().collect();
         let attempted_v: Vec<&String> = self.attempted.iter().collect();
         // The other shards' days leave the committed side, or they read as
-        // unmeasured here on every run (#408).
+        // unmeasured here on every run.
         let mine = |committed: &BTreeMap<String, u64>| -> BTreeMap<String, u64> {
             committed
                 .iter()

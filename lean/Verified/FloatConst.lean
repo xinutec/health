@@ -38,7 +38,7 @@ def orOne (x : Float) : Float := if x == 0 || x.isNaN then 1 else x
 /-- `n.toFloat`, through the 64-bit cast when `n` fits. `Nat.toFloat` is
 `Float.ofScientific n false 0`, the generic literal path: Nat arithmetic and
 GMP on EVERY call, which was a third of the decode build's busy samples and a
-tenth of the walk matcher's (#1774, #1921, 2026-10-07). For `n < 2^63` that
+tenth of the walk matcher's. For `n < 2^63` that
 path shifts by zero and calls `UInt64.toFloat`, so the two agree; it is
 `opaque`, so no theorem can say so — the guard sweep below pins it instead. -/
 def natToFloat (n : Nat) : Float :=

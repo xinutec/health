@@ -57,7 +57,7 @@ pub(crate) const MIRROR_RECENT_DAYS: i64 = 120;
 pub(crate) const MIRROR_REGION_GAP_KM: f64 = 80.0;
 /// ≈ 3.5 km. Proven size: a single whole-bbox `relation[route=bus]` over greater
 /// London matches ~700 routes and pulls every member node of each, which timed
-/// out on first run (#255).
+/// out on first run.
 pub(crate) const MIRROR_TILE_DEG: f64 = 0.05;
 /// The margin `bboxFromFixes` adds around the home region.
 pub(crate) const MIRROR_MARGIN_M: f64 = 1500.0;

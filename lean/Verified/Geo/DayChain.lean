@@ -35,7 +35,7 @@ at all.
 
 `sleepPlace` is `bestPlace(preferResidential: true)` composed with `placeLabel` —
 venue resolution against the OSM mirror, the same class as `Env.bestPlace` in the
-fold. It is a lookup, so it crosses as an ask the host answers (#1709).
+fold. It is a lookup, so it crosses as an ask the host answers.
 
 The empty-day arm (`inferEmptyDayStatesFromBracket`) is NOT here. It fires only
 when the day has no states AND no points, reads a cross-day bracket this env does
@@ -131,7 +131,7 @@ def stateSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.DayState.Seg :=
 The timestamp used to NARROW here: `PathPt.ts` is a `Float` because the
 over-route trim and the walk corrector interpolate `ts` along a chord without
 rounding, while `SPt.ts` was an `Int`, so this conversion rounded. Both are
-`Float` now (#420), so the vertex crosses the stage boundary untouched — which
+`Float` now, so the vertex crosses the stage boundary untouched — which
 is what a projection between two views of one record should do. -/
 private def spts (p : Option (Array Verified.Geo.PathPt)) :
     Array Verified.Geo.EpisodeGeometry.SPt :=
@@ -428,7 +428,7 @@ def dayChain (e : Env) :
   let continued := markUnseenArrivals (bridgeSamePlaceHoles
     (Verified.Geo.DwellContinuation.applyDwellContinuation
       states e.segments e.dwellPlaces e.dayEndTs) e.points e.dayEndTs) e.points
-  -- ⚠ CITY IS STAMPED LAST, over the FINAL states (#339). The client it
+  -- ⚠ CITY IS STAMPED LAST, over the FINAL states. The client it
   -- replaces ran over the served list, so an INFERRED stay — created by the
   -- dwell continuation, after `segmentsToDayStates` has returned — got a header
   -- there and must get one here. Stamping it earlier silently drops exactly

@@ -1,10 +1,10 @@
-//! Capture a live day's OSM callback answers as an `osmTrace` (#1660).
+//! Capture a live day's OSM callback answers as an `osmTrace`.
 //!
 //! ⚠ **WHY THIS EXISTS: nothing has written an `osmTrace` since the TypeScript
-//! backend went (#975).** Every reader of the format is in `day_shell::osm`;
+//! backend went.** Every reader of the format is in `day_shell::osm`;
 //! the writer was elsewhere and left with it. The corpus froze at 2026-08-13,
 //! so no recent day could become a gate — and recent days are where the
-//! defects are (#1658, #1659).
+//! defects are.
 //!
 //! ⚠ **IT IS ONE THIRD OF A GOLDEN DAY, and saying so is the point.** A fixture
 //! carries `{meta, inputs, expected}`; `inputs.osmTrace` has TEN sections and
@@ -15,8 +15,8 @@
 //!
 //! ⚠ **AND IT PROVES ITSELF.** Writing a trace that cannot answer its own day
 //! is the failure this repo has already had twice — a fixture whose keys the
-//! fold never spells answers nothing and looks exactly like no fixture at all
-//! (#1418). So after capturing, it RELOADS what it wrote and folds the same day
+//! fold never spells answers nothing and looks exactly like no fixture at all.
+//! So after capturing, it RELOADS what it wrote and folds the same day
 //! again, and reports the hit rate. Anything below 100% means the key the
 //! capture wrote is not the key the lookup forms.
 //!
@@ -270,7 +270,7 @@ async fn main() -> Result<()> {
     // counted `unanswerable`, while an empty answer is a claim that there is
     // nothing there. Those can reach the same day and are not the same fact —
     // and `routes::velocity` logs the unanswerable count as the signal that a
-    // served day was built from defaults (#1658). Reporting only when the day
+    // served day was built from defaults. Reporting only when the day
     // moves would hide exactly that.
     eprintln!(
         "control: declined — live {} · replay {} · without `declined` {}",
@@ -328,11 +328,11 @@ async fn main() -> Result<()> {
     // one; this is SELF-blessed — the pipeline's own output, frozen. It catches
     // a REGRESSION and cannot catch "it was always wrong". The ground-truth
     // narrative grades correctness, and the day must be named in
-    // `corpus::day::SELF_BLESSED` to be accepted (#1660).
+    // `corpus::day::SELF_BLESSED` to be accepted.
     //
     // ⚠ `meta.captureInputs` says what the capture was taken under. Without it
     // a fixture cannot notice the constants it depends on moving, and every
-    // gate stays green while the served day differs (#1071, #328).
+    // gate stays green while the served day differs.
     let mut fixture_inputs = inputs.clone();
     if let Some(o) = fixture_inputs.as_object_mut() {
         o.insert("osmTrace".into(), doc["inputs"]["osmTrace"].clone());

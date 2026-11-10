@@ -1,4 +1,4 @@
-//! Share-link management (#982).
+//! Share-link management.
 //!
 //! One row per user. A share link hands an unauthenticated recipient read
 //! access to the last N days, so these four handlers are the only place a user

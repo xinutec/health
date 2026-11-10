@@ -1,4 +1,4 @@
-//! The fold slot: one day folds at a time per process (#1071).
+//! The fold slot: one day folds at a time per process.
 
 use backend::routes::velocity::{fold_slot, fold_slot_free};
 

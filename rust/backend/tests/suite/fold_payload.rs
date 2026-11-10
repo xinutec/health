@@ -1,4 +1,4 @@
-//! `encode_seg` against the TypeScript that produced the wire format (#982).
+//! `encode_seg` against the TypeScript that produced the wire format.
 //!
 //! # The oracle is the TypeScript's OUTPUT, not my reading of its source
 //!

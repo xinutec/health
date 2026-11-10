@@ -1,4 +1,4 @@
-//! Linking a Nextcloud account, and pointing PhoneTrack's map at today (#982).
+//! Linking a Nextcloud account, and pointing PhoneTrack's map at today.
 //!
 //! # Login Flow v2 is a THREE-party handshake
 //!

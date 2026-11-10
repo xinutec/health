@@ -1,6 +1,6 @@
 import Verified.Eval.Journeys
 /-!
-# Journey reconstruction scoring (port of `src/eval/journey-score.ts`, #1048)
+# Journey reconstruction scoring (port of `src/eval/journey-score.ts`)
 
 The gate's referee for the DRAWN timeline: does the day read as the right
 sequence of trips? `Verified.Eval.Journeys.groundTruthJourneys` builds the
@@ -18,14 +18,14 @@ dark-tube ride drawn as walk + stay + walk + short train — the FIRST fragment
 can carry the identical shape `[walking, train, walking]` while spanning a third
 of the trip. Measured 2026-08-11: five of the corpus's fifteen unmatched
 journeys reconstruct their exact expected shape and fail on coverage instead,
-one of them an enforced regression nobody could attribute (#752). So
+one of them an enforced regression nobody could attribute. So
 `uncoveredS` and `slackS` come back beside the verdict rather than being
 recomputed by whoever reads it.
 
 ## ⚠ THE END-CLIP IS ONE MINUTE, AND ONLY AT THE ENDS
 
 A leg crossing the audited boundary used to be kept whole however little of it
-fell inside, which is how 2026-06-24 failed (#810): the walk out of the station
+fell inside, which is how 2026-06-24 failed: the walk out of the station
 contributes THIRTY-SIX SECONDS to a 21-minute window and still added a third
 element to the shape, against a ground truth with no row for it at all. One
 corpus case clips to two seconds.
@@ -291,7 +291,7 @@ def journeyShapeResults (gtJourneys pipelineJourneys : Array Journey) : Array Re
 
 /-! ## Witnesses
 
-⚠ SYNTHETIC ONLY (#860): times are small integers and modes are the eight mode
+⚠ SYNTHETIC ONLY: times are small integers and modes are the eight mode
 words, so nothing here carries a real day. The SHAPES come from the corpus
 incidents named in the module header.
 

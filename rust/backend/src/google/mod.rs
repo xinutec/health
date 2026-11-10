@@ -1,6 +1,6 @@
 //! Google Health: OAuth, the weight feed, and the reconciliation it drives.
 //!
-//! Ports of `src/google/{oauth,health,body}.ts` (#260, #982).
+//! Ports of `src/google/{oauth,health,body}.ts`.
 //!
 //! # Why weight comes from here and not from Fitbit
 //!

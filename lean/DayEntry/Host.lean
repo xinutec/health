@@ -5,7 +5,7 @@ import Lean.Data.Json
 
 Every lookup the day fold cannot compute — the OSM mirror, the zone at a
 coordinate, a geocode — is one `ask`: a table name and a key, answered by
-whoever spawned `verified_cli serve` (#1709). The host reads asks off the same
+whoever spawned `verified_cli serve`. The host reads asks off the same
 pipe the results come back on, so the protocol on stdout is two line shapes:
 
     {"ask":{"what":"nearbyStations","key":"<latBits>|<lonBits>|<rBits>"}}
@@ -16,7 +16,7 @@ and the host replies to an ask with ONE line on stdin:
     {"answer": <row>}          the row, in the shape the table's parser reads
     {"answer": null}           a DECLINE — the host cannot vouch for this ground
 
-⚠ **A DECLINE IS NOT AN EMPTY ANSWER** (#1667). "There are no roads here" is a
+⚠ **A DECLINE IS NOT AN EMPTY ANSWER**. "There are no roads here" is a
 row (an empty array); "nobody has fetched here" is `null`. The two reach the
 fold as `some #[]` and `none`, and every reader keeps them apart.
 

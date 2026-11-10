@@ -14,7 +14,7 @@ profiles, identity) already lives in {@link Verified.Geo.FocusPlaces} and
 {@link Verified.Geo.FocusIdentity} and is reachable through `ServeEntry`'s
 `focus` mode. The vote was the half with no entry point, and so the half that
 drifted: `pickWinningAmenity` lost the near-field exemption for nine days and
-`isLabelWorthyVenue` was never ported at all (both fixed 2026-08-24, #1003).
+`isLabelWorthyVenue` was never ported at all (both fixed 2026-08-24).
 
 ## Why one function and not three
 
@@ -166,7 +166,7 @@ def mineCluster (stays : List MinedStay) (centroid : List Landmark)
 
 ⚠ These are the ONLY check on this module until the Rust arm runs against prod
 and its output is diffed against `focus_places` — there is no live comparator
-for the mining half (#1003). Written to pin the gates and the tie-breaks, which
+for the mining half. Written to pin the gates and the tie-breaks, which
 is what drifted last time. -/
 
 private def LM (name type_ subtype : String) (d : Float) : Landmark :=

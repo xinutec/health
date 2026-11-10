@@ -156,7 +156,7 @@ structure Env where
   reenrich : Seg → Option Seg := fun _ => none
   /-- The road matcher's shell: the street-network read and the solver.
 
-  ⚠ **THE UNFED READ DECLINES, IT DOES NOT ANSWER EMPTY** (#1667). A shell
+  ⚠ **THE UNFED READ DECLINES, IT DOES NOT ANSWER EMPTY**. A shell
   nobody wired has no mirror behind it, and "there are no roads here" is a claim
   about the world that an unwired shell is in no position to make. The pass
   leaves the leg raw either way, so this changes no drawing — what it changes is
@@ -394,7 +394,7 @@ def ALIGHT_FRESH_MAX_M : Float := 400
 
 /-- A ride whose last fix the phone then HELD (the same position repeated, the
 accuracy growing) alights at the line's station nearest the first fix after the
-hold, when that is nearer than the labelled one (#1891). A held fix is one cell
+hold, when that is nearer than the labelled one. A held fix is one cell
 reading, not a place: 2026-10-01's Métro 4 ended on a fix 19 m from Vavin, held
 10:16–10:21 London with no street fix, and the first fresh one sat 217 m from
 Montparnasse-Bienvenüe, where he got off and walked the corridors to the Gare. -/
@@ -486,8 +486,8 @@ abbrev Pass := String × (Array Seg → Array Seg)
 def passes (e : Env) : Array Pass := #[
   ("stayArrivalClaim", fun segs => FootArrival.claimStayArrivalFromWalk segs e.points),
 
-  -- A stop of a few minutes inside a walk — a shop, a queue — is its own stay
-  -- (#1694). After every rail and vehicle carver, so a platform wait is never
+  -- A stop of a few minutes inside a walk — a shop, a queue — is its own stay.
+  -- After every rail and vehicle carver, so a platform wait is never
   -- taken for one. The remainders keep the walk's name, so the re-enrichment
   -- that follows leaves them alone. Lean-only: the TS had no pass here.
   ("walkDwell", fun segs =>

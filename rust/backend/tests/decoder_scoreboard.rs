@@ -1,4 +1,4 @@
-//! The decoder scoreboard, replayed against the blessed counts (#1048).
+//! The decoder scoreboard, replayed against the blessed counts.
 //!
 //! ```text
 //!   decoded_days fixture (frozen decode) ─┐
@@ -82,7 +82,7 @@ fn scoreboard_segs(segs: &[Value]) -> Vec<Value> {
 
 /// `SCOREBOARD_LIVE=1`: the same ten counts for TODAY'S Lean decode of each
 /// blessed day, printed beside the blessed ones with totals. Report-only — the
-/// referee for an emissions change (#366): a decoder arm that shifts segments
+/// referee for an emissions change: a decoder arm that shifts segments
 /// fails `hsmm_decode_corpus` by design, and this says whether the shift is
 /// an improvement against the narratives before anything is re-blessed.
 #[test]

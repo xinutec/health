@@ -1,4 +1,4 @@
-//! Whether an account reads as linked (#982).
+//! Whether an account reads as linked.
 //!
 //! ⚠ Production could not test this. Both connections are `active` on the real
 //! account, so the parity run in `backend rows-check` exercises exactly one of

@@ -1,5 +1,4 @@
-//! `stationchain` — the board/alight resolver, exercised rather than probed
-//! (#1424).
+//! `stationchain` — the board/alight resolver, exercised rather than probed.
 //!
 //! # Why this is not the probe it resembles
 //!
@@ -8,7 +7,7 @@
 //! words and is indifferent to the answer. This one asserts what the resolver
 //! DECIDES, including the case where it decides to say nothing.
 //!
-//! # The geography is INVENTED (#860), and small on purpose
+//! # The geography is INVENTED, and small on purpose
 //!
 //! One straight line, two or three halts on it. A synthetic corridor makes each
 //! refusal below unambiguous — on a real graph, "no resolution" could always be

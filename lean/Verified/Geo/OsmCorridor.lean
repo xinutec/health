@@ -161,8 +161,8 @@ the results. `query` is `osm.drivableRoads` (roads) or `osm.walkableRoads`
 The `Float` radius is the TS's: the single-disc arm rounds its own radius to a
 whole metre, the corridor arm passes `radiusM` through untouched.
 
-⚠ **`query` MAY DECLINE**, and a corridor of declines is not an empty corridor
-(#1667). `none` here means every read the corridor made went unanswered — the
+⚠ **`query` MAY DECLINE**, and a corridor of declines is not an empty corridor.
+`none` here means every read the corridor made went unanswered — the
 mirror has never covered this ground — where `some #[]` means it was asked and
 there is nothing there.
 

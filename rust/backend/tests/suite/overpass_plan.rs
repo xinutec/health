@@ -97,11 +97,11 @@ fn the_tile_key_is_four_decimal_places_of_the_south_west_corner() {
 /// ⚠ NOT HYPOTHETICAL. Measured against production 2026-09-12: nearly a third
 /// of `bus_route_cache` sat under names no plan could emit, some from before
 /// the column existed and the rest under a band from a retired grid. The reader
-/// takes the table unfiltered, so all of them reached the bus matcher (#1153).
+/// takes the table unfiltered, so all of them reached the bus matcher.
 ///
 /// ⚠ THE NUMBERS BELOW ARE SYNTHETIC, and must stay that way. The real grid is
 /// derived from mined focus places, so its corners describe where he actually
-/// goes — and this repository is public (#860). The property under test needs A
+/// goes — and this repository is public. The property under test needs A
 /// lattice and AN off-lattice key, never his.
 #[test]
 fn shifting_the_bbox_renames_every_tile() {

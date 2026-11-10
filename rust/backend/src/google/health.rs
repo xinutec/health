@@ -1,8 +1,5 @@
 //! Google Health API v4 — the client every Google stream reads through: paged
 //! `dataPoints` walks, filtered walks, the daily roll-up and the typed fetchers.
-//! It began as the weight feed (a port of the retired TypeScript `health.ts`,
-//! #260) and grew with the migration (#1886).
-//!
 //! Unified data model: `GET /v4/users/me/dataTypes/{type}/dataPoints`, paged.
 
 use anyhow::{Context, Result, anyhow};
@@ -287,7 +284,7 @@ pub struct ActiveMinutesDay {
 
 /// Read one `active-minutes` rollup point. A level absent from the day's
 /// breakdown is ZERO minutes at it — the day exists, it just had none, and that
-/// reading matches Fitbit on every measured day (#260). A point with no
+/// reading matches Fitbit on every measured day. A point with no
 /// breakdown at all is no reading.
 pub fn active_minutes_of_rollup_point(pt: &serde_json::Value) -> Option<ActiveMinutesDay> {
     let date = pt.get("civilStartTime")?.get("date")?;

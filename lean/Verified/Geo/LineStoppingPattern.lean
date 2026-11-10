@@ -158,8 +158,7 @@ def railRelationsForLine (relations : Array RailStopRelation) (lineName : String
     Array RailStopRelation :=
   let base := (lineBaseToken lineName).toLower
   if base.isEmpty then #[] else
-  -- Exact, like `Verified.Hsmm.ServedStations.railRelationsForLine` since
-  -- 2026-09-30 (#238): the ref IS the token, or the relation's own name has it
+  -- Exact, like `Verified.Hsmm.ServedStations.railRelationsForLine`: the ref IS the token, or the relation's own name has it
   -- as base token. Containment let every Southern service terminating at London
   -- Victoria stand in for the Victoria line — 38 relations for a line with 16.
   relations.filter fun r =>

@@ -1,4 +1,4 @@
-//! How often a phone is told to look for itself (#982).
+//! How often a phone is told to look for itself.
 //!
 //! ⚠ It is NEVER told to stop looking. The user's decision, 2026-09-23: a
 //! missing journey is a hole in the record and a flat battery is not, so the

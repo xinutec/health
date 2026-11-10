@@ -1,7 +1,7 @@
 import Verified.Eval.GroundTruth
 import Verified.Eval.Journeys
 /-!
-# Three-way truth check (port of `src/eval/truth-check.ts`, #1052)
+# Three-way truth check (port of `src/eval/truth-check.ts`)
 
 The golden harness diffs pipeline output against the last blessed SNAPSHOT,
 which conflates three different things into one must-not-change blob: lines we
@@ -340,7 +340,7 @@ def classifyDay (rows : Array TRow) (states : Array StateWindow) : DayResult :=
 
 /-! ## Witnesses
 
-⚠ SYNTHETIC NAMES ONLY (#860). The shapes are drawn from the real corpus — 395
+⚠ SYNTHETIC NAMES ONLY. The shapes are drawn from the real corpus — 395
 rows over 32 narratives, whose truth cells occupy exactly 12 shapes — but the
 names are invented, because this file is tracked and the repo is public.
 

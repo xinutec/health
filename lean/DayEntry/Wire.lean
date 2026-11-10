@@ -4,7 +4,7 @@ import Lean.Data.Json
 # `Wire` — the float-exact JSON helpers the entry points share
 
 Lifted out of `Main.lean` so the day entry point can live in a LIBRARY rather
-than in the executable's root module (#952). Three callers use them: the day
+than in the executable's root module. Three callers use them: the day
 cascade in `DayEntry`, and `Focus` / `StationChain`, which stay in `Main` and
 used to reach them with `open Day (optArr nth)` — a namespace borrowing a
 sibling's private helpers, which said plainly enough that they belonged neither

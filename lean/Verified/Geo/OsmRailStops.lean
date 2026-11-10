@@ -4,7 +4,7 @@ import Verified.Geo.OsmRouteMembers
 # Which rail relations are worth mirroring
 
 `refresh-rail-stops` mirrors OSM rail route relations — subway, train,
-light_rail, tram — with their ordered stop lists into `rail_stops_cache` (#364).
+light_rail, tram — with their ordered stop lists into `rail_stops_cache`.
 This module is the cron's judgement: the Overpass query it asks, and which of
 the relations that come back are kept (#982 Tier 2).
 

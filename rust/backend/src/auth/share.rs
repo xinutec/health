@@ -1,4 +1,4 @@
-//! Auth by share token — the read-only path a forwarded link takes (#982).
+//! Auth by share token — the read-only path a forwarded link takes.
 //!
 //! A recipient sends `X-Share-Token`. If it matches a row, the request runs AS
 //! THE OWNER with a date window attached, and everything downstream sees an

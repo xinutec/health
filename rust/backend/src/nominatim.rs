@@ -1,8 +1,7 @@
-//! Reverse geocoding through Nominatim, and the cache the TypeScript left behind
-//! (#1076).
+//! Reverse geocoding through Nominatim, and the cache the TypeScript left behind.
 //!
 //! The port of the retired TypeScript `osm.ts`'s `reverseGeocode` and its `withCache` wrapper.
-//! Production has never made this call since the TypeScript went (#975), which
+//! Production has never made this call since the TypeScript went, which
 //! is why a captured day cannot answer the `reverseGeocode` keys every golden
 //! day holds — see [`crate::rowset_answerer`], which declines them on purpose.
 //!

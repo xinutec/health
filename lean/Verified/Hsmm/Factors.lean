@@ -33,7 +33,7 @@ they never run.
 
 This file itself defines nothing and asserts nothing — it is an import surface,
 and `lean-coverage` reports it as one. A checker that credited it would be
-crediting the imports below, which are counted in their own right (#738).
+crediting the imports below, which are counted in their own right.
 
 Implementation-first: these compute in Lean `Float` to match TS bit-for-bit
 (exactly, for `sqrt`/arithmetic/discrete factors; ≤1-ULP where a factor uses

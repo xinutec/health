@@ -1,7 +1,7 @@
-//! The reverse-geocode cache key and the wire shape (#1076).
+//! The reverse-geocode cache key and the wire shape.
 //!
 //! The cache these keys address is in PRODUCTION, written by the TypeScript
-//! before it was deleted (#975). A key that disagrees with the TypeScript's does
+//! before it was deleted. A key that disagrees with the TypeScript's does
 //! not fail — it misses, and re-pays Nominatim for an answer already bought. So
 //! the rounding is pinned here rather than trusted.
 //!

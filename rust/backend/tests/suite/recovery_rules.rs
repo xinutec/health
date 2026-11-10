@@ -1,4 +1,4 @@
-//! The raw recovery numbers coach reads (#982).
+//! The raw recovery numbers coach reads.
 //!
 //! ⚠ These are NUMBERS, never a readiness score. health does not know what
 //! readiness means; coach composes it. Two apps scoring the same nights would

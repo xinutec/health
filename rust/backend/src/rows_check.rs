@@ -1,4 +1,4 @@
-//! Render the twelve table endpoints' rows against production (#982).
+//! Render the twelve table endpoints' rows against production.
 //!
 //! ⚠ THIS IS THE ONLY THING THAT CHECKS THE DECODE. `tests/suite/row_json.rs` pins the
 //! rules — which SQL type takes which JSON shape, and that the host's ISO
@@ -7,11 +7,8 @@
 //! is not theoretical: running this is what found sqlx refusing `NaiveDateTime`
 //! for a TIMESTAMP column, which no amount of reading had suggested.
 //!
-//! It was written to be `diff`ed against `rows-check-ts.mjs`, the
-//! TypeScript's rendering of the same rows; that half went with the TypeScript
-//! (#975, the script on 2026-09-25) and the parity it established is history.
-//! What this still does is put real DECIMAL, DATETIME and ENUM rows through
-//! the decoder, which no test can.
+//! It puts real DECIMAL, DATETIME and ENUM rows through the decoder, which no
+//! test can.
 //!
 //! ```text
 //! scripts/prod-db.sh backend rows-check <user> <since> <date> > /tmp/rs.txt

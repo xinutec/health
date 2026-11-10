@@ -7,7 +7,7 @@
 //! encoding was negotiated at all, because `tower-http` was built with only
 //! `fs` and `trace`. The body was 18,656 rows each repeating `user_id` and `tz`
 //! verbatim, so it was mostly one constant. ⚠ THAT BYTE COUNT IS HISTORICAL:
-//! the route now names its columns and `user_id` no longer ships (#1532), so
+//! the route now names its columns and `user_id` no longer ships, so
 //! the same day would measure smaller. The argument is unchanged — the rows are
 //! still mostly one repeated zone — and nothing here asserts a size.
 //!

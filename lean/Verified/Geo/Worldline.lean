@@ -79,7 +79,7 @@ def parseRailWayName (wayName : Option String) : Option RailTriple :=
     walking AWAY from a stop vote on the stop — 05-12's seven-minute shop stop
     read 56 steps/min (the 93 of the arrival minute and the 100 of the
     departure minute, each overlapping by seconds) and was vetoed as walked
-    through; prorated it reads 30 (#185, 2026-09-30). -/
+    through; prorated it reads 30. -/
 def meanCadenceSpm (steps : List FeasibilityStepPoint) (startTs endTs : Int) : Option Float := Id.run do
   let mut total : Float := 0
   let mut overlapped := false

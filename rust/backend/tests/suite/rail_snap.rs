@@ -1,4 +1,4 @@
-//! `lean::rail_snap` — the `railsnap` mode's production caller (#1424).
+//! `lean::rail_snap` — the `railsnap` mode's production caller.
 //!
 //! # Why this exists
 //!

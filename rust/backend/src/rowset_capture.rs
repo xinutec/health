@@ -1,8 +1,8 @@
-//! Recording what the answerer asked the mirror, as an `osmRowSet` (#1660).
+//! Recording what the answerer asked the mirror, as an `osmRowSet`.
 //!
-//! ⚠ **WHY: nothing has written one since the TypeScript went (#975).** The
+//! ⚠ **WHY: nothing has written one since the TypeScript went.** The
 //! corpus froze at 2026-08-13, so no recent day could become a gate — and
-//! recent days are where the defects are (#1658, #1659). `osm_trace`'s
+//! recent days are where the defects are. `osm_trace`'s
 //! recording answerer does the three matcher-read sections; this is the other
 //! half, the rows the ANSWERER serves its seven tables from.
 //!
@@ -67,7 +67,7 @@ pub struct Recorded {
     declined: Vec<String>,
     /// Geocodes the source answered, keyed `lat|lon|zoom` in PLAIN DECIMALS —
     /// the format the 42 TypeScript-written fixtures use, so a captured section
-    /// is diffable against them (#1076).
+    /// is diffable against them.
     geocodes: BTreeMap<String, Value>,
 }
 
@@ -208,7 +208,7 @@ impl<S: RowSource> RowSource for RecordingSource<S> {
     // ⚠ THE THREE MATCHER READS FORWARD. The trait defaults them to a decline
     // because a ROW SET has no arm for them, and a recorder that inherited that
     // default asked the mirror nothing: the 2026-08-06 re-capture came back
-    // with every walkable-roads read declined and a moved timeline (#1660). The
+    // with every walkable-roads read declined and a moved timeline. The
     // answers are recorded by the `RecordingAnswerer` above as `osmTrace`
     // sections; a `None` here is a decline the replay reproduces by absence.
     fn walkable_roads(&mut self, lat: f64, lon: f64, radius_m: f64) -> Result<Option<Value>> {

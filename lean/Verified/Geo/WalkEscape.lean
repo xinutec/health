@@ -703,7 +703,7 @@ def routeChordAroundBuildings (a b : Pt) (buildings : Array Ring) : Option (Arra
 /-- `routeChordAroundBuildings` over boxes already built — `ctx` is
     `RingCtx.ofRings buildings 0`. A caller routing every chord of a line builds
     them once: per chord it was a bbox for every building, 2,139 on a long walk,
-    160 times (#1921). -/
+    160 times. -/
 def routeChordAroundBuildingsIn (ctx : RingCtx) (a b : Pt) (buildings : Array Ring) :
     Option (Array Pt) :=
   if buildings.isEmpty then some #[a, b]

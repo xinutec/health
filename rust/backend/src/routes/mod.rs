@@ -2,7 +2,7 @@
 //!
 //! ⚠ THIS IS PRODUCTION. It serves `health.xinutec.org` — the SPA shell, the
 //! static build and every `/api` route — and there is no TypeScript server
-//! left to fall back to — `server.ts` went with the TS arm (#975). Treat a
+//! left to fall back to — `server.ts` went with the TS arm. Treat a
 //! change here as a change to the live site.
 //!
 //! `/velocity` answers from the OSM mirror through Lean rather than MariaDB's

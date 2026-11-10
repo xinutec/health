@@ -3,7 +3,7 @@
 
 `src/geo/map-match-core.ts` cleans a matched walk polyline with a pipeline
 of display passes. `simplifyPath` is the one whose *guarantee* is
-load-bearing: `spliceRouteDetail` (#369) restores way geometry exactly
+load-bearing: `spliceRouteDetail` restores way geometry exactly
 where a chord deviates within `(DETAIL_TOLERANCE_M, simplifyDropM]`, and
 its correctness argument is "a chord over simplify-dropped geometry
 deviates at most the simplify tolerance (the Douglas-Peucker guarantee),

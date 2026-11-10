@@ -1,4 +1,4 @@
-//! The as-of-the-day prior, end to end through the real Lean op (#1405).
+//! The as-of-the-day prior, end to end through the real Lean op.
 //!
 //! ⚠ NOT A MOCK OF THE AGGREGATION. These call `lean::priors_as_of`, which
 //! crosses the FFI into `Verified.Geo.VenuePrior.priorsAsOf`. A Rust-side

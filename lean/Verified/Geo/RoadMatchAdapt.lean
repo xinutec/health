@@ -27,7 +27,7 @@ does, so they stop here.
 **The result is `path`, not `coarsePath`.** `RoadMatchAnnotate` hands
 `matchImprovesDisplay` the same line it draws (`road-match-annotate.ts:115`
 passes `result.path`), unlike the walk pass, which gates on `coarsePath` and
-draws the finer line (#369). `QMatchResult` has no `coarsePath` to confuse it
+draws the finer line. `QMatchResult` has no `coarsePath` to confuse it
 with — its second field is `routeDetail` — so this is one field, taken whole.
 
 # Buildings
@@ -47,7 +47,7 @@ defect that file's header exists to prevent (see also #957).
 So, exactly as for the walk arm: wiring this is NOT expected to leave the day
 gate unchanged, and the day gate compares exactly. `RoadMatchAnnotate.lean`'s
 own header says the quantised arm is "measured and ceilinged against the TS
-rather than bit-identical to it (#395 / #403)". Judge it with
+rather than bit-identical to it". Judge it with
 `compare-match --gate`, and do not quiet a divergence by widening the
 accepted-delta manifest — `deploy.sh:139`.
 -/

@@ -1,7 +1,7 @@
 import Verified.Geo.RailAbsorbers
 import Verified.Fix
 /-!
-# Worldline feasibility (port of `src/eval/worldline-feasibility.ts`, #1048)
+# Worldline feasibility (port of `src/eval/worldline-feasibility.ts`)
 
 A model-independent assertion on the OUTPUT timeline: a real worldline is one
 continuous path through space-time, so some outputs are simply impossible
@@ -21,7 +21,7 @@ interpretations that can't be right given the data."*
   pedestrian-paced run while the wearer steps at walking cadence (the "train at
   walking pace down the street").
 * **invalid-rail-triple** — a leg labelled `Board → Alight · Line` naming a
-  station that line does not reach (#181/#351).
+  station that line does not reach.
 * **rail-discontinuity** — two train legs with nothing relocating between them
   must share a station: you cannot step off at one and instantly board at
   another.
@@ -267,7 +267,7 @@ def meanCadenceSpm (steps : Array StepPoint) (startTs endTs : Int) : Option Floa
   if !overlapped then return none
   return some (total / max 1 (Float.ofInt (endTs - startTs) / 60))
 
-/-- The symmetric invariant (#356): a `train` leg whose fixes sustain a
+/-- The symmetric invariant: a `train` leg whose fixes sustain a
 pedestrian-paced run over a real net distance WHILE the wearer steps at walking
 cadence contains movement that is not riding.
 
@@ -322,7 +322,7 @@ abbrev LineMembership := Array (String × Array String)
 private def norm (s : String) : String :=
   s.trimAscii.toString.toLower
 
-/-- The valid-triple invariant (#181/#351): a train leg labelled
+/-- The valid-triple invariant: a train leg labelled
 `Board → Alight · Line` must name two stations the line actually reaches. -/
 def checkRailTriples (legs : Array Leg) (lineStations : LineMembership) : Array Violation := Id.run do
   let mut out : Array Violation := #[]
@@ -448,7 +448,7 @@ def checkWorldlineFeasibility (legs : Array Leg) (points : Array Fix)
 
 /-! ## Witnesses
 
-⚠ SYNTHETIC ONLY (#860): coordinates are a bare degree grid and station names
+⚠ SYNTHETIC ONLY: coordinates are a bare degree grid and station names
 are Greek letters, so nothing here carries a real place.
 
 Checked differentially against the recovered TypeScript over the real corpus by

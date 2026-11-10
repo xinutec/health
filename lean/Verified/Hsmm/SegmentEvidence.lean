@@ -69,7 +69,7 @@ def windowFor (obs : Array ObsRow) (pref : Array Float) (startIndex segEnd : Int
 
 /-- The window of the segment of length `d` ending at `segEnd`. It depends on
     the segment and not on the state, so the duration build resolves it once per
-    `(d, segEnd)` and scores every state class from it (#1774). -/
+    `(d, segEnd)` and scores every state class from it. -/
 def windowAt (obs : Array ObsRow) (pref : Array Float) (d segEnd : Nat) : Option Window :=
   windowFor obs pref ((segEnd : Int) - (d : Int) + 1) (segEnd : Int)
 

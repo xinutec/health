@@ -75,11 +75,11 @@ structure ModelContext where
   chainOn : Bool
   stepPref : Array Float
   /-- Per minute, what the line-proximity term asks of the graph
-      (`RouteModel.minuteLines`) — computed once per minute, not per state (#1774). -/
+      (`RouteModel.minuteLines`) — computed once per minute, not per state. -/
   minuteLines : Array RouteModel.MinuteLines := #[]
   /-- Per minute, each train state's rail gap evidence by `stateKey`, computed
       once per bracketing pair (`RouteModel.railKey`) and shared by every minute
-      of it (#1774). A state absent from the map scores 0, as a non-train state
+      of it. A state absent from the map scores 0, as a non-train state
       does in `routeRailEvidence`. -/
   railByMinute : Array (Std.HashMap String Float) := #[]
   /-- The emission parameters per mode: the shipped table unless a request
@@ -143,7 +143,7 @@ def WAIT_MARK : String := "wait"
 ⚠ A MODEL PARAMETER, NOT A TUNING KNOB, and it belongs here because it is the
 `maxD` of the `O(T·S·maxD)` trellis every arm must agree on. The TypeScript twin
 is `DEFAULT_MAX_DURATION` in `src/hmm/hsmm-viterbi.ts`, which goes with the rest
-of the TS arms (#975); after that this is the only copy, which is why the shell
+of the TS arms; after that this is the only copy, which is why the shell
 now omits `maxD` and lets the request default to it rather than spelling 240 in
 Rust.
 
@@ -346,7 +346,7 @@ def segMinuteAt (q : SegmentEmission.Prepared) (c : ModelContext) (t : Nat) (st 
   chain + rank
 
 /-- `emission(s, obs[t])` — the full composed emission. Coverage does not reach
-    it (#238, 2026-09-29): the per-minute line factors stay live on a
+    it: the per-minute line factors stay live on a
     generator-covered minute; see `EmissionFull`. -/
 def emitAt (c : ModelContext) (t s : Nat) : Float :=
   -- A minute or state off the model is impossible, hence `−∞` — the tensors
@@ -467,7 +467,7 @@ def initAt (c : ModelContext) (s : Nat) : Float :=
 
 /-- The half of `durAt` that does not depend on the segment end: the state
     mode's duration prior at `d`. One per `(s, d)`; `durAtFrom` finishes each
-    `e` from it. `durAt_eq_durAtFrom` says the split is exact (#1774). -/
+    `e` from it. `durAt_eq_durAtFrom` says the split is exact. -/
 def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
   match c.states[s]? with
   | none => negInf
@@ -621,7 +621,7 @@ def coveredAtE (c : ModelContext) (e : Nat) : Bool :=
   match c.obs[e]? with | some o => coveredAt c o.ts | none => false
 
 /-- `durAtFrom` with what depends only on `(d, e)` — the coverage and the
-    segment's window — resolved by the caller once for every state (#1774). -/
+    segment's window — resolved by the caller once for every state. -/
 def durAtFromW (c : ModelContext) (s d : Nat) (covered : Bool)
     (w : Option SegmentEvidence.Window) (sst : SegmentEmission.Stats) (base : Float)
     (level : Bool := true) (dv : Option SegmentEmission.DispVec := none) : Float :=

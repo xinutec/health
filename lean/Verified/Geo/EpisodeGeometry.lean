@@ -61,7 +61,7 @@ Node/V8 (`lean/experiments/episode-geometry-refs.mts`).
 * Fix timestamps are `Int` — the capture path records whole UTC seconds. Drawn
   DERIVED vertices are not: the over-route trim and the walk corrector
   interpolate `ts` along a chord without rounding, so {@link SPt} and the `ts`
-  {@link LatLon} carries are `Float` (#420).
+  {@link LatLon} carries are `Float`.
 -/
 
 namespace Verified.Geo.EpisodeGeometry
@@ -90,7 +90,7 @@ structure LatLon where
   /-- `Float`, not `Int`: the TS field is a JS `number`, and the derived-path
   vertices that feed it carry fractional timestamps (see {@link SPt}). Rounding
   on the way out made this module emit a different value from the TS for 4226 of
-  23525 drawn vertices across the corpus (#420). -/
+  23525 drawn vertices across the corpus. -/
   ts : Option Float := none
   deriving Inhabited, BEq, Repr
 
@@ -107,7 +107,7 @@ a fractional `ts`.
 The window filter in `clipPath` compares it against the state's integral
 bounds. That comparison is where a rounded model could keep or drop a vertex the
 TS does not — measured at ZERO occurrences in those 23525, so the divergence
-this type closes is the EMITTED VALUE, not the clip (#420). -/
+this type closes is the EMITTED VALUE, not the clip. -/
 structure SPt where
   lat : Float
   lon : Float
@@ -260,7 +260,7 @@ def inWindow (ts start finish : Int) : Bool := ts ≥ start && ts ≤ finish
 
 /-- The same window test for a derived-path vertex, whose `ts` is fractional.
 The TS compares JS numbers throughout, so the fraction takes part in the
-comparison rather than being rounded away first (#420). -/
+comparison rather than being rounded away first. -/
 def inWindowF (ts : Float) (start finish : Int) : Bool :=
   ts ≥ Float.ofInt start && ts ≤ Float.ofInt finish
 

@@ -56,7 +56,7 @@ structure DayState where
       `placeSource`. Not part of `sameState`. -/
   placeAt : Option (Float × Float) := none
   /-- The city header the timeline draws above this state. Served rather than
-  re-derived by the client (#339); see `cityForState`. -/
+  re-derived by the client; see `cityForState`. -/
   city : Option String := none
   wayName : Option String := none
   /-- Every road a moving leg was on (`Seg.roads`); `wayName` has room for
@@ -94,7 +94,7 @@ structure Seg where
   /-- `some "bus"` refines a driving leg into a bus for display. -/
   vehicleKind : Option String := none
   place : Option String := none
-  /-- `SegmentMerge.Seg.placeSource`, carried to the state (#325). -/
+  /-- `SegmentMerge.Seg.placeSource`, carried to the state. -/
   placeSource : Option Verified.PlaceSource := none
   wayName : Option String := none
   /-- The roads of a moving leg, longest first (`SegmentMerge.Seg.walkWayUm`'s
@@ -244,7 +244,7 @@ def stripPartialMinutesAsleep (states : List DayState) (sleeps : List SleepWindo
     else { s with minutesAsleep := none })
 
 /-- The city header the timeline draws above a state — a port of the client's
-`cityForState`, not a new rule (#339).
+`cityForState`, not a new rule.
 
 ⚠ COMPUTED AFTER THE MERGE, on the merged span, because that is where the client
 computes it. Taking the city from a contributing segment instead would answer

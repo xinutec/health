@@ -1,4 +1,4 @@
-//! The `assemblesegments` request `decode-day` actually sends (#982).
+//! The `assemblesegments` request `decode-day` actually sends.
 //!
 //! ⚠ THIS FILE EXISTS BECAUSE THE REQUEST SHIPPED WRONG TWICE, in the same way
 //! both times: a field whose SHAPE was never checked. First `obs`, where

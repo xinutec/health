@@ -1,4 +1,4 @@
-//! Episode coordinates must leave `/api/velocity` as NUMBERS (#1616).
+//! Episode coordinates must leave `/api/velocity` as NUMBERS.
 //!
 //! ⚠ THE DEFECT THIS PINS HUNG THE ANDROID APP. The Lean fold encodes
 //! coordinates as IEEE-754 bit strings for its internal wire; forwarding them

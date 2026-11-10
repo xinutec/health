@@ -1,5 +1,5 @@
 //! The base OSM mirror's WRITE half — the Overpass fetch that fills
-//! `osm_lines`, `osm_points` and `osm_coverage` (#1658).
+//! `osm_lines`, `osm_points` and `osm_coverage`.
 //!
 //! Port of the retired TypeScript `osm-local.ts`'s `fetchAndStore` half; the
 //! READ half is [`crate::mirror_source`]. Until this existed nothing in the tree
@@ -18,7 +18,7 @@
 //!
 //! `ensureCovered` fetched INSIDE the velocity request, in a 512 MiB pod, which
 //! is why buildings were pinned to a 500 m half-width — a 10 km box of London
-//! footprints was a volume bomb on the serving path (#255). This runs in the
+//! footprints was a volume bomb on the serving path. This runs in the
 //! drain beside the pod ([`crate::fetch_drain`]), with no request waiting on it
 //! and its own memory, so the box is sized to the QUESTION instead: see
 //! [`half_width_for`], the one deliberate departure from the TypeScript.
@@ -350,7 +350,7 @@ const UPSERT_BATCH: usize = 500;
 /// did), and the row must move with it: the Gare Montparnasse halls were
 /// fetched as buildings on 2026-10-01, `building=train_station` joined the venue
 /// tags on 10-03, and the landmark fetch that returned them left them buildings
-/// — invisible to every landmark reader (#1891).
+/// — invisible to every landmark reader.
 ///
 /// ⚠ WRITTEN OUT TWICE, points and lines, for `DL-SQLX-SCHEMA-TRUTH`'s reason:
 /// SQL that reaches the driver through a variable cannot be checked against the
@@ -480,7 +480,7 @@ pub const VOCAB_BUCKET: &str = "landmark";
 /// day would be served without them for `COVERAGE_FRESH_DAYS`. So the box is
 /// recorded with the vocabulary that fetched it, and a read under another one
 /// does not see it — the next fold declines, the drain fetches, the old row
-/// keeps its date (#1891, 2026-10-03).
+/// keeps its date.
 /// Bumped when what a landmark fetch FILES changes without the tag list
 /// changing — a parse or upsert rule — so the boxes fetched under the old
 /// filing stop counting. 2: `feature_type` follows the parse on a duplicate key.

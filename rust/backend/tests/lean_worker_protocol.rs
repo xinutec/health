@@ -1,4 +1,4 @@
-//! The ask protocol, driven against a FAKE `verified_cli` (#1709).
+//! The ask protocol, driven against a FAKE `verified_cli`.
 //!
 //! A shell script stands in for Lean: it reads the request, puts one ask on
 //! stdout, reads the answer back off stdin and folds it into its result. That

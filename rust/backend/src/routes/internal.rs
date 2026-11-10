@@ -1,4 +1,4 @@
-//! Service-to-service endpoints for the coach app (#982).
+//! Service-to-service endpoints for the coach app.
 //!
 //! Not part of `/api`: no session, no cookie. The caller passes the target
 //! `?user=` and proves itself with a shared secret in `X-Service-Token`.

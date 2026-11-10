@@ -3,7 +3,7 @@
 //! Every other table the answerer serves is keyed by a coordinate, so the
 //! dispatch parsed `lat|lon|…` out of the key before matching the table name. A
 //! bare line name has no `|`, so it fell out of the dispatch before reaching any
-//! arm — 13 declines a day, silently, while every other table was wired (#1075).
+//! arm — 13 declines a day, silently, while every other table was wired.
 //!
 //! ⚠ What a missing answer COSTS here is not a missing name. It is a missing
 //! MERGE: the table tells the tube-hop pass which stations a line serves, and

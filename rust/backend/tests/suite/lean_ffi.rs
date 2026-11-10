@@ -1,4 +1,4 @@
-//! The Lean decisions, called through the C ABI (#982).
+//! The Lean decisions, called through the C ABI.
 //!
 //! The point of asking Lean at all is that the rules the backend runs ARE the
 //! ones in Lean, and a pipe that carries the question wrongly

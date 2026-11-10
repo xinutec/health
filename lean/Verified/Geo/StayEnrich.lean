@@ -58,8 +58,7 @@ their own scatter and by how much of the stay they observed
 ({@link Verified.Geo.EnrichFold.nameStay}), the place by its
 {@link Verified.Geo.PlacePrior.effectiveSigmaM}.
 The TS snapped to the stored centroid outright, on the reading that the day's
-aggregate is noisy and the place's is true. Measured over the corpus (#325,
-2026-09-29) the opposite holds for a tight stay: on the days whose name was
+aggregate is noisy and the place's is true. Measured over the corpus the opposite holds for a tight stay: on the days whose name was
 wrong the stay's fixes scattered 8–14 m and sat 79–90 m from the stored
 centroid, which averages a cluster wider than its nominal radius, so the
 resolver was asked about a neighbour's doorstep. A smeared stay (scatter of
@@ -74,7 +73,7 @@ stay at a residence is a visit like any other: the 2026-04-29 midday stay
 whose fixes sit 118 m from the hotel and 7 m from a café was the café (his
 word), and a hospital cluster that has counted fourteen sleep hours over
 forty-two days was naming every visit at its stored centroid, where a
-neighbouring building's footprint answered (#325). The lodging override
+neighbouring building's footprint answered. The lodging override
 still runs for every residence stay (`preferResidential`), from whichever
 coordinate is asked.
 
@@ -172,7 +171,7 @@ def RESIDENCE_SLEEP_THRESHOLD_H : Float := 5
 
 /-- In σ of the place ({@link Verified.Geo.PlacePrior.effectiveSigmaM}), how far
 a stay must sit from the Home or Work it elected before the building around it
-is asked about (#325). Census over the corpus (2026-10-04): of 74 stays named
+is asked about. Census over the corpus (2026-10-04): of 74 stays named
 Home or Work, 72 sit within 50 m of the stored centroid and one at 50–100 m,
 all with σ ≈ 100 m; the one past it is 09-30's 74-minute wait inside St Pancras
 station, 150–200 m from Work, which elected Work as an ordinary candidate. -/
@@ -269,8 +268,8 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
           (reads.place placeLat placeLon true false)
       else
         let isResidential := wp.sleepHours ≥ RESIDENCE_SLEEP_THRESHOLD_H
-        -- 4. RETIRED 2026-09-03 (#344): the mined amenity label no longer
-        -- short-circuits the venue resolver. Measured before removal, via the
+        -- 4. The mined amenity label does not short-circuit the venue
+        -- resolver. Measured before its removal, via the
         -- priors referee + this exact ablation: ZERO truth verdicts move and
         -- the elected venue changes on NO corpus stay — the override's labels
         -- differed from the resolver's only in FORMAT (bare vs suffixed),
@@ -423,7 +422,7 @@ private def run (reads : Reads) (places : List NamedPlace) (prev : Option Seg :=
 #guard (run spy [home]).place == some "Home"
 #guard (run spy [home]).focusPlaceId == some 1
 
--- 3, far (#325): a stay 200 m from Home, inside a building the resolver
+-- 3, far: a stay 200 m from Home, inside a building the resolver
 -- reports as enclosing, is named for the building; a non-enclosing answer, or
 -- the same building at the place itself, leaves it Home.
 private def enclosingAt (src : String) : Reads :=
@@ -437,8 +436,7 @@ private def runFar (reads : Reads) : Seg := enrichStay reads {} [farHome] none s
 -- A short piece far out is not asked about: the stay it joins decides.
 #guard (enrichStay (enclosingAt "enclosing") {} [farHome] none
   { stay with endTs := stay.startTs + HOME_WORK_FAR_MIN_S - 1 } LAT LON).place == some "Home"
--- 4 (RETIRED 2026-09-03, #344): the mined label no longer short-circuits the
--- resolver — a labelled, non-residential cluster asks the resolver like
+-- 4: the mined label does not short-circuit the resolver; a labelled, non-residential cluster asks the resolver like
 -- everything else. What SURVIVES the retirement and stays pinned here: a
 -- cluster that carries an amenityLabel is NOT `venueless`, so it asks with
 -- `preferResidential=false` — while the venueless guard below asks with

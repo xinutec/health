@@ -35,7 +35,7 @@ def MAX_GAP_DURATION_S : Int := 5400
 def MIN_GAP_DISTANCE_M : Float := 1000
 def UNDERGROUND_BOOST : Float := 3.5
 /-- Steps a minute at or above which a dark minute inside a GPS gap is a
-    WALKED minute (#238). -/
+    WALKED minute. -/
 def INTERCHANGE_CADENCE_SPM : Float := 60
 
 /-- A parsed route edge with the attributes the factors read. Node ids are the
@@ -112,7 +112,7 @@ def toConnGraph (g : RouteGraphModel) : RouteConnectivity.Graph :=
 /-- The part of an observation `routeRailEvidence` reads: the fix present or
     not, and the fixes bracketing the minute. Two minutes with the same key get
     the same value for every state — every minute of one fix-less gap shares
-    it — so the model build memoises on it (#1774, 2026-09-30). -/
+    it — so the model build memoises on it. -/
 def railKey (o : ObsRow) : Bool × Option Int × Option Int :=
   -- A bracketing fix is the minute aggregate AT its timestamp, so the
   -- timestamp names it.
@@ -136,7 +136,7 @@ def routeRailEvidence (g : RouteGraphModel) (cg : RouteConnectivity.Graph)
           else if next.ts - prev.ts > MAX_GAP_DURATION_S then 0.0
           else if haversineMeters prev.lat prev.lon next.lat next.lon < MIN_GAP_DISTANCE_M then 0.0
           else
-            -- A WALKED minute inside the gap is an interchange (#238, 06-09:
+            -- A WALKED minute inside the gap is an interchange (06-09:
             -- Victoria → King's Cross, a step burst, King's Cross → Baker
             -- Street, all dark). The ride this minute belongs to then reaches
             -- only ONE bookend — the one on its side of the walk — so the line
@@ -221,7 +221,7 @@ def linesWithinRadius (g : RouteGraphModel) (lat lon radiusM : Float) : List Str
     same for every state at that minute: the lines within `NEAR_M` of the fix,
     and whether ANY railway edge is (the graph holds every railway way,
     memberships only for the named lines). Empty and `false` without a fix.
-    Computed once per minute by the model build (#1774, 2026-09-30) instead of
+    Computed once per minute by the model build instead of
     once per state per minute. -/
 structure MinuteLines where
   linesNear : List String
@@ -350,8 +350,8 @@ def chainPlaceBoard (edgesByLine : Std.HashMap String (List LineEdge))
     | none => none
   else none
 
-/-- What the chain term asks of one minute that does not depend on the pair
-    (#1774, 2026-09-30): the stay penalty from the minute's last fix to a place,
+/-- What the chain term asks of one minute that does not depend on the pair:
+    the stay penalty from the minute's last fix to a place,
     and the fix-anchored boarding penalty for a line — each 0 without a
     previous fix. `chainMinute` computes them on
     demand; the transition build tables them once per minute
@@ -388,7 +388,7 @@ def chainMinuteTabled (edgesByLine : Std.HashMap String (List LineEdge))
 /-- The fix-dependent half of a minute's chain answers: the fix's distance to
     each line and to each place. They depend on the fix alone, and every minute
     of a gap reads the same `prevGpsFix`, so the transition build computes them
-    once per distinct fix rather than once per minute (#1774, 2026-10-07). -/
+    once per distinct fix rather than once per minute. -/
 structure FixDists where
   fx : Observation.Fix
   lineD : Std.HashMap String Float

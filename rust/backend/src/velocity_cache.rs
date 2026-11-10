@@ -1,4 +1,4 @@
-//! The per-pod cache in front of `/velocity` (#982).
+//! The per-pod cache in front of `/velocity`.
 //!
 //! Computing a day is a Nextcloud fetch, a Kalman pass, segmentation, OSM
 //! enrichment and biometric joins — 5–10 s on a data-rich day — and
@@ -32,7 +32,7 @@
 //! ⚠ **`invalidateVelocityCache` and its generation counter are NOT ported, and
 //! that is a deletion rather than an omission.** In the TypeScript they existed
 //! for one caller — the verified-core master toggle, which swapped the Lean core
-//! for TS inside a live process. That toggle went with the TS arm (#975), and
+//! for TS inside a live process. That toggle went with the TS arm, and
 //! with it the only thing that changed an answer without a restart. Anything
 //! that later changes the pipeline's answer under a RUNNING pod has to bring
 //! both back; this paragraph is the note that says so. The drain beside the

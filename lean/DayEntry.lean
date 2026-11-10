@@ -11,7 +11,7 @@ The day request comes in as one JSON object (`env`, carrying the day's stored
 decode), the decoder's segments are named by the tail (`PassFold.passes`), and the
 timeline goes back out. Every lookup the fold needs beyond its request —
 the OSM tables, the zone at a coordinate, a geocode, a stay's local hours — is
-asked of the host mid-fold through `DayEntry.Host.ask` (#1709). Nothing is
+asked of the host mid-fold through `DayEntry.Host.ask`. Nothing is
 carried in the request that the host could answer on demand: there are no
 lookup tables here and no miss policy, because a miss is an ask.
 
@@ -235,7 +235,7 @@ private def parseWay (j : Json) : Except String Verified.Geo.Factors.NearbyWay :
 
 It used to decode the five city-like fields only, because `extractCity` was the
 one consumer. `Verified.Geo.BestPlace` reads the rest, so the projection went
-away on both sides at once (#430) — a decoder narrower than the encoder would
+away on both sides at once — a decoder narrower than the encoder would
 silently drop the venue keys the naming turns on. -/
 private def parseGeoResult (j : Json) : Except String Verified.Geo.BestPlace.Result := do
   return {
@@ -441,7 +441,7 @@ private def namerOf (j : Json) : Except String Namer := do
 
 /-- One naming's input in the shape `verified_cli serve` mode `bestplace`
 reads (`bestPlaceResult` in `ServeEntry`), so a census can replay exactly the
-question the fold asked (#325). Floats cross as plain numbers there. -/
+question the fold asked. Floats cross as plain numbers there. -/
 private def placeInputJson (pois : List Verified.Geo.BestPlace.Poi)
     (geo : Int → Option Verified.Geo.BestPlace.Result) (samples : List (Nat × Nat))
     (stay : Option Verified.Geo.VenuePrior.StayShape)
@@ -518,7 +518,7 @@ private def parseChain (j : Json) (segs : Array Seg)
     dayEndTs := (← optInt j "dayEndTs").getD 0
     dayStartTs := (← optInt j "dayStartTs").getD 0
     dayTz := (j.getObjValAs? String "dayTz").toOption
-    -- ⚠ INJECTED, not computed here, unlike `sleepPlace` below (#1055). The
+    -- ⚠ INJECTED, not computed here, unlike `sleepPlace` below. The
     -- bracket is two `presence_log` reads plus a `focus_places` centroid — DB,
     -- not mirror — so the fold cannot ask for it and is handed the answer. The
     -- shell also names it, which is what `buildInferredStayState`'s doc has
@@ -638,7 +638,7 @@ private def parseEnv (j : Json) : Except String Env := do
       -- (`Verified.Geo.WalkMatchAdapt`). It draws NOTHING without ways, so a
       -- host that declines `walkableRoads` gets the raw leg back.
       -- Each solver leaf is timed under `walk.<leaf>`, so a slow walkMatch
-      -- pass says WHICH solver took the time (#1921).
+      -- pass says WHICH solver took the time.
       matcher := fun fixes ways buildings => DayEntry.Host.timed "walk.matcher" fun _ =>
         DayEntry.Host.dump "match" (fun _ => matchInputJson fixes ways buildings)
           (Verified.Geo.WalkMatchAdapt.matcher fixes ways buildings)
@@ -666,7 +666,7 @@ private def parseEnv (j : Json) : Except String Env := do
       -- defaults with the budget invariant switched off, not a budget of zero.
       correct := fun drawn ctx budget => DayEntry.Host.timed "walk.correct" fun _ =>
         (Verified.Geo.WalkEscape.correctWalkPathIn ctx drawn { stepBudgetM := budget }).1
-      -- A walk's remembered result (#1921). Only the serving host keeps
+      -- A walk's remembered result. Only the serving host keeps
       -- any; a replay answers nothing and every walk is drawn.
       memoGet := fun key => DayEntry.Host.askAs "memo.walkGet" key parseWalkPatch
       memoPut := fun key patch =>
@@ -752,7 +752,7 @@ private def segJson (s : Seg) : Json :=
     ("walkMatchedPath", match s.walkMatchedPath with | none => Json.null | some p => pathJson p),
     ("walkSmoothedPath", match s.walkSmoothedPath with | none => Json.null | some p => pathJson p),
     ("walkBuildingsMeasured", match s.walkBuildingsMeasured with | none => Json.null | some b => Json.bool b),
-    -- A DEBUG surface (#1464): where the walk matcher's route actually ran,
+    -- A DEBUG surface: where the walk matcher's route actually ran,
     -- named way by named way, longest first. ⚠ Nothing consumes it — the day
     -- gate compares `states`, and `parseSeg` does not read it back, so a
     -- replay's INPUT is unchanged by its presence.
@@ -771,7 +771,7 @@ def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
     ("startTs", Lean.toJson s.startTs), ("endTs", Lean.toJson s.endTs),
     ("mode", Json.str s.mode), ("place", jOptS s.place), ("city", jOptS s.city),
     ("placeSource", jOptS s.placeSource),
-    -- How often the rule that named `place` has been right (#325).
+    -- How often the rule that named `place` has been right.
     ("placeConfidence", match s.placeSource with
       | some src => Lean.toJson (Verified.Geo.NameConfidence.confidence src)
       | none => Json.null),
@@ -807,10 +807,10 @@ private def episodeJson (e : Verified.Geo.EpisodeGeometry.Episode) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson e.startTs), ("endTs", Lean.toJson e.endTs),
     ("mode", Json.str e.mode), ("kind", Json.str e.kind), ("place", jOptS e.place),
-    -- `ts` rides as bits like its `lat`/`lon` siblings: it is a `Float` now
-    -- (#420), and a derived vertex's is fractional, so a JSON number would round
+    -- `ts` rides as bits like its `lat`/`lon` siblings: it is a `Float` now,
+    -- and a derived vertex's is fractional, so a JSON number would round
     -- at the boundary the bit encoding exists to avoid. Nothing decodes this
-    -- payload yet — the day chain has no serving path (#431) — so a consumer
+    -- payload yet — the day chain has no serving path — so a consumer
     -- must read `ts` as bits when one is written.
     ("points", Json.arr (e.points.map fun p =>
       Json.mkObj [("lat", fBits p.lat), ("lon", fBits p.lon), ("ts", jOptF p.ts)]))]

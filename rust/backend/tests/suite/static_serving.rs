@@ -1,4 +1,4 @@
-//! A missing static file is a 404, not the no-build page (#1489).
+//! A missing static file is a 404, not the no-build page.
 //!
 //! ⚠ THIS EXISTS BECAUSE THE WRONG ANSWER WAS A 200, WHICH IS INVISIBLE.
 //! Measured against production 2026-09-08: `GET /media/nope.woff2` on

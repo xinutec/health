@@ -130,7 +130,7 @@ def pop (h : Heap) : Option ((Nat × Nat) × Heap) :=
         (h.a.pop.setIfInBounds 0 (h.a.getD (h.a.size - 1) (0, 0))).size 0⟩)
     else some (top, ⟨h.a.pop⟩)
 
-/-! ### The same functions, compiled in place (#1921)
+/-! ### The same functions, compiled in place
 
 Each reads what it needs BEFORE it writes, so the array has one owner when it
 is written and Lean updates it in place. The definitions above read the array

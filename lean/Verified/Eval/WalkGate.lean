@@ -8,7 +8,7 @@ fixtures it describes, because it carries real walk timestamps.
 ## Why this is a ratchet and not a comparison
 
 `score-walk-match`'s own A/B exit (matcher vs smoother) carries standing
-failures (#305), so it can never be a deploy gate as-is: it is red on a healthy
+failures, so it can never be a deploy gate as-is: it is red on a healthy
 tree. The ratchet inverts that — a standing defect is RECORDED in the floor and
 can only shrink. Improvements are surfaced for re-bless rather than failing.
 
@@ -103,7 +103,7 @@ structure WalkEntry where
   lenM : Float
   /-- Pedometer displacement budget (steps × stride, m); `none` = no step data. -/
   budgetM : Option Float
-  /-- **A DIAGNOSTIC COLUMN, NOT AN AXIS (#1464).** The matcher's identity
+  /-- **A DIAGNOSTIC COLUMN, NOT AN AXIS.** The matcher's identity
   report for this leg: named ways and their metres, longest first.
 
   ⚠ **IT IS NOT IN `Metric` AND MUST NOT BE.** Every other field here is scored
@@ -116,7 +116,7 @@ structure WalkEntry where
   a baseline that has no such column, and an absent one means "not recorded",
   exactly as it does for the `Option` axes above. -/
   wayUm : Array (String × Nat) := #[]
-  /-- **COVERAGE — DIAGNOSTIC COLUMNS, NOT AXES (#1501).** Length of the raw GPS
+  /-- **COVERAGE — DIAGNOSTIC COLUMNS, NOT AXES.** Length of the raw GPS
   track, the farthest a raw fix falls from the drawn line, and the gaps between
   the two tracks' ends.
 
@@ -307,7 +307,7 @@ about what the code does.
 
 The fixtures are synthetic: this is the referee's arithmetic, and it has no
 opinion about real coordinates. The metric PRODUCER is where real days are
-needed, and that is Rust glue over the gitignored fixtures (#860). -/
+needed, and that is Rust glue over the gitignored fixtures. -/
 
 section Witnesses
 

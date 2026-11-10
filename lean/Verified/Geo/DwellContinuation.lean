@@ -231,7 +231,7 @@ def applyDwellContinuation
             let continuation : DayState :=
               { startTs := anchor.endTs, endTs, mode := "stationary",
                 place := truthy anchor.place, inferred := some true,
-                -- The anchor's name, so the anchor's source (#325).
+                -- The anchor's name, so the anchor's source.
                 placeSource := if (truthy anchor.place).isSome then anchor.placeSource else none,
                 placeAt := if (truthy anchor.place).isSome then anchor.placeAt else none,
                 tz := truthy anchor.tz }
@@ -329,7 +329,7 @@ private def far : DwellCandidate := { homeFocus with centroidLat := 51.51 }   --
 -- rounding it describes is unchanged — `dwellContinuation` still answers
 -- `some (950001, _)`, because a 0.69 s horizon ROUNDS UP — but a one-second
 -- visit is not one the miner would count, so `MIN_CONTINUATION_S` refuses to
--- draw it (#1271). The kernel and the splice decision now differ here on
+-- draw it. The kernel and the splice decision now differ here on
 -- purpose, which is the whole reason the bar sits in the orchestration.
 #guard match dwellContinuation ⟨30, 30, 30⟩ 950000 DAY_END with
   | some (e, _) => e == 950001

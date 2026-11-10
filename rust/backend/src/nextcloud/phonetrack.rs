@@ -77,7 +77,7 @@ pub struct TrackFetch {
     /// evidence is now reading it wrongly.
     pub failed_devices: usize,
     /// Windows that came back at the cap and could NOT be split any further
-    /// because they were already one second wide (#1032).
+    /// because they were already one second wide.
     ///
     /// ⚠ THE ONLY REMAINING WAY TO LOSE POINTS HERE, and it is now counted
     /// instead of invisible. Splitting resolves every ordinary case; this is
@@ -100,7 +100,7 @@ pub struct Session {
     /// omitted from this response" would otherwise both read as zero devices,
     /// and only one of them is a fact about the account.
     ///
-    /// ⚠ **`BTreeMap`, and the ORDER IS THE POINT (#1073).** The range fetch
+    /// ⚠ **`BTreeMap`, and the ORDER IS THE POINT.** The range fetch
     /// concatenates points device by device and then sorts by timestamp with a
     /// STABLE sort, so points sharing a timestamp keep whatever order this walk
     /// produced. Rust randomises `HashMap` iteration per process, which made
@@ -111,7 +111,7 @@ pub struct Session {
     ///
     /// The original task asked for INSERTION order, to match the TypeScript's
     /// `Object.values(session.devices)`. There is no TypeScript to match any
-    /// more (#975), and the requirement it was standing in for was only ever
+    /// more, and the requirement it was standing in for was only ever
     /// determinism — so this sorts by device key instead of taking a dependency
     /// on `indexmap` to reproduce a dead runtime's iteration order.
     #[serde(default)]
@@ -135,7 +135,7 @@ struct WirePoint {
 /// nothing downstream keys on it.
 pub fn parse_sessions(body: &str) -> anyhow::Result<Vec<Session>> {
     // ⚠ `BTreeMap` for the same reason as `Session::devices` — this map's values
-    // become `self.sessions`, which the range fetch walks in order (#1073).
+    // become `self.sessions`, which the range fetch walks in order.
     let map: std::collections::BTreeMap<String, Session> =
         serde_json::from_str(body).context("decoding the phonetrack sessions listing")?;
     Ok(map.into_values().collect())
@@ -241,7 +241,7 @@ impl PhoneTrack {
         let mut out = TrackFetch::default();
         // ⚠ EVERY DEVICE AT ONCE, in a fixed order. One request per device per
         // window, awaited one after the other, was the day's `load.phonetrack`
-        // — 0.5 to 1.2 s on the pod (#1921, 2026-10-06), a round trip at a
+        // — 0.5 to 1.2 s on the pod, a round trip at a
         // time. The requests are independent GETs under basic auth, so they go
         // out together; the RESULTS are read back in the order the devices
         // were listed, so the stable sort below sees the same insertion order
@@ -288,7 +288,7 @@ impl PhoneTrack {
     }
 
     /// One device's points for `[min_ts, max_ts]`, SPLITTING when the response
-    /// comes back at the cap (#1032).
+    /// comes back at the cap.
     ///
     /// ⚠ **PhoneTrack truncates at `maxPoints` and says nothing.** A full
     /// response is shaped exactly like a device that happened to record that

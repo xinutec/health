@@ -1,9 +1,9 @@
-//! One replay of one golden day, shared by every corpus grader (#1359).
+//! One replay of one golden day, shared by every corpus grader.
 //!
 //! ⚠ **THE REPLAY WAS PAID FOUR TIMES.** `day_corpus`, `truth_corpus`,
 //! `journey_corpus` and `walk_gate` each rebuilt the same day from the same
 //! fixture and then graded it differently — measured 2026-09-03 at ~1.31 s/day,
-//! and far worse once the walk matcher started running in the fold (#1418):
+//! and far worse once the walk matcher started running in the fold:
 //! `user` 2934 s against 718 s wall on one row, because the matcher's ~305 s was
 //! paid per harness rather than per day. `corpus_gate` replays once per day and
 //! hands the result to all four.
@@ -146,7 +146,7 @@ pub fn read_fixture(golden: &str, name: &str) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|e| format!("{name}: parsing: {e}"))
 }
 
-/// Which venue priors an A/B arm replays under (#343, #1845).
+/// Which venue priors an A/B arm replays under.
 ///
 /// `VENUE_PRIORS_FILE=<blob.json>` is one blob for every day — the anachronism
 /// the serving path removed in #1405, kept for arms that want it on purpose.
@@ -224,7 +224,7 @@ pub fn with_priors(fx: &Value, priors: Option<&Value>) -> Value {
 /// Index the day's recorded walkable roads, buildings and drivable ways, so the
 /// fold's walk pass runs the way production runs it.
 ///
-/// ⚠ **WITHOUT A TRACE THE WALK PASS DOES NOT RUN** (#1418). The matcher's
+/// ⚠ **WITHOUT A TRACE THE WALK PASS DOES NOT RUN**. The matcher's
 /// `walkableRoads` ask is DECLINED unless a trace answers it — and on a decline
 /// `annotateWalkMatches` bails per leg, so the raw drawing survives looking
 /// exactly like a leg the matcher considered and left alone.
@@ -247,7 +247,7 @@ pub fn load_trace(
     // ⚠ REFUSE A FIXTURE CAPTURED UNDER CONSTANTS THIS BUILD NO LONGER USES.
     // The margin and the candidate limit are applied AFTER the ask key is
     // formed, so moving one changes production and changes nothing any fixture
-    // answers — the gate stays green while the served day differs (#1071), and
+    // answers — the gate stays green while the served day differs, and
     // #328 is the same fault from the other side. Absent stamp is not a
     // mismatch: the 42 fixtures predating this carry none.
     backend::osm_trace::check_capture_inputs(&fx["meta"]).map_err(|e| format!("{name}: {e}"))?;
@@ -262,7 +262,7 @@ pub fn load_trace(
         },
     )
     .map_err(|e| format!("{name}: osm trace: {e}"))?;
-    // ⚠ AN EMPTY BUILDING ANSWER IS UNMEASURED, NOT CLEAN (#1501), and the
+    // ⚠ AN EMPTY BUILDING ANSWER IS UNMEASURED, NOT CLEAN, and the
     // referee knows that per LEG (`WalkIn.buildingsMeasured`), so a partial
     // capture is answered as far as it goes rather than refused. What replaces
     // a refusal is the REPORT: `walks:` prints the measured / unmeasured tally
@@ -323,7 +323,7 @@ pub fn replay(name: &str, mut fx: Value, trace: Option<&TraceAnswerer>) -> Resul
     })
 }
 
-/// ⚠ **TRANSITIONAL (#1359)** — the pre-shared-runner entry point, for graders
+/// ⚠ **TRANSITIONAL** — the pre-shared-runner entry point, for graders
 /// not yet moved into `corpus_gate`. It reads the fixture per caller, which is
 /// the cost the move exists to remove, and it deliberately does NOT load the
 /// trace: a grader still on this path must keep replaying the arm it was

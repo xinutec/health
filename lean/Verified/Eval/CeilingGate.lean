@@ -1,11 +1,11 @@
 /-!
-# The one-way ceiling (port of `src/eval/ceiling-gate.ts`, #1048)
+# The one-way ceiling (port of `src/eval/ceiling-gate.ts`)
 
 The count-shaped sibling of `FloorGate`. Where a floor records what the pipeline
 gets RIGHT and may only grow, a ceiling records standing DEFECTS as a per-day
 count and may only shrink: the physically-impossible legs of
 `Verified.Eval.Feasibility`, and the train legs labelled with a line that does
-not serve their stations (#181/#351). A day emitting more than its committed
+not serve their stations. A day emitting more than its committed
 count is a regression; fewer is an improvement to re-bless.
 
 ## ⚠ SILENCE IS NOT ZERO, and this is the module that keeps getting it wrong

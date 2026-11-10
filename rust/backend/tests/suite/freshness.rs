@@ -1,4 +1,4 @@
-//! The freshness check must FAIL, not only pass (#1231).
+//! The freshness check must FAIL, not only pass.
 //!
 //! ⚠ Every stream in prod was fresh when this was written, so the passing path
 //! is the only one a live run can exercise. A check nobody has seen fail is

@@ -56,7 +56,7 @@ pub enum Command {
         /// YYYY-MM-DD, default yesterday
         until: Option<String>,
     },
-    /// resting HR / HRV / breathing rate by day, or two window means (#1733)
+    /// resting HR / HRV / breathing rate by day, or two window means
     HrTrend {
         #[arg(long, conflicts_with = "averages")]
         json: bool,
@@ -67,11 +67,11 @@ pub enum Command {
         #[arg(long, num_args = 2, value_names = ["FROM", "BOUNDARY"])]
         averages: Option<Vec<String>>,
     },
-    /// the full HRV + resting-HR history as CSV (#1733)
+    /// the full HRV + resting-HR history as CSV
     HrvHistory,
-    /// the shape of heart_rate_zones (#1223)
+    /// the shape of heart_rate_zones
     ZonesCensus,
-    /// every venue-prior snapshot and the current blob, as the serving path resolves them (#1845)
+    /// every venue-prior snapshot and the current blob, as the serving path resolves them
     VenuePriorSnapshots { user: String, out_dir: String },
     /// field NAMES and leaf types from Google Health; never values
     GoogleProbe,
@@ -104,7 +104,7 @@ pub enum Command {
     DayLive(UserDay),
     /// the day fold against the OSM mirror
     DayMirror(UserDay),
-    /// write a golden fixture for one day from the live mirror (#1660)
+    /// write a golden fixture for one day from the live mirror
     CaptureDay {
         user: String,
         date: String,
@@ -115,7 +115,7 @@ pub enum Command {
     RecaptureWalkable { user: String, fixture: String },
     /// answer from the live mirror only the lookups a golden fixture cannot, in place
     RecaptureAsks { user: String, fixture: String },
-    /// time the HSMM decoder per frozen day, model build excluded (#1714)
+    /// time the HSMM decoder per frozen day, model build excluded
     DecodeBench {
         #[arg(long, default_value_t = 5)]
         runs: usize,
@@ -179,7 +179,7 @@ pub enum Command {
         #[arg(long, default_value_t = 200)]
         limit: i64,
     },
-    /// fold several days in ONE process — the arena's high-water (#1071)
+    /// fold several days in ONE process — the arena's high-water
     VelocityMany {
         user: String,
         #[arg(required = true)]

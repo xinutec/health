@@ -1,4 +1,4 @@
-//! A remembered walk is the drawn walk (#1921).
+//! A remembered walk is the drawn walk.
 //!
 //! The fold keys each walk's drawn result by a hash of what the drawing reads
 //! and, on a later fold, takes it from the host instead of drawing it. That is

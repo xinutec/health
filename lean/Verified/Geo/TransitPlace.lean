@@ -51,7 +51,7 @@ same landmine `WalkAnchors` records.
 
 UNPROVEN. The first two rules are pinned against Node/V8
 (`lean/experiments/transit-place-refs.mts`); the two boarding rules are
-Lean-only (#1891, 2026-10) and pinned by their `#guard`s below.
+Lean-only (2026-10) and pinned by their `#guard`s below.
 -/
 
 namespace Verified.Geo.TransitPlace

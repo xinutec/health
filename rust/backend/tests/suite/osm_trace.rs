@@ -1,4 +1,4 @@
-//! A fixture's recorded trace answers the fold's asks (#1709).
+//! A fixture's recorded trace answers the fold's asks.
 //!
 //! The matcher reads match QUANTISED — the two arms that wrote and read a key
 //! compute a corridor centre one ULP apart on ~0.5% of rows — and the answerer

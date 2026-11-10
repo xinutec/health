@@ -1,4 +1,4 @@
-//! The auth layer's REFUSALS (#982).
+//! The auth layer's REFUSALS.
 //!
 //! `session_rules.rs` covers what Lean decides. This covers what the HTTP layer
 //! does with those answers, and specifically the two failures that are dangerous
