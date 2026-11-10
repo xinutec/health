@@ -139,9 +139,6 @@ struct Day {
     nights: Vec<Vec<Option<f64>>>,
     /// Each lit stay's distance to the nearest listed place, metres.
     stay_dist: Vec<f64>,
-    /// Each lit stay minute's squared distance from its stay's centre and its
-    /// fix's squared reported accuracy, metres² (`fitCentreSigma`).
-    stay_scatter: Vec<(f64, f64)>,
     /// The one-minute span across each boundary between adjacent runs, km/h.
     boundary: Vec<f64>,
     /// The same spans with the modes either side.
@@ -567,25 +564,6 @@ fn read_day(name: &str, date: &str, md: &str) -> Result<Day> {
                 .filter_map(|t| by_ts.get(&t))
                 .filter_map(|m| Some((m["lat"].as_f64()?, m["lon"].as_f64()?)))
                 .collect();
-            // The scatter about the stay's own centre, with each fix's accuracy.
-            let acc: Vec<f64> = (0..)
-                .map(|k| r.s + 60 * k)
-                .take_while(|t| *t < r.e)
-                .filter_map(|t| by_ts.get(&t))
-                .filter(|m| m["lat"].as_f64().is_some())
-                .map(|m| m["accuracyM"].as_f64().unwrap_or(ACCURACY_DEFAULT_M))
-                .collect();
-            if fixes.len() >= MIN_STAY_FIXES {
-                let n = fixes.len() as f64;
-                let c = (
-                    fixes.iter().map(|f| f.0).sum::<f64>() / n,
-                    fixes.iter().map(|f| f.1).sum::<f64>() / n,
-                );
-                for (f, a) in fixes.iter().zip(&acc) {
-                    let d = metres(c, *f);
-                    day.stay_scatter.push((d * d, a * a));
-                }
-            }
             if fixes.len() >= MIN_STAY_FIXES && !places.is_empty() {
                 let n = fixes.len() as f64;
                 let c = (
@@ -692,12 +670,6 @@ fn hr_effect(groups: &[Vec<Option<f64>>]) -> Option<(f64, f64, f64, f64)> {
         / means.len().max(1) as f64;
     Some((mu, (between - sampling).max(1.0).sqrt(), s2.sqrt(), rho))
 }
-
-/// The search range for a stay's position spread, metres.
-const CENTRE_SIGMA_MIN_M: u16 = 5;
-const CENTRE_SIGMA_MAX_M: u16 = 300;
-/// A fix with no reported accuracy carries the decoder's default.
-const ACCURACY_DEFAULT_M: f64 = 10.0;
 
 /// EM steps for the outlier fits.
 const EM_STEPS: usize = 100;
@@ -922,32 +894,6 @@ fn write_fit(
                 "train line: {k} of {} narrated starts vouched; share {q:.4}; coverage {} of {tr} train starts, {} of {ot} others: covered {covered:+.3}, uncovered {uncovered:+.3}",
                 xs.len(), n[0], n[2]
             ));
-        }
-    }
-    // With `fitCentreSigma`, a stay's fixes scatter about its centre as a 2-D
-    // Gaussian of variance σ² + the fix's accuracy² per axis: σ by maximum
-    // likelihood over every narrated stay's lit minutes (the centre score's
-    // `withPositions` weight, hand-set at `PLACE_RADIUS_M` without it).
-    if form.decoder["fitCentreSigma"].as_bool() == Some(true) {
-        let pts: Vec<(f64, f64)> = used
-            .iter()
-            .flat_map(|d| d.stay_scatter.iter().copied())
-            .collect();
-        if pts.len() >= MIN_N {
-            let ll = |s: f64| -> f64 {
-                pts.iter()
-                    .map(|(d2, a2)| {
-                        let v = s * s + a2;
-                        -(2.0 * std::f64::consts::PI * v).ln() - d2 / (2.0 * v)
-                    })
-                    .sum()
-            };
-            let sigma = (CENTRE_SIGMA_MIN_M..=CENTRE_SIGMA_MAX_M)
-                .map(f64::from)
-                .max_by(|a, b| ll(*a).total_cmp(&ll(*b)))
-                .unwrap_or(f64::from(CENTRE_SIGMA_MAX_M));
-            se["centreSigmaM"] = json!(sigma);
-            log.push(format!("stay scatter: σ {sigma} m ({} minutes)", pts.len()));
         }
     }
     // The span across a boundary by the modes either side (measurement only).

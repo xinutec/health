@@ -1,5 +1,7 @@
 # The generative day: the decoder's end state
 
+**Removed (2026-11-10):** the rebuild's code (`segEmission.position` with `listedCentre`, `positionDisp`, `moveHold`, `stopChain`, `strayFix`; `awakeDrift`; `hrLevel`; `walkPause`; `edgeCadence`; `placeSigmaM`/`placeEps`; `centreSigmaM`; the harness arms `durationNoFloor` and `oneMinuteLog`) is cut from the decoder: the production record used none of it. It is last present at commit `7affa5b7`.
+
 **Status (2026-11-05):** vision, for review. No decoder code under it until
 it is agreed. It refines [`decoder-roadmap.md`](decoder-roadmap.md) (the
 worldline) under the contract in

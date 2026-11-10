@@ -1,5 +1,7 @@
 # A stay's position: stray fixes and moving spots
 
+**Removed (2026-11-10):** the rebuild's code (`segEmission.position` with `listedCentre`, `positionDisp`, `moveHold`, `stopChain`, `strayFix`; `awakeDrift`; `hrLevel`; `walkPause`; `edgeCadence`; `placeSigmaM`/`placeEps`; `centreSigmaM`; the harness arms `durationNoFloor` and `oneMinuteLog`) is cut from the decoder: the production record used none of it. It is last present at commit `7affa5b7`.
+
 **Status (2026-11-05):** design A built and refuted as an addition (below); the rework — every mode scoring each fix the same way — is built behind `segEmission.position` and measured in `2026-11-generative-day.md` (step 1). Layer 1 and 2 of the
 position-first rebuild (#1947); the activity terms (the heart rate answering the
 steps, the fitted cadence with edge minutes) wait on it.

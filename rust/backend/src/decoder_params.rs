@@ -23,13 +23,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 
 /// The request flags the record sets, by its own key.
-const FLAGS: [&str; 5] = [
-    "segEmission",
-    "transFit",
-    "entryCounts",
-    "fittedPriors",
-    "durationNoFloor",
-];
+const FLAGS: [&str; 4] = ["segEmission", "transFit", "entryCounts", "fittedPriors"];
 
 /// The golden copy of the record the serving pod loads (the Secret's line):
 /// what a replay runs under when no arm names another.

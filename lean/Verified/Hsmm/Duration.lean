@@ -19,8 +19,7 @@ open Verified.Hsmm.Emissions (Mode)
     the fitted one-minute share of each mode's narrated rows is −4.5 (walk) to
     −6.1 (stay), and under those a stepped minute inside a stay at the same
     place becomes a one-minute walk on eight corpus days — the stay's inside is
-    what this floor is masking, not a duration fact
-    (`Assemble.ModelContext.oneMinuteLog` is the measured switch). -/
+    what this floor is masking, not a duration fact. -/
 def HARD_FLOOR_LOG_PROB : Float := -10
 
 /-- `DEFAULT_MIN_DURATION_BY_MODE` (minutes). -/

@@ -123,77 +123,6 @@ structure TrainLine where
   uncovered : Float
   deriving Inhabited
 
-/-- `Params.position`: one observation model of a fix for every state, fitted
-    on the narrated stays (`tests/golden/fits/instruments/hr-level/strays3.py`,
-    `spotfit.py`). A fix is the true position plus noise, per axis a Gaussian
-    scale mixture: the core at `lam·(7² + accuracy²)`; a share `e1` of local
-    scatter (another desk, indoor multipath: uniform within `r1` metres, here
-    the Gaussian of its variance `r1²/4`); a share `e2` of far strays within
-    `r2`; a share `e3` anywhere within `r3`, so one wild reading lowers every
-    hypothesis and rules none out. A stay's spot moves with chance `rho` a
-    minute, by a 2-D Gaussian of `tm` metres. -/
-structure PositionParams where
-  lam : Float
-  e1 : Float
-  r1 : Float
-  e2 : Float
-  r2 : Float
-  e3 : Float
-  r3 : Float
-  rho : Float
-  tm : Float
-  deriving Inhabited
-
-/-- A vehicle's minutes as a chain of moving and stopped (`vehicleChain`):
-    `P(stopped | moving)` and `P(stopped | stopped)`, fitted on the narrated
-    rides (`lean/experiments/stopchain.py`: Tube 0.04 and 0.66, the other
-    trains 0.016 and 0.50). -/
-structure StopChain where
-  toStop : Float
-  stay : Float
-  deriving Inhabited
-
-/-- `Params.awakeDrift`: the awake heart rate as the person's level, which
-    drifts, plus the answer to the recent steps (`beta` bpm per step a minute,
-    the steps of the last `ACTIVITY_LAGS` minutes at `e^(−k/ta)`). Each
-    minute's difference from the minute before, the steps' share taken out,
-    is a two-part Gaussian mixture — `(share, core sd, wide sd)` while still
-    or riding (`calm`) and while walking (`walk`), fitted on the narrated
-    awake minutes (`tests/golden/fits/instruments/invariants/hrdiff.py`) —
-    scored by the segment it ends in, so a boundary hides no pair and a split
-    adds only its segment's level about the mode's mean. -/
-structure AwakeDrift where
-  beta : Float
-  ta : Float
-  calm : Float × Float × Float
-  walk : Float × Float × Float
-  deriving Inhabited
-
-/-- Where a stay's spot is expected before its first fix: around a listed
-    place's pin at variance `v0`, or where the last fix before left him. -/
-inductive SpotStart where
-  | pin (x y v0 : Float)
-  | placeless
-  deriving Inhabited
-/-- `Params.hrLevel`: `x = m + β·a + L + u` — the heart rate follows the
-    recent steps `a` (each minute's steps over the last `ACTIVITY_LAGS`,
-    weighted `e^{−k/ta}`), the level `L` an AR(1) of stationary spread `tau`
-    and lag-1 `rl`, the noise `u` one of `su` and `phi`. With the steps
-    explaining it, a walk's level is a stay's (the narrated runs: 80.6 bpm
-    against 81.2), so the heart rate no longer counts the steps the cadence
-    already does. -/
-structure HrLevel where
-  tau : Float
-  rl : Float
-  su : Float
-  phi : Float
-  beta : Float := 0
-  ta : Float := 1
-  deriving Inhabited
-
-/-- The minutes of steps a heart rate answers to, this one included. -/
-def ACTIVITY_LAGS : Nat := 6
-
 structure Params where
   sigmaW : Float
   rho : Float
@@ -204,14 +133,6 @@ structure Params where
       evenly over 0–`uMaxKmh` (a fix that jumped): one bad fix must not outvote
       the steps and the minutes around it. -/
   speedEps : List (Mode × Float) := []
-  /-- The spread of a stay's fixes about its centre, metres, fitted on the
-      narrated stays; `none` keeps `PLACE_RADIUS_M`. -/
-  centreSigmaM : Option Float := none
-  /-- A stay's minute about its LISTED place (`Emissions.placeTermWith`): the
-      width, metres, and the share of minutes anywhere, both fitted on the
-      narrated stays' minutes; `none` keeps `placeTerm`'s hand width and floor. -/
-  placeSigmaM : Option Float := none
-  placeEps : Option Float := none
   /-- The pair across a boundary as an exponential of
       this mean (km/h, fitted on the narrated boundaries) instead of uniform. -/
   pairBoundaryMeanKmh : Option Float := none
@@ -241,62 +162,6 @@ structure Params where
       begins and ends still); a moving minute's steps are scored as a walk's;
       the place, the position and the levels stay the stay's. -/
   stayMove : Option (Float × Float) := none
-  /-- A minute's fix may be a far stray (`strayShares`): the spread a fix
-      keeps from the line between its lit neighbours, `λ·(7² + accuracy²)`
-      plus `κ`·their speed·the gap, the share of strays and the range they
-      fall in — fitted on the narrated minutes. A stray carries no position:
-      the position sums weigh each fix by its share of not being one. -/
-  strayFix : Option (Float × Float × Float × Float) := none
-  /-- A stay at a LISTED place has a centre too, drawn around the place's pin
-      (`listedCentreScore`): the spread a visit's centre sits off it is
-      scaled-inverse-χ² with these `(ν₀, t₀ metres)`, fitted over the mined
-      places' visits, and updated by the place's own (`visitSpread`).
-      Replaces the per-minute place term's hand width. -/
-  listedCentre : Option (Float × Float) := none
-  /-- Every state scores every fix as a density of it, under one noise model
-      (`PositionParams`), given the fix before: a stay from its spot
-      (`spotTable`), a moving state from the fix before at its speed in any
-      direction (`ringLog`). Replaces, for every state, the pair speeds, the
-      boundary pair, the stay's integrated centre, the listed place's
-      per-minute term, the dark minutes' gap and feasibility terms and the
-      net displacement, which each score the same fixes again. Needs
-      `listedCentre` (where a listed place's visits are). -/
-  position : Option PositionParams := none
-  /-- The awake heart rate as a drifting level answering the steps
-      (`AwakeDrift`), in place of one level per segment. -/
-  awakeDrift : Option AwakeDrift := none
-  /-- Under `position`, keep the net displacement between a segment's
-      bracketing fixes (`dispPosteriorScore`): where a trip ends, which the
-      per-minute terms cannot say (a walk between two places almost never
-      returns where it began). -/
-  positionDisp : Bool := false
-  /-- Under `position`, a moving state without a stop chain scores each fix
-      from the last that was not a far stray, over the last `moveHold` lit
-      fixes (`holdTable`); `0` from the fix before. -/
-  moveHold : Nat := 0
-  /-- Under `position`, a vehicle's minutes moving or stopped as a chain
-      (`vehicleTable`), per class: `train` (the named lines and the unnamed
-      metro) and `mainline`. -/
-  stopChain : List (String × StopChain) := []
-  /-- The awake heart rate as a level that drifts and returns to the mode's
-      own (`hrLevelTable`): the level's spread about the mode's mean `τ` and
-      its lag-1 correlation, and the minute's own noise about the level `σu`
-      and its lag-1 correlation — fitted by maximum likelihood on the
-      narrated runs. Replaces one constant level per segment, under which
-      a long stay's drift (first half against second over 38 narrated stays
-      of four hours or more: sd 6.3 bpm, where a constant allows 2–3) paid
-      for splitting it. -/
-  hrLevel : Option HrLevel := none
-  /-- A segment's first and last minute are shared with the segments beside
-      it, so their steps are a part-minute's: per mode, the zero-step share
-      and the stepped minutes' mean and spread of the narrated segments' edge
-      minutes, scored there in place of the mode's interior cadence
-      (`Assemble.edgeCadenceAt`). A mode not listed keeps its interior. -/
-  edgeCadence : List (Mode × (Float × Float × Float)) := []
-  /-- A walk's pauses (`Assemble.walkPauseTable`): the chance a walking minute
-      is followed by a still one, and a still one by another; a walk begins
-      and ends walking. -/
-  walkPause : Option (Float × Float) := none
   /-- What the train generator knows at a train's start (`TrainLine`): with it
       a transition into a train gives the even split over train states back,
       and the entry scores the line and the coverage. Without it a train's
@@ -341,21 +206,6 @@ structure Prefix where
       count, cumulative over the pair ending at each minute. -/
   bedDiffSq : Array Float := #[ZERO]
   bedDiffN : Array Float := #[ZERO]
-  /-- Under `awakeDrift`: per minute, the log density of its steps-adjusted
-      heart-rate difference from the minute before under each family (still
-      or riding, walking), and the adjusted rates' count and sum, cumulative. -/
-  hrDiffCalm : Array Float := #[ZERO]
-  hrDiffWalk : Array Float := #[ZERO]
-  hrAdjN : Array Float := #[ZERO]
-  hrAdjSum : Array Float := #[ZERO]
-  /-- With `hrLevel`: per segment `(d, e)` at `triOff maxD e + d − 1`, the
-      awake heart rate's likelihood as a Gaussian in the mode's mean `m` —
-      `R − (m − μ̂)² / (2V)` — as `R`, `μ̂` and `V` (`V = 0`: no awake minute
-      with a heart rate). Empty without it. -/
-  hrMaxD : Nat := 0
-  hrR : FloatArray := FloatArray.empty
-  hrMu : FloatArray := FloatArray.empty
-  hrV : FloatArray := FloatArray.empty
   deriving Inhabited
 
 private def METRES_PER_DEGREE : Float := 111320
@@ -369,66 +219,18 @@ def localXY (ref : Float × Float) (lat lon : Float) : Float × Float :=
 /-- The position prefix sums: each lit minute's aggregate at weight
     `1 / (sigmaM² + accuracy²)`, the accuracy its own reported one or
     `accDefaultM`. -/
-private def STRAY_BASE_M : Float := 7
-/-- How far apart in minutes a fix's neighbours may be to judge it. -/
-private def STRAY_GAP_MIN : Nat := 10
-
-/-- Per minute, the share of its fix that is not a far stray: judged against
-    the line between the nearest lit minutes either side (within
-    `STRAY_GAP_MIN`), its residual scored under the fitted inlier spread
-    against the strays' uniform range. `1` without the record's `strayFix`,
-    without a fix, or without a neighbour on both sides. -/
-def strayShares (obs : Array ObsRow) (ref : Float × Float) (accDefaultM : Float)
-    (h : Option (Float × Float × Float × Float)) : Array Float := Id.run do
-  let T := obs.size
-  let some (lam, kap, eps, range) := h | return Array.replicate T ONE
-  let xy : Array (Option (Float × Float × Float)) := obs.map fun o =>
-    o.gps.map fun g => let (x, y) := localXY ref g.lat g.lon; (x, y, g.accuracyM.getD accDefaultM)
-  let mut prev : Array (Option Nat) := Array.replicate T none
-  let mut last : Option Nat := none
-  for t in [0:T] do
-    prev := prev.set! t last
-    if (xy[t]!).isSome then last := some t
-  let mut next : Array (Option Nat) := Array.replicate T none
-  last := none
-  for i in [0:T] do
-    let t := T - 1 - i
-    next := next.set! t last
-    if (xy[t]!).isSome then last := some t
-  let mut out := Array.replicate T ONE
-  for t in [0:T] do
-    match xy[t]!, prev[t]!, next[t]! with
-    | some (x, y, acc), some tp, some tn =>
-      if t - tp > STRAY_GAP_MIN || tn - t > STRAY_GAP_MIN then continue
-      match xy[tp]!, xy[tn]! with
-      | some (xp, yp, _), some (xn, yn, _) =>
-        let span := Verified.FloatConst.natToFloat (tn - tp)
-        let u := Verified.FloatConst.natToFloat (t - tp) / span
-        let px := xp + u * (xn - xp)
-        let py := yp + u * (yn - yp)
-        let r := Float.sqrt ((x - px) * (x - px) + (y - py) * (y - py))
-        let speed := Float.sqrt ((xn - xp) * (xn - xp) + (yn - yp) * (yn - yp)) / span
-        let gap := Verified.FloatConst.natToFloat (max (t - tp) (tn - t))
-        let v := lam * (STRAY_BASE_M * STRAY_BASE_M + acc * acc) + (kap * speed * gap) * (kap * speed * gap)
-        let fin := (ONE - eps) * r / v * Float.exp (ZERO - r * r / (TWO * v))
-        let fout := if r < range then eps * TWO * r / (range * range) else ZERO
-        if fin + fout > ZERO then out := out.set! t (fin / (fin + fout))
-      | _, _ => pure ()
-    | _, _, _ => pure ()
-  return out
-
 def withPositions (p : Prefix) (obs : Array ObsRow) (ref : Float × Float)
-    (sigmaM accDefaultM : Float) (keep : Array Float := #[]) : Prefix := Id.run do
+    (sigmaM accDefaultM : Float) : Prefix := Id.run do
   let mut w := #[ZERO]
   let mut wx := #[ZERO]
   let mut wy := #[ZERO]
   let mut wrr := #[ZERO]
-  for (o, t) in obs.zipIdx do
+  for o in obs do
     let (dw, dx, dy, drr) := match o.gps with
       | some g =>
         let (x, y) := localXY ref g.lat g.lon
         let acc := g.accuracyM.getD accDefaultM
-        let k := keep.getD t ONE / (sigmaM * sigmaM + acc * acc)
+        let k := ONE / (sigmaM * sigmaM + acc * acc)
         (k, k * x, k * y, k * (x * x + y * y))
       | none => (ZERO, ZERO, ZERO, ZERO)
     w := w.push (w.back?.getD ZERO + dw)
@@ -484,738 +286,6 @@ def prefixOf (obs : Array ObsRow) : Prefix := Id.run do
   if open_ then runEnd := runEnd.push obs.size
   return { p with runStart, runEnd, runOf }
 
-private def SPOT_BASE_M : Float := 7
-private def PI_F : Float := 3.141592653589793
-private def FOUR : Float := 4
-/-- Metres a minute in a km/h. -/
-private def M_PER_MIN_PER_KMH : Float := 1000 / 60
-
-/-- A fix's core noise variance per axis: `lam·(7² + accuracy²)`. -/
-def coreVar (pp : PositionParams) (acc : Float) : Float :=
-  pp.lam * (SPOT_BASE_M * SPOT_BASE_M + acc * acc)
-
-/-- The noise mixture's components, `(share, variance per axis beyond the
-    core)`, the core first. -/
-def noiseComps (pp : PositionParams) : Array (Float × Float) :=
-  #[(ONE - pp.e1 - pp.e2 - pp.e3, ZERO), (pp.e1, pp.r1 * pp.r1 / FOUR),
-    (pp.e2, pp.r2 * pp.r2 / FOUR), (pp.e3, pp.r3 * pp.r3 / FOUR)]
-
-/-- `log Σ exp xs`, from the largest so nothing underflows. -/
-def logSumExp (xs : Array Float) : Float :=
-  let m := xs.foldl max Verified.FloatConst.negInf
-  if m == Verified.FloatConst.negInf then m else
-  m + Float.log (xs.foldl (fun a x => a + Float.exp (x - m)) ZERO)
-
-/-- `log (e^a + e^b)`, without an array. -/
-@[inline] def lse2 (a b : Float) : Float :=
-  let m := max a b
-  if m == Verified.FloatConst.negInf then m else m + Float.log (Float.exp (a - m) + Float.exp (b - m))
-
-/-- An isotropic 2-D Gaussian's log density at squared distance `d2`, per-axis
-    variance `v`. -/
-@[inline] def logN2 (d2 v : Float) : Float :=
-  ZERO - Float.log (TWO * PI_F * v) - d2 / (TWO * v)
-
-private def I0_KNEE : Float := 3.75
-private def I0_A : Array Float := #[1.0, 3.5156229, 3.0899424, 1.2067492, 0.2659732, 0.0360768, 0.0045813]
-private def I0_B : Array Float :=
-  #[0.39894228, 0.01328592, 0.00225319, -0.00157565, 0.00916281, -0.02057706, 0.02635537, -0.01647633, 0.00392377]
-
-/-- `Σ cᵢ uⁱ` by Horner's rule. -/
-private def horner (c : Array Float) (u : Float) : Float :=
-  c.foldr (fun ci acc => ci + u * acc) ZERO
-
-/-- `e^(−x)·I₀(x)` for `x ≥ 0`, the modified Bessel function scaled: Abramowitz
-    and Stegun 9.8.1 and 9.8.2, error below 2·10⁻⁷. -/
-def i0e (x : Float) : Float :=
-  if x < I0_KNEE then
-    let t := x / I0_KNEE
-    Float.exp (ZERO - x) * horner I0_A (t * t)
-  else horner I0_B (I0_KNEE / x) / Float.sqrt x
-
-#guard (i0e 0 - 1).abs < 1e-9
-#guard (i0e 1 - 0.4657596).abs < 1e-6
-#guard (i0e 10 - 0.1278333).abs < 1e-6
-
-/-- A speed density over metres a minute as a quadrature: midpoints and their
-    weights (density × width), the weights summing to one. -/
-structure SpeedQuad where
-  s : FloatArray
-  w : FloatArray
-  deriving Inhabited
-
-private def QUAD_FINE_TOP : Float := 20
-private def QUAD_FINE : Nat := 40
-private def QUAD_COARSE : Nat := 160
-
-/-- A speed density from its unnormalised shape `f` over metres a minute,
-    with a share `eps` spread evenly up to `uMaxKmh`: fine near a standstill,
-    log-spaced above. -/
-def speedQuadOf (f : Float → Float) (eps uMaxKmh : Float) : SpeedQuad := Id.run do
-  let top := uMaxKmh * M_PER_MIN_PER_KMH
-  let mut edges : Array Float := #[]
-  for i in [0:QUAD_FINE] do
-    edges := edges.push (QUAD_FINE_TOP * Verified.FloatConst.natToFloat i / Verified.FloatConst.natToFloat QUAD_FINE)
-  let ratio := Float.log (top / QUAD_FINE_TOP) / Verified.FloatConst.natToFloat QUAD_COARSE
-  for i in [0:QUAD_COARSE + 1] do
-    edges := edges.push (QUAD_FINE_TOP * Float.exp (ratio * Verified.FloatConst.natToFloat i))
-  let mut mids := FloatArray.empty
-  let mut raw := FloatArray.empty
-  let mut widths := FloatArray.empty
-  for i in [0:edges.size - 1] do
-    let lo := edges[i]!
-    let hi := edges[i + 1]!
-    let mid := (lo + hi) / TWO
-    mids := mids.push mid
-    widths := widths.push (hi - lo)
-    raw := raw.push (f mid * (hi - lo))
-  let tot := raw.foldl (· + ·) ZERO
-  let mut w := FloatArray.empty
-  for i in [0:mids.size] do
-    w := w.push ((ONE - eps) * (if tot > ZERO then raw[i]! / tot else ZERO) + eps * widths[i]! / top)
-  return { s := mids, w }
-
-/-- A mode's speed: a moving Gaussian (`meanKmh`, `sdKmh`) cut at zero, a
-    share `stop` standing still (half-normal, `stopSdKmh`), and the share
-    `eps` of outliers. -/
-def modeSpeedQuad (meanKmh sdKmh stop stopSdKmh eps uMaxKmh : Float) : SpeedQuad :=
-  let m := meanKmh * M_PER_MIN_PER_KMH
-  let sd := max (sdKmh * M_PER_MIN_PER_KMH) ONE
-  let ssd := max (stopSdKmh * M_PER_MIN_PER_KMH) ONE
-  speedQuadOf (fun s =>
-    (ONE - stop) * Float.exp (ZERO - (s - m) * (s - m) / (TWO * sd * sd)) / sd
-      + stop * TWO * Float.exp (ZERO - s * s / (TWO * ssd * ssd)) / ssd) eps uMaxKmh
-
-/-- The log density (per m²) of a 2-D displacement of length `r` over `g`
-    minutes, the noise `v` per axis: a ring of radius speed × `g` in any
-    direction, blurred, over the speed density `q`. -/
-def ringLog (q : SpeedQuad) (r g v : Float) : Float := Id.run do
-  let lead := ZERO - Float.log (TWO * PI_F * v)
-  let mut best := Verified.FloatConst.negInf
-  let n := q.s.size
-  let mut lg := FloatArray.emptyWithCapacity n
-  for i in [0:n] do
-    let rho := q.s[i]! * g
-    let z := r * rho / v
-    let x := Float.log q.w[i]! + lead - (r - rho) * (r - rho) / (TWO * v) + Float.log (i0e z)
-    lg := lg.push x
-    best := max best x
-  if best == Verified.FloatConst.negInf then return best
-  let mut acc := ZERO
-  for i in [0:n] do
-    acc := acc + Float.exp (lg[i]! - best)
-  return best + Float.log acc
-
-/-- A fix moved `r` metres over `g` minutes from the fix before, at the speed
-    density `q`: the ring under both fixes' core noise (`vA`, `vB`), each
-    share of the mixture widening it. -/
-def moveLog (pp : PositionParams) (q : SpeedQuad) (r g vA vB : Float) : Float :=
-  logSumExp ((noiseComps pp).map fun (w, ex) => Float.log w + ringLog q r g (vA + vB + ex))
-
-/-- A fix's log density about a spot expected at squared distance `d2`, the
-    spot's own spread `V` per axis, the fix's core `R`. -/
-def fixLog (pp : PositionParams) (d2 V R : Float) : Float :=
-  logSumExp ((noiseComps pp).map fun (w, ex) => Float.log w + logN2 d2 (V + R + ex))
-
-/-- Per minute, the last lit minute before it. -/
-def prevLit (obs : Array ObsRow) : Array (Option Nat) := Id.run do
-  let mut out : Array (Option Nat) := #[]
-  let mut last : Option Nat := none
-  for (o, t) in obs.zipIdx do
-    out := out.push last
-    if o.gps.isSome then last := some t
-  return out
-
-/-- The lit minutes in local metres, with each fix's core noise. -/
-def fixesLocal (obs : Array ObsRow) (ref : Float × Float) (accDefaultM : Float) (pp : PositionParams) :
-    Array (Option (Float × Float × Float)) :=
-  obs.map fun o => o.gps.map fun g =>
-    let (x, y) := localXY ref g.lat g.lon; (x, y, coreVar pp (g.accuracyM.getD accDefaultM))
-
-/-- The log density of a displacement of squared length `d2` over `g` minutes
-    for a phone that stayed: the spot still, or moved at least once in the
-    `g` minutes (a stay's rare move, which redraws the spot inside the
-    place, so its spread does not grow with the gap), under both fixes'
-    noise. -/
-def stillLog (pp : PositionParams) (d2 g vA vB : Float) : Float :=
-  let still := Float.exp (g * Float.log (ONE - pp.rho))
-  -- A move redraws the spot inside the place: however many, one spread.
-  let moved := pp.tm * pp.tm
-  logSumExp ((noiseComps pp).foldl (fun acc (w, ex) =>
-    acc.push (Float.log (still * w) + logN2 d2 (vA + vB + ex))
-      |>.push (if still < ONE then Float.log ((ONE - still) * w) + logN2 d2 (moved + vA + vB + ex)
-               else Verified.FloatConst.negInf)) #[])
-
-/-- Per minute, a moving state's log density of its fix given the fix before
-    (any gap), at speed `q`: the ring over the whole gap, as if the state had
-    moved through all of it; the day's first fix at `broad`, an unlit minute
-    `0`. A segment that does not own all of a gap at its edge corrects it
-    (`gapTables`, `Assemble.gapEdge`). -/
-def moveIncrements (xy : Array (Option (Float × Float × Float))) (prev : Array (Option Nat))
-    (pp : PositionParams) (q : SpeedQuad) (broad : Array Float) (qOf : Option (Nat → SpeedQuad) := none) :
-    Array Float :=
-  (Array.range xy.size).map fun t =>
-    match xy[t]!, prev[t]! with
-    | none, _ => ZERO
-    | some _, none => broad.getD t ZERO
-    | some (x, y, R), some tp => match xy[tp]! with
-      | some (xp, yp, Rp) =>
-        -- A vehicle's speed over a gap of `g` minutes: its chain's share of
-        -- standing still throughout (`qOf`), else the per-minute mixture.
-        let q' := match qOf with | some f => f (t - tp) | none => q
-        moveLog pp q' (Float.sqrt ((x - xp) * (x - xp) + (y - yp) * (y - yp)))
-          (Verified.FloatConst.natToFloat (t - tp)) R Rp
-      | none => broad.getD t ZERO
-
-/-- Per vehicle segment `(d, e)` at `triOff maxD e + d − 1`: the log density
-    of its fixes when each minute is moving (`moving`, the ring at the moving
-    speed alone) or stopped (`stopped`), the two a chain (`sc`), a leg
-    beginning and ending moving — it departs and arrives — so a "ride" that
-    stands still throughout is no ride. A minute whose fix follows a gap, or
-    the segment's first fix, is the full mixture's (`mixed`): the gap's
-    minutes are not told apart. Summed over the chain's paths from each
-    start. -/
-def vehicleTable (moving stopped mixed : Array Float) (lit : Array Bool) (consec : Array Bool)
-    (sc : StopChain) (maxD : Nat) : FloatArray := Id.run do
-  let T := lit.size
-  let mut out := Verified.FloatConst.floats (Verified.Hsmm.triOff maxD T) ZERO
-  let lmm := Float.log (ONE - sc.toStop)
-  let lms := Float.log sc.toStop
-  let lsm := Float.log (ONE - sc.stay)
-  let lss := Float.log sc.stay
-  let negInf := Verified.FloatConst.negInf
-  for s0 in [0:T] do
-    -- Log masses of the chain being moving or stopped after the minutes so far.
-    let mut vm := ZERO
-    let mut vs := negInf
-    let mut first := true
-    for d in [1:maxD + 1] do
-      let e := s0 + d - 1
-      if e ≥ T then break
-      if d > 1 then
-        let m2 := lse2 (vm + lmm) (vs + lsm)
-        let s2 := lse2 (vm + lms) (vs + lss)
-        vm := m2
-        vs := s2
-      if lit[e]! then
-        if first || !consec[e]! then
-          -- Not told apart: the mixture's density, the chain carried on.
-          vm := vm + mixed[e]!
-          vs := vs + mixed[e]!
-        else
-          vm := vm + moving[e]!
-          vs := vs + stopped[e]!
-        first := false
-      -- It arrives moving: the leg ends in the moving state.
-      out := out.set! (Verified.Hsmm.triOff maxD e + (d - 1)) vm
-  return out
-
-/-- Per moving segment `(d, e)` at `triOff maxD e + d − 1`, the log density of
-    its fixes when a far stray leaves him where he was, as it leaves a stay's
-    spot: each fix moved from the last fix that was not a stray (core or
-    local scatter), a forward from each start over which of the last `K` lit
-    fixes that was. Without it one stray moves the reference, and a walk
-    crosses 900 m for the price of one far fix. The segment's first fix is
-    `first`'s (from the fix before, the full mixture); a reference more than
-    `K` lit fixes back is dropped with its mass. -/
-def holdTable (xy : Array (Option (Float × Float × Float))) (first : Array Float)
-    (pp : PositionParams) (q : SpeedQuad) (K maxD : Nat) : FloatArray := Id.run do
-  let K := max K 2
-  let T := xy.size
-  let negInf := Verified.FloatConst.negInf
-  let mut lits : Array Nat := #[]
-  let mut rank : Array Nat := Array.replicate T 0
-  for t in [0:T] do
-    if (xy[t]!).isSome then
-      rank := rank.set! t lits.size
-      lits := lits.push t
-  -- Per lit fix `i` and `k = 1 … K` at `i·K + k − 1`: the fix moved from the
-  -- `k`-th lit fix before it, or a far stray about where that one left him.
-  let comps := noiseComps pp
-  let mut inl := Verified.FloatConst.floats (lits.size * K) negInf
-  let mut str := Verified.FloatConst.floats (lits.size * K) negInf
-  for i in [0:lits.size] do
-    for k in [1:K + 1] do
-      if k ≤ i then
-        match xy[lits[i]!]!, xy[lits[i - k]!]! with
-        | some (x, y, R), some (xp, yp, Rp) =>
-          let d2 := (x - xp) * (x - xp) + (y - yp) * (y - yp)
-          let g := Verified.FloatConst.natToFloat (lits[i]! - lits[i - k]!)
-          let r := Float.sqrt d2
-          let (w0, x0) := comps[0]!
-          let (w1, x1) := comps[1]!
-          let (w2, x2) := comps[2]!
-          let (w3, x3) := comps[3]!
-          inl := inl.set! (i * K + k - 1) (lse2 (Float.log w0 + ringLog q r g (R + Rp + x0))
-            (Float.log w1 + ringLog q r g (R + Rp + x1)))
-          str := str.set! (i * K + k - 1) (lse2 (Float.log w2 + logN2 d2 (R + Rp + x2))
-            (Float.log w3 + logN2 d2 (R + Rp + x3)))
-        | _, _ => pure ()
-  -- A far stray about a reference further back than the tables reach.
-  let strayFrom := fun (i j : Nat) => match xy[lits[i]!]!, xy[lits[j]!]! with
-    | some (x, y, R), some (xp, yp, Rp) =>
-      let d2 := (x - xp) * (x - xp) + (y - yp) * (y - yp)
-      let (w2, x2) := comps[2]!
-      let (w3, x3) := comps[3]!
-      lse2 (Float.log w2 + logN2 d2 (R + Rp + x2)) (Float.log w3 + logN2 d2 (R + Rp + x3))
-    | _, _ => negInf
-  let mut out := Verified.FloatConst.floats (Verified.Hsmm.triOff maxD T) ZERO
-  -- `a[k]`: the log weight that the reference is the lit fix `k` before the
-  -- last one seen (`k = 0` that one); the last slot holds every reference
-  -- `K − 1` or more back, at the likelier one's rank (`old`). Past the
-  -- tables it goes on only as strays, so no path's mass is lost.
-  let mut a := Verified.FloatConst.floats K negInf
-  let mut b := Verified.FloatConst.floats K negInf
-  for s0 in [0:T] do
-    let mut tot := ZERO
-    let mut started := false
-    let mut old := 0
-    for d in [1:maxD + 1] do
-      let e := s0 + d - 1
-      if e ≥ T then break
-      if (xy[e]!).isSome then
-        let i := rank[e]!
-        if !started then
-          tot := tot + first[e]!
-          started := true
-          a := a.set! 0 ZERO
-          for k in [1:K] do a := a.set! k negInf
-        else
-          let mut inAcc := negInf
-          for k in [0:K] do b := b.set! k negInf
-          let mut newOld := old
-          let mut oldW := negInf
-          for k in [0:K] do
-            let w := a[k]!
-            if w != negInf then
-              let j := if k + 1 < K then i - (k + 1) else old
-              let dist := i - j
-              let (li, ls) := if dist ≤ K then (inl[i * K + dist - 1]!, str[i * K + dist - 1]!)
-                else (negInf, strayFrom i j)
-              inAcc := lse2 inAcc (w + li)
-              let dest := min (k + 1) (K - 1)
-              b := b.set! dest (lse2 b[dest]! (w + ls))
-              if dest == K - 1 && w + ls > oldW then
-                oldW := w + ls
-                newOld := j
-          old := newOld
-          let mut all := inAcc
-          for k in [1:K] do all := lse2 all b[k]!
-          tot := tot + all
-          b := b.set! 0 (inAcc - all)
-          for k in [1:K] do b := b.set! k (b[k]! - all)
-          let tmp := a
-          a := b
-          b := tmp
-      out := out.set! (Verified.Hsmm.triOff maxD e + (d - 1)) tot
-  return out
-
--- A walk at 80 m a minute: one far fix that comes back costs less held than
--- from the fix before (once, not twice); a 940 m jump that stays costs more.
-private def ppHold : PositionParams :=
-  { lam := 0.02, e1 := 0.16, r1 := 60, e2 := 0.02, r2 := 5000, e3 := 0.001, r3 := 600000, rho := 0.03, tm := 30 }
-private def qWalk : SpeedQuad := modeSpeedQuad 4.8 1.9 0 1 0 300
-private def holdVsPrev (xs : List Float) : Float × Float :=
-  let xy : Array (Option (Float × Float × Float)) := (xs.map fun x => some (x, ZERO, ONE)).toArray
-  let prev : Array (Option Nat) := (Array.range xy.size).map fun t => if t == 0 then none else some (t - 1)
-  let first := moveIncrements xy prev ppHold qWalk (Array.replicate xy.size ZERO)
-  let n := xy.size
-  ((holdTable xy first ppHold qWalk 4 n)[Verified.Hsmm.triOff n (n - 1) + (n - 1)]!,
-   first.foldl (· + ·) ZERO)
-#guard let (h, p) := holdVsPrev [0, 80, 1100, 240, 320]; h > p + 5
-#guard let (h, p) := holdVsPrev [0, 80, 160, 1100, 1180, 1260]; h < p - 20
--- A walk that cannot reach a 10 km jump pays a stray a fix: finite, as every
--- reading is (the window's oldest reference is kept, not dropped).
-#guard let (h, _) := holdVsPrev [0, 80, 10000, 10080, 10160, 10240, 10320, 10400]; h > -1000 && h < -100
-
-/-- Per lit minute `n` whose fix follows a gap (`g = n − prev n > 1`): the
-    ring of its displacement over `k` minutes of motion, `k = 1 … g`
-    (`ring[k]`), and its density had he stayed through the gap (`still`).
-    A moving segment that owns only `k` of a gap's minutes scores its
-    displacement over those: the motion was in its own minutes. -/
-structure GapTable where
-  ring : FloatArray := FloatArray.empty
-  still : Float := 0
-  deriving Inhabited
-
-def gapTables (xy : Array (Option (Float × Float × Float))) (prev : Array (Option Nat))
-    (pp : PositionParams) (q : SpeedQuad) (qOf : Option (Nat → SpeedQuad) := none) : Array GapTable :=
-  (Array.range xy.size).map fun n =>
-    match xy[n]!, prev[n]! with
-    | some (x, y, R), some tp =>
-      if n - tp ≤ 1 then default else
-      match xy[tp]! with
-      | some (xp, yp, Rp) =>
-        let d2 := (x - xp) * (x - xp) + (y - yp) * (y - yp)
-        let r := Float.sqrt d2
-        let g := n - tp
-        let ring := (List.range (g + 1)).foldl (fun acc k =>
-          acc.push (if k == 0 then ZERO else
-            moveLog pp (match qOf with | some f => f k | none => q) r (Verified.FloatConst.natToFloat k) R Rp)) FloatArray.empty
-        { ring, still := stillLog pp d2 (Verified.FloatConst.natToFloat g) R Rp }
-      | none => default
-    | _, _ => default
-
-/-- Per stay segment `(d, e)` at `triOff maxD e + d − 1`, the log density of
-    its fixes: from each start, an assumed-density filter over the spot,
-    collapsed to one Gaussian per minute. A fix is the spot plus the noise
-    mixture; since the last lit minute the spot stayed or moved at least once.
-    Every stay's spot starts given the last fix before: reached from it at
-    the boundary's mean speed `reachM` (metres a minute), and for a listed
-    place inside its footprint as well; with the boundary's outlier share
-    `reachEps` from anywhere (the footprint alone, or the broad prior
-    `broad`). So a listed and a placeless stay are compared on the same
-    question: where is the first fix, given where he was. -/
-def spotTable (xy : Array (Option (Float × Float × Float))) (prev : Array (Option Nat))
-    (pp : PositionParams) (start : SpotStart) (reachM reachEps : Float) (broad : Array Float)
-    (maxD : Nat) (nearR : Float := ZERO) : FloatArray := Id.run do
-  let T := xy.size
-  let mut out := Verified.FloatConst.floats (Verified.Hsmm.triOff maxD T) ZERO
-  let tm2 := pp.tm * pp.tm
-  let comps := noiseComps pp
-  -- The components unboxed, each weight's log once.
-  let nc := comps.size
-  let cLw : FloatArray := ⟨comps.map fun (w, _) => Float.log w⟩
-  let cEx : FloatArray := ⟨comps.map (·.2)⟩
-  let l1r := Float.log (ONE - pp.rho)
-  -- One row: the filter from start `s0`, its values for `d = 1, 2, …`. With
-  -- `atPin` the spot starts at the pin, the fix before not asked (a row
-  -- whose earlier fixes were all strays).
-  let row := fun (s0 : Nat) (atPin : Bool) => Id.run do
-    let mut vals := FloatArray.emptyWithCapacity maxD
-    let mut mx := ZERO
-    let mut my := ZERO
-    let mut V := ZERO
-    let mut seen := false
-    let mut dark := 0
-    let mut tot := ZERO
-    for d in [1:maxD + 1] do
-      let e := s0 + d - 1
-      if e ≥ T then break
-      match xy[e]! with
-      | none => dark := dark + 1
-      | some (x, y, R) =>
-        if !seen then
-          -- Where the spot starts, given the last fix before: reached from it
-          -- across the boundary (a 2-D Gaussian of the boundary's mean speed
-          -- over the gap), and for a listed place inside its footprint too —
-          -- the two together, normalised. With the boundary's outlier share
-          -- he came from anywhere: the footprint alone, or the broad prior.
-          let before : Option (Float × Float × Float) := if atPin then none else match prev[s0]! with
-            | some tp => match xy[tp]! with
-              | some (xp, yp, Rp) =>
-                let g := Verified.FloatConst.natToFloat (e - tp)
-                some (xp, yp, Rp + reachM * reachM * g * g)
-              | none => none
-            | none => none
-          -- Gaussian starts `(log weight, mean, variance)`, and the broad
-          -- prior's share for a placeless spot (the fix where it is).
-          let (starts, flat) : Array (Float × Float × Float × Float) × Option Float :=
-            match start, before with
-            | .pin px py v0, some (xp, yp, vr) =>
-              let vs := ONE / (ONE / v0 + ONE / vr)
-              (#[(Float.log (ONE - reachEps), vs * (px / v0 + xp / vr), vs * (py / v0 + yp / vr), vs),
-                 (Float.log reachEps, px, py, v0)], none)
-            | .pin px py v0, none => (#[(ZERO, px, py, v0)], none)
-            | .placeless, some (xp, yp, vr) =>
-              (#[(Float.log (ONE - reachEps), xp, yp, vr)], some (Float.log reachEps + broad.getD e ZERO))
-            | .placeless, none => (#[], some (broad.getD e ZERO))
-          let mut m := Verified.FloatConst.negInf
-          let mut sw := ZERO
-          let mut sx := ZERO
-          let mut sy := ZERO
-          let mut sq := ZERO
-          -- Offsets from the fix itself; the broad share's spot is the fix.
-          let parts : Array (Float × Float × Float × Float) := Id.run do
-            let mut acc : Array (Float × Float × Float × Float) := #[]
-            for (lw, cx, cy, vc) in starts do
-              for (w, ex) in comps do
-                let kk := vc / (vc + R + ex)
-                let d2 := (x - cx) * (x - cx) + (y - cy) * (y - cy)
-                acc := acc.push (lw + Float.log w + logN2 d2 (vc + R + ex),
-                  (cx - x) * (ONE - kk), (cy - y) * (ONE - kk), vc * (ONE - kk))
-            match flat with
-            | some lf => acc := acc.push (lf, ZERO, ZERO, R)
-            | none => pure ()
-            return acc
-          for (lm, ax, ay, vv) in parts do
-            if lm > m then
-              let r := Float.exp (m - lm)
-              sw := sw * r + ONE
-              sx := sx * r + ax
-              sy := sy * r + ay
-              sq := sq * r + (vv + (ax * ax + ay * ay) / TWO)
-              m := lm
-            else
-              let wgt := Float.exp (lm - m)
-              sw := sw + wgt
-              sx := sx + wgt * ax
-              sy := sy + wgt * ay
-              sq := sq + wgt * (vv + (ax * ax + ay * ay) / TWO)
-          tot := tot + m + Float.log sw
-          let ox := sx / sw
-          let oy := sy / sw
-          V := max (sq / sw - (ox * ox + oy * oy) / TWO) ZERO
-          mx := x + ox
-          my := y + oy
-          seen := true
-        else
-          let d2 := (x - mx) * (x - mx) + (y - my) * (y - my)
-          -- The spot since the last lit minute: stayed, or moved.
-          let k := Verified.FloatConst.natToFloat (dark + 1)
-          let lStill := k * l1r
-          let still := Float.exp lStill
-          let twoMoves := still < ONE
-          let lMoved := if twoMoves then Float.log (ONE - still) else Verified.FloatConst.negInf
-          -- A move redraws the spot inside the place: however many moves
-          -- since the last lit minute, one spread.
-          let vMove := V + tm2
-          -- One pass over the components (stayed or moved, × the noise
-          -- mixture): the log-sum-exp from a running maximum, and the
-          -- posterior's moments, each weight taken relative to it.
-          let mut m := Verified.FloatConst.negInf
-          let mut sw := ZERO
-          let mut sx := ZERO
-          let mut sy := ZERO
-          let mut sq := ZERO
-          for j in [0:(if twoMoves then 2 else 1)] do
-            let (lpm, Vp) := if j == 0 then ((if twoMoves then lStill else ZERO), V) else (lMoved, vMove)
-            for ci in [0:nc] do
-              let ex := cEx[ci]!
-              let lm := lpm + cLw[ci]! + logN2 d2 (Vp + R + ex)
-              let kk := Vp / (Vp + R + ex)
-              -- The component's posterior mean as an offset from the spot.
-              let ax := kk * (x - mx)
-              let ay := kk * (y - my)
-              let vv := Vp * (ONE - kk)
-              if lm > m then
-                let r := Float.exp (m - lm)
-                sw := sw * r + ONE
-                sx := sx * r + ax
-                sy := sy * r + ay
-                sq := sq * r + (vv + (ax * ax + ay * ay) / TWO)
-                m := lm
-              else
-                let wgt := Float.exp (lm - m)
-                sw := sw + wgt
-                sx := sx + wgt * ax
-                sy := sy + wgt * ay
-                sq := sq + wgt * (vv + (ax * ax + ay * ay) / TWO)
-          tot := tot + m + Float.log sw
-          -- The spot's posterior, collapsed to one Gaussian: its mean, and its
-          -- per-axis variance as the mixture's second moment less the mean's.
-          let ox := sx / sw
-          let oy := sy / sw
-          V := max (sq / sw - (ox * ox + oy * oy) / TWO) ZERO
-          mx := mx + ox
-          my := my + oy
-          seen := true
-        dark := 0
-      vals := vals.push tot
-    return vals
-  match start with
-  | .placeless =>
-    for s0 in [0:T] do
-      let r := row s0 false
-      for i in [0:r.size] do
-        out := out.set! (Verified.Hsmm.triOff maxD (s0 + i) + i) r[i]!
-    return out
-  | .pin px py v0 =>
-    -- A row whose first fixes are far from the pin (beyond `nearR`): each
-    -- is a stray and the spot stays at the pin, so up to the first near fix
-    -- `n` the row is the far rule's sum, and from `n` on it is the filter
-    -- from `n` at the pin — one per `n`, shared by every row it serves.
-    let far : Array Float := xy.map fun f => match f with
-      | some (x, y, R) => fixLog pp ((x - px) * (x - px) + (y - py) * (y - py)) v0 R
-      | none => ZERO
-    let isNear : Array Bool := xy.map fun f => match f with
-      | some (x, y, _) => (x - px) * (x - px) + (y - py) * (y - py) ≤ nearR * nearR
-      | none => false
-    let farPre : Array Float := far.foldl (fun acc v => acc.push (acc.back! + v)) #[ZERO]
-    let (nextNear, firstLit) : Array Nat × Array Nat := Id.run do
-      let mut nn := Array.replicate (T + 1) T
-      let mut fl := Array.replicate (T + 1) T
-      for i in [0:T] do
-        let t := T - 1 - i
-        nn := nn.set! t (if isNear[t]! then t else nn[t + 1]!)
-        fl := fl.set! t (if xy[t]!.isSome then t else fl[t + 1]!)
-      return (nn, fl)
-    let mut cache : Std.HashMap Nat FloatArray := {}
-    for s0 in [0:T] do
-      let f := firstLit[s0]!
-      if f < T && isNear[f]! then
-        let r := row s0 false
-        for i in [0:r.size] do
-          out := out.set! (Verified.Hsmm.triOff maxD (s0 + i) + i) r[i]!
-      else
-        let n := nextNear[s0]!
-        let tail : FloatArray := if n ≥ T then FloatArray.empty else
-          match cache.get? n with
-          | some r => r
-          | none => row n true
-        if n < T && !cache.contains n then cache := cache.insert n tail
-        for d in [1:maxD + 1] do
-          let e := s0 + d - 1
-          if e ≥ T then break
-          let v := if e < n then farPre[e + 1]! - farPre[s0]!
-            else farPre[n]! - farPre[s0]! + (tail[e - n]?).getD ZERO
-          out := out.set! (Verified.Hsmm.triOff maxD e + (d - 1)) v
-    return out
-
--- A still minute is likelier still than walked, a walked one the reverse.
-private def ppT : PositionParams := { lam := 0.02, e1 := 0.16, r1 := 60, e2 := 0.02, r2 := 5000, e3 := 0.001, r3 := 600000, rho := 0.03, tm := 30 }
-private def walkQ : SpeedQuad := modeSpeedQuad 3.64 1.9 0 1 0.0094 300
-#guard fixLog ppT 4 1 1.5 > moveLog ppT walkQ 2 1 1.5 1.5 + 2
-#guard moveLog ppT walkQ 70 1 1.5 1.5 > fixLog ppT 4900 1 1.5 + 2
--- A ring is a density: over the plane it integrates to one (a coarse sum).
-#guard
-  let s := (List.range 400).foldl (fun a i =>
-    let r := (Verified.FloatConst.natToFloat i + HALF) * 1
-    a + Float.exp (ringLog walkQ r 1 10) * TWO * PI_F * r) ZERO
-  (s - 1).abs < 0.05
-
-/-- Per minute, the log density of the placeless stay's prior at its fix:
-    a Gaussian of bandwidth `h` around each listed place, averaged — the
-    prior `centreScore` integrates. `0` for a minute without a fix. -/
-def placelessLogAt (obs : Array ObsRow) (ref : Float × Float) (h : Float)
-    (places : Array (Float × Float)) : Array Float :=
-  obs.map fun o => match o.gps with
-    | none => ZERO
-    | some g =>
-      if places.isEmpty then ZERO else
-      let (x, y) := localXY ref g.lat g.lon
-      let v := h * h
-      let r2 := fun (p : Float × Float) => (x - p.1) * (x - p.1) + (y - p.2) * (y - p.2)
-      let near := places.foldl (fun a p => min a (r2 p)) (r2 places[0]!)
-      Float.log (places.foldl (fun a p => a + Float.exp ((near - r2 p) / (TWO * v))) ZERO)
-        - near / (TWO * v) - Float.log (TWO * PI_F * v) - Float.log (Verified.FloatConst.natToFloat places.size)
-private def LOG_TWO_PI : Float := 1.8378770664093453
-
-/-- `Prefix.hrR`, `hrMu`, `hrV` for every segment of at most `maxD` minutes:
-    from each start, a Kalman filter over the level and the noise (`HrLevel`;
-    an asleep or unlit minute is unobserved, so a night lets the level wander
-    back to its prior), the mode's mean `m` carried as a regression effect —
-    every prediction is affine in `m`, so the likelihood is a Gaussian in it
-    and one sweep serves every mode. One sweep forward from each start. -/
-def hrLevelTable (obs : Array ObsRow) (h : HrLevel) (maxD : Nat) : FloatArray × FloatArray × FloatArray := Id.run do
-  let T := obs.size
-  let n := Verified.Hsmm.triOff maxD T
-  let mut tR := Verified.FloatConst.floats n ZERO
-  let mut tMu := Verified.FloatConst.floats n ZERO
-  let mut tV := Verified.FloatConst.floats n ZERO
-  let tau2 := h.tau * h.tau
-  let su2 := h.su * h.su
-  let qL := tau2 * (ONE - h.rl * h.rl)
-  let qU := su2 * (ONE - h.phi * h.phi)
-  -- Each minute's heart rate less what its recent steps explain.
-  let wts := (Array.range ACTIVITY_LAGS).map fun k =>
-    Float.exp (ZERO - Verified.FloatConst.natToFloat k / h.ta)
-  let wSum := wts.foldl (· + ·) ZERO
-  let xAdj : Array (Option Float) := (Array.range T).map fun t =>
-    match obs[t]? with
-    | some o =>
-      if o.inBed then none else o.hr.map fun x =>
-        let a := (Array.range ACTIVITY_LAGS).foldl (fun acc k =>
-          if k > t then acc else
-          acc + wts[k]! * (((obs[t - k]?).bind (·.cadence)).getD ZERO)) ZERO
-        x - h.beta * a / wSum
-    | none => none
-  for s0 in [0:T] do
-    -- The state's mean `c + g·m`, its covariance `P`, and the sums the
-    -- likelihood is read from.
-    let mut c0 := ZERO
-    let mut c1 := ZERO
-    let mut g0 := ZERO
-    let mut g1 := ZERO
-    let mut p00 := tau2
-    let mut p01 := ZERO
-    let mut p11 := su2
-    let mut sLogF := ZERO
-    let mut sAA := ZERO
-    let mut sAB := ZERO
-    let mut sBB := ZERO
-    let mut nObs := ZERO
-    for d in [1:maxD + 1] do
-      let e := s0 + d - 1
-      if e ≥ T then break
-      if d > 1 then
-        c0 := h.rl * c0
-        c1 := h.phi * c1
-        g0 := h.rl * g0
-        g1 := h.phi * g1
-        p00 := h.rl * h.rl * p00 + qL
-        p01 := h.rl * h.phi * p01
-        p11 := h.phi * h.phi * p11 + qU
-      match xAdj[e]? with
-      | some (some x) =>
-            let f := p00 + TWO * p01 + p11
-            let a := x - (c0 + c1)
-            let b := ONE + (g0 + g1)
-            let k0 := (p00 + p01) / f
-            let k1 := (p01 + p11) / f
-            sLogF := sLogF + Float.log f
-            sAA := sAA + a * a / f
-            sAB := sAB + a * b / f
-            sBB := sBB + b * b / f
-            nObs := nObs + ONE
-            c0 := c0 + k0 * a
-            c1 := c1 + k1 * a
-            g0 := g0 - k0 * b
-            g1 := g1 - k1 * b
-            let h0 := p00 + p01
-            let h1 := p01 + p11
-            p00 := p00 - k0 * h0
-            p01 := p01 - k0 * h1
-            p11 := p11 - k1 * h1
-      | _ => pure ()
-      if sBB > ZERO then
-        let i := Verified.Hsmm.triOff maxD e + (d - 1)
-        tR := tR.set! i (ZERO - HALF * (sLogF + nObs * LOG_TWO_PI + sAA - sAB * sAB / sBB))
-        tMu := tMu.set! i (sAB / sBB)
-        tV := tV.set! i (ONE / sBB)
-  return (tR, tMu, tV)
-
-/-- A difference's log density under a two-part mixture `(share, sd₁, sd₂)`. -/
-private def mixLog (m : Float × Float × Float) (d : Float) : Float :=
-  let (pi, s1, s2) := m
-  lse2 (Float.log pi - HALF * Float.log (TWO * PI_F * s1 * s1) - d * d / (TWO * s1 * s1))
-    (Float.log (ONE - pi) - HALF * Float.log (TWO * PI_F * s2 * s2) - d * d / (TWO * s2 * s2))
-
-/-- The prefix with the awake drift's sums (`awakeDrift`). -/
-def withAwakeDrift (p : Prefix) (obs : Array ObsRow) (ad : AwakeDrift) : Prefix := Id.run do
-  let T := obs.size
-  let wts := (Array.range ACTIVITY_LAGS).map fun k =>
-    Float.exp (ZERO - Verified.FloatConst.natToFloat k / ad.ta)
-  let wSum := wts.foldl (· + ·) ZERO
-  let xAdj : Array (Option Float) := (Array.range T).map fun t =>
-    match obs[t]? with
-    | some o =>
-      if o.inBed then none else o.hr.map fun x =>
-        let a := (Array.range ACTIVITY_LAGS).foldl (fun acc k =>
-          if k > t then acc else
-          acc + wts[k]! * (((obs[t - k]?).bind (·.cadence)).getD ZERO)) ZERO
-        x - ad.beta * a / wSum
-    | none => none
-  let mut dc := #[ZERO]
-  let mut dw := #[ZERO]
-  let mut an := #[ZERO]
-  let mut asum := #[ZERO]
-  for t in [0:T] do
-    let (lc, lw) := match xAdj[t]!, (if t == 0 then none else xAdj[t - 1]!) with
-      | some x, some xp => (mixLog ad.calm (x - xp), mixLog ad.walk (x - xp))
-      | _, _ => (ZERO, ZERO)
-    let (n, sm) := match xAdj[t]! with | some x => (ONE, x) | none => (ZERO, ZERO)
-    dc := dc.push (dc.back! + lc)
-    dw := dw.push (dw.back! + lw)
-    an := an.push (an.back! + n)
-    asum := asum.push (asum.back! + sm)
-  return { p with hrDiffCalm := dc, hrDiffWalk := dw, hrAdjN := an, hrAdjSum := asum }
-
-/-- The prefix with its level tables (`hrLevelTable`). -/
-def withHrLevel (p : Prefix) (obs : Array ObsRow) (h : HrLevel) (maxD : Nat) : Prefix :=
-  let (hrR, hrMu, hrV) := hrLevelTable obs h maxD
-  { p with hrMaxD := maxD, hrR, hrMu, hrV }
-
 /-- A segment's sufficient statistics. -/
 structure Stats where
   n : Float
@@ -1250,22 +320,6 @@ structure Stats where
       the pairs inside the segment. -/
   bedDiffSq : Float := ZERO
   bedDiffN : Float := ZERO
-  /-- `Prefix.hrR`, `hrMu`, `hrV` at the segment; `hrV = 0` without them. -/
-  hrR : Float := ZERO
-  hrMu : Float := ZERO
-  hrV : Float := ZERO
-  /-- The same asleep differences with the pair across the segment's start:
-      every pair belongs to the segment it ends in, so a boundary hides none
-      (`sleepScore` under `position`). -/
-  bedDiffSqB : Float := ZERO
-  bedDiffNB : Float := ZERO
-  /-- `Prefix.hrDiffCalm` and the rest over the segment's minutes (the pair
-      across its start the segment's). -/
-  hrDiffCalm : Float := ZERO
-  hrDiffWalk : Float := ZERO
-  hrAdjN : Float := ZERO
-  hrAdjSum : Float := ZERO
-
 /-- A prefix array's share of the minute before `[lo, hi)` and the minute
     after it; a minute off the day adds nothing. -/
 private def outside (a : Array Float) (lo hi : Nat) : Float :=
@@ -1291,16 +345,8 @@ def statsAt (p : Prefix) (d e : Nat) : Stats :=
    awakeRuns p lo hi,
    -- The pairs ending inside the segment: the prefix at `hi` less the one
    -- at `lo + 1`.
-   get p.bedDiffSq hi - get p.bedDiffSq (lo + 1), get p.bedDiffN hi - get p.bedDiffN (lo + 1),
-   hrAt p.hrR, hrAt p.hrMu, hrAt p.hrV,
-   get p.bedDiffSq hi - get p.bedDiffSq lo, get p.bedDiffN hi - get p.bedDiffN lo,
-   get p.hrDiffCalm hi - get p.hrDiffCalm lo, get p.hrDiffWalk hi - get p.hrDiffWalk lo,
-   get p.hrAdjN hi - get p.hrAdjN lo, get p.hrAdjSum hi - get p.hrAdjSum lo⟩
+   get p.bedDiffSq hi - get p.bedDiffSq (lo + 1), get p.bedDiffN hi - get p.bedDiffN (lo + 1)⟩
 where
-  /-- A level table's cell for this segment, `0` off the table. -/
-  hrAt (a : FloatArray) : Float :=
-    if p.hrMaxD == 0 || d == 0 || d > p.hrMaxD then ZERO
-    else (a[Verified.Hsmm.triOff p.hrMaxD e + (d - 1)]?).getD ZERO
   /-- The awake runs `[lo, hi)` spans, each's heart-rate statistics, when
       there are two or more. -/
   awakeRuns (p : Prefix) (lo hi : Nat) : Array (Float × Float × Float) := Id.run do
@@ -1336,10 +382,6 @@ def hrMarginal (sigmaW rho hrMean hrTau n sum sq : Float) : Float :=
     let v := hrTau * hrTau + s2 / nEff
     let between := -HALF * Float.log (TWO_PI * v) - (mean - hrMean) * (mean - hrMean) / (TWO * v)
     within + between
-
-/-- The awake heart rate under the drifting level at the mode's mean `m`. -/
-@[inline] def hrLevelScore (st : Stats) (m : Float) : Float :=
-  if st.hrV ≤ ZERO then ZERO else st.hrR - (m - st.hrMu) * (m - st.hrMu) / (TWO * st.hrV)
 
 /-- The segment's awake heart-rate marginal under one mode. -/
 def hrScore (p : Params) (m : ModeParams) (st : Stats) : Float :=
@@ -1389,65 +431,6 @@ def centreScore (st : Stats) (h : Float) (places : Array (Float × Float))
     - Float.log (Verified.FloatConst.natToFloat places.size) - Float.log (TWO_PI * v) + lse
   max gauss (Verified.Hsmm.Emissions.PLACE_DISTANCE_FLOOR * st.fixN)
 
-/-- Where a listed place's visits are centred: its pin in local metres and
-    the 2-D Student-t its visits teach (`pinPriorOf`), with the t's constant,
-    truncated at the radius the miner gathers a place's visits within. -/
-structure PinPrior where
-  x : Float
-  y : Float
-  nu : Float
-  s2 : Float
-  logC : Float
-  /-- The truncation radius, squared, and the log of the t's mass inside it. -/
-  r2Max : Float
-  logMass : Float
-  deriving Inhabited
-
-private def PI : Float := 3.141592653589793
-
-/-- A place's pin prior from the record's `(ν₀, t₀)` and its mined visits:
-    `n` visits whose centres sit `ss` m² (summed) off the pin. The pin is
-    their dwell-weighted mean, so `n` visits teach about `2(n − 1)` squared
-    coordinates: `ν = ν₀ + 2(n − 1)`, `s² = (ν₀t₀² + ss) / ν`. A visit is
-    one within `rMax` of the pin (the miner's cluster radius), so the t is
-    cut there: its mass inside is `1 − (1 + rMax²/(νs²))^(−ν/2)`. -/
-def pinPriorOf (pin : Float × Float) (nu0 t0 n ss rMax : Float) : PinPrior :=
-  let k := TWO * max ZERO (n - ONE)
-  let nu := nu0 + k
-  let s2 := (nu0 * t0 * t0 + ss) / nu
-  let r2Max := rMax * rMax
-  { x := pin.1, y := pin.2, nu, s2, r2Max
-    logC := Duration.logGamma ((nu + TWO) / TWO) - Duration.logGamma (nu / TWO)
-    logMass := Float.log (ONE - Float.exp (ZERO - nu / TWO * Float.log (ONE + r2Max / (nu * s2)))) }
-
-/-- A stay at a listed place, its centre integrated out as `centreScore`
-    does for a placeless one, its prior the place's pin prior: the 2-D
-    Student-t of `pp`, its scale widened by the segment centre's own `1/W`
-    (exact for a Gaussian, the t's scale mixture taken at its mode). The same
-    frame and floor as `centreScore`, so a listed and a placeless stay over
-    the same minutes differ only in where their centre is expected; a centre
-    beyond the truncation is the floor's, every fix an outlier. -/
-def listedCentreScore (st : Stats) (pp : PinPrior) : Float :=
-  if st.posW ≤ ZERO then ZERO else
-  let floor := Verified.Hsmm.Emissions.PLACE_DISTANCE_FLOOR * st.fixN
-  let xb := st.posWX / st.posW
-  let yb := st.posWY / st.posW
-  let r2 := (xb - pp.x) * (xb - pp.x) + (yb - pp.y) * (yb - pp.y)
-  if r2 > pp.r2Max then floor else
-  let scatter := max ZERO (st.posWRR - (st.posWX * st.posWX + st.posWY * st.posWY) / st.posW)
-  let s2 := pp.s2 + ONE / st.posW
-  let logT := pp.logC - Float.log (pp.nu * PI * s2)
-    - (pp.nu + TWO) / TWO * Float.log (ONE + r2 / (pp.nu * s2)) - pp.logMass
-  max (ZERO - HALF * scatter + Float.log (TWO_PI / st.posW) + logT) floor
-
--- A wide t is close to the Gaussian of the same scale: at the pin the two
--- agree (ten fixes keep it off the floor).
-#guard
-  let pp := pinPriorOf (0, 0) 1000 10 0 0 1000
-  let st : Stats := { n := 1, hrN := 0, hrSum := 0, hrSq := 0, fixN := 10,
-                      posW := 1, posWX := 0, posWY := 0, posWRR := 0 }
-  (listedCentreScore st pp - (Float.log TWO_PI - Float.log (TWO_PI * 101))).abs < 0.01
-
 /-- The segment's asleep heart-rate marginal, the same for every state
     (`Params.asleep`); `0` without it. -/
 def sleepScore (p : Params) (st : Stats) : Float :=
@@ -1461,10 +444,7 @@ def sleepScore (p : Params) (st : Stats) : Float :=
       let v := sp.hrTau * sp.hrTau
       let between := -HALF * Float.log (TWO_PI * v) - (mean - sp.hrMean) * (mean - sp.hrMean) / (TWO * v)
       let d2 := sp.diffSd * sp.diffSd
-      -- Under `position` the pair across the segment's start is the
-      -- segment's: splitting a night at a jump no longer hides the jump.
-      let (dq, dn) := if p.position.isSome then (st.bedDiffSqB, st.bedDiffNB) else (st.bedDiffSq, st.bedDiffN)
-      between + dn * (-HALF * Float.log (TWO_PI * d2)) - dq / (TWO * d2)
+      between + st.bedDiffN * (-HALF * Float.log (TWO_PI * d2)) - st.bedDiffSq / (TWO * d2)
     else hrMarginal sp.sigmaW sp.rho sp.hrMean sp.hrTau st.bedN st.bedSum st.bedSq
   | none => ZERO
 
@@ -1623,7 +603,7 @@ def speedRobust (p : Params) (mode : Mode) (gauss : Float) : Float :=
 def score (p : Params) (mode : Mode) (st : Stats) : Float :=
   sleepScore p st
     + match p.byMode.find? (·.1 == mode) with
-      | some (_, m) => (if p.hrLevel.isSome then hrLevelScore st m.hrMean else hrScore p m st) + fixScore m st
+      | some (_, m) => hrScore p m st + fixScore m st
       | none => ZERO
 
 /-! ### Tabulated
@@ -1706,22 +686,8 @@ private def idx (x : Float) : Nat := (x + HALF).toUInt64.toNat
       let s2 := q.p.sigmaW * q.p.sigmaW
       q.withinConst.getD hn ZERO - w * ssw / (TWO * s2)
         - HALF * t.logTwoPiV.getD hn ZERO - (mean - t.m.hrMean) * (mean - t.m.hrMean) * t.invTwoV.getD hn ZERO
-    -- One level per awake run the segment spans: a sleep resets it. Under
-    -- `hrLevel` the level drifts instead, and a night is unobserved minutes.
-    match q.p.awakeDrift with
-    | some _ =>
-      -- The drift: each minute's difference is the minute's own state's (the
-      -- part a journey's leg keeps); the segment's level about the mode's
-      -- mean is the segment's.
-      let diffs := if mode == .walking || mode == .cycling then st.hrDiffWalk else st.hrDiffCalm
-      let between := if st.hrAdjN < ONE then ZERO else
-        let mean := st.hrAdjSum / st.hrAdjN
-        let v := t.m.hrTau * t.m.hrTau
-        ZERO - HALF * Float.log (TWO_PI * v) - (mean - t.m.hrMean) * (mean - t.m.hrMean) / (TWO * v)
-      (fix + diffs, between)
-    | none =>
-    let hr := if q.p.hrLevel.isSome then hrLevelScore st t.m.hrMean
-      else if st.runs.isEmpty then level st.hrN st.hrSum st.hrSq
+    -- One level per awake run the segment spans: a sleep resets it.
+    let hr := if st.runs.isEmpty then level st.hrN st.hrSum st.hrSq
       else st.runs.foldl (fun acc (n, sm, sq) => acc + level n sm sq) ZERO
     (fix, hr)
 
@@ -1734,9 +700,9 @@ private def pTest : Params :=
   { sigmaW := 8, rho := 0.8
     byMode := [(.stationary, ⟨84, 9, 0.09, 0.064⟩), (.train, ⟨89, 9, 2.55, 1.04⟩)]
     disp := [(.stationary, ⟨3.5, 1.5, 0.006⟩), (.train, ⟨3.4, 0.6, 0.025⟩)] }
-#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ + 10
-#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ - 1
-#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩ == 0
+#guard score pTest .stationary ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ + 10
+#guard score pTest .stationary ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ > score pTest .train ⟨300, 0, 0, 0, 300, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ - 1
+#guard score pTest .walking ⟨300, 0, 0, 0, 0, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩ == 0
 -- An 84-minute café at 30 m scatter, 150 m place radius, 300 m from the
 -- nearest of three listed places at a 300 m bandwidth: a few nats of scatter
 -- and one Occam factor, not 168.
@@ -1759,7 +725,7 @@ private def stop5 : Stats :=
     anchorW := 2 / 22500, anchorWX := 0, anchorWY := 0 }
 #guard centreScore stop5 300 threePlaces true > -3
 -- The tables agree with the closed form.
-private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO⟩
+private def stT : Stats := ⟨120, 90, 7650, 652000, 40, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 0, 0, #[], ZERO, ZERO⟩
 #guard Float.abs (scorePrepared (prepare pTest 400) .train stT - score pTest .train stT) < 1e-6
 #guard Float.abs (scorePrepared (prepare pTest 400) .stationary stT - score pTest .stationary stT) < 1e-6
 
