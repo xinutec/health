@@ -1,67 +1,30 @@
-//! Candidate OSM rows from the live mirror, for the fold's asks (#982, #1709).
+//! Candidate OSM rows from the live mirror, for the fold's asks: the
+//! production implementation of the row-source trait (the golden fixtures'
+//! [`RowSetSource`](crate::rowset_answerer::RowSetSource) is the other).
 //!
-//! [`RowSetSource`](crate::rowset_answerer::RowSetSource) answers from the rows
-//! a golden fixture carries, which is what made the day port checkable with no
-//! database. This is the other implementation of the same trait: the rows come
-//! from `osm_points`/`osm_lines` in production.
+//! # The SQL is a pre-filter; Lean scores
 //!
-//! # ⚠ The SQL is a PRE-FILTER. It is not allowed to score.
+//! The SQL selects candidates inside a bounding box and hands every one to Lean
+//! (`Verified.Geo.OsmSpatial`), which owns the distance, the order and the cap.
+//! `ST_Distance` on a LINESTRING measures to the nearest vertex, not the way, so
+//! scoring in MariaDB would be wrong.
 //!
-//! `osm-local.ts`'s `queryPoints`/`queryLines` compute the distance,
-//! order by it and `LIMIT 50`, all inside MariaDB. **None of that is copied
-//! here**, and the omission is the point rather than an oversight:
+//! # The box must contain Lean's scoring window
 //!
-//!   * `ST_Distance` on a multi-vertex LINESTRING returns the distance to the
-//!     nearest VERTEX, not the perpendicular distance to the way. That is the
-//!     defect health #413 is open about — worst measured 37.96 m on
-//!     `nearbyWays` — and reproducing the `ORDER BY` would reproduce it;
-//!   * the cap and the ordering belong to `Verified.Geo.OsmSpatial`, which is
-//!     where every other caller of this trait already gets them from.
+//! A row the SQL drops is a row Lean never sees, so the box may only
+//! over-include. Its half-width is `radiusM / min(111000, 111000·cos lat)` in
+//! both axes, which contains `queryLines`' degree-space window
+//! (`radiusM / (111320·cos lat)`) and `queryPoints`' metre window
+//! (`haversineAt`), widened by [`SUPERSET_MARGIN`].
 //!
-//! So the statements below select CANDIDATES inside a bounding box and hand
-//! every one of them to Lean.
+//! # Coverage
 //!
-//! Measured when the oracle swapped (#413, 2026-08-02): across every day both
-//! oracles replayed, 0 of 315 timeline states changed `place` or `wayName`.
-//! This source also drops the `LIMIT 50`; the corpus has been blessed against
-//! it since.
-//!
-//! # ⚠ The box must be a SUPERSET of Lean's scoring window
-//!
-//! A row the SQL drops is a row Lean never sees, so the pre-filter can only be
-//! allowed to over-include. The box is the TypeScript's own — half-width
-//! `radiusM / min(111000, 111000·cos lat)` in BOTH axes — and it contains both
-//! of Lean's windows:
-//!
-//!   * `queryLines` scores in DEGREE space against `radiusM / (111320·cos lat)`,
-//!     which is the smaller half-width of the two (111320 > 111000);
-//!   * `queryPoints` scores in METRES with `haversineAt`. The box's latitude
-//!     half-width is `radiusM · 111000·cos(lat) / 111000` ≥ `radiusM` in metres
-//!     for every `lat`, and its longitude half-width is `radiusM` exactly.
-//!
-//! Both hold for the whole inhabited range. The constants are deliberately the
-//! mirror's own `111000` rather than the Kalman filter's `111320` — see
-//! `Verified.Geo.OsmCoverage.METERS_PER_DEG_LAT`, which says the same thing
-//! about the same number.
-//!
-//! # The coverage gate, and what a decline means here
-//!
-//! The TypeScript's `ensureCovered` fetched from Overpass when an area had not
-//! been filled. This source does not: it asks
-//! [`lean::osm_covered`](crate::lean::osm_covered), and where the TypeScript
-//! fetched, this DECLINES. A decline is honest — the fold records the key as
-//! unanswerable and the caller can see it — where an empty row list would be the
-//! claim that there are no roads there (#976).
-//!
-//! ⚠ **AND IT RECORDS THE DECLINE.** The write half is [`crate::osm_mirror`],
-//! drained beside the pod by [`crate::fetch_drain`] (#1889): a fetch here would
-//! put an Overpass round trip on the serving path, which is what the queue
-//! exists to avoid (#1076, #1658).
-//!
-//! The three matcher reads — `walkableRoads`, `buildingsNear`,
-//! `drivableRoads` — come through here too (#1709), on the same pool and
-//! through the same coverage gate, so a decline on the walk path is recorded
-//! exactly as one on the naming path is.
+//! Before any read, [`lean::osm_covered`](crate::lean::osm_covered) decides
+//! whether the mirror holds this area for this bucket. If not, the source
+//! declines (an empty list would claim there are no roads) and records the
+//! decline for [`crate::fetch_drain`] to fetch, off the serving path. The three
+//! matcher reads (`walkableRoads`, `buildingsNear`, `drivableRoads`) go through
+//! the same gate.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -74,12 +37,9 @@ use crate::fold_payload::bits;
 use crate::lean::{self, CoverageRow};
 use crate::rowset_answerer::RowSource;
 
-/// How far beyond the asked disc a ROAD corridor read reaches. The corridor
-/// fetch samples the leg and unions the ways around each sample; the margin is
-/// what lets a way that starts just outside one sample's disc still be found.
-/// ⚠ Applied AFTER the ask key is formed, so moving it changes production and
-/// changes nothing any fixture answers — which is why it is stamped into a
-/// capture's `meta` (`osm_trace::capture_inputs`).
+/// How far beyond the asked disc a road corridor read reaches, so a way that
+/// starts just outside one sample's disc is still found. Applied after the ask
+/// key is formed, so it is stamped into a capture's `meta`.
 pub const ROAD_CORRIDOR_MARGIN_M: f64 = 400.0;
 
 /// As above, for building outlines around a walk.
@@ -139,68 +99,30 @@ fn margin_box_wkt(lat: f64, lon: f64, radius_m: f64, margin_m: f64) -> String {
     )
 }
 
-/// How much larger than the TypeScript's box, and why it is not 1.
+/// How much the candidate box is widened beyond `radiusM`.
 ///
-/// # ⚠ The unwidened box clears Lean's window by 0.18%
-///
-/// The TypeScript's own half-width is `radiusM / min(111000, 111000·cos lat)`,
-/// and it only ever had to contain MariaDB's scoring, which happened inside the
-/// same query. This box feeds a DIFFERENT scorer, so what it has to contain is
-/// Lean's window, and the two clear each other by the ratio between constants
-/// that live in different files:
-///
-///   * points — `haversineAt` measures metres on a sphere of radius
-///     `LEAN_EARTH_R`, so one degree is ~111195 m. The box's half-width is
-///     `radiusM · 111195/111000` = 1.0018·`radiusM` in both axes;
-///   * lines — `queryLines` compares a degree-space distance against
-///     `radiusM / (111320·cos lat)`, and 111320/111000 is the same 1.0029.
-///
-/// **Measured, not reasoned:** shrinking the box by 1% loses rows on the corpus
-/// (`tests/suite/mirror_source.rs`, ablated 2026-08-22 — 4 of 7 ways at one query
-/// point); shrinking it by 0.1% does not. So the corpus sits inside that margin,
-/// and a change to any one of those three constants would silently start
-/// dropping the nearest way.
-///
-/// # Why widening is the safe direction here and not a moved goalpost
-///
-/// A row this box admits that Lean scores out costs one comparison and changes
-/// no answer; a row it excludes changes the answer with nothing to show for it.
-/// The two errors are not symmetric, so the margin buys real safety at a price
-/// of a few candidate rows at a 50–200 m radius. It is NOT a tolerance on a
-/// result — nothing downstream compares against it.
+/// The unwidened box clears Lean's window only by the ratio of constants in
+/// different files: 111195/111000 = 1.0018 for points (`haversineAt` on
+/// `LEAN_EARTH_R`), 111320/111000 = 1.0029 for lines. Shrinking it by 1% loses
+/// rows on the corpus (`tests/suite/mirror_source.rs`). Widening is the safe
+/// direction: an extra row costs one comparison, a missing row changes the
+/// answer.
 const SUPERSET_MARGIN: f64 = 1.05;
 
 /// A backstop, not a cap the queries may spend.
 ///
-/// The point buckets are asked with 50–200 m radii
-/// (`fold_payload::default_radius_m`), so a bucket inside one box is tens of
-/// rows in the densest city, and reaching this many means the box is not the
-/// box this module thinks it is: the run ERRORS rather than answering from a
-/// truncated set — a silently truncated candidate list scores as "the nearest
-/// way is 40 m away" with no way to tell it from the truth.
+/// The point buckets ask 50–200 m radii, so reaching this means the box is
+/// wrong: the run errors rather than scoring a truncated list ("nearest way 40 m
+/// away" would be indistinguishable from the truth).
 ///
-/// ⚠ THE MATCHER READS ARE NOT THAT SHAPE, and they DECLINE here instead of
-/// erroring. A walk's disc is its own extent plus 120 m — routinely 500–1800 m
-/// (measured over the golden corpus 2026-09-25: 14 walkable-roads asks over
-/// 1 km, three within 300 rows of this cap, one AT it) — and the corridor box
-/// adds 400 m a side, so a central-London walk asks for 10,000–20,000 highway
-/// rows. Two production days (a 1.4 km and a 4.3 km disc) answered 400 for the
-/// whole day because one leg crossed this line. A declined leg draws as a raw
-/// chord and the day SAYS so (`declined_by_table`); a failed day draws nothing.
+/// The matcher reads are larger (a walk's extent plus a 400 m corridor, often
+/// 10 000–20 000 highway rows in central London) and decline here instead: a
+/// declined leg draws as a chord and the day says so (`declined_by_table`).
 pub const CANDIDATE_LIMIT: i64 = 20_000;
 
-/// SQL statements this source has issued, process-wide.
-///
-/// ⚠ A DENOMINATOR, not a performance counter. A round trip costs far more over
-/// `scripts/prod-db.sh`'s SSH tunnel than inside the cluster (measured
-/// 2026-08-17: 54 s in-cluster vs 64 min tunnelled, same work), so a duration
-/// measured from the Mac says nothing about production unless the query count is
-/// known.
-///
-/// ⚠ "The fold is dominated by round trips" is REFUTED (#1071): halving the
-/// queries — 489 to 273 on one day — moved fold time by 0-17%. That claim came
-/// from dividing fold time by query count, which assumes what it appears to
-/// measure. [`take_db_nanos`] exists so the question is answered, not inferred.
+/// SQL statements this source has issued, process-wide: the denominator for any
+/// timing, since a round trip through the tunnel costs far more than in the
+/// cluster. [`take_db_nanos`] measures the time itself.
 static QUERIES: AtomicU64 = AtomicU64::new(0);
 
 /// Nanoseconds spent INSIDE [`MirrorSource::block`] — the database, and nothing
@@ -213,11 +135,8 @@ pub fn take_queries() -> u64 {
     QUERIES.swap(0, Ordering::Relaxed)
 }
 
-/// Read the accumulated database time and reset it.
-///
-/// ⚠ Wall clock inside `block_on`, so it includes waiting for the connection
-/// pool as well as the query. That is the right boundary for "would fewer
-/// queries help": pool contention is a cost of issuing queries too.
+/// Read the accumulated database time and reset it. Wall clock inside
+/// `block_on`, so pool waits count: they are a cost of issuing queries too.
 pub fn take_db_nanos() -> u64 {
     DB_NANOS.swap(0, Ordering::Relaxed)
 }
@@ -281,19 +200,13 @@ impl CachedRow {
     }
 }
 
-/// The mirror's lines and points, read by tile and kept for the fold.
-///
-/// An ask's candidates are the cached features whose box meets its candidate
-/// box — the predicate the per-ask SQL applied (`MBRIntersects`) — so the
-/// candidate set is the one the database would have returned, read once. The
-/// order is the features' key, `(osm_type, osm_id)`: the database returned its
-/// spatial index's order, which nothing defined, and Lean's stable sort by
-/// distance carried that order into ties.
 /// A tile of one bucket of one table: `(table, bucket, lat index, lon index)`.
 type TileKey = (Geo, String, i64, i64);
 /// A feature's key in its table: `(osm_type, osm_id)`.
 type FeatureKey = (String, i64);
-
+/// The mirror's lines and points, read by tile and kept for the fold. An ask's
+/// candidates are the cached features whose box meets its candidate box (the
+/// SQL's `MBRIntersects`), in feature-key order `(osm_type, osm_id)`.
 #[derive(Default)]
 struct TileCache {
     fetched: HashSet<TileKey>,
@@ -311,43 +224,33 @@ fn boxes_meet(a: &[f64; 4], b: &[f64; 4]) -> bool {
 
 pub struct MirrorSource {
     pool: MySqlPool,
-    /// ⚠ The runtime this blocks on, captured by the caller. See
-    /// [`with_mirror_answerer`] — this type must not be driven from async code.
+    /// The runtime this blocks on, captured by the caller (see
+    /// [`with_mirror_answerer`]).
     handle: tokio::runtime::Handle,
     /// The clock, owned by the host. Lean's staleness rule takes it as an
     /// argument so that the decision does not depend on when it was asked.
     now_ms: i64,
-    /// Coverage boxes per feature bucket, read once each. `readCoverage` is
-    /// "cheap (~tens of rows)" in the TypeScript and a day asks its buckets
-    /// dozens of times, so re-reading them would be the query this walk repeats
-    /// most.
+    /// Coverage boxes per feature bucket, read once each: a day asks each bucket
+    /// dozens of times.
     coverage: HashMap<String, Vec<CoverageRow>>,
     /// Coverage VERDICTS, keyed by the question rather than the bucket: the
     /// local-data probe is two indexed queries and the same coordinate is asked
     /// for several tables.
     decided: HashMap<(String, u64, u64, u64), bool>,
-    /// Every distinct railway line name, read once. ~1k strings.
-    ///
-    /// ⚠ Cached for the same reason the TypeScript caches it, which is not
-    /// tidiness: without it each `stationsOnLine` is a `DISTINCT name` scan, and
-    /// a day asks about a dozen lines.
+    /// Every distinct railway line name, read once (~1k strings): each
+    /// `stationsOnLine` would otherwise scan for them.
     rail_names: Option<Vec<String>>,
-    /// Every railway station point, read once. ~1.2k rows.
-    ///
-    /// ⚠ Pre-fetched WHOLE rather than per-line bbox, which is the TypeScript's
-    /// measured choice: a London-wide MBR query against a million-row
-    /// `osm_points` takes ~30 s even when only ~100 stations match, because the
-    /// spatial index is poorly suited to a box tens of km on a side. One small
-    /// indexed read plus an in-memory filter per line is far cheaper.
+    /// Every railway station point, read once (~1.2k rows). Whole, not per line:
+    /// a London-wide MBR query against `osm_points` takes ~30 s, where one small
+    /// indexed read plus an in-memory filter is cheap.
     rail_stations: Option<Vec<Value>>,
     /// The line and point reads, by tile ([`TileCache`]).
     tiles: TileCache,
 }
 
 impl MirrorSource {
-    /// ⚠ Call from a BLOCKING thread only. [`with_mirror_answerer`] is the
-    /// supported entry point; constructing this on a runtime worker and letting
-    /// a query reach it aborts the process rather than returning an error.
+    /// ⚠ Call from a blocking thread only ([`with_mirror_answerer`]): a query
+    /// reached from a runtime worker aborts the process.
     pub fn new(pool: MySqlPool, handle: tokio::runtime::Handle, now_ms: i64) -> Self {
         Self {
             rail_names: None,
@@ -407,9 +310,8 @@ impl MirrorSource {
              FROM {table} WHERE feature_type IN ({placeholders}) \
              AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) LIMIT ?"
         );
-        // ⚠ `AssertSqlSafe`: audited — the interpolations are a table name and
-        // its geometry columns from the match above and a run of `?`
-        // placeholders whose length is `want.len()`. Every value is bound.
+        // `AssertSqlSafe`: the interpolations are a table name and geometry
+        // columns from the match above and a `?` run; every value is bound.
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
         for b in &want {
             q = q.bind(*b);
@@ -443,9 +345,8 @@ impl MirrorSource {
                 let cached = match geo {
                     Geo::Lines => {
                         let wkt: String = r.try_get("wkt").context("osm_lines.geom has no WKT")?;
-                        // ⚠ `parse_linestring_wkt` swaps to `(lat, lon)`: WKT writes
-                        // `lon lat`, and Lean's `lineDistDeg` reads the first as the
-                        // latitude — the other order gives plausible wrong distances.
+                        // `parse_linestring_wkt` swaps WKT's `lon lat` to `(lat,
+                        // lon)`, the order Lean's `lineDistDeg` reads.
                         let pts = parse_linestring_wkt(&wkt);
                         // A way with one vertex is not a line — same guard as before.
                         if pts.len() < 2 {
@@ -531,16 +432,10 @@ impl MirrorSource {
             .collect()
     }
 
-    /// The pre-filter box, as `[min_lat, max_lat, min_lon, max_lon]`.
-    ///
-    /// Half-width `radiusM / min(METERS_PER_DEG_LAT, metersPerDegLon(lat))` in
-    /// BOTH axes — the TypeScript's own. See the module note for why this
-    /// contains Lean's scoring window; `tests/suite/mirror_source.rs` checks that claim
-    /// against the corpus by comparing answers rather than trusting it.
-    ///
-    /// Public because that test needs the predicate the SQL applies, and a test
-    /// that reimplements the box from the same paragraph would agree with a
-    /// wrong box.
+    /// The pre-filter box, `[min_lat, max_lat, min_lon, max_lon]`: half-width
+    /// `radiusM / min(METERS_PER_DEG_LAT, metersPerDegLon(lat))` in both axes
+    /// (see the module note). Public so `tests/suite/mirror_source.rs` can test
+    /// the predicate the SQL applies, not a reimplementation of it.
     pub fn candidate_box(lat: f64, lon: f64, radius_m: f64) -> [f64; 4] {
         const METERS_PER_DEG_LAT: f64 = 111_000.0;
         let m_per_deg_lon = METERS_PER_DEG_LAT * lat.to_radians().cos();
@@ -548,21 +443,17 @@ impl MirrorSource {
         [lat - d, lat + d, lon - d, lon + d]
     }
 
-    /// `mbrBoxWkt` — [`candidate_box`](Self::candidate_box) as a closed ring.
-    ///
-    /// ⚠ WKT writes `lon lat`, and the stored geometry was built from
-    /// `POINT(lon lat)`. Swapping the pair here produces a box in the wrong
-    /// hemisphere that still parses.
+    /// [`candidate_box`](Self::candidate_box) as a closed WKT ring. ⚠ WKT writes
+    /// `lon lat`; the other order is a box in the wrong hemisphere that still
+    /// parses.
     fn mbr_box_wkt(lat: f64, lon: f64, radius_m: f64) -> String {
         let [s, n, w, e] = Self::candidate_box(lat, lon, radius_m);
         format!("POLYGON(({w} {s},{e} {s},{e} {n},{w} {n},{w} {s}))")
     }
 
-    /// Run one query against the pool, blocking on the captured runtime.
-    ///
-    /// ⚠ A FAILED QUERY IS AN ERROR, never a decline and never an empty answer.
-    /// health #976 is that distinction going wrong — a database that is down
-    /// producing the same answer as an area with no roads.
+    /// Run one query against the pool, blocking on the captured runtime. A
+    /// failed query is an error, never a decline or an empty answer: a database
+    /// that is down must not look like an area with no roads.
     fn block<T, E, F>(&self, label: &str, f: F) -> Result<T>
     where
         F: std::future::Future<Output = Result<T, E>>,
@@ -582,22 +473,14 @@ impl MirrorSource {
         out.map_err(Into::into)
     }
 
-    /// The coverage boxes for one bucket, read once.
-    ///
-    /// ⚠ `min_lat` and friends are `DECIMAL(9,6)`, which sqlx cannot decode into
-    /// `f64` without the `rust_decimal` feature this crate line deliberately does
-    /// not carry. `CAST(… AS CHAR)` then `str::parse` — CHAR and not DOUBLE,
-    /// because that is the path the TypeScript's driver already takes and
-    /// `str::parse` is correctly rounded, where `CAST(… AS DOUBLE)` moves the
-    /// rounding into MariaDB and the two arms would agree only by luck. The
-    /// first Rust loader in this crate to get this wrong decoded all 117 of
-    /// production's places to centroid 0.0 and still printed OK.
+    /// The coverage boxes for one bucket, read once. The `DECIMAL(9,6)` bounds
+    /// are cast to CHAR and parsed (sqlx cannot decode DECIMAL without
+    /// `rust_decimal`).
     fn coverage_rows(&mut self, bucket: &str) -> Result<&[CoverageRow]> {
         if !self.coverage.contains_key(bucket) {
-            // ⚠ The landmark bucket's boxes are read under the CURRENT venue
-            // vocabulary (`osm_mirror::venue_vocab`): a box fetched before a
-            // tag joined `VENUE_TAGS` is not coverage for it. Asked of Lean
-            // once per source, the same way the drain asks.
+            // The landmark bucket's boxes are read under the current venue
+            // vocabulary (`osm_mirror::venue_vocab`): a box fetched before a tag
+            // joined `VENUE_TAGS` is not coverage for it.
             let vocab = if bucket == crate::osm_mirror::VOCAB_BUCKET {
                 Some(crate::osm_mirror::venue_vocab(&crate::lean::venue_tags()?))
             } else {
@@ -616,16 +499,10 @@ impl MirrorSource {
         Ok(&self.coverage[bucket])
     }
 
-    /// The coverage rows that can decide a question at `(lat, lon)`: those
-    /// whose box contains the point.
-    ///
-    /// ⚠ A PRE-FILTER, NOT THE RULE. `decideCoverage` says covered when some
-    /// FRESH row contains the whole query box; a row that contains the query
-    /// box contains its centre, so dropping rows that miss the centre drops no
-    /// row the rule could accept, and the staleness test is per row. The rule
-    /// stays Lean's; this only stops the host serialising three hundred boxes
-    /// to ask about one point. `tests/suite/osm_coverage.rs` checks the two
-    /// verdicts agree on random rows.
+    /// The coverage rows whose box contains `(lat, lon)`. A pre-filter, not the
+    /// rule: `decideCoverage` needs a fresh row containing the whole query box,
+    /// which contains the centre, so nothing it could accept is dropped.
+    /// `tests/suite/osm_coverage.rs` checks the verdicts agree.
     pub fn boxes_around(lat: f64, lon: f64, rows: &[CoverageRow]) -> Vec<CoverageRow> {
         rows.iter()
             .filter(|c| {
@@ -635,19 +512,13 @@ impl MirrorSource {
             .collect()
     }
 
-    /// "Do we have ANY data here for this bucket?" — `hasLocalData`, one indexed
-    /// `LIMIT 1` per table, lines first so a hit short-circuits the second.
+    /// Whether the mirror has any row of this bucket here (`hasLocalData`): one
+    /// indexed `LIMIT 1` per table, lines first. A sibling bucket's fetch can
+    /// leave rows without a matching coverage box.
     ///
-    /// It exists because a sibling bucket's fetch can have populated this
-    /// bucket's rows without leaving a matching coverage row, and re-asking
-    /// Overpass for an area that already has data is how the TypeScript once
-    /// spent minutes per request looping on ETIMEDOUT.
-    ///
-    /// ⚠ WRITTEN OUT TWICE ON PURPOSE. The obvious form loops over
-    /// `["osm_lines", "osm_points"]` and picks the statement inside the loop,
-    /// which hands `sqlx::query` a variable — and `DL-SQLX-SCHEMA-TRUTH` refuses
-    /// that, because SQL reaching the driver through a binding cannot be checked
-    /// against the schema. A table name is not something to parameterise anyway.
+    /// Written out twice, not looped over table names: a statement chosen in a
+    /// loop reaches `sqlx::query` through a variable, which the schema lint
+    /// cannot check.
     fn has_local_data(&self, bucket: &str, lat: f64, lon: f64, radius_m: f64) -> Result<bool> {
         let poly = Self::mbr_box_wkt(lat, lon, radius_m);
         let in_lines = self
@@ -680,11 +551,8 @@ impl MirrorSource {
         Ok(in_points.is_some())
     }
 
-    /// May the mirror be read for this bucket at this point?
-    ///
-    /// The TypeScript's `ensureCovered` without its fetch: coverage rows, then
-    /// the local-data probe only when they say no — the probe is two queries and
-    /// most questions are answered by the boxes alone.
+    /// May the mirror be read for this bucket at this point? Coverage rows first;
+    /// the local-data probe (two queries) only when they say no.
     fn covered(&mut self, bucket: &str, lat: f64, lon: f64, radius_m: f64) -> Result<bool> {
         let k = (
             bucket.to_string(),
@@ -697,44 +565,29 @@ impl MirrorSource {
         }
         let now = self.now_ms;
         let boxes = Self::boxes_around(lat, lon, self.coverage_rows(bucket)?);
-        // ⚠ TIMED, and not under `foldLeanMs`: that timer is the scoring of
-        // candidate rows. This is a second Lean round trip per (bucket, point),
-        // and it was the largest unmeasured piece of an ask (#1921): shipping
-        // every box the bucket had — 97 to 306 on the pod — it cost 2 ms a call,
-        // 476 calls and 950 ms on the heaviest smoke day.
+        // Timed apart from `foldLeanMs` (which is candidate scoring): a second
+        // Lean round trip per (bucket, point).
         let t0 = std::time::Instant::now();
         let mut covered = lean::osm_covered(lat, lon, radius_m, &boxes, now, false)
             .with_context(|| format!("coverage gate for {bucket}"))?;
         crate::fold::LEDGER.charge("cover", t0.elapsed().as_nanos() as u64);
-        // ⚠ NOT for the landmark bucket. The probe exists because a SIBLING
-        // bucket's fetch can leave rows without a coverage box; nothing but the
-        // landmark fetch writes landmarks, so for them it is only a bypass of
-        // the box's date and vocabulary (`osm_mirror::VOCAB_BUCKET`), and a
-        // vocabulary the box was not fetched under is exactly what must decline
-        // (#1891, 2026-10-03: every area he had been kept its old landmark box).
+        // Not for the landmark bucket: only the landmark fetch writes landmarks,
+        // so the probe would only bypass the box's date and vocabulary, which
+        // must decline.
         if !covered
             && bucket != crate::osm_mirror::VOCAB_BUCKET
             && self.has_local_data(bucket, lat, lon, radius_m)?
         {
-            // ⚠ Asked through Lean again rather than set to `true` here.
-            // `hasLocalData` short-circuits staleness as well as containment,
-            // and that trade is a rule — it belongs in `decideCoverage`, not in
-            // a `||` on this line.
+            // Through Lean again, not set here: `hasLocalData` overriding
+            // staleness is a rule, and rules live in `decideCoverage`.
             let t0 = std::time::Instant::now();
             covered = lean::osm_covered(lat, lon, radius_m, &boxes, now, true)
                 .with_context(|| format!("coverage gate for {bucket} with local data"))?;
             crate::fold::LEDGER.charge("cover", t0.elapsed().as_nanos() as u64);
         }
-        // ⚠ **RECORDED, NOT FETCHED** — the same trade `geocode` makes below,
-        // for the same reason. A decline used to leave no trace at all, so
-        // unmirrored ground stayed unmirrored on every fold forever: nothing in
-        // the tree wrote `osm_lines`/`osm_points`/`osm_coverage`, and the base
-        // mirror was frozen at whatever the TypeScript left (#1658). Fetching
-        // here would put an Overpass round trip inside a fold that already costs
-        // ~27 s on a heavy day (#1071).
-        //
-        // ⚠ Inside the memo, so one question is recorded once per source even
-        // though `nearbyWays` asks four buckets per coordinate.
+        // Recorded for the drain, not fetched here: an Overpass round trip has
+        // no place inside a fold. Inside the memo, so one question is recorded
+        // once even though `nearbyWays` asks four buckets per coordinate.
         if !covered
             && crate::osm_mirror::bucket_of(&crate::osm_mirror::queue_kind(bucket)).is_some()
         {
@@ -797,9 +650,8 @@ impl MirrorSource {
         radius_m: f64,
         subtypes: &[&str],
     ) -> Result<Option<Value>> {
-        // ⚠ BEFORE THE QUERY, because the query cannot tell the two cases
-        // apart: no rows over unfetched ground and no rows over empty ground are
-        // the same answer. Both way readers draw from `highway`.
+        // Before the query: no rows over unfetched ground and no rows over empty
+        // ground look the same. Both way readers draw from `highway`.
         if !self.covered("highway", lat, lon, radius_m)? {
             return Ok(None);
         }
@@ -813,10 +665,8 @@ impl MirrorSource {
              LIMIT ?",
             placeholders(subtypes.len())
         );
-        // ⚠ `AssertSqlSafe` because sqlx refuses a non-'static SQL string by
-        // default — a good rule, and this is the audited exception. The only
-        // runtime part of the statement is `placeholders(n)`, which emits `?`
-        // and commas; every value, each subtype included, is BOUND.
+        // `AssertSqlSafe`: the only runtime part is `placeholders(n)`; every
+        // value, each subtype included, is bound.
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
         for st in subtypes {
             q = q.bind(*st);
@@ -859,9 +709,8 @@ impl RowSource for MirrorSource {
         self.ways(lat, lon, radius_m, DRIVABLE_ROAD_SUBTYPES)
     }
 
-    /// Building outlines as closed rings. `None` declines, and this is the
-    /// bucket the gate was missing entirely until #1667: nothing declined a
-    /// building question, so no `building` box was ever queued.
+    /// Building outlines as closed rings. `None` declines, which also queues the
+    /// `building` box for fetching.
     fn buildings_near(&mut self, lat: f64, lon: f64, radius_m: f64) -> Result<Option<Value>> {
         if !self.covered("building", lat, lon, radius_m)? {
             return Ok(None);
@@ -922,12 +771,9 @@ impl RowSource for MirrorSource {
         Ok(Some(out))
     }
 
-    /// Point candidates, in `osmspatial`'s positional form, from the tiles.
-    ///
-    /// ⚠ The tiles read `ST_X` as LONGITUDE and `ST_Y` as latitude: the geometry
-    /// was built from `POINT(lon lat)` WKT. A coordinate read in the binary
-    /// protocol against the fixtures' text rendering was measured not to move
-    /// any distance (`backend mirror-check`).
+    /// Point candidates, in `osmspatial`'s positional form, from the tiles. The
+    /// tiles read `ST_X` as longitude and `ST_Y` as latitude (the geometry is
+    /// `POINT(lon lat)`).
     fn point_rows(
         &mut self,
         bucket: &str,
@@ -945,15 +791,10 @@ impl RowSource for MirrorSource {
         Ok(Some(out))
     }
 
-    /// The four line buckets `nearbyWays` needs, read together.
-    ///
-    /// ⚠ Coverage is checked PER BUCKET: a coordinate the mirror cannot vouch
-    /// for in one bucket declines the whole answer, and reading the buckets
-    /// together must not quietly answer for an area that was never fetched.
-    ///
-    /// ⚠ Every requested bucket gets an entry even when it matched no rows. An
-    /// absent key and an empty one mean different things here — "no ways of this
-    /// kind nearby" is an answer, and the caller must not read it as a decline.
+    /// The four line buckets `nearbyWays` needs, read together. Coverage is
+    /// checked per bucket: one the mirror cannot vouch for declines the whole
+    /// answer. Every bucket gets an entry, empty ones included: "no ways of this
+    /// kind nearby" is an answer, not a decline.
     fn line_rows_multi(
         &mut self,
         buckets: &[&str],
@@ -961,11 +802,9 @@ impl RowSource for MirrorSource {
         lon: f64,
         radius_m: f64,
     ) -> Result<Option<crate::rowset_answerer::LinesByBucket>> {
-        // ⚠ EVERY BUCKET IS ASKED even once one has already declined. The
-        // answer is the same — one bucket the mirror cannot vouch for declines
-        // the whole thing — but `covered` is where a decline is RECORDED for
-        // the fetch queue (#1658), and an early return records only the first
-        // uncovered bucket of four.
+        // Every bucket is asked even after one declined: `covered` records each
+        // decline for the fetch queue, and an early return would record only the
+        // first.
         let mut all_covered = true;
         for b in buckets {
             if !self.covered(b, lat, lon, radius_m)? {
@@ -991,10 +830,8 @@ impl RowSource for MirrorSource {
         Ok(Some(out))
     }
 
-    /// ⚠ NOT gated on coverage, and that is the difference between this and
-    /// every other read here. Coverage boxes are spatial and this question has
-    /// no coordinate — a line is a name. The mirror either holds railway ways
-    /// or it does not, and `rail_ways_named` returning nothing is what says so.
+    /// Not gated on coverage: this question has no coordinate. The mirror holds
+    /// railway ways or not, and `rail_ways_named` returning nothing says so.
     fn rail_line_names(&mut self) -> Result<Option<Vec<String>>> {
         if self.rail_names.is_none() {
             let rows = self
@@ -1025,18 +862,17 @@ impl RowSource for MirrorSource {
         if names.is_empty() {
             return Ok(Some(vec![]));
         }
-        // ⚠ An exact `name IN (…)` so the index serves it. The substring match
-        // already happened in Lean against the cached name list — doing it here
-        // as a leading-wildcard LIKE is the ~28 s scan this design avoids.
+        // An exact `name IN (…)` so the index serves it; the substring match
+        // already ran in Lean over the cached names (a leading-wildcard LIKE
+        // would scan ~28 s).
         let placeholders = std::iter::repeat_n("?", names.len())
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
             "SELECT ST_AsText(geom) AS wkt FROM osm_lines              WHERE feature_type = 'railway' AND name IN ({placeholders})"
         );
-        // ⚠ `AssertSqlSafe` because sqlx 0.9 refuses a non-'static SQL string.
-        // Audited: the only interpolation is the `?` placeholder run, whose
-        // length comes from `names.len()`. Every NAME is bound, never inlined.
+        // `AssertSqlSafe`: the only interpolation is the `?` run, sized by
+        // `names.len()`; every name is bound.
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
         for n in names {
             q = q.bind(n);
@@ -1059,11 +895,7 @@ impl RowSource for MirrorSource {
 
     fn rail_stations(&mut self) -> Result<Option<Vec<Value>>> {
         if self.rail_stations.is_none() {
-            // ⚠ NO ORDER BY, matching the TypeScript. Order is part of the
-            // answer, so it must be the same order — and the TypeScript takes
-            // whatever the server returns for this unordered read. Adding a sort
-            // here would be a defensible choice that produces a DIFFERENT
-            // answer, which is the one thing a port must not do.
+            // No ORDER BY: the order is the server's, and part of the answer.
             let rows = self
                 .block(
                     "railStations",
@@ -1095,23 +927,11 @@ impl RowSource for MirrorSource {
         Ok(self.rail_stations.clone())
     }
 
-    /// One reverse geocode, from the cache the TypeScript filled (#1076).
+    /// One reverse geocode, from `osm_cache`. Read-only: a miss is recorded for
+    /// the drain to fetch, so no Nominatim round trip sits on the serving path.
     ///
-    /// ⚠ **READ-ONLY, AND NO NETWORK.** `osm_cache` stopped growing when the
-    /// TypeScript was deleted (#975), so this answers habitual ground and
-    /// declines on new ground — measured at 13 of 15 keys on an ordinary day and
-    /// 6 of 32 on the first day somewhere new. Putting the FETCH here would put
-    /// a Nominatim round trip on the serving path, which is where the fold's
-    /// latency already hurts (#1071); the fetch belongs in a deferred job, which
-    /// is the same shape #1658 needs for Overpass.
-    ///
-    /// ⚠ **A NEGATIVE SENTINEL DECLINES, WHATEVER ITS AGE.** `withCache` wrote a
-    /// failed fetch as `{_err, _at}` under a five-minute TTL, and 331 of those
-    /// are now permanent because the fetcher that would have overwritten them is
-    /// gone. But the TTL only ever governed whether to RE-FETCH, and this reader
-    /// does not fetch — so a sentinel is simply an absent answer. Returning
-    /// `null` for a fresh one would tell the fold "nothing is named here", which
-    /// is a claim about the world made out of a network error (#976).
+    /// A stored failure (`{_err, _at}`) declines whatever its age: returning
+    /// `null` would claim "nothing is named here" out of a network error.
     fn geocode(&mut self, lat: f64, lon: f64, zoom: i64) -> Result<Option<Value>> {
         let pool = self.pool.clone();
         let found = self.block("geocode", async move {
@@ -1119,15 +939,10 @@ impl RowSource for MirrorSource {
         })?;
         Ok(match found {
             Some(crate::nominatim::Cached::Answer(Some(g))) => Some(serde_json::to_value(g)?),
-            // ⚠ Nominatim answering "nothing is here" IS an answer, and the fold
-            // reads a null entry as a RESOLVED lookup with no name — which is a
-            // different state from an unanswered key, and the reason this arm
-            // exists separately from the two below.
+            // Nominatim's "nothing is here" is an answer: a resolved lookup with
+            // no name, unlike an unanswered key.
             Some(crate::nominatim::Cached::Answer(None)) => Some(Value::Null),
-            // ⚠ **RECORDED, NOT FETCHED.** A decline used to leave no trace, so
-            // the same coordinate went unanswered on every fold forever. The
-            // queue is what lets the drain fill it within seconds; fetching here
-            // would put a Nominatim round trip on the serving path (#1071, #1076).
+            // Recorded for the drain, which fills it within seconds.
             Some(crate::nominatim::Cached::Failed { .. }) | None => {
                 let pool = self.pool.clone();
                 let kind = crate::nominatim::query_type(zoom);
@@ -1142,11 +957,8 @@ impl RowSource for MirrorSource {
     }
 }
 
-/// ⚠ A NULL subtype becomes `""`, not `null`. Lean's row parser reads this
-/// position with `getStr?` and a `null` fails the whole request; `""` is also
-/// what the TypeScript writes (`f.subtype ?? ""`), and it is in no subtype
-/// filter, so a row without one is excluded exactly as `subtype IN (…)`
-/// excluded it.
+/// A NULL subtype becomes `""`: Lean reads the position with `getStr?`, and
+/// `""` matches no subtype filter, as `subtype IN (…)` excluded it.
 fn subtype_of(r: &sqlx::mysql::MySqlRow, table: &str) -> Result<Value> {
     Ok(Value::String(
         r.try_get::<Option<String>, _>("subtype")
@@ -1155,8 +967,7 @@ fn subtype_of(r: &sqlx::mysql::MySqlRow, table: &str) -> Result<Value> {
     ))
 }
 
-/// ⚠ A NULL name stays `null`. Lean reads this position as an `Option` and an
-/// unnamed way contributes nothing to `linesAtPoint`; `""` would be a name.
+/// A NULL name stays `null`: Lean reads an `Option`, and `""` would be a name.
 fn name_of(r: &sqlx::mysql::MySqlRow, table: &str) -> Result<Value> {
     Ok(
         match r
@@ -1169,15 +980,10 @@ fn name_of(r: &sqlx::mysql::MySqlRow, table: &str) -> Result<Value> {
     )
 }
 
-/// `tags_json` as the `[[key, value], …]` pairs Lean reads.
-///
-/// ⚠ NON-STRING VALUES ARE DROPPED rather than stringified. Lean's parser takes
-/// both halves with `getStr?`, so a numeric tag would fail the request; OSM tag
-/// values are strings, and one that is not is a row this port should not be
-/// silently reshaping.
+/// `tags_json` as the `[[key, value], …]` pairs Lean reads. Non-string values
+/// are dropped, not stringified: OSM tag values are strings.
 fn tags_of(r: &sqlx::mysql::MySqlRow) -> Result<Value> {
-    // ⚠ Serves BOTH tables now. A venue is a point POI or a building outline,
-    // and `nearbyLandmarks` needs both sides.
+    // Both tables: a venue is a point POI or a building outline.
     let raw: Option<String> = r
         .try_get("tags_json")
         .context("tags_json does not decode as text")?;
@@ -1200,9 +1006,8 @@ pub fn tags_pairs(raw: Option<&str>) -> Result<Value> {
     ))
 }
 
-/// `parseLineStringWkt` — WKT writes `lon lat`; the pair comes back `(lat, lon)`.
-/// A coordinate that does not parse is DROPPED, as the TypeScript's
-/// `Number.isFinite` guard drops it.
+/// WKT `LINESTRING(lon lat, …)` as `(lat, lon)` pairs; a coordinate that does
+/// not parse is dropped.
 pub fn parse_linestring_wkt(wkt: &str) -> Vec<(f64, f64)> {
     let t = wkt.trim();
     let Some(inner) = t
@@ -1225,19 +1030,11 @@ pub fn parse_linestring_wkt(wkt: &str) -> Vec<(f64, f64)> {
 
 /// Run something with a mirror-backed answerer, on a blocking thread.
 ///
-/// # ⚠ Why this exists rather than a `MirrorSource` the caller drives
-///
-/// The fold answers its asks SYNCHRONOUSLY — the worker is blocked on the pipe
-/// until the row comes back — while `sqlx` is async. So the fold has to run on
-/// a blocking thread with a runtime handle to block on, and `Handle::block_on`
-/// from a runtime WORKER aborts the process instead of returning an error.
-///
-/// That hazard cannot be detected from inside [`MirrorSource`]: tokio sets the
-/// runtime context on blocking-pool threads too, so `Handle::try_current()`
-/// says the same thing in the safe case and the fatal one. What replaces the
-/// check is that the blocking hop lives HERE, with the only public constructor
-/// that pairs a pool with a handle — a caller that folds from a handler has to
-/// have gone around this function to do it.
+/// The fold answers its asks synchronously while `sqlx` is async, so it must run
+/// on a blocking thread with a runtime handle, and `Handle::block_on` from a
+/// runtime worker aborts the process. That cannot be detected inside
+/// [`MirrorSource`] (tokio sets the context on blocking threads too), so the hop
+/// lives here, in the only public constructor pairing a pool with a handle.
 pub async fn with_mirror_answerer<F, T>(pool: MySqlPool, now_ms: i64, f: F) -> Result<T>
 where
     F: FnOnce(&mut crate::rowset_answerer::OsmAnswerer<MirrorSource>) -> Result<T> + Send + 'static,
@@ -1254,17 +1051,13 @@ where
     .context("the mirror thread panicked")?
 }
 
-/// [`fold_from_mirror`], RECORDING every row the answerer was served, as the
-/// `osmRowSet` a golden fixture carries, and the three matcher reads' answers
-/// as its `osmTrace` sections (#1660).
-///
-/// ⚠ The recorder wraps the source rather than re-running the queries, so what
-/// is captured is exactly what production asked and got — including the
-/// DECLINES, without which a replay answers where the mirror could not and the
-/// day comes out better in the fixture than it does in production.
+/// [`fold_from_mirror`], recording every row served as the fixture's
+/// `osmRowSet` and the matcher reads' answers as its `osmTrace` sections. The
+/// recorder wraps the source, so declines are captured too: without them a
+/// replay would answer where production could not.
 ///
 /// Returns `(folded, row_set, matcher_trace, geocode_section)`; the geocode
-/// section is `None` when the source answered no geocode at all (#1076).
+/// section is `None` when no geocode was answered.
 pub async fn fold_from_mirror_recording(
     pool: MySqlPool,
     cap: Value,

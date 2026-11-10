@@ -1,6 +1,6 @@
 //! Calling the Lean decisions.
 //!
-//! Every function here is one request to `verified_cli serve` (#1709) —
+//! Every function here is one request to `verified_cli serve` —
 //! `{"mode":"backend","op":…}` for the decision table in `Verified/Session.lean`
 //! and its siblings, `{"mode":…}` for the algorithm modes — typed on this side
 //! so a caller never spells a wire shape. The process, the pool and the ask
@@ -33,13 +33,9 @@ pub fn init() -> Result<()> {
 /// One decision: the request object goes out as `{"mode":"backend","req":…}`,
 /// the reply body comes back as text.
 ///
-/// Through [`serve`], so the `backend` mode is recorded in a traced run like
-/// every other (#1003's second hop). A direct `lean_worker` call here left the
-/// busiest arm in the table reading as executed by nothing.
-///
-/// ⚠ WRAPPED, not merged. Some ops carry a `mode` of their own (`mayRebuild`'s
-/// is `bus`/`rail`), and merging the routing key into the payload overwrote it
-/// — the first run of the suite over the pipe failed exactly there.
+/// Through [`serve`], so a traced run records the `backend` mode like any
+/// other. The request is wrapped, not merged: some ops carry a `mode` of their
+/// own, which merging would overwrite.
 fn call_raw(request: &Value) -> Result<String> {
     let req = serde_json::json!({ "mode": "backend", "req": request });
     serve(&req.to_string())
@@ -102,31 +98,20 @@ struct OptInt {
     value: Option<i64>,
 }
 
-/// See `Verified.Civil.midnightUtc` — a `YYYY-MM-DD` as Unix SECONDS at UTC
-/// midnight.
-///
-/// ⚠ Stricter than the `new Date(s)` the TypeScript used, and that is the
-/// point. `new Date("2026-02-30")` yields the 2nd of March and
-/// `new Date("nonsense")` yields `NaN`, whose `getTime()/1000` floors to `NaN`
-/// and goes into a query string as the literal text `NaN`. Here both refuse.
+/// `Verified.Civil.midnightUtc`: a `YYYY-MM-DD` as Unix seconds at UTC
+/// midnight. An impossible date (30 February) or a non-date is refused, never
+/// rolled over.
 pub fn midnight_utc(date: &str) -> Result<i64> {
     let r: OptInt = call_json(&serde_json::json!({ "op": "midnightUtc", "date": date }))?;
     r.value
         .ok_or_else(|| anyhow!("not a calendar date: {date:?}"))
 }
 
-/// One fetched bounding box of the local OSM mirror, for one feature bucket.
-///
-/// `fetched_at` is milliseconds, and `None` means a row written before fetch
-/// times were tracked — treated as FRESH, not stale. See
-/// `Verified.Geo.OsmCoverage`.
-/// `Verified.VelocityCache.ttlMsFor` — how long a computed day may be reused,
+/// `Verified.VelocityCache.ttlMsFor`: how long a computed day may be reused,
 /// plus the LRU bound the host enforces.
 ///
-/// ⚠ `today` MUST be the viewer's local civil date (`timezone::local_date_at`),
-/// not UTC's. Nothing on either side of this wire can check that: a UTC date is
-/// a well-formed argument asking a different question, and the answer to it
-/// looks exactly the same.
+/// `today` must be the viewer's local civil date (`timezone::local_date_at`),
+/// not UTC's: a UTC date is a well-formed argument asking a different question.
 pub fn velocity_ttl_ms(date: &str, today: &str) -> Result<(i64, usize)> {
     #[derive(Deserialize)]
     struct Wire {
@@ -219,13 +204,11 @@ pub fn may_proceed(
     Ok(w.value)
 }
 
-/// `Verified.Share.shareableDateRange` — the inclusive `[from, to]` a share with
+/// `Verified.Share.shareableDateRange`: the inclusive `[from, to]` a share with
 /// this `days_back` may show, ending at `today`.
 ///
-/// ⚠ `None` means SHARE DISABLED, not "no window". It covers both `days_back ≤
-/// 0` and a `today` that does not parse — the TypeScript produced NaN-shaped
-/// garbage for the second, which formatted as `"NaN-NaN-NaN"`. A caller that
-/// treats `None` as "unrestricted" has inverted the rule.
+/// ⚠ `None` means SHARE DISABLED (`days_back ≤ 0`, or an unparseable `today`),
+/// not "no window". Reading it as unrestricted inverts the rule.
 pub fn shareable_date_range(today: &str, days_back: i64) -> Result<Option<(String, String)>> {
     #[derive(Deserialize)]
     struct Range {
@@ -242,15 +225,13 @@ pub fn shareable_date_range(today: &str, days_back: i64) -> Result<Option<(Strin
     Ok(w.value.map(|r| (r.from, r.to)))
 }
 
-/// `Verified.ApiWindow.validateDays` — the `days` query parameter.
+/// `Verified.ApiWindow.validateDays`: the `days` query parameter. `None` out
+/// means reject, not "use the default": `days=400` is a 400, not a narrowed
+/// window.
 ///
-/// ⚠ `None` OUT MEANS REJECT, not "use the default". Zod's `.min`/`.max`
-/// validate rather than clamp, so `days=400` is a 400 and not a narrowed window.
-///
-/// ⚠ `raw` must be what JS `Number(...)` makes of the parameter: `None` ONLY
-/// when it was absent, `Some(NaN)` when present and unparseable, and
-/// `Some(0.0)` for the empty string. Mapping `""` to `None` turns a rejection
-/// into a 30-day read.
+/// `raw` is what JS `Number(...)` makes of the parameter: `None` only when
+/// absent, `Some(NaN)` when unparseable, `Some(0.0)` for the empty string.
+/// Mapping `""` to `None` would turn a rejection into a 30-day read.
 pub fn validate_days(raw: Option<f64>) -> Result<Option<i64>> {
     #[derive(Deserialize)]
     struct Wire {
@@ -341,18 +322,12 @@ struct Covered {
     covered: bool,
 }
 
-/// `Verified.Geo.OsmCoverage.decideCoverage` — may the mirror be read here?
+/// `Verified.Geo.OsmCoverage.decideCoverage`: may the mirror be read here?
+/// `false` means nobody fetched this area for this bucket, so a query would
+/// return nothing indistinguishable from an empty area; the caller declines.
 ///
-/// `false` means nobody has fetched this area for this bucket, so a spatial
-/// query over the mirror would return nothing and be indistinguishable from an
-/// area with no features in it. The caller must DECLINE rather than answer.
-///
-/// ⚠ `coverage` is the rows for ONE feature bucket. Boxes are per-bucket, and
-/// mixing them would report a highway fetch as covering the landmarks.
-///
-/// ⚠ `now_ms` is passed IN. Lean has no clock in a pure function, and giving it
-/// one would make the staleness rule depend on when it was asked, which is what
-/// makes it untestable. The host owns the clock; Lean owns the decision.
+/// `coverage` holds one bucket's rows (boxes are per bucket). `now_ms` is passed
+/// in: the host owns the clock, Lean the decision.
 pub fn osm_covered(
     lat: f64,
     lon: f64,
@@ -418,14 +393,12 @@ pub struct FillCandidate {
     pub fixes: Vec<(String, String)>,
 }
 
-/// `Verified.Geo.RailRouteFill.unsnappedTrainRoutes` — which train legs of a
-/// computed day want a background route fill.
+/// `Verified.Geo.RailRouteFill.unsnappedTrainRoutes`: the train legs of a
+/// computed day that want a background route fill.
 ///
-/// ⚠ `segments` and `points` are already in the wire form the mode reads:
-/// `[mode, refinedMode|null, startTs, endTs, wayName|null, hasSnappedPath]` and
-/// `[ts, latBits, lonBits]`. `hasSnappedPath` is a BOOLEAN — shipping the
-/// geometry to answer "is it drawn already" would put every snapped polyline of
-/// the day on the wire to be discarded.
+/// Wire forms: segments `[mode, refinedMode|null, startTs, endTs,
+/// wayName|null, hasSnappedPath]`, points `[ts, latBits, lonBits]`.
+/// `hasSnappedPath` is a boolean, so the day's polylines never cross.
 pub fn unsnapped_train_routes(
     segments: &[serde_json::Value],
     points: &[serde_json::Value],
@@ -446,24 +419,15 @@ pub fn unsnapped_train_routes(
     Ok(w.candidates)
 }
 
-/// `Verified.Geo.DayState.clipFuture` — never assert the future.
+/// `Verified.Geo.DayState.clipFuture`: never assert the future. Truncates a
+/// state straddling `now_ts`, drops one wholly beyond it, and marks a state
+/// starting at or after `observed_through` (the decode's horizon) inferred.
 ///
-/// The pipeline fills a day to its end, which for TODAY lies ahead of the
-/// current moment. This truncates a state that straddles `now_ts` and drops one
-/// wholly beyond it, observed or inferred.
+/// ⚠ Apply per request, after the cache: the cached day is fixed while `now`
+/// moves, so clipping before caching would freeze the horizon.
 ///
-/// ⚠ APPLY PER REQUEST, AFTER THE CACHE. The cached result is the full
-/// deterministic day; `now` advances and the cached value does not, so clipping
-/// before seating would freeze the horizon at whatever it was when the day was
-/// computed.
-///
-/// ⚠ `states` must be the `day` mode's own state objects. They round-trip
-/// through the SAME encoder they were emitted by, so a field this port does not
-/// know about would be dropped — which is why `Day.stateJson` is shared rather
-/// than restated.
-///
-/// `observed_through`: where the day's decode had data to (`decoded_days.inputs_through`);
-/// a state beginning at or after it is marked inferred (`DayState.clipFuture`).
+/// `states` must be the `day` mode's own state objects: they round-trip
+/// through the same encoder, so unknown fields survive.
 pub fn clip_future(
     states: &[serde_json::Value],
     now_ts: i64,
@@ -487,16 +451,11 @@ pub fn clip_future(
     Ok(w.states)
 }
 
-/// `Verified.Geo.Velocity.watchBatterySeries` — the watch trace for one day.
+/// `Verified.Geo.Velocity.watchBatterySeries`: the watch trace for one day.
 ///
-/// ⚠ `rows` are `[ts|null, level, deviceVersion|null]` with the instant ALREADY
-/// RESOLVED. `null` is a wall clock that did not resolve, and Lean drops it
-/// rather than defaulting — a reading at a guessed instant draws a step that
-/// never happened.
-///
-/// ⚠ ROW ORDER IS LOAD-BEARING. Two rows at the same instant keep the LATER one
-/// in this slice, so a caller that sorts the result set changes which level is
-/// drawn.
+/// `rows` are `[ts|null, level, deviceVersion|null]` with the instant already
+/// resolved; a `null` instant is dropped, not guessed. Row order matters: of
+/// two rows at one instant, the later is kept.
 pub fn watch_battery_series(
     rows: &[serde_json::Value],
     start_utc: i64,
@@ -520,36 +479,21 @@ pub fn watch_battery_series(
     Ok(w.series)
 }
 
-/// Where a traced run records the modes it asked for.
-///
-/// Fixed at COMPILE time from this crate's own directory rather than read from
-/// the environment. `cargo` gives every test process the package root as its
-/// working directory while the gate rows that switch tracing on run from the
-/// repository root, so a relative path would split one run's trace across two
-/// files; an absolute path written into the gate table would be this machine's
-/// path and would collide between worktrees.
+/// Where a traced run records the modes it asked for: an absolute path fixed at
+/// compile time, since test processes and gate rows run from different
+/// directories.
 const MODE_TRACE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../target/mode-trace.txt");
 
 /// Whether this process records the modes it asks for. Read once.
 static MODE_TRACE: OnceLock<bool> = OnceLock::new();
 
-/// The modes this process has already recorded.
-///
-/// Per process and not per run: `cargo nextest` runs test-per-process, so the
-/// file is the union of many of these. Recording only the FIRST time a mode is
-/// seen keeps the cost to one set lookup per call — `serve` is called in the
-/// fold's inner loop — and keeps the file to at most one line per mode per
-/// process rather than one per call.
+/// The modes this process has already recorded: each is written once per
+/// process, so the cost in the fold's inner loop is one set lookup.
 static MODE_SEEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
-/// The mode of a request, without paying for a full parse in the common case.
-///
-/// ⚠ THE WINDOW IS NOT ENOUGH ON ITS OWN. `serde_json::Map` is a `BTreeMap`
-/// unless `preserve_order` is on, so a request built by inserting into a map
-/// carries its keys SORTED — `mode` lands after `lookups` and whatever else,
-/// which in a fold request is megabytes in. The scan is the fast path for the
-/// hand-written requests, which put `mode` first; the parse is what makes the
-/// answer right for the rest.
+/// The mode of a request: a scan of its head for the hand-written requests,
+/// which put `mode` first, else a full parse (a map-built request sorts its
+/// keys, putting `mode` deep inside).
 fn mode_of(request: &str) -> Option<String> {
     let mut n = request.len().min(8192);
     while n > 0 && !request.is_char_boundary(n) {
@@ -573,15 +517,9 @@ fn mode_after_key(head: &str) -> Option<String> {
     Some(body[..body.find('"')?].to_owned())
 }
 
-/// Record that something asked for this mode, if this run is tracing.
-///
-/// This is the second hop of #1003's reachability question. The first — does
-/// `dispatch` still route to the mode — is answered by reading the table's own
-/// arms; it passes while nothing calls the mode. This one is answered by
-/// EXECUTION, which is why it lives at the single point every caller funnels
-/// through rather than in a grep: several callers build the mode from a
-/// parameter, so a scan of the source cannot see who asks for what.
-///
+/// Record that something asked for this mode, if this run is tracing. At the
+/// one point every caller funnels through, because several callers build the
+/// mode name from a parameter that no source scan can follow.
 fn record_mode(request: &str) {
     if !*MODE_TRACE.get_or_init(|| std::env::var_os("HEALTH_MODE_TRACE").is_some()) {
         return;
@@ -596,10 +534,8 @@ fn record_mode(request: &str) {
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "?".to_owned());
-    // ⚠ ONE `write_all` of one short line, onto a descriptor opened for append.
-    // Every test process in the run writes to this file concurrently; an append
-    // of well under a pipe buffer is atomic, where the two writes `writeln!`
-    // can emit are not.
+    // One `write_all` of a short line onto an append descriptor: atomic, where
+    // `writeln!`'s two writes could interleave with other processes'.
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -712,12 +648,8 @@ pub fn next_day(date: &str) -> Result<String> {
     Ok(w.value)
 }
 
-/// `Verified.LocationTail`'s constants.
-///
-/// ⚠ Restated here as consts rather than fetched per request: they are compile
-/// time constants in Lean too, and a host call per poll would cost more than the
-/// value is worth. `tests/suite/location_tail.rs` asserts each against Lean, so a
-/// change there fails a test rather than silently disagreeing.
+/// `Verified.LocationTail`'s constants, restated rather than fetched per poll;
+/// `tests/suite/location_tail.rs` asserts each against Lean.
 pub const TAIL_MAX_POINTS: i64 = 2000;
 pub const LATEST_FIX_TTL_MS: i64 = 10_000;
 pub const TAIL_TTL_MS: i64 = 10_000;
@@ -788,15 +720,9 @@ pub fn build_share_url(base_url: &str, token: &str) -> Result<String> {
     Ok(w.value)
 }
 
-/// `Verified.Share.clampShareDaysBack`.
-///
-/// ⚠ CLAMPS, and is the mirror of [`validate_days`], which REJECTS. Two
-/// day-window parameters in one API with opposite behaviour, both faithful to
-/// the TypeScript: `?days=400` on a read is an ERROR, while `daysBack: 400` on
-/// a share is silently narrowed to 365.
-///
-/// `None` in or out means "not a finite number at all" — NOT "out of range".
-/// The caller decides what to do with that: create defaults, update rejects.
+/// `Verified.Share.clampShareDaysBack`. Clamps, where [`validate_days`]
+/// rejects: a share's `daysBack: 400` is narrowed to 365, a read's `?days=400`
+/// is an error. `None` means not a finite number at all.
 pub fn clamp_share_days_back(days_back: Option<i64>) -> Result<Option<i64>> {
     #[derive(Deserialize)]
     struct Wire {
@@ -810,12 +736,8 @@ pub fn clamp_share_days_back(days_back: Option<i64>) -> Result<Option<i64>> {
     Ok(w.value)
 }
 
-/// `Verified.LogLine.oneLine` — flatten client text into one log field.
-///
-/// ⚠ THE SECURITY BOUNDARY of `/api/telemetry`, and called per label rather
-/// than reimplemented here. The rule depends on Unicode category tables derived
-/// from V8; a second copy in Rust would be a second thing to keep in step with
-/// them, for a path that handles at most 100 labels per request.
+/// `Verified.LogLine.oneLine`: flatten client text into one log field. The
+/// security boundary of `/api/telemetry`; its Unicode rules live in Lean only.
 pub fn one_line(raw: &str, max: i64) -> Result<String> {
     #[derive(Deserialize)]
     struct Wire {
@@ -1254,16 +1176,11 @@ pub fn owntracks_history_max_age_sec() -> i64 {
     600
 }
 
-/// `Verified.PresenceLog.computeRow` — one day's decoded segments rolled up.
+/// `Verified.PresenceLog.computeRow`: one day's decoded segments rolled up.
+/// `None` is an answer: a day with nothing over a minute has no row.
 ///
-/// ⚠ `None` is an ANSWER, not an error: a day that decoded nothing, or whose
-/// segments all round to under a minute, has no row rather than a row claiming
-/// 0% of nothing.
-///
-/// ⚠ The segments must arrive in the order the decoder emitted them. A tie on
-/// minutes keeps the place seen FIRST, because the TypeScript accumulates into a
-/// JS `Map` and iterates it in insertion order. Sorting on the way in would
-/// change which place a day is attributed to.
+/// Segments must arrive in the decoder's order: a tie on minutes keeps the
+/// place seen first.
 pub struct PresenceRow {
     pub dominant_place_id: Option<i64>,
     pub dominant_fraction: f64,
@@ -1294,10 +1211,8 @@ pub fn presence_row(segments: &serde_json::Value) -> Result<Option<PresenceRow>>
         "op": "presenceRow",
         "segments": segments,
     }))?;
-    // ⚠ Fractions cross as IEEE-754 BIT PATTERNS. `dominant_fraction` is a ratio
-    // of two integer minute counts and lands in a DECIMAL column; a re-rounded
-    // value would differ from the TypeScript's in the last place and the two
-    // arms' rows would not compare equal.
+    // Fractions cross as bit patterns, so the DECIMAL column gets the exact
+    // ratio.
     let bits = |s: &str| -> Result<f64> {
         Ok(f64::from_bits(s.parse::<u64>().with_context(|| {
             format!("presenceRow: {s:?} is not a bit pattern")
@@ -1370,15 +1285,12 @@ pub fn filter_stations_by_line_proximity(
         .collect())
 }
 
-/// `Verified.Geo.Landmarks.shapeLandmarks` — the venues near a stay.
+/// `Verified.Geo.Landmarks.shapeLandmarks`: the venues near a stay, which name
+/// it.
 ///
-/// ⚠ This is what names a timeline entry. While this went unanswered, a served
-/// day lost venue names silently: the stay still rendered, as "stationary" with
-/// no place, which is why no test caught it (#1054).
-///
-/// ⚠ The scored rows arrive under `rows`, and their `distanceM` is an IEEE-754
-/// BIT PATTERN. Reading either wrongly yields an empty shaping — which claims
-/// "no venues here" rather than declining, and is worse than the gap it closes.
+/// ⚠ Scored rows arrive under `rows`, with `distanceM` as a bit pattern.
+/// Reading either wrongly yields an empty list, which claims "no venues here"
+/// instead of declining.
 pub fn shape_landmarks(
     points: &serde_json::Value,
     lines: &serde_json::Value,
@@ -1437,19 +1349,14 @@ pub fn shape_landmarks(
                 "subtype".into(),
                 m.get("subtype").cloned().unwrap_or_default(),
             );
-            // ⚠ A BIT-PATTERN STRING, not a JSON number. `DayEntry.parsePoi`
-            // reads this field with `jBits`, and the trace-fed path encodes it
-            // the same way (`fold_payload`'s `num_bits`). Emitting a number here
-            // fails the fold's decode outright with "String expected" — which
-            // is the loud failure, and only reachable once the shaping stopped
-            // returning an empty list for every stay (#1054).
+            // A bit-pattern string, as `DayEntry.parsePoi` reads it (`jBits`);
+            // a JSON number fails the fold's decode.
             o.insert(
                 "distanceM".into(),
                 serde_json::Value::String(crate::fold_payload::bits(d)),
             );
-            // ⚠ `enclosing` is ALWAYS present, including `false` — the recorded
-            // trace carries it that way. Only `openingHours` is conditional,
-            // matching the TypeScript's spread.
+            // `enclosing` is always present, as the recorded traces carry it;
+            // only `openingHours` is conditional.
             o.insert(
                 "enclosing".into(),
                 serde_json::Value::Bool(
@@ -1473,17 +1380,14 @@ pub fn shape_landmarks(
     Ok(serde_json::Value::Array(out))
 }
 
-/// One focus cluster's amenity vote — `Verified.Geo.FocusMining.mineCluster`.
+/// One focus cluster's amenity vote: `Verified.Geo.FocusMining.mineCluster`.
 ///
-/// The whole vote crosses in ONE call, deliberately. The three gates read each
-/// other's leavings (the near-field exemption is built by the same pass that
-/// builds the tally, and an exact tie keeps the first name seen), so splitting
-/// it into a call per gate would put those tie-breaks on this side of the FFI —
-/// which is the half that drifted while nothing compared it (#1003).
+/// The whole vote crosses in one call: its three gates read each other's
+/// leavings (and an exact tie keeps the first name seen), so a call per gate
+/// would move those tie-breaks to this side.
 ///
-/// `landmarks` on each stay and on `centroid` are `shape_landmarks` OUTPUT,
-/// passed straight back: the raw `openingHours` tag rides along so Lean can
-/// resolve it against that stay's `samples`.
+/// `landmarks` on each stay and on `centroid` are `shape_landmarks` output,
+/// passed back with the raw `openingHours` for Lean to resolve per stay.
 pub struct MinedCluster {
     pub amenity_label: Option<String>,
     pub amenity_kind: Option<String>,
@@ -1497,9 +1401,8 @@ pub struct AttributedStay {
     pub subtype: String,
     pub duration_sec: f64,
     pub local_hour: i64,
-    /// When the stay STARTED, so a prior can be taken as of a past day
-    /// (#1405). A plain unix second — it is an integer the shell already
-    /// holds, never a measured double, so it does not ride as float bits.
+    /// When the stay started, so a prior can be taken as of a past day. A plain
+    /// unix second, not float bits.
     pub start_unix: i64,
 }
 
@@ -1517,9 +1420,8 @@ pub struct MineStay {
     pub landmarks: serde_json::Value,
 }
 
-/// The cron's gate-1 constants. ⚠ Cross as bit patterns like every other float
-/// here: `minFraction` is compared with `<` against a computed ratio, and a
-/// re-rounded 0.5 moves that boundary.
+/// The cron's gate-1 constants. They cross as bit patterns: `minFraction` is
+/// compared against a computed ratio.
 pub const MINE_MIN_WEIGHT_SEC: f64 = 60.0 * 30.0;
 pub const MINE_MIN_FRACTION: f64 = 0.5;
 
@@ -1544,10 +1446,8 @@ pub fn mine_cluster(stays: &[MineStay], centroid: &serde_json::Value) -> Result<
         duration_sec_bits: String,
         #[serde(rename = "localHour")]
         local_hour: i64,
-        // ⚠ NOT `Option`. A stay that reached mining without a start time is a
-        // broken payload, and defaulting it to 0 would quietly date every such
-        // stay to 1970 — which an as-of-the-day prior would then include in
-        // every day's prefix, restoring the exact bug this field removes.
+        // Required: a stay defaulted to 0 would date to 1970, and an as-of
+        // prior would include it in every day.
         #[serde(rename = "startUnix")]
         start_unix: i64,
     }
@@ -1601,28 +1501,14 @@ pub fn mine_cluster(stays: &[MineStay], centroid: &serde_json::Value) -> Result<
     })
 }
 
-/// Aggregate every cluster's attributed stays into the venue-type prior blob —
-/// `Verified.Geo.VenuePrior.minePriors`.
+/// Aggregate every cluster's attributed stays into the venue-type prior blob:
+/// `Verified.Geo.VenuePrior.minePriors`. Returns the JSON stored in
+/// `venue_type_priors.priors_json`: `{bySubtype: {k: {visits, dwell[],
+/// hours[]}}, byCategory, totalVisits}`.
 ///
-/// Returns the JSON that goes into `venue_type_priors.priors_json`, in the
-/// TypeScript's shape: `{bySubtype: {k: {visits, dwell[], hours[]}}, byCategory,
-/// totalVisits}`.
-///
-/// ⚠ A FULL RECOMPUTE, never incremental — a re-mine after a gate change has to
-/// be reproducible from the stays alone.
-///
-/// ⚠ KEY ORDER is first-seen order, carried deliberately. Lean accumulates into
-/// an insertion-ordered association list and the TypeScript into a JS object,
-/// which is the same order for string keys, so the two arms produce the same
-/// TEXT and not merely the same numbers.
-///
-/// ⚠ Counts cross as bit patterns but are written as JSON NUMBERS, because that
-/// is what the column holds and what `rankVenues` reads back. They are
-/// integer-valued, so V8 renders `1` where `serde_json` renders `1.0`: the
-/// values parse identically and nothing compares the two arms byte-for-byte,
-/// but do not "verify" this blob with a text diff against a TypeScript-written
-/// row — it would report a difference that is not one
-/// (`reference_jq_cannot_check_serialisation_parity`).
+/// A full recompute, so a re-mine is reproducible from the stays alone. Keys
+/// keep first-seen order, which `shapeScore` reads back. Counts are written as
+/// JSON numbers, the column's form.
 #[derive(Deserialize)]
 struct WirePriorsBlob {
     #[serde(rename = "bySubtype")]
@@ -1631,12 +1517,8 @@ struct WirePriorsBlob {
     by_category: Vec<(String, WirePriorStats)>,
     #[serde(rename = "totalVisitsBits")]
     total_visits_bits: String,
-    /// The evidence behind the aggregate, so a past day can be re-aggregated
-    /// as it stood THEN (#1405).
-    ///
-    /// ⚠ `default` because `priorsAsOf` replies with this same shape and has no
-    /// events to hand back — it is answering FROM them. An absent list there is
-    /// correct, not a truncated payload.
+    /// The evidence behind the aggregate, so a past day can be re-aggregated as
+    /// it stood then. Absent in `priorsAsOf`'s reply, which answers from it.
     #[serde(default)]
     events: Vec<WirePriorEvent>,
 }
@@ -1663,13 +1545,8 @@ struct WirePriorStats {
 }
 
 /// Bit-pattern wire blob → the JSON-numbers blob `venue_type_priors` holds.
-///
-/// ⚠ Relies on `serde_json`'s `preserve_order` feature, which
-/// `backend/Cargo.toml` enables for exactly this reason — the default `Map`
-/// is a `BTreeMap` and would SORT the keys, silently discarding the
-/// first-seen order the `mine_priors` doc comment promises. The blob would
-/// still hold the right numbers, so nothing would fail; it would just stop
-/// being the same text the TypeScript wrote.
+/// Needs `serde_json`'s `preserve_order` (on in `Cargo.toml`): the default map
+/// would sort the keys and lose first-seen order.
 fn wire_priors_to_json(w: &WirePriorsBlob) -> Result<serde_json::Value> {
     let bits = |s: &str| -> Result<f64> {
         Ok(f64::from_bits(s.parse::<u64>().with_context(|| {
@@ -1697,20 +1574,13 @@ fn wire_priors_to_json(w: &WirePriorsBlob) -> Result<serde_json::Value> {
         "bySubtype": table(&w.by_subtype)?,
         "byCategory": table(&w.by_category)?,
         "totalVisits": bits(&w.total_visits_bits)?,
-        // ⚠ ALONGSIDE the aggregate, never instead of it. A blob written by
-        // this build must stay readable by a pod that predates #1405 — during
-        // a rollout both are serving — and the aggregate is what that pod
-        // reads.
+        // Alongside the aggregate, which a reader without event support uses.
         "events": w.events,
     }))
 }
 
-/// Re-aggregate stored evidence as it stood at `as_of_unix`.
-///
-/// ⚠ THE AGGREGATION IS LEAN'S, called rather than reimplemented. Doing the
-/// sum here would be a second copy of `bumpStats`/`dwellBucket` and of the
-/// insertion order that `shapeScore` reads back as the subtype-universe size —
-/// the exact class of duplication the Lean/Rust split exists to prevent.
+/// Re-aggregate stored evidence as it stood at `as_of_unix`. The aggregation
+/// is Lean's, not a second copy here.
 pub fn priors_as_of(events: &[WirePriorEvent], as_of_unix: i64) -> Result<serde_json::Value> {
     #[derive(Deserialize)]
     struct Wire {
@@ -1750,10 +1620,8 @@ pub fn mine_priors(attributed: &[AttributedStay]) -> Result<serde_json::Value> {
     wire_priors_to_json(&w.value)
 }
 
-/// What `mine_priors_soft` reports beside the blob — the P0 honesty numbers
-/// (docs/proposals/2026-07-soft-venue-attribution.md): if the effective sample
-/// size does not grow far past the hard count, soft attribution is the wrong
-/// lever and the phases after P0 must not be built.
+/// What `mine_priors_soft` reports beside the blob: whether soft attribution
+/// grows the effective sample size far past the hard count.
 pub struct SoftMineReport {
     /// Σ responsibilities over every candidate of every stay — whole visits'
     /// worth of evidence, excluding `other` mass.
@@ -1766,11 +1634,9 @@ pub struct SoftMineReport {
     pub mean_other: f64,
 }
 
-/// The SOFT twin of `mine_priors` — `Verified.Geo.VenuePrior.minePriorsSoft`
-/// over `stayResponsibilities` (#343 P0). Takes the same per-stay wire as
-/// `mine_cluster`, so the mining population is BY CONSTRUCTION the one the
-/// prod cron mines: collect the stays inside the same loop, or the July
-/// harness bug (528 stays where prod mines 306) comes back.
+/// The soft twin of `mine_priors` (`Verified.Geo.VenuePrior.minePriorsSoft`).
+/// Takes `mine_cluster`'s per-stay wire, so its population is the one the
+/// mining job mines.
 pub fn mine_priors_soft(stays: &[MineStay]) -> Result<(serde_json::Value, SoftMineReport)> {
     #[derive(Deserialize)]
     struct Wire {
@@ -1839,18 +1705,9 @@ pub struct FocusPlaces {
     pub deleted: Vec<i64>,
 }
 
-/// Mine focus places from a point history — the `focus` serve mode.
-///
-/// ⚠ `clusters` is EMPTY on purpose. `focus` mode takes already-built clusters
-/// only to exercise `splitCluster` against captured fixtures; the cron mines
-/// from points, and `detectFocusPlaces` builds its own.
-///
-/// ⚠ EXTRACTED FROM `main.rs` SO IT CAN BE TESTED (#1424). It sat inline in
-/// `refresh_focus_places_one`, a DB-backed `async fn` in the BINARY crate,
-/// which put it out of reach of every integration test — #1003's two-hop check
-/// measured exactly that: dispatched, live in production, executed by nothing
-/// any gate can see. Nothing about the request or the decode changed in the
-/// move.
+/// Mine focus places from a point history: the `focus` serve mode.
+/// `clusters` is empty on purpose: the mode accepts built clusters only for
+/// fixture tests, and mining builds its own from points.
 pub fn focus_places(
     points: &[(i64, f64, f64, Option<f64>)],
     sleep_windows: &[[i64; 2]],
@@ -1902,9 +1759,8 @@ pub fn focus_places(
         .and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(serde_json::Value::as_i64).collect())
         .unwrap_or_default();
-    // ⚠ One assignment per mined cluster, or the caller pairs a cluster with the
-    // wrong existing row and moves somebody else's `first_seen_ts`. Checked here
-    // rather than at the call site because it is a property of THIS reply.
+    // One assignment per mined cluster, or a cluster is paired with the wrong
+    // existing row.
     if assignments.len() != mined.len() {
         anyhow::bail!(
             "focus mode returned {} identity assignment(s) for {} cluster(s)",
@@ -1973,22 +1829,14 @@ pub fn relation_route(
     })
 }
 
-/// One train leg snapped onto its rail corridor — the `railsnap` serve mode
-/// over `Verified.Geo.RailSnap`.
+/// One train leg snapped onto its rail corridor: the `railsnap` mode over
+/// `Verified.Geo.RailSnap`, which builds the graph from the raw ways itself.
 ///
-/// ⚠ THE WHOLE SNAP CROSSES, not just the shortest path. `RailSnap.lean` holds
-/// `buildRailGraph`, `edgeWeight`, `bridgeGaps`, `nearestVertex` and the vertex
-/// fusion (123 guards); the production TypeScript builds the graph itself and
-/// asks Lean only for `dijkstraC`. Handing over raw ways keeps all of that on
-/// the Lean side rather than growing a second implementation here (#1003).
+/// `on_line` selects the fallback, `snapTrainSegmentOnLine`: route over only
+/// the named line's ways, leaning on the label. The corridor form declines
+/// below 12 fixes, since a thin cloud cannot evidence a corridor.
 ///
-/// `on_line` selects the fallback: `snapTrainSegmentOnLine` routes over ONLY the
-/// named line's ways with no fix cloud, which is what `computeRailRoute` reaches
-/// for when the corridor snap refuses. The two are NOT interchangeable — the
-/// corridor form declines below 12 fixes because a thin cloud cannot evidence a
-/// corridor, and the line form leans on the label instead.
-///
-/// `Ok(None)` means LEAVE IT RAW. Never a guessed path.
+/// `Ok(None)` means leave it raw, never a guessed path.
 pub fn rail_snap(
     way_name: &str,
     start_ts: f64,
@@ -2017,9 +1865,8 @@ pub fn rail_snap(
     if let Some(e) = v.get("error") {
         anyhow::bail!("railsnap: {e}");
     }
-    // ⚠ `path: null` is the REFUSAL and is a normal answer — a leg whose
-    // stations do not resolve, or whose cloud is too thin. Distinct from an
-    // `error`, which is a malformed request.
+    // `path: null` is a refusal, a normal answer (unresolved stations, a thin
+    // cloud); an `error` is a malformed request.
     let Some(path) = v.get("path").and_then(|p| p.as_array()) else {
         return Ok(None);
     };
@@ -2037,31 +1884,12 @@ pub fn rail_snap(
     Ok(if geom.is_empty() { None } else { Some(geom) })
 }
 
-/// One day's HSMM decode, model and all, returned as SEGMENTS — the
-/// `assemblesegments` serve mode.
+/// One day's HSMM decode, as segments: the `assemblesegments` mode. The model
+/// is built in Lean from raw `edges`/`nodes`/`obs`/`places`, and the state
+/// table never crosses: grouping into segments happens there.
 ///
-/// ⚠ THE MODEL IS BUILT IN LEAN, not marshalled to it. `parseAssemble` takes
-/// raw `edges`/`nodes`/`obs`/`places` and calls `buildRouteGraphModel` and
-/// `buildCoverage` itself, so nothing here constructs a route graph.
-///
-/// ⚠ That is the whole point of this mode and of #411: the production
-/// TypeScript uses the `hsmm` mode instead and ships the QUANTISED TENSORS —
-/// 33-40 MiB per day to decode 1440 minutes, measured over the 11 decode
-/// fixtures. The reply either way is ~1440 integers. Porting decode-day onto
-/// this path deletes that payload rather than reimplementing it.
-///
-/// ⚠ `assembledecode` HAS NEVER BEEN THE SERVING PATH. `Verified.Hsmm.Assemble`
-/// has 14 guards and no production day behind it, so the first real comparison
-/// against the `hsmm` arm is this port's actual cost — not the wiring.
-///
-/// ⚠ NOT the `assembledecode` mode, which returns state INDICES with no state
-/// table — enough to measure a decode, not enough to persist one. The grouping
-/// into segments happens in Lean so the state table never crosses and no
-/// consumer can reimplement `groupStates` against it.
-///
-/// `Ok(None)` is the DEGENERATE case Lean reports explicitly (no viable path),
-/// which is distinct from an error and must not be flattened into one — a day
-/// with no decodable path is a real answer, a malformed request is not.
+/// `Ok(None)` is the degenerate case Lean reports (no viable path), an answer
+/// distinct from an error.
 pub fn assemble_segments(input: &serde_json::Value) -> Result<Option<serde_json::Value>> {
     Ok(assemble_response(input)?.map(|v| v["segments"].clone()))
 }
@@ -2089,15 +1917,11 @@ pub fn assemble_response(input: &serde_json::Value) -> Result<Option<serde_json:
 }
 
 // ---------------------------------------------------------------------------
-// The decoder's place/line hard constraint (#982).
+// The decoder's place/line hard constraint.
 
-/// `Verified.Hsmm.Assemble.KNOWN_LINES` — the train lines the served state space
-/// is built from.
-///
-/// ⚠ ASKED RATHER THAN SPELLED. A Rust copy of this list would let the shell
-/// resolve stations for a different set of lines than the model has states for,
-/// and nothing would report the mismatch: the extra pairs would simply never
-/// match a state, and the missing ones would silently drop a hard zero.
+/// `Verified.Hsmm.Assemble.KNOWN_LINES`: the train lines the state space is
+/// built from. Asked, not restated, so the shell resolves stations for exactly
+/// the lines the model has states for.
 pub fn known_lines() -> Result<Vec<String>> {
     #[derive(Deserialize)]
     struct Wire {
@@ -2108,16 +1932,12 @@ pub fn known_lines() -> Result<Vec<String>> {
     Ok(w.value)
 }
 
-/// `Verified.Hsmm.PlaceNearLine.buildPlaceNearLine` — the `"{placeId}|{lineName}"`
-/// keys the transition matrix hard-zeroes against.
+/// `Verified.Hsmm.PlaceNearLine.buildPlaceNearLine`: the `"{placeId}|{line}"`
+/// keys the transition matrix hard-zeroes. `lines` pairs a line with its
+/// stations as `[latBits, lonBits]`; the 400 m rule is Lean's.
 ///
-/// `lines` pairs a line name with its stations as `[latBits, lonBits]`; the
-/// mirror answers those, and the 400 m rule is Lean's.
-///
-/// ⚠ AN EMPTY RESULT IS NOT A NEUTRAL ONE. `parseAssemble` reads `placeNearLine`
-/// as optional, and an absent set removes every hard zero rather than adding
-/// them — a decode that skips this permits boardings the TypeScript forbids and
-/// still produces a plausible timeline.
+/// ⚠ An empty set is not neutral: it removes every hard zero, permitting
+/// impossible boardings while still producing a plausible timeline.
 pub fn place_near_line(
     places: &[(i64, f64, f64)],
     lines: &[(String, Vec<(f64, f64)>)],
@@ -2163,17 +1983,9 @@ pub struct GpsFix {
     pub accuracy_m: Option<f64>,
 }
 
-/// `Verified.Hsmm.GpsOutliers.dropGpsOutliers` — the physically-impossible fixes
-/// removed before anything looks at the day.
-///
-/// ⚠ THIS RUNS BEFORE BOTH HALVES OF THE DECODE, and that is the whole reason it
-/// needed a caller. The TypeScript cleans once in `buildHsmmModel` and again at
-/// the proximity call site, so the tensor and the rail/road distances describe
-/// the same fixes; a shell that cleaned only one of them would ask OSM about a
-/// jump the decoder never sees.
-///
-/// ⚠ The `gpsoutliers` mode had been reachable from NO Rust caller — a #1003
-/// orphan sitting one function away from the path that needed it.
+/// `Verified.Hsmm.GpsOutliers.dropGpsOutliers`: the physically impossible fixes,
+/// removed before anything looks at the day. It runs before both halves of the
+/// decode, so the tensor and the rail/road distances describe the same fixes.
 pub fn drop_gps_outliers(points: &[GpsFix]) -> Result<Vec<GpsFix>> {
     #[derive(Deserialize)]
     struct Wire {
@@ -2210,20 +2022,12 @@ pub fn drop_gps_outliers(points: &[GpsFix]) -> Result<Vec<GpsFix>> {
 }
 
 // ---------------------------------------------------------------------------
-// Per-minute rail/road proximity (#982, #238).
-//
-// ⚠ TWO CALLS BECAUSE THE MIDDLE IS AN OSM LOOKUP, not because anything is
-// decided here. Which minutes exist, where each one is asked about, how few
-// distinct queries a day needs, which subtypes count as rail or road, and which
-// minute gets which answer are all `Verified.Hsmm.RailRoadProximity`. This side
-// runs `nearby_ways` and carries bytes.
+// Per-minute rail/road proximity: two calls because the middle is an OSM
+// lookup. Every decision is `Verified.Hsmm.RailRoadProximity`'s; this side runs
+// `nearby_ways` and carries bytes.
 
-/// One location the shell must ask OSM about.
-///
-/// ⚠ THE BIT PATTERNS ARE THE IDENTITY. Lean joins minutes to answers on
-/// `coordKey`, which is computed from the Float — so the strings go back
-/// VERBATIM and the two sides key on the same value by construction. Parsing is
-/// only ever to ask the question.
+/// One location the shell must ask OSM about. The bit-pattern strings are its
+/// identity (Lean joins on them) and go back verbatim.
 #[derive(Debug, Clone)]
 pub struct ProximityQuery {
     lat_bits: String,
@@ -2298,12 +2102,9 @@ pub fn proximity_queries(
     })
 }
 
-/// One answered query: the location, spelled exactly as [`ProximityQuery`] gave
-/// it, and the `nearbyWays` rows found there.
-///
-/// ⚠ A QUERY THE MIRROR DECLINED HAS NO `ProximityAnswer` AT ALL. Sending it
-/// with an empty `ways` would say "nothing within 300 m", which is evidence;
-/// leaving it out says nothing, which is the truth (#976).
+/// One answered query: the location as [`ProximityQuery`] spelled it, and the
+/// `nearbyWays` rows there. A declined query has no answer at all: an empty
+/// `ways` would claim "nothing within 300 m".
 #[derive(Debug, Clone)]
 pub struct ProximityAnswer {
     query: ProximityQuery,
@@ -2367,18 +2168,10 @@ fn decode_serve<T: for<'de> Deserialize<'de>>(raw: &str, what: &str) -> Result<T
     serde_json::from_value(v).with_context(|| format!("decoding {what}: {raw}"))
 }
 
-/// Raw OSM rows → the `{edges, nodes}` the assemble modes consume, via
-/// `Verified.Hsmm.RouteGraph.buildWireGraph`.
-///
-/// ⚠ EVERY DECISION IS LEAN'S. `isUnderground`, `parseLineMemberships`, the
-/// 5-dp `nodeKey` that fuses junctions, and the 150 m station merge all happen
-/// there. This side supplies rows with the WKT parsed — a format concern — and
-/// nothing else.
-///
-/// ⚠ The TypeScript's `RouteGraph` additionally carries a cell index and
-/// per-edge `lengthM`. Those are NOT sent: `buildRouteGraphModel` rebuilds them
-/// on the far side, so shipping them would be shipping a second copy of an
-/// index the receiver constructs anyway.
+/// Raw OSM rows → the `{edges, nodes}` the assemble modes read, via
+/// `Verified.Hsmm.RouteGraph.buildWireGraph`. Every decision (underground,
+/// line memberships, junction fusion, the 150 m station merge) is Lean's; this
+/// side parses WKT.
 pub fn build_wire_graph(
     ways: &[serde_json::Value],
     stops: &[serde_json::Value],
@@ -2397,13 +2190,9 @@ pub fn build_wire_graph(
 }
 
 // ---------------------------------------------------------------------------
-// The two Overpass mirrors (#982 Tier 2).
-//
-// ⚠ EVERY DECISION BELOW IS LEAN'S. These wrappers move bytes and nothing else:
-// the region, the tiles, the query text, which relations survive, and whether
-// the run may write are all decided in `Verified.Geo.Osm*`. Adding a `if
-// routes.is_empty()` here would be re-deciding in Rust something that has a
-// guard in Lean.
+// The two Overpass mirrors. Every decision (region, tiles, query, which
+// relations survive, whether a run may write) is `Verified.Geo.Osm*`'s; these
+// wrappers move bytes.
 
 /// One tile of the mirror's grid, as Lean computed it.
 #[derive(Debug, Clone)]
@@ -2425,10 +2214,9 @@ pub struct MirrorPlan {
     pub place_count: i64,
 }
 
-/// ⚠ THE TILE KEY IS 4 DECIMAL PLACES OF THE SOUTH-WEST CORNER, matching
-/// `tileKey` in `refresh-bus-routes.ts`. It is stored on every row the tile
-/// produced and is what lets a partial run replace only the tiles that
-/// answered — so a change of precision here orphans every existing row.
+/// The tile key: the south-west corner to 4 decimal places, stored on every row
+/// the tile produced so a partial run replaces only the tiles that answered.
+/// ⚠ Changing the precision orphans every existing row.
 pub fn tile_key(t: &MirrorTile) -> String {
     format!("{:.4},{:.4}", t.min_lat, t.min_lon)
 }
@@ -2491,12 +2279,9 @@ pub fn mirror_region(
     }))
 }
 
-/// The Overpass QL for one tile. `mode` is `"rail"` or `"bus"`.
-///
-/// ⚠ THE COORDINATES ARE RENDERED HERE because Lean has no shortest-round-trip
-/// float renderer to match `${bbox.minLat}` with. That is safe for a query
-/// string Overpass parses and would NOT be safe for `stops_json`, which is
-/// compared row for row.
+/// The Overpass QL for one tile. `mode` is `"rail"` or `"bus"`. Coordinates are
+/// rendered here (Lean has no shortest round-trip float printer); fine for a
+/// query string.
 pub fn overpass_query(mode: &str, t: &MirrorTile) -> Result<String> {
     #[derive(Deserialize)]
     struct Wire {
@@ -2516,10 +2301,8 @@ pub fn overpass_query(mode: &str, t: &MirrorTile) -> Result<String> {
 /// A stop, as Lean resolved it. `seq` is the position in the route direction.
 #[derive(Debug, Clone, Serialize)]
 pub struct RouteStop {
-    // ⚠ FIELD ORDER IS THE SERIALISED ORDER and it must stay `name, lat, lon,
-    // seq`: `stops_json` is compared against the TypeScript arm's, and
-    // `JSON.stringify` follows the object literal. `serde` follows declaration
-    // order, so this declaration IS the wire format.
+    // Declaration order is the serialised order of `stops_json`: `name, lat,
+    // lon, seq`.
     pub name: Option<String>,
     pub lat: f64,
     pub lon: f64,
@@ -2540,9 +2323,7 @@ pub struct ExtractedRoute {
 }
 
 /// Parse one tile's Overpass response and keep the relations worth mirroring.
-///
-/// ⚠ THE RAW BODY GOES TO LEAN. Narrowing it here first would mean parsing 5 MB
-/// twice and keeping a second definition of what an Overpass element is.
+/// The raw body goes to Lean, which owns what an element is.
 pub fn extract_routes(mode: &str, body: &str) -> Result<Vec<ExtractedRoute>> {
     let elements = crate::overpass::elements(body)?;
     let v: serde_json::Value = call_json(&serde_json::json!({

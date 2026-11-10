@@ -8,30 +8,20 @@ import Verified.RestHr
 /-!
 # `ServeEntry` — the mode table `verified_cli serve` dispatches on
 
-One NDJSON request per line in, one reply per line out (`serveLoop`), and mid-
-request the day fold may put questions of its own on the same pipe
-(`DayEntry.Host`). The Rust backend keeps one or more of these processes alive
-and every Lean decision it makes crosses here (#1709).
+One NDJSON request per line in, one reply per line out (`serveLoop`); mid-request
+the day fold may put questions of its own on the same pipe (`DayEntry.Host`).
+The Rust backend keeps these processes alive, and every Lean decision it makes
+crosses here.
 -/
 
 /-!
 # `verified_cli` — JSON decode interface
 
-Reads one HSMM problem as JSON on stdin, decodes it with `sDecode` — the
-by-start decoder proved equal to the specification's `decode`
-(`sDecode_eq`), so its output stays theorem-backed (`sDecode_correct`) — and
-writes the result as JSON on stdout. The parser
-lays the tensors out as the flat `Array Nat`s `PData` reads through direct,
-inlinable accessors (the forward pass' hot path), instead of the `PModel`
-closure fields it used to build. The bridge for A/B-ing against
-`src/hmm/hsmm-viterbi.ts` on identical integer-scaled scores: see
-`lean/experiments/compare.mjs`.
-
-Scores are parsed straight into the packed encoding (`enc`: `-∞ ↦ 0`,
-`v ↦ v + 2^61` as a `Nat` scalar), and the parser REFUSES inputs outside the
-proven envelope — `|v| ≤ 2^49` for emissions, `|v| ≤ 2^45` for the other
-tensors, `T ≤ 2048` — rather than decode where the equivalence theorem does
-not apply.
+Reads one HSMM problem as JSON on stdin, decodes it with `sDecode` (proved equal
+to the specification's `decode`, `sDecode_eq`), and writes the result as JSON
+on stdout. Scores are parsed straight into the packed encoding (`enc`: `-∞ ↦ 0`,
+`v ↦ v + 2^61`), and inputs outside the proven envelope are refused: `|v| ≤
+2^49` for emissions, `|v| ≤ 2^45` for the other tensors, `T ≤ 2048`.
 
 Input shape (all scores integers; `null` = `-∞`):
   {
@@ -39,22 +29,17 @@ Input shape (all scores integers; `null` = `-∞`):
     "emit":  [[..S]  × T],          // emit[t][s]
     "trans": [[..S] × S]            // trans[from][to], time-constant …
            | [[[..S] × S] × T],     // … or trans[t][from][to] per destination t
-    "transOv": [[from,to,[..T]]]?,  // per-t rows for time-varying pairs (chain
-                                    // context); each row overrides the base
-                                    // matrix for that pair at every t
+    "transOv": [[from,to,[..T]]]?,  // per-t rows overriding the base matrix
     "dur":   [[..maxD] × S],        // dur[s][d-1]
     "durOverrides": [[s,d,e,v]]?,   // sparse per-segEnd exceptions (v null = -∞)
-    "durClass": [..S]?,             // + "durDelta": class-factorised per-segEnd
-    "durDelta": [[[[v,len]..] × maxD]]?, // deltas (segment evidence),
-                                    //   run-length-encoded over e: state s pays
-                                    //   dur[s][d-1] + durDelta[durClass[s]][d-1][e];
-                                    //   requires the -∞ pattern be e-independent
-    "init":  [..S]?,                // absent → 0 (uniform), matching the TS default
-    "entry": [[..S] × T]?           // absent → 0, matching the TS default
+    "durClass": [..S]?,             // + "durDelta": state s pays
+    "durDelta": [[[[v,len]..] × maxD]]?, //   dur[s][d-1] + durDelta[durClass[s]][d-1][e],
+                                    //   run-length-encoded over e
+    "init":  [..S]?,                // absent → 0 (uniform)
+    "entry": [[..S] × T]?           // absent → 0
   }
 
-`durOverrides` and `durClass`/`durDelta` are mutually exclusive (the exporter
-picks sparse or class-factorised form).
+`durOverrides` and `durClass`/`durDelta` are mutually exclusive.
 
 Output: {"path": [..T], "best": n}
       | {"degenerate": true}       // every path scores -∞
@@ -62,11 +47,9 @@ Output: {"path": [..T], "best": n}
 
 ## Rail mode (`verified_cli rail`)
 
-V3: shortest path over a TS-exported rail graph. Input is the adjacency
-structure verbatim — entry order per vertex is the TS insertion order, which
-the tie-parity claim depends on — with ×2²⁰-quantised nonnegative integer
-weights. `Nat` weights are exact at any magnitude, so unlike the packed HSMM
-scores there is no envelope to refuse on.
+Shortest path over a rail graph given as its adjacency structure, with
+×2²⁰-quantised nonnegative integer weights. Entry order per vertex decides
+ties. `Nat` weights are exact at any magnitude, so there is no envelope.
 
   { "adj": [[[to, w], ..] × n],   // adj[u] = directed edges out of u
     "src": n, "dst": n }
@@ -163,8 +146,7 @@ private def parseDurOverrides (j : Json) (maxD T : Nat) :
     m := m.insert ((s * maxD + (d - 1)) * T + e) v
   return m
 
-/-- `enc Score.zero` — the default for absent `init`/`entry` tensors,
-matching the TS decoder's implicit 0. -/
+/-- `enc Score.zero`: the default for absent `init`/`entry` tensors. -/
 private def encZero : Nat := pOff
 
 private def parseModel (j : Json) : Except String PData := do
@@ -538,11 +520,9 @@ private def parseObsRow (j : Json) : Except String Verified.Hsmm.Observation.Obs
     roadDistM := ← jOptFloat j "roadDistM", railDistM := ← jOptFloat j "railDistM"
     prevGpsFix := ← parseOptFix j "prevGpsFix", nextGpsFix := ← parseOptFix j "nextGpsFix" }
 
-/-- A station node for the chained-triple resolver. Same five fields as
-`parseStationNode`'s, and a DIFFERENT record — the coverage builder and the
-station chain each have their own. Kept here beside the other wire parsers
-rather than inside `namespace StationChain`, because `assemblesegments` runs the
-chain itself and needs this several hundred lines earlier. -/
+/-- A station node for the chained-triple resolver: the same fields as
+`parseStationNode`'s, a different record. Here rather than in `StationChain`
+because `assemblesegments` runs the chain and needs it earlier. -/
 private def parseChainNode (j : Json) : Except String Verified.Hsmm.StationChain.ChainNode := do
   let name : Option String := match (j.getObjVal? "stationName" >>= (·.getStr?)) with
     | .ok s => some s | .error _ => none
@@ -555,8 +535,8 @@ NAMES are read — the coordinates in `stops_json` answer a different question. 
 private def parseRelation (j : Json) :
     Except String Verified.Hsmm.ServedStations.RailStopRelation := do
   let stops ← (← (← j.getObjVal? "stops").getArr?).mapM fun t => do
-    -- Coordinates are plain numbers in the cache's `stops_json`; absent or
-    -- unreadable reads as unknown, which only silences the pass term (#238).
+    -- Coordinates are plain numbers in `stops_json`; absent or unreadable is
+    -- unknown, which only silences the pass term.
     let coord := fun (k : String) => (t.getObjVal? k).toOption.bind (fun x => (jFloat x).toOption)
     pure ({ name := ← optStr t "name", lat := coord "lat", lon := coord "lon" }
       : Verified.Hsmm.ServedStations.RailStop)
@@ -613,21 +593,11 @@ private def parseStationNode (j : Json) : Except String Verified.Hsmm.TrainCandi
 
 /-! ## Building the observation tensor here, instead of receiving it
 
-⚠ THE TENSOR IS 1440 ROWS AND IT DOES NOT NEED TO CROSS THE WIRE. Shipping it is
-what #411 measures at 33-40 MiB per day. Everything it is built FROM is small:
-the day's fixes, three biometric streams, and two per-minute lookup tables the
-shell must resolve because they are not pure — the local hour/day-of-week (a
-timezone) and the road/rail distances (an OSM query).
-
-So `assemblesegments` accepts EITHER form:
-
-    "obs"          a pre-built array of rows   — what the TS shadow path sends
-    "observation"  the raw materials           — what `decode-day` sends
-
-⚠ The two are not interchangeable by accident: `head::capture`'s `obs` is the DAY
-TENANT's object and has nothing to do with this. decode-day sent it for a week
-and every run failed with `array expected`, because a compile cannot tell two
-tensors apart when they share a field name.
+The tensor is 1440 rows, built from small inputs: the day's fixes, three
+biometric streams, and two per-minute lookup tables the shell resolves because
+they are not pure (the local hour/day-of-week, a timezone; the road/rail
+distances, an OSM query). So `assemblesegments` takes either a pre-built `obs`
+array or the raw `observation`, which is what `decode-day` sends.
 -/
 
 private def parseGpsPoint (j : Json) : Except String Verified.Hsmm.Observation.GpsPoint := do
@@ -647,15 +617,11 @@ private def parseSleepRec (j : Json) : Except String Verified.Hsmm.Observation.S
 
 /-- Build the tensor from raw materials.
 
-⚠ `localCtx` AND `proximity` ARE LOOKUP TABLES, NOT FUNCTIONS, because JSON has
-no functions. `localCtx` is 1440 `[hourLocal, dayOfWeek]` pairs indexed by minute;
-`proximity` is a list of `[minuteTs, roadDistM|null, railDistM|null]` for the
-minutes that HAD fixes — sparse on purpose, since a minute with no fix has no
-position to be near anything.
-
-⚠ A MINUTE MISSING FROM `proximity` IS `(none, none)`, which is "not known to be
-near either", NOT "far from both". The decoder treats a null as no evidence; a
-large number would be evidence AGAINST rail. -/
+`localCtx` and `proximity` are lookup tables (JSON has no functions):
+`localCtx` is 1440 `[hourLocal, dayOfWeek]` pairs by minute; `proximity` is a
+sparse list of `[minuteTs, roadDistM|null, railDistM|null]` for the minutes
+with a fix. A minute missing from it is `(none, none)`, no evidence, not "far
+from both". -/
 private def parseObservationInput (v : Json)
     : Except String (Array Verified.Hsmm.Observation.ObsRow) := do
   let startUtc ← (← v.getObjVal? "startUtc").getInt?
@@ -676,9 +642,8 @@ private def parseObservationInput (v : Json)
   let proxPairs ← (← (← v.getObjVal? "proximity").getArr?).mapM (fun e => do
     let a ← e.getArr?
     let some tsJ := a[0]? | throw "proximity: a row is not [ts, road, rail]"
-    -- ⚠ EITHER ENCODING, WHICH IS `jFloat`'S JOB — `proximitytable` writes bit
-    -- patterns and the TS shadow path writes numbers. Absent or null is "not
-    -- known to be near either"; anything else is an ERROR rather than a null.
+    -- Either encoding (`jFloat`): bit patterns or numbers. Absent or null is
+    -- "not known to be near either"; anything else malformed is an error.
     let dist : Json → Except String (Option Float) := fun x =>
       if x.isNull then pure none else some <$> jFloat x
     let road ← match a[1]? with | some x => dist x | none => pure none
@@ -696,9 +661,8 @@ private def parseObservationInput (v : Json)
 private def recordZero : Float := 0
 
 private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.ModelContext × Nat) := do
-  -- ⚠ `observation` WINS when both are present, and that is not arbitrary: the
-  -- raw form is the one that cannot be stale, because it is what the tensor
-  -- would be built from anyway.
+  -- `observation` wins when both are present: it is what the tensor would be
+  -- built from anyway, so it cannot be stale.
   let obs ← match j.getObjVal? "observation" with
     | .ok v => if v.isNull then
                  (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
@@ -734,9 +698,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         pure (Std.HashSet.ofList (← (← v.getArr?).mapM (·.getStr?)).toList)
     | .error _ => pure {}
   let flags ← j.getObjVal? "flags"
-  -- ⚠ ABSENT `maxD` IS THE MODEL'S OWN, not a caller's guess. It is the trellis
-  -- depth every arm has to agree on, so the number lives in
-  -- `Verified.Hsmm.Assemble` and a shell that has no opinion says nothing.
+  -- Absent `maxD` is the model's own (`Verified.Hsmm.Assemble`), the trellis
+  -- depth every caller must agree on.
   let maxD ← match j.getObjVal? "maxD" with
     | .ok v => if v.isNull then pure Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION else v.getNat?
     | .error _ => pure Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION
@@ -983,12 +946,10 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
 
 /-! ## Coverage mode (`verified_cli coverage`)
 
-Rebuild the train-generator coverage map IN LEAN from the observation tensor and a
-node-annotated station graph — `enumerateTrainCandidates` + `buildCoverage`, the
-Lean twin of `buildTrainGeneratorPrior`. Checks the REBUILD parity (the assemble
-mode CONSUMES a coverage map; here Lean reconstructs it). The shell supplies the
-station annotation (`nodeKey` ids, station names, incident edge ids — the topology
-boundary).
+Rebuild the train-generator coverage map from the observation tensor and a
+node-annotated station graph (`enumerateTrainCandidates` + `buildCoverage`).
+The shell supplies the station annotation: `nodeKey` ids, station names,
+incident edge ids.
 
   { "obs": [...], "edges": [...],
     "nodes": [{id, lat, lon, stationName|null, edgeIds:[...]}] }
@@ -1019,9 +980,8 @@ private def coverageResult (j : Json) : Json :=
 private def encScore (bound : Nat) : Option Float → Except String Nat
   | none => .ok 0
   | some fv =>
-    -- In machine words: `Int` is a GMP number past 2^31, and these scores are
-    -- far past it, so `(v + pOff).toNat` allocated on every cell (#1774).
-    -- `|w|` as a `UInt64` is exact for every `Int64`, `Int64.min` included.
+    -- In machine words: `Int` past 2^31 is a GMP number, and these scores are
+    -- far past it. `|w|` as a `UInt64` is exact for every `Int64`.
     let w := Float.toInt64 fv
     let mag := (if w < 0 then 0 - w else w).toUInt64.toNat
     if mag > bound then throw s!"assembled score {w.toInt} exceeds envelope {bound}"
@@ -1104,8 +1064,8 @@ private def journeyKmPerM : Float := 0.001
 private def journeyMinPerHour : Float := 60
 
 /-- Phase one of the model build: the emission and entry tensors, `T·S` each.
-    The three phases are separate functions so `decodeprof` can time them one at
-    a time (#1774); `buildPData` composes them and nothing else calls them. -/
+    The phases are separate so `decodeprof` can time each; only `buildPData`
+    composes them. -/
 private def buildEmitEntry (c : Verified.Hsmm.Assemble.ModelContext) (T S : Nat) :
     Except String (Array Nat × Array Nat) := do
   let quant := Verified.Hsmm.Quantize.quantize
@@ -1162,13 +1122,12 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
         && (Verified.Hsmm.RouteModel.isMovingMode dst.mode || dst.mode == .unknown))
     || (dst.mode == .train && (match dst.lineName with
         | some l => !Verified.Hsmm.Emissions.isPlaceholderLine l | none => false))
-  -- What the chain term asks of each minute regardless of the pair — a fix's
-  -- stay penalty to each place, its boarding penalty to each line — tabled once
-  -- per minute rather than once per pair per minute (#1774, 2026-09-30).
+  -- What the chain term asks of each minute regardless of the pair (a fix's
+  -- stay penalty per place, boarding penalty per line), tabled once per minute.
   let placeIds := c.placeCoords.toList.map (·.1)
   let lineNames := c.edgesByLine.toList.map (·.1)
-  -- The fix's distances to every line and place once per DISTINCT fix: a
-  -- gap's minutes all share one `prevGpsFix` (#1774, 2026-10-07).
+  -- The fix's distances to every line and place, once per distinct fix: a
+  -- gap's minutes all share one `prevGpsFix`.
   let minutes : Array (Verified.Hsmm.RouteModel.ChainMinute × Bool) :=
     if c.chainOn then Id.run do
       let mut out : Array (Verified.Hsmm.RouteModel.ChainMinute × Bool) := #[]
@@ -1183,11 +1142,8 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
            Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)
       return out
     else #[]
-  -- The override rows go straight into the flat `nRows × T` array, row after
-  -- row: a row per pair and a `zipIdx` copy of each afterwards was the churn
-  -- in this phase (#1774, 2026-10-07). A pure loop, like the durations': the
-  -- FIRST envelope error is kept and thrown after it, which is the error the
-  -- `Except` loop stopped at.
+  -- The override rows go straight into the flat `nRows × T` array. A pure loop:
+  -- the first envelope error is kept and thrown after it.
   let (ovPairs, transFlat, err) : Array (Nat × Nat) × Array Nat × Option String := Id.run do
     let mut ovPairs : Array (Nat × Nat) := #[]
     let mut flat : Array Nat := #[]
@@ -1201,7 +1157,7 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
             -- context, as a walk does.
             let base := outerTransF src dst ws a b
             -- The place-anchored boarding penalty once per pair; each minute adds
-            -- only what depends on it (`chainContext` is this composition, #1774).
+            -- only what depends on it.
             let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
             for (cm, covered) in minutes do
               let cv := Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine src dst covered pb cm
@@ -1313,9 +1269,8 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   let slotArr : Array (Option Nat) := (Array.range nC).map fun cls => legSlots.findIdx? (· == cls)
   -- Every slot is a class below `nC`, so past it there is none either.
   let slotOfCls := fun (cls : Nat) => slotArr.getD cls none
-  -- A pure loop: in `Except` each of the ~2.4M cells paid for the monad, which
-  -- was half the phase (#1774). An out-of-range delta is recorded and thrown
-  -- after the loop instead.
+  -- A pure loop (in `Except`, every one of ~2.4M cells paid for the monad); an
+  -- out-of-range delta is recorded and thrown after it.
   -- The first end minute computed: `T` (none) for the tables alone.
   let f := if tablesOnly then T else (inc.map (·.f)).getD 0
   let (durDelta, bad, legDur) : Array Nat × Option Int × FloatArray := Id.run do
@@ -1344,7 +1299,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       -- the phase, exactly. Below `f` the cells are the previous build's.
       for e in [max d0 f:T] do
         -- The segment's window once per (d, e) for every class
-        -- (`durAtFrom_eq_W`, #1774).
+        -- (`durAtFrom_eq_W`).
         let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
         let sst := Verified.Hsmm.SegmentEmission.statsAt c.segPref (d0 + 1) e
         -- The displacement densities once per (d, e): every class and both
@@ -1504,13 +1459,11 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         let L := legList.size
         let legOuter := legList.map (·.1)
         let baseOf := legList.map (·.2.1)
-        -- A ride begins where the fixes LEAVE its board station. The station census
-        -- over the corpus's paired rides reads 86 departures with the decoded ride
-        -- beginning inside the platform wait in 85 of them. A minute with a fix of
-        -- its own at the station starts a ride only when the next minute is away
-        -- (the departure seen); a minute whose fix is carried from before (a dark
-        -- platform, `fixAt`) may start one, the departure lying somewhere in the
-        -- dark. The wait before the ride keeps every reach minute.
+        -- A ride begins where the fixes leave its board station (in 85 of 86
+        -- corpus departures the decoded ride began inside the platform wait). A
+        -- minute with its own fix at the station starts a ride only when the next
+        -- minute is away; a minute whose fix is carried from before (a dark
+        -- platform, `fixAt`) may start one. The wait keeps every reach minute.
         let reachStarts : Array (Array Nat) := legList.map fun (l, _, st?) =>
           match st? with
           | none => #[]
@@ -1633,28 +1586,17 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
                   | none => acc
                   | some d => match acc with | none => some d | some bd => if d < bd then some d else acc) none, fc2)
               for e in [0:T] do
-                -- The alight is where the fixes resume AWAY from the board station
-                -- and AT a station of the line, within the stale window: a track
-                -- that sits at the station it boarded at is the phone repeating its
-                -- last position underground (07-02: Finchley Road until 08:15:20Z,
-                -- Baker Street at 08:16:47Z), and the minute straddling the arrival
-                -- carries a position between the two stations — away from the
-                -- board, near no alight — so stopping there left a one-stop hop
-                -- with no ride time while a line stationed nearer the midpoint kept
-                -- searching and found its pair.
-                -- The arrival is the FIRST minute after the leg whose END is away
-                -- from the board and at a served station of the line, within the
-                -- stale window. Read from the minute's last fix: the minute after
-                -- the leg begins at a call on the way and ends on the platform
-                -- (07-07: Great Portland Street 08:44:29–08:45:03, Euston Square
-                -- at 08:45:42). The LAST such minute was the next ride (05-18:
-                -- Baker Street at 10:48, the change, Euston Square at 10:52).
-                -- It lies at or beyond the farthest station the ride's own fixes
-                -- reached in the stale window before its end, along the line: the
-                -- phone repeats a call's position underground too (07-16: Finchley
-                -- Road at 07:41–07:42 after St John's Wood at 07:39, Baker Street
-                -- at 07:44). The look-back stops at a fix at the board station, so
-                -- a short hop does not read the ride before it.
+                -- The arrival is the first minute after the leg whose end is away
+                -- from the board station and at a served station of the line,
+                -- within the stale window, read from the minute's last fix (a
+                -- minute can begin at a call on the way and end on the platform;
+                -- the last such minute would be the next ride). Underground the
+                -- phone repeats the board station's position, and the minute
+                -- straddling the arrival sits between two stations, so neither
+                -- ends the search. The arrival also lies at or beyond the farthest
+                -- station the ride's own fixes reached before its end (the phone
+                -- repeats a passed call too); the look-back stops at a fix at the
+                -- board station, so a short hop does not read the ride before it.
                 let mut passedM : Float := journeyZero
                 let mut t := e
                 while true do
@@ -1672,10 +1614,9 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
                 while m < T && m ≤ e + journeyFixStaleMin do
                   match fixAfter m, alights[m]! with
                   | some (la, lo), some a =>
-                    -- The same STATION is no ride: a station is several nodes
-                    -- (King's Cross has six), and a node of the board station
-                    -- within reach of the next fix priced a one-minute ride to
-                    -- itself at 0.8 minutes.
+                    -- The same station is no ride: a station is several nodes,
+                    -- and a node of the board station within reach would price a
+                    -- ride to itself.
                     if Verified.Hsmm.FloatScore.haversineMeters la lo σ.lat σ.lon > journeyReachM
                         && a.stationName != σ.stationName then
                       let (pm, fc2) := pathTo footCache a
@@ -1926,12 +1867,11 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat)
     Except String (PData × Option Verified.Hsmm.Journey.Tables) := do
   buildPDataFrom c maxD g? rels? (← buildPre c maxD g? rels?)
 
-/-- `verified_cli decodetrace` — the per-minute line evidence over a window,
-for reading WHY a ride took the line it took (#238). An `assemblesegments`
-request plus `"window": [tsFrom, tsTo]`; for every minute inside it: the
-generator's coverage, and for each state but the place stays
-the emission, the entry prior, and the transition INTO it from `walking` and
-from `stationary` (the boarding chain term, station hard-zero included). -/
+/-- `verified_cli decodetrace`: the per-minute line evidence over a window, for
+reading why a ride took its line. An `assemblesegments` request plus
+`"window": [tsFrom, tsTo]`; per minute: the generator's coverage, and per state
+(place stays excepted) the emission, the entry prior, and the transition into
+it from `walking` and `stationary`. -/
 private def decodeTraceResult (j : Json) : Json :=
   match parseAssemble j with
   | .error e => Json.mkObj [("error", Json.str e)]
@@ -2001,16 +1941,14 @@ private def journeyInputs (c : Verified.Hsmm.Assemble.ModelContext) (j : Json) :
     | .error _ => none
   (g?, rels?)
 
-/-- `verified_cli decodeprof` — the decoder's cost on one day, apart from its
-model build. Reads an `assemblesegments` request plus `"runs"` (default 5),
-builds the `PData` once, then times `sDecode` that many times on it; each
-`IO.lazyPure` pins one decode between two timestamps. The reply is the trellis
-shape, `buildMs`, every `decodeMs`, and the best score — which every run must
-agree on, so a timing never comes from a decode that changed its answer.
+/-- `verified_cli decodeprof`: the decoder's cost on one day, apart from the
+model build. An `assemblesegments` request plus `"runs"` (default 5): builds
+`PData` once, times `sDecode` per run (each pinned by `IO.lazyPure`), and
+replies with the trellis shape, `buildMs`, every `decodeMs`, and the best score,
+which every run must agree on.
 
-⚠ THIS IS THE INSTRUMENT FOR A CHANGE TO THE TRELLIS. `hsmm_decode_corpus`
-proves a decode still exact; its wall (fixture parse, Rust and Lean together)
-swings 2× run to run and cannot tell a 10% decoder change from noise. -/
+The instrument for a trellis change: `hsmm_decode_corpus` proves a decode exact,
+but its wall time swings 2× and cannot see a 10% change. -/
 private def decodeProfMain (input : String) : IO UInt32 := do
   match Json.parse input with
   | .error e => IO.eprintln s!"error: {e}"; return 1
@@ -2075,23 +2013,13 @@ private def decodeProfMain (input : String) : IO UInt32 := do
           ("best", Json.str best)]).compress
         return 0
 
-/-! ## `assemblesegments` — assemble, decode, and return SEGMENTS
+/-! ## `assemblesegments` — assemble, decode, and return segments
 
-A decode is a path of STATE INDICES, which the caller cannot map to
-`{mode, placeId, lineName}`: `parseAssemble` builds `c.states` internally and
-never emits it. The answer is NOT to emit the state table. That table is an internal representation,
-and shipping it would invite every consumer to reimplement the run-grouping — the
-`groupStates` logic — against it. So the grouping happens HERE, once, and what
-crosses the wire is what `decoded_days` stores.
-
-⚠ This is also `Verified.HsmmSegments.groupStates`' FIRST entry point. It was
-ported on 2026-08-24 and reachable from no mode and no op until now — the #1003
-orphan pattern, one day old.
-
-⚠ The timestamps come from `c.obs`, NOT from a caller-supplied array: the path
-indexes the observation tensor, so any other source could silently disagree in
-length or order and `groupStates` would return `none` (or worse, agree by
-accident on a shifted window). -/
+A decode is a path of state indices, meaningless without `c.states`, which
+never crosses: the grouping into `{mode, placeId, lineName}` runs
+(`HsmmSegments.groupStates`) happens here, once, and the reply is what
+`decoded_days` stores. The timestamps come from `c.obs`, which the path indexes;
+any other source could disagree in length or order. -/
 private def MINUTES_PER_HOUR : Float := 60
 
 /-- `"emissionDebug": {"fromTs": n, "toTs": n}` on an `assemblesegments` request:
@@ -2508,24 +2436,14 @@ private def segmentsOf (j : Json) (c : Verified.Hsmm.Assemble.ModelContext)
           (legAt[t]?.bind id).bind fun l => tb.legStation[l]?.bind id
       let segs := folded.map fun s =>
         if s.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then { s with lineName := none } else s
-      -- ⚠ THE STATION CHAIN RUNS HERE, and that is the point. `stationchain`
-      -- exists as its own mode and takes `obs` — the 1440-row observation
-      -- tensor — so calling it from the shell would put the tensor back on
-      -- the wire, which the request's raw form keeps off it. This function already
-      -- HOLDS the tensor it built.
-      --
-      -- ⚠ The graph is built from `c.model`, NOT by re-running
-      -- `mkChainGraph`. `buildRouteGraphModel` has already run on these
-      -- edges, and `edgesNearIdx` reads `model.edges` in BUILDER ORDER —
-      -- reusing the same object is not an optimisation, it is the only way
-      -- to be certain the order is the one the model was built with.
+      -- The station chain runs here, where the observation tensor already is
+      -- (the `stationchain` mode would put it back on the wire). The graph comes
+      -- from `c.model`, not a fresh `mkChainGraph`: `edgesNearIdx` reads
+      -- `model.edges` in builder order, and reusing the object guarantees it.
       let chained : Except String (Array Json) := do
         let nodes ← (← optArr j "nodes").mapM parseChainNode
-        -- ⚠ ABSENT AND `[]` ARE DIFFERENT REQUESTS. Absent means the mirror
-        -- was never consulted, so every candidate's `servedPen` is 0; empty
-        -- means it was consulted and had nothing. Flattening them would let
-        -- a shell that cannot reach the mirror pass for one that found it
-        -- bare.
+        -- Absent and `[]` differ: absent means the mirror was never consulted
+        -- (every `servedPen` 0), empty means it had nothing.
         let rels ← match j.getObjVal? "railStopRelations" with
           | .ok v => if v.isNull then pure none
                      else pure (some (← (← v.getArr?).mapM parseRelation))
@@ -2641,14 +2559,9 @@ private def segmentsOf (j : Json) (c : Verified.Hsmm.Assemble.ModelContext)
                 | some l, _ => Json.str l
                 | none, none => Json.null
                 | none, some l => Json.str l) ]
-          -- ⚠ ABSENT, NOT NULL, ON A SEGMENT THE RESOLVER DID NOT REACH.
-          -- The TypeScript ASSIGNS these two fields only at the indices
-          -- `resolveStationsServed` returned, and `JSON.stringify` omits an
-          -- `undefined`. A resolved segment whose side could not be
-          -- separated carries an explicit null — "wrong is worse than
-          -- missing" — and an unresolved one carries no key at all. The two
-          -- read the same to a consumer and differ byte for byte in
-          -- `segments_json`, which is what the parity diff compares.
+          -- A segment the resolver did not reach has no board/alight keys; a
+          -- resolved one whose side could not be separated carries an explicit
+          -- null. The stored `segments_json` keeps the difference.
           Json.mkObj (match byIdx.get? i with
             | none => base ++ (match waitStation[i]? with
                 | some (some st) => [("boardStation", Json.str st)]
@@ -2686,11 +2599,11 @@ private def assembleSegmentsResult (j : Json) : Json :=
 
 /-! ## Today, from the earliest changed minute (`assemblesegmentsinc`)
 
-The day's previous run is kept by the serve loop; a run whose per-minute tables
-match it before minute `f` copies every cell ending before `f`, computes the
-rest, and builds the trellis's rows on from the previous run's, cut at `f`
-(`sDecodeInc_eq`: the full decode exactly). Any day-wide difference, a new key
-or no previous run decodes in full (docs/proposals/2026-11-incremental-today.md). -/
+The serve loop keeps the day's previous run. A run whose per-minute tables match
+it before minute `f` copies every cell ending before `f`, computes the rest, and
+builds the trellis rows on from the previous run's, cut at `f` (`sDecodeInc_eq`:
+exactly the full decode). Any day-wide difference, a new key, or no previous run
+decodes in full. -/
 
 /-- What the day's next run reuses. -/
 structure TodayState where
@@ -2871,22 +2784,14 @@ private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × O
 
 /-! ## Float bit transport
 
-Every other mode quantises before it emits (`qCell`, `ptJson`) because its
-inputs live on a pinned integer grid. The Kalman filter does not: it is a
-covariance recursion over raw degrees, where the seventh decimal of a fix moves
-the gain, so its wire format has to carry Floats exactly.
+Most modes quantise before they emit (`qCell`, `ptJson`). The Kalman filter
+cannot: it runs over raw degrees, where the seventh decimal moves the gain. And
+`Lean.toJson (f : Float)` rounds to six places (`51.50009905063291` comes back
+`51.500099`, `1e-7` comes back `0`).
 
-`Lean.toJson (f : Float)` cannot. `Lean.JsonNumber` is a decimal (mantissa ×
-10⁻ᵉ) and the printer emits six places, so Float → JSON → Float is two
-roundings: `51.50009905063291` comes back `51.500099` and `1e-7` comes back `0`.
-Writing a faithful printer means a shortest-round-trip algorithm (Ryu/Grisu),
-which `JsNum.lean` explicitly declines to port.
-
-So a Float crosses the wire as its IEEE-754 bit pattern, and the pattern is a
-decimal STRING rather than a JSON number: it reaches 2^64, well past the 2^53
-JS integers are exact to, and a bare number would simply be re-rounded by
-`JSON.parse` one layer down. Round-tripping is then exact by construction,
-including `1e-7` and `-0.0`. The TS twin is `src/lean/float-bits.ts`. -/
+So a Float crosses as its IEEE-754 bit pattern, as a decimal string: it reaches
+2^64, past the 2^53 a JSON number is exact to. The round trip is then exact by
+construction, `1e-7` and `-0.0` included. -/
 
 /-! ## Kalman mode (`verified_cli kalman`)
 
@@ -2921,28 +2826,18 @@ private def kalmanResult (j : Json) : Json :=
 
 /-! ## GPS quality mode (`verified_cli gpsquality`)
 
-`Verified.Geo.GpsQuality.qualityFilterGps` — the incoherent-run pre-filter that
-runs immediately BEFORE the Kalman filter, over the whole day's track.
+`Verified.Geo.GpsQuality.qualityFilterGps`, the incoherent-run pre-filter that
+runs just before the Kalman filter, over the whole day's track.
 
   { "pts": [[ts, latBits, lonBits, accBits|null], …] }
 
-Output: the SURVIVING rows, same shape. Unlike `kalman` this emits no computed
-values: every output row is a copy of an input row, so the response is a pure
-selection and the only thing the two arms can disagree about is WHICH fixes
-survive. `cos` reaches only the threshold comparisons, never the output. -/
+Output: the surviving rows, same shape: a pure selection. -/
 
-/-! ## `rankvenues` — the venue ranking, candidate by candidate (#1405, #325)
+/-! ## `rankvenues` — the venue ranking, candidate by candidate
 
-`Verified.Geo.VenuePrior.rankVenues` decides which OSM venue names a stay, and
-until now nothing could see INSIDE it. #325 built this probe and reverted it to
-avoid landing a mode with no caller; #1405 is why it is back, with a test that
-drives it: a hand-computed model of `shapeScore` disagreed with what the fold
-actually served, and a model that disagrees with the artefact is worth nothing.
-
-⚠ FLOATS CROSS AS PLAIN NUMBERS HERE, not as `fBits`. This is a probe read by a
-human and by a test that writes literals, not a Lean-to-Lean parity hop — the
-bit-pattern spelling exists so two implementations can compare doubles exactly,
-and there is only one implementation of this.
+`Verified.Geo.VenuePrior.rankVenues`, with every candidate's score broken out,
+so the term that decided a stay is readable. A probe for people and tests, so
+floats cross as plain numbers.
 
   { "landmarks": [{name, type, subtype, distanceM,
                    openFraction?, enclosing?, reverseGeocoded?}],
@@ -2950,12 +2845,9 @@ and there is only one implementation of this.
     "priors": {bySubtype: [[name, {visits, dwell:[…], hours:[…]}]],
                byCategory: [[…]], totalVisits} | null }
 
-Output: every candidate in RANKED order with its score broken out, so the term
-that decided a stay is readable rather than inferred.
-
-  { "ranked": [{name, subtype, distanceM, total,
-                distance, venue, shape|null, hours|null,
-                nearField, enclosing}] }
+  → { "ranked": [{name, subtype, distanceM, total,
+                  distance, venue, shape|null, hours|null,
+                  nearField, enclosing}] }
 -/
 
 private def num (j : Json) : Except String Float := do
@@ -3008,17 +2900,12 @@ private def parsePriorsPlain (j : Json)
         totalVisits := ← num (← v.getObjVal? "totalVisits")
       }
 
-/-! ## `bestplace` — the WHOLE naming chain, not just the ranking (#1405)
+/-! ## `bestplace` — the whole naming chain
 
-`rankvenues` reads the ranker. This reads what `BestPlace.resolve` finally
-ANSWERS, which is a different question: the ranker's winner passes through an
-enclosing check, a Nominatim specific-venue branch, a lodging override and a
-residential-address branch before it becomes a label.
-
-⚠ THIS IS THE ONLY WAY TO TELL "the ranker chose X" FROM "the fold serves X".
-#1405 needed exactly that: the ranker's winner and the served label disagree,
-and without this mode there is no way to say which side of `resolve` the
-disagreement is on.
+What `BestPlace.resolve` finally answers: the ranker's winner after the
+enclosing check, the Nominatim specific-venue branch, the lodging override and
+the residential-address branch. The only way to tell "the ranker chose X" from
+"the fold serves X".
 
   { "landmarks": [{name, type, subtype, distanceM, openingHours?, enclosing?}],
     "geocode": {"18": <result>|null, "16": <result>|null},
@@ -3032,8 +2919,7 @@ disagreement is on.
               neighbourhood?, suburb?, stateDistrict?, city?, town?, village?,
               municipality?}}
 
-Output: `{ "label": str, "city": str|null }`, or `{"label": null}` when the
-chain resolves nothing.
+Output: `{ "label": str, "city": str|null }`, or `{"label": null}`.
 -/
 
 private def optStr (j : Json) (k : String) : Option String :=
@@ -3104,9 +2990,8 @@ private def bestPlaceResult (j : Json) : Json :=
     let resolved := Verified.Geo.BestPlace.resolve
       { landmarks := pois.toList, geocode := geo, samples := samples.toList }
       stay priors (optBool j "preferResidential")
-    -- The ranker's view of the same candidates beside the chain's answer, so
-    -- a census over dumped namings (`LEAN_DUMP_DIR`, `place-N.json`) can say
-    -- what lost and by which term (#325).
+    -- The ranker's view of the same candidates beside the chain's answer, so a
+    -- census over dumped namings (`LEAN_DUMP_DIR`) can say what lost and why.
     let ranked := Verified.Geo.VenuePrior.rankVenues
       (pois.toList.map (Verified.Geo.BestPlace.toLandmark samples.toList stay.isSome)) stay priors
     -- The shape's three log-ratios unclamped, per candidate, for a fit over
@@ -3185,24 +3070,13 @@ private def gpsQualityResult (j : Json) : Json :=
 
 /-! ## HSMM GPS outlier filter (`verified_cli gpsoutliers`)
 
-`Verified.Hsmm.GpsOutliers.dropGpsOutliers` — the robust-median cluster filter
-`buildHsmmModel` runs on its raw points before the observation tensor. Distinct
-from `gpsquality` above, which is a different filter at a different stage: that
-one runs before the Kalman smoother on raw PhoneTrack fixes, this one runs after
-it on the smoothed stream, and only this one is the HSMM's.
+`Verified.Hsmm.GpsOutliers.dropGpsOutliers`: the robust-median cluster filter
+run on the smoothed stream before the observation tensor (unlike `gpsquality`,
+which runs on raw fixes before the Kalman smoother).
 
   { "pts": [[ts, latBits, lonBits, speedBits], …] }
 
-Output: the SURVIVING rows, same shape — a pure selection like `gpsquality`, so
-the only thing the two arms can disagree about is WHICH fixes survive. `cos`
-reaches the deviation compared against the 2 km threshold and nothing else, and
-no real fix sits within a ULP of 2 km of its own cluster median, so the kept set
-is exact rather than close. Set equality is the honest assertion here and a
-float delta would be the wrong instrument.
-
-This verb exists because the module had none (#695): `Verified.Hsmm.Factors` was
-its only importer and nothing in `verified_cli` reached it, so the twin was a
-real port of a live pass that no comparator could enter. -/
+Output: the surviving rows, same shape: a pure selection. -/
 
 private def parseHsmmGpsPt (j : Json) : Except String Verified.Hsmm.Observation.GpsPoint := do
   let a ← j.getArr?
@@ -3223,9 +3097,8 @@ private def gpsOutliersResult (j : Json) : Json :=
 
 /-! ## Biometric label rewrites (`verified_cli biolabels`)
 
-`Verified.Geo.BiometricLabels` — the four velocity passes that let the step
-counter overrule what GPS decided about a segment's mode. One verb for all
-four, selected by `pass`, because they share the whole input parse.
+`Verified.Geo.BiometricLabels`: the four velocity passes that let the step
+counter overrule GPS on a segment's mode, one verb for all four (`pass`).
 
   { "pass": "cadence" | "revert" | "jitter" | "walkthrough",
     "segs":  [{ startTs, endTs, mode, refinedMode?, kinds?, avgSpeed, maxSpeed,
@@ -3233,15 +3106,9 @@ four, selected by `pass`, because they share the whole input parse.
     "steps": [[ts, stepsBits], …],
     "pts":   [[ts, latBits, lonBits], …] }
 
-Floats cross as bit patterns (`avgSpeed`, `linearity`, …), same as everywhere
-else, so both arms compare the same doubles rather than 6-decimal renderings.
-
-Output: `{ "decisions": [null | [mode, reason, kind|null], …] }`, one per input
-segment — `null` is "unchanged". `walkthrough` additionally returns
-`"runs": [[start, end), …]`, the merge plan over the decided sequence.
-
-The per-segment passes (`cadence`, `jitter`) are mapped over `segs` here rather
-than called one segment at a time, so a day is one bridge call, not fifty. -/
+Output: `{ "decisions": [null | [mode, reason, kind|null], …] }`, one per segment
+(`null` = unchanged); `walkthrough` adds `"runs": [[start, end), …]`, the merge
+plan. The per-segment passes map over `segs` here, so a day is one call. -/
 
 private def parseStepPt (j : Json) : Except String Verified.Geo.BiometricWindows.StepPoint := do
   let a ← j.getArr?
@@ -3306,22 +3173,16 @@ private def bioLabelsResult (j : Json) : Json :=
 
 /-! ## Snapping fixes to known places (`verified_cli head`)
 
-`Verified.Geo.PlacePrior.snapToPlace` over a day's raw fixes:
+`Verified.Geo.PlacePrior.snapToPlace` over a day's raw fixes, batched (one call,
+not one per fix):
 
     { "op": "snap",
       "fixes":  [[latBits, lonBits, accBits|null], …],
       "places": [[latBits, lonBits, radiusBits|null, id|null], …] }
   → { "snapped": [[latBits, lonBits, accBits|null, moved], …] }  one per fix, in order
 
-⚠ `snap` is BATCHED over the whole day, deliberately. The TS calls `snapToPlace`
-once per fix inside a `.map` (`velocity.ts:687`); a round trip per fix would be
-thousands of bridge calls for one day, where every other tenant makes one. The
-response is positional — one row per input fix, same order — so the caller can
-zip it back onto its own points without matching on coordinates.
-
-`snapped` is returned as a flag rather than inferred from whether the coordinates
-moved: a fix already AT a centroid snaps without moving, and reading "moved" off
-the geometry would silently call that a non-snap. -/
+`snapped` is a flag, not inferred from movement: a fix already at a centroid
+snaps without moving. -/
 
 private def parseHeadFix (j : Json) : Except String (Float × Float × Option Float) := do
   let a ← j.getArr?
@@ -3364,40 +3225,20 @@ private def headResult (j : Json) : Json :=
 
 /-! ## Focus-place mining (`verified_cli focus`)
 
-`Verified.Geo.FocusPlaces` + `Verified.Geo.FocusIdentity` — the weekly
-`refresh-focus-places` cron's pure core, which no day replay reaches, so until
-this mode existed both modules were guard-pinned and unattended (#435).
-
-Everything the cron computes off a point history, in the cron's own call order:
+`Verified.Geo.FocusPlaces` + `Verified.Geo.FocusIdentity`: the weekly mining
+job's pure core, in its call order.
 
   { "points":       [[ts, latBits, lonBits, accBits|null], …],
     "sleepWindows": [[startTs, endTs], …],
     "clusters":     [{ id, lat, lon, dwell, stays: [[…], …] }, …],
     "old":          [[id, latBits, lonBits, firstSeenTs], …] }
 
-`points` drives `detectFocusPlaces`; `clusters` are ALREADY-BUILT clusters that
-go straight to `splitCluster` (the captured conflated café/residence and Home,
-which no single day's points can reproduce); `old` drives `matchClusters`
-against the mined centroids, the re-mining identity map.
+`points` drives `detectFocusPlaces`; `clusters` are already-built clusters for
+`splitCluster` (captured cases no single day's points reproduce); `old` drives
+`matchClusters`, the re-mining identity map. Every cluster comes back as a
+report: its fields plus every derived value the job reads. -/
 
-Every cluster comes back as a REPORT — its own fields plus every derived value
-`refresh-focus-places.ts` reads off it — so one comparison covers the
-classification layer as well as the geometry. Floats cross as bit patterns, so
-the two arms compare the same doubles.
-
-`pickWinningAmenity` is the one export this mode does NOT reach, and it is not
-an oversight: its input is a vote tally over OSM venue NAMES, produced by
-`nearbyLandmarks` + `rankVenues` + `isLabelWorthyVenue`. Building one here
-would mean this referee carrying another module's oracle, and a fabricated
-tally would check nothing. It stays guard-pinned; `lean-coverage.mts` counts
-that honestly rather than crediting it to this gate. -/
-
-/-! ## `stationchain` — the C4.3 chained-triple resolver (#672)
-
-The verb that makes `Verified.Hsmm.StationChain` live-compared rather than
-merely guard-pinned. Its 22 guards pin it against eleven synthetic V8 outcomes;
-what they cannot see is the TS moving underneath (#417), which is what a
-comparator over real days is for.
+/-! ## `stationchain` — the chained-triple resolver
 
 Input:
   { "edges":  [{id, geometry:[{lat,lon}], lineMemberships:[str], underground,
@@ -3408,12 +3249,9 @@ Input:
     "relations": [{lineRef, lineName, stops:[{name}]}] | null }
 Output: { "resolved": [[segIndex, board|null, alight|null]] }
 
-`nodes` ARRIVES ORDERED and must stay that way across the wire. The shell hands
-over `routeGraph.nodes.values()` in JS Map insertion order, and four things
-downstream read it — the candidate dedupe, the stable sort, the cut at
-`MAX_CANDIDATES_PER_SIDE`, and the first-wins argmax over max-marginals. A
-transport that sorted or de-duplicated this array would change results while
-looking like a tidy-up.
+⚠ `nodes` order is part of the input: the candidate dedupe, the stable sort,
+the cut at `MAX_CANDIDATES_PER_SIDE` and the first-wins argmax all read it. A
+transport that sorted or deduplicated it would change results.
 -/
 namespace StationChain
 
@@ -3449,21 +3287,11 @@ def stationChainResult (j : Json) : Json :=
 
 end StationChain
 
-/-! ## `osmspatial` — the row-set kernel (#982)
+/-! ## `osmspatial` — the row-set kernel
 
-⚠ ORPHANED UNTIL NOW, like `batterySeries` before it and for the same reason:
-`Verified.Geo.OsmSpatial` was ported and given reference values against
-MariaDB's earth radius, then reachable from no entry point at all (#1003).
-
-A host answering the day fold's converge loop needs exactly these: the fold
-names a coordinate it has no answer for, and the host computes one from pushed
-rows rather than from a database.
-
-⚠ NO FEATURE-BUCKET FILTER HERE, deliberately. The TypeScript's
-`queryLinesFromRows` takes a `featureType` and drops non-matching rows before
-scoring; `LineRow` has no such field and should not gain one. The bucket is a
-plain equality the caller can do while it is assembling the rows, and putting it
-here would give this function two jobs and one of them would be filtering. -/
+Distance queries over rows the host pushes, for a host answering the day fold's
+asks without a database. No feature-bucket filter: the caller filters by bucket
+while assembling the rows. -/
 private def parsePointRow (j : Json) : Except String Verified.Geo.OsmSpatial.PointRow := do
   let a ← j.getArr?
   let tags ← match a[5]? with
@@ -3484,8 +3312,7 @@ private def parseLineRow (j : Json) : Except String Verified.Geo.OsmSpatial.Line
   let coords ← (← (← nth a 3).getArr?).mapM (fun c => do
     let p ← c.getArr?
     return ((← jBits (← nth p 0)), (← jBits (← nth p 1))))
-  -- ⚠ Index 4, and OPTIONAL: a caller that predates the field sends four
-  -- elements and gets an empty tag map rather than a parse error.
+  -- Index 4, optional: a four-element row gets an empty tag map.
   let tags ← match a[4]? with
     | some v => if v.isNull then pure #[] else do
         let ts ← v.getArr?
@@ -3499,10 +3326,8 @@ private def parseLineRow (j : Json) : Except String Verified.Geo.OsmSpatial.Line
              | none => pure none),
            coords := coords, tags := tags }
 
-/-- ⚠ The tag map is EMITTED, not just carried. `nearbyLandmarks` spawns one
-landmark per tag key, so a consumer given only `subtype` cannot build it — which
-is exactly why that table went unanswered and served days lost venue names
-(#1054). -/
+/-- The tag map is emitted, not just carried: `nearbyLandmarks` spawns one
+landmark per tag key, which `subtype` alone cannot. -/
 private def tagsJson (tags : Array (String × String)) : Json :=
   Json.arr (tags.map (fun (k, v) => Json.arr #[Json.str k, Json.str v]))
 
@@ -3553,19 +3378,11 @@ private def osmSpatialResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
-/-! ## `battery` — the chart series (#982)
+/-! ## `battery` — the chart series
 
-⚠ ORPHANED UNTIL NOW. `Verified.Geo.Velocity.batterySeries` and
-`appendBatteryTail` were ported and `#guard`ed against the Node references, then
-reachable from no entry point at all — the shape #1003 is open about. The
-velocity pipeline computes the chart beside the fold rather than inside it, so a
-host porting that pipeline needs them callable, not merely written.
-
-Composed in ONE mode rather than exposed as two, because the pipeline never
-wants the raw series: `computeVelocity` writes
-`appendBatteryTail(batterySeries(inDay), tail, endUtc)` as a single expression,
-and splitting it across two round trips would let a caller ship the untailed
-series by forgetting the second. -/
+`appendBatteryTail(batterySeries(inDay), tail, endUtc)` in one mode: the
+pipeline never wants the untailed series, and two calls would let a caller ship
+it. -/
 private def batteryResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let pts ← (← optArr j "points").mapM (fun e => do
@@ -3593,23 +3410,18 @@ private def batteryResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
-/-! ## `watchbattery` — the watch trace for one day (#982)
+/-! ## `watchbattery` — the watch trace for one day
 
-`Verified.Geo.Velocity.watchBatterySeries`. The `device_battery_log` history,
-shaped to sit on the same axis as the phone series.
+`Verified.Geo.Velocity.watchBatterySeries`: the `device_battery_log` history on
+the phone series' axis.
 
   { "rows": [[ts|null, level, deviceVersion|null], …],
     "startUtc": int, "endUtc": int }
 → { "series": [[ts, level], …] }
 
-⚠ `ts` is ALREADY RESOLVED, and `null` is a wall clock that did not. The column
-is a Fitbit wall clock with no offset, so turning it into an instant needs
-tzdata — the host's, not this. A `null` is dropped rather than defaulted: a
-reading at a guessed instant would draw a step that never happened.
-
-⚠ ORDER IS LOAD-BEARING. Two rows at the same instant keep the one that came
-later in this array, so a caller that reorders the result set changes which level
-is drawn. The SQL must not gain an `ORDER BY` that the shaping does not expect. -/
+`ts` is already resolved by the host (tzdata); a `null` is dropped, never
+guessed. ⚠ Row order matters: of two rows at one instant the later is kept, so
+the SQL must not gain an `ORDER BY` the shaping does not expect. -/
 private def watchBatteryResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let rows ← (← optArr j "rows").mapM (fun e => do
@@ -3631,7 +3443,7 @@ private def watchBatteryResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
-/-! ## `venuetags` — which named features are places (2026-10-02)
+/-! ## `venuetags` — which named features are places
 
 `Verified.Geo.Landmarks.VENUE_TAGS`, for the mirror's fetch: it asks the landmark
 query for named features with these tags and files them as landmarks. Declared
@@ -3642,12 +3454,11 @@ private def venueTagsResult (_ : Json) : Json :=
   Json.mkObj [("tags", Json.arr (Verified.Geo.Landmarks.VENUE_TAGS.toArray.map fun (k, vs, _) =>
     Json.arr #[Json.str k, Json.arr (vs.toArray.map Json.str)]))]
 
-/-! ## `osmcoverage` — can the local mirror answer here? (#982)
+/-! ## `osmcoverage` — can the local mirror answer here?
 
-`Verified.Geo.OsmCoverage.decideCoverage`. The gate a host must pass before
-reading `osm_points`/`osm_lines`: `covered` means a spatial query over the
-mirror is an ANSWER, anything else means nobody has fetched this area and the
-same query returns nothing while looking exactly like an area with no roads.
+`Verified.Geo.OsmCoverage.decideCoverage`: the gate before reading
+`osm_points`/`osm_lines`. `covered` means a query is an answer; otherwise nobody
+fetched this area, and an empty result would look like an area with no roads.
 
   { "lat": bits, "lon": bits, "radiusM": bits,
     "coverage": [[minLatBits, maxLatBits, minLonBits, maxLonBits, fetchedAtMs|null], …],
@@ -3655,13 +3466,8 @@ same query returns nothing while looking exactly like an area with no roads.
     "hasLocalData": bool }
 → { "covered": true|false }
 
-⚠ `coverage` is the rows for ONE feature_type. Boxes are per-bucket and mixing
-them would report a highway fetch as covering the landmarks.
-
-⚠ `nowMs` crosses the wire rather than being read here. Lean has no clock in a
-pure function, and taking one would make the answer depend on when it was asked
-— which is exactly what makes the staleness rule untestable. The host owns the
-clock; this owns the decision. -/
+`coverage` holds one feature type's boxes. `nowMs` is passed in: the host owns
+the clock, Lean the decision. -/
 private def parseCoverageRow (j : Json) : Except String Verified.Geo.OsmCoverage.CoverageRow := do
   let a ← j.getArr?
   let fetchedAt ← match a[4]? with
@@ -3685,22 +3491,17 @@ private def osmCoverageResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
-/-! ## `railfill` — which train legs want a background route fill (#982, #363)
+/-! ## `railfill` — which train legs want a background route fill
 
-`Verified.Geo.RailRouteFill.unsnappedTrainRoutes`. A train leg draws on rails
-only when its label has a `rail_route_cache` row, so a key first ridden today
-draws raw until the nightly job runs. This names the legs a worker should fill.
+`Verified.Geo.RailRouteFill.unsnappedTrainRoutes`: a train leg draws on rails
+only when its label has a `rail_route_cache` row; this names the legs a worker
+should fill, in the order the day was walked (the fill order).
 
   { "segments": [[mode, refinedMode|null, startTs, endTs, wayName|null, hasSnappedPath], …],
     "points":   [[ts, latBits, lonBits], …] }
 → { "candidates": [{ "key", "startTs", "endTs", "fixes": [[latBits, lonBits], …] }, …] }
 
-⚠ `hasSnappedPath` is a BOOLEAN, not the path. The scan only asks whether the
-leg is drawn already, and shipping the geometry to answer that would put every
-snapped polyline of the day on the wire to be discarded.
-
-⚠ The order out is the order the day was walked, and it is what the queue drains
-in. Sorting the reply would be a change to the fill order. -/
+`hasSnappedPath` is a boolean, so the day's polylines never cross. -/
 private def parseFillSegment (j : Json) : Except String Verified.Geo.RailRouteFill.FillSegment := do
   let a ← j.getArr?
   return { mode := ← (← nth a 0).getStr?,
@@ -3729,23 +3530,12 @@ private def candidateJson (c : Verified.Geo.RailRouteFill.Candidate) : Json :=
     , ("fixes", Json.arr ((c.fixes.map
         (fun (la, lo) => Json.arr #[fBits la, fBits lo])).toArray)) ]
 
-/-! ## `railsnap` mode — the whole corridor snap, not just the shortest path
+/-! ## `railsnap` — the whole corridor snap
 
-⚠ THE PRODUCTION TypeScript DOES NOT USE THIS. `src/lean/lean-rail.ts` builds
-the rail graph itself and asks Lean only for `dijkstraC` (the `rail` mode
-above), so `buildRailGraph`, `nearestVertex` and `snapTrainSegment` have been
-ported and guarded (123 guards) while never running on the serving path — the
-orphaned-port position of #1003.
-
-This mode exists so `refresh-rail-routes` (#982 Tier 2) can hand over the RAW
-ways, stations and fix cloud and get the finished path back, instead of the
-Rust arm reimplementing the graph build. Rebuilding it shell-side would put
-`edgeWeight`, `bridgeGaps` and the vertex fusion in Rust — the half that
-drifts.
-
-`onLine` picks the fallback: `snapTrainSegmentOnLine` routes over ONLY the
-named line's ways with no fix cloud, which is what `computeRailRoute` reaches
-for when the corridor snap refuses. -/
+The host hands over the raw ways, stations and fix cloud and gets the finished
+path back; the graph build, edge weights, gap bridging and vertex fusion all
+stay here. `onLine` picks the fallback, `snapTrainSegmentOnLine`: route over
+only the named line's ways, with no fix cloud. -/
 
 private def parseSnapPt (j : Json) : Except String Verified.Geo.WalkableRoute.Pt := do
   let a ← j.getArr?
@@ -3774,12 +3564,9 @@ private def railSnapResult (j : Json) : Json :=
     let stations ← (← optArr j "stations").mapM parseOsmStation
     let fixes ← (← optArr j "fixes").mapM parseSnapPt
     let onLine := (j.getObjVal? "onLine" >>= (·.getBool?)).toOption == some true
-    -- ⚠ The two entry points are NOT interchangeable. `snapTrainSegment`
-    -- refuses below `minCloudFixes` (12) because a thin cloud cannot evidence a
-    -- corridor; `snapTrainSegmentOnLine` takes no cloud at all and leans on the
-    -- line name instead. Calling the second when the first refused is the
-    -- TypeScript's fallback order, and the caller picks it explicitly rather
-    -- than this mode guessing.
+    -- Not interchangeable: `snapTrainSegment` refuses below `minCloudFixes`
+    -- (12), since a thin cloud cannot evidence a corridor; the on-line form
+    -- takes no cloud and leans on the line name. The caller chooses.
     let res :=
       if onLine then Verified.Geo.RailSnap.snapTrainSegmentOnLine seg lines stations
       else Verified.Geo.RailSnap.snapTrainSegment seg lines stations fixes
@@ -3830,24 +3617,17 @@ private def railFillResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
-/-! ## `clipfuture` — never assert the future (#982)
+/-! ## `clipfuture` — never assert the future
 
-`Verified.Geo.DayState.clipFuture`. The pipeline fills a day to its end — the
-decoder's last stay to midnight, an inferred stay to a survival horizon — which
-for TODAY lies ahead of the current moment and would claim presence at a place
-hours before it happened.
+`Verified.Geo.DayState.clipFuture`. The pipeline fills a day to its end, which
+for today lies ahead of now.
 
   { "states": [ <the day mode's own state objects> ], "nowTs": int }
 → { "states": [ … ] }
 
-⚠ PRESENTATION ONLY, and that is why it is a separate mode rather than a step of
-`day`. The pipeline stays deterministic — it fills to the end — so the golden
-corpus, which replays past days where `nowTs` is already past the day end, is
-unaffected. A caller applies this PER REQUEST, after the cache, because `now`
-advances while a cached result does not.
-
-A state that straddles `now` by less than a minute is dropped rather than
-truncated: the timeline would show it as `0m` (`MIN_SHOWN_S`). -/
+Presentation only, so the pipeline stays deterministic; a caller applies it per
+request, after the cache. A state straddling `now` by under a minute is dropped
+rather than shown as `0m`. -/
 private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DayState := do
   let optS (k : String) : Except String (Option String) :=
     match j.getObjVal? k with
@@ -3862,7 +3642,7 @@ private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DaySt
          , mode := ← (← j.getObjVal? "mode").getStr?
          , place := ← optS "place", city := ← optS "city", wayName := ← optS "wayName"
          -- The rule that named `place`; `placeConfidence` is derived from it on
-         -- the way back out, so it is not read (#325).
+         -- the way out, so it is not read.
          , placeSource := ← optS "placeSource"
          , placeAt := ← match j.getObjVal? "placeAt" with
              | .ok (.arr #[la, lo]) => do return some (← jFloat la, ← jFloat lo)
@@ -3887,21 +3667,11 @@ private def clipFutureResult (j : Json) : Json :=
 
 /-! ## Per-minute rail/road proximity (`proximityqueries` / `proximitytable`)
 
-The two halves of `computeMinuteProximity`, split at the one place it is not
-pure: the OSM lookup. The shell asks WHICH locations to query, runs
-`nearby_ways` on each, and hands the answers back to be joined.
-
-⚠ THE SPLIT IS TWO MODES AND NOT ONE BECAUSE THE MIDDLE IS I/O — not because
-the shell is trusted with any of the decision. Bucketing into minutes, the
-median that picks each minute's query point, the ~11 m key that decides how few
-queries a day needs, which subtypes count as rail or road, and which minute gets
-which answer are all in {@link Verified.Hsmm.RailRoadProximity}. The shell
-transports coordinates and OSM rows.
-
-⚠ THE SPEED FIELD IS NOT SENT. `minuteMedians` buckets and takes medians of
-lat/lon only, so a `pts` row is `[ts, latBits, lonBits]` and `speedKmh` is
-filled with 0. Shipping it would invite a later reader to think it mattered.
--/
+`computeMinuteProximity` split at its one impure step, the OSM lookup: the shell
+asks which locations to query, runs `nearby_ways` on each, and hands the answers
+back. Every decision (minute buckets, medians, the ~11 m key, which subtypes
+count as rail or road) is `Verified.Hsmm.RailRoadProximity`'s. A `pts` row is
+`[ts, latBits, lonBits]`: speed plays no part. -/
 
 /-- `[ts, latBits, lonBits]` → a `GpsPoint` with `speedKmh` 0; see the note. -/
 private def parseProxPt (j : Json) : Except String Verified.Hsmm.Observation.GpsPoint := do
@@ -3941,16 +3711,10 @@ private def proximityQueriesResult (j : Json) : Json :=
 /-- `{ minutes, answers }` → `{ proximity, unanswered }`.
 
 `proximity` is the sparse `[minuteTs, roadBits|null, railBits|null]` table
-`assemblesegments` takes as its `observation.proximity`. The shell passes it
-through without reading it.
-
-⚠ `answers` OMITS A QUERY THAT FAILED rather than sending it empty — see
-`WayAnswer`. `unanswered` counts the minutes left uncovered, which is the only
-number that can tell a failed mirror from an empty neighbourhood (#976).
-
-⚠ THE ROW IS ROAD THEN RAIL. `Proximity` names rail first and the wire does
-not; `parseObservationInput` reads `[ts, road, rail]`, and swapping them would
-put every fix on a road. -/
+`assemblesegments` takes, passed through unread. `answers` omits a failed
+query; `unanswered` counts the minutes left uncovered, which tells a failed
+mirror from an empty neighbourhood. ⚠ Road then rail: swapped, every fix would
+be on a road. -/
 private def proximityTableResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let ms ← (← optArr j "minutes").mapM parseMinuteFix
@@ -3977,13 +3741,9 @@ private def proximityTableResult (j : Json) : Json :=
 
 /-! ## The decoder's place/line hard constraint (`knownlines` / `placenearline`)
 
-Split the same way the proximity pair is, and for the same reason: the middle is
-an OSM query. The shell asks WHICH lines exist, resolves each one's stations, and
-hands them back to be measured.
-
-⚠ THE LINE LIST IS LEAN'S. `KNOWN_LINES` is the served state space; a shell with
-its own copy would decode against a different set of train states than the model
-was built for, and nothing would report a mismatch.
+Split like the proximity pair, around the OSM query: the shell asks which lines
+exist, resolves each one's stations, and hands them back to be measured. The
+line list is Lean's (`KNOWN_LINES`, the served state space).
 -/
 
 /-- `{}` → `{ value: [line, …] }`. See `Verified.Hsmm.Assemble.KNOWN_LINES`. -/
@@ -3994,11 +3754,7 @@ private def knownLinesResult (_ : Json) : Json :=
 /-- `{ places, lines }` → `{ value: ["placeId|lineName", …] }`.
 
 `places` are `[id, latBits, lonBits]`; `lines` are `[name, [[latBits, lonBits], …]]`.
-
-⚠ ABSENT IS NOT NEUTRAL HERE. `parseAssemble` reads `placeNearLine` as optional
-and an empty set removes every hard zero rather than adding them — so a shell
-that skips this call gets a decoder that permits boardings the TypeScript
-forbids, silently. See the module note. -/
+⚠ An empty set is not neutral: it removes every hard zero. -/
 private def parseNearPlace (e : Json) : Except String Verified.Hsmm.PlaceNearLine.Place := do
   let a ← e.getArr?
   match a[0]?, a[1]?, a[2]? with
@@ -4053,13 +3809,9 @@ private def restHrResult (j : Json) : Json :=
       ("p75", Lean.toJson d.p75), ("p05", Lean.toJson d.p05), ("p95", Lean.toJson d.p95),
       ("restMinutes", Lean.toJson d.restMinutes)])]
 
-/-- The mode table: one request object in, one result object out.
-
-⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
-over stdin. A host that has linked this library already has the request in
-memory and must not have to spell it back into NDJSON to ask a question — the
-subprocess protocol is a consequence of `verified_cli` being a separate
-process, not part of what the handlers are. -/
+/-- The mode table: one request object in, one result object out. Separate from
+`serveLoop`, so a host that links this library can ask without spelling the
+request into NDJSON. -/
 def dispatch (j : Json) : Json :=
   match (j.getObjVal? "mode" >>= (·.getStr?)) with
   | .ok "rail" => railResult j
@@ -4079,7 +3831,7 @@ def dispatch (j : Json) : Json :=
   | .ok "head" => headResult j
   | .ok "day" => Day.dayResult j
   -- The name-confidence table, for the test that holds it to its blessed
-  -- measurement (`tests/golden/name-confidence.jsonl`, #325).
+  -- measurement (`tests/golden/name-confidence.jsonl`).
   | .ok "nameconfidence" => Json.mkObj [("counts", Json.arr
       (Verified.Geo.NameConfidence.COUNTS.map fun (src, r, n) =>
         Json.arr #[Json.str src, Lean.toJson r, Lean.toJson n]).toArray)]
@@ -4094,13 +3846,13 @@ def dispatch (j : Json) : Json :=
   | .ok "clipfuture" => clipFutureResult j
   | .ok "watchbattery" => watchBatteryResult j
   | .ok "stationchain" => StationChain.stationChainResult j
-  -- The walk referee (#1048 Group B). Nothing serves it; it is here rather
-  -- than beside `main` because that is the only place a host can link.
+  -- The walk referee. Nothing serves it; it is here because this is where a
+  -- host can link it.
   | .ok "walkgate" => WalkGate.walkGateResult j
-  -- The narrative parser (#1290). Reply is CIVIL time; the shell resolves it.
+  -- The narrative parser. The reply is civil time; the shell resolves it.
   | .ok "groundtruth" => GroundTruth.groundTruthResult j
-  -- The ground-truth side of the decoder scoreboard (#1048). Rows arrive
-  -- RESOLVED; the zone conversion is the shell's.
+  -- The ground-truth side of the decoder scoreboard. Rows arrive resolved; the
+  -- zone conversion is the shell's.
   | .ok "journeys" => Journeys.journeysResult j
   | .ok "truthcheck" => TruthCheck.truthCheckResult j
   | .ok "floorgate" => FloorGate.floorGateResult j
@@ -4110,10 +3862,8 @@ def dispatch (j : Json) : Json :=
   | .ok "ceilinggate" => CeilingGate.ceilingGateResult j
   | .ok "ceilingbless" => CeilingGate.ceilingBlessResult j
   -- The backend's decision table (`Verified.Session`, `Verified.Share`, …),
-  -- keyed on `op`. One process serves both tables so the host has one pipe to
-  -- keep alive. ⚠ The payload rides under `req`, not merged into this object:
-  -- some ops carry a `mode` of their own (`overpassQuery`'s is `bus`/`rail`), and
-  -- merging would have the routing key overwrite it.
+  -- keyed on `op`, in the same process. The payload rides under `req`, not
+  -- merged: some ops carry a `mode` of their own.
   | .ok "backend" =>
     match j.getObjVal? "req" with
     | .ok r => BackendEntry.dispatch r
@@ -4121,13 +3871,11 @@ def dispatch (j : Json) : Json :=
   | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
   | .error _ => Json.mkObj [("error", Json.str "missing mode")]
 
-/-- Persistent request loop: one NDJSON request per line
-(`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
-(`{"id", "result": …}`), flushed per line. A handler may write `{"ask": …}`
-lines and read the reply off the same stdin before its result goes out
-(`DayEntry.Host`); the host drives both. The loop carries the day's
-incremental state from one `assemblesegmentsinc` to the next; every other mode
-is `dispatch`, a pure function of its request. -/
+/-- Persistent request loop: one NDJSON request per line (`{"id", "mode", …}`)
+→ one NDJSON response (`{"id", "result": …}`), flushed per line. A handler may
+write `{"ask": …}` lines and read the reply off the same stdin before its result
+goes out (`DayEntry.Host`). The loop carries the day's incremental state from
+one `assemblesegmentsinc` to the next; every other mode is `dispatch`. -/
 private partial def serveLoop (stdin stdout : IO.FS.Stream) (today : Option TodayState) :
     IO Unit := do
   let line ← stdin.getLine
