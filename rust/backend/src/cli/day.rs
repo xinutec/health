@@ -847,6 +847,19 @@ pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
         if let Some(t) = body.get("timing") {
             println!("         timing {t}");
         }
+        // `VELOCITY_MANY_OUT=<dir>`: each day's served body, its timing left
+        // out, to compare two builds of the same day.
+        if let Some(dir) = std::env::var_os("VELOCITY_MANY_OUT") {
+            let mut b = body.clone();
+            if let Some(o) = b.as_object_mut() {
+                o.remove("timing");
+            }
+            std::fs::write(
+                std::path::Path::new(&dir).join(format!("{date}.json")),
+                b.to_string(),
+            )
+            .context("writing VELOCITY_MANY_OUT")?;
+        }
     }
     pool.close().await;
     println!("high-water            {high:>5} MiB");

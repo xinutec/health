@@ -63,7 +63,7 @@
 //! through the same coverage gate, so a decline on the walk path is recorded
 //! exactly as one on the naming path is.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
@@ -224,6 +224,91 @@ pub fn take_db_nanos() -> u64 {
 
 /// Rows from the live mirror. One per fold: the coverage decisions it
 /// memoises are only valid for the `now_ms` it was built with.
+/// The side of a tile the line and point reads are cached by, in degrees: about
+/// 550 m north–south and 350 m east–west in London. A walk asks for the ways
+/// around each of its fixes, metres apart, so consecutive asks share their
+/// tiles: one read and one parse per tile replace one per ask.
+const TILE_DEG: f64 = 0.0025;
+
+/// Which mirror table a tile holds.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Geo {
+    Lines,
+    Points,
+}
+
+/// One feature, held as numbers: its bounding box
+/// (`[min_lat, max_lat, min_lon, max_lon]`) to pick it for an ask, and what
+/// its answer row is built from. Coordinates are kept as `f64` and spelled as
+/// the answer's bit-pattern strings only when an ask returns the feature —
+/// held as those strings, a tile cost several times the memory.
+struct CachedRow {
+    mbr: [f64; 4],
+    osm_id: i64,
+    subtype: Value,
+    name: Value,
+    tags: Value,
+    geom: CachedGeom,
+}
+
+enum CachedGeom {
+    Line(Vec<(f64, f64)>),
+    Point(f64, f64),
+}
+
+impl CachedRow {
+    /// The row as `line_rows` / `point_rows` answer it.
+    fn row(&self) -> Value {
+        match &self.geom {
+            CachedGeom::Line(pts) => {
+                let coords: Vec<Value> = pts
+                    .iter()
+                    .map(|(la, lo)| json!([bits(*la), bits(*lo)]))
+                    .collect();
+                json!([self.osm_id, self.subtype, self.name, coords, self.tags])
+            }
+            CachedGeom::Point(la, lo) => {
+                json!([
+                    self.osm_id,
+                    self.subtype,
+                    self.name,
+                    bits(*la),
+                    bits(*lo),
+                    self.tags
+                ])
+            }
+        }
+    }
+}
+
+/// The mirror's lines and points, read by tile and kept for the fold.
+///
+/// An ask's candidates are the cached features whose box meets its candidate
+/// box — the predicate the per-ask SQL applied (`MBRIntersects`) — so the
+/// candidate set is the one the database would have returned, read once. The
+/// order is the features' key, `(osm_type, osm_id)`: the database returned its
+/// spatial index's order, which nothing defined, and Lean's stable sort by
+/// distance carried that order into ties.
+/// A tile of one bucket of one table: `(table, bucket, lat index, lon index)`.
+type TileKey = (Geo, String, i64, i64);
+/// A feature's key in its table: `(osm_type, osm_id)`.
+type FeatureKey = (String, i64);
+
+#[derive(Default)]
+struct TileCache {
+    fetched: HashSet<TileKey>,
+    rows: HashMap<(Geo, String), BTreeMap<FeatureKey, CachedRow>>,
+    by_tile: HashMap<TileKey, Vec<FeatureKey>>,
+}
+
+fn tile_of(deg: f64) -> i64 {
+    (deg / TILE_DEG).floor() as i64
+}
+
+fn boxes_meet(a: &[f64; 4], b: &[f64; 4]) -> bool {
+    a[0] <= b[1] && a[1] >= b[0] && a[2] <= b[3] && a[3] >= b[2]
+}
+
 pub struct MirrorSource {
     pool: MySqlPool,
     /// ⚠ The runtime this blocks on, captured by the caller. See
@@ -255,6 +340,8 @@ pub struct MirrorSource {
     /// spatial index is poorly suited to a box tens of km on a side. One small
     /// indexed read plus an in-memory filter per line is far cheaper.
     rail_stations: Option<Vec<Value>>,
+    /// The line and point reads, by tile ([`TileCache`]).
+    tiles: TileCache,
 }
 
 impl MirrorSource {
@@ -270,7 +357,178 @@ impl MirrorSource {
             now_ms,
             coverage: HashMap::new(),
             decided: HashMap::new(),
+            tiles: TileCache::default(),
         }
+    }
+
+    /// Read every tile the box touches that `buckets` have not been read for,
+    /// in ONE query over the tiles still missing (a lookup whose box straddles
+    /// four tiles is still one read), each row filed under every tile it meets.
+    fn fetch_tiles(&mut self, geo: Geo, buckets: &[&str], bx: &[f64; 4]) -> Result<()> {
+        let mut missing: Vec<(String, i64, i64)> = Vec::new();
+        for ti in tile_of(bx[0])..=tile_of(bx[1]) {
+            for tj in tile_of(bx[2])..=tile_of(bx[3]) {
+                for b in buckets {
+                    if !self
+                        .tiles
+                        .fetched
+                        .contains(&(geo, (*b).to_string(), ti, tj))
+                    {
+                        missing.push(((*b).to_string(), ti, tj));
+                    }
+                }
+            }
+        }
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let mut want: Vec<&str> = buckets
+            .iter()
+            .copied()
+            .filter(|b| missing.iter().any(|m| m.0 == *b))
+            .collect();
+        want.dedup();
+        let ti0 = missing.iter().map(|m| m.1).min().unwrap_or(0);
+        let ti1 = missing.iter().map(|m| m.1).max().unwrap_or(0);
+        let tj0 = missing.iter().map(|m| m.2).min().unwrap_or(0);
+        let tj1 = missing.iter().map(|m| m.2).max().unwrap_or(0);
+        let (s, w) = (ti0 as f64 * TILE_DEG, tj0 as f64 * TILE_DEG);
+        let (n, e) = ((ti1 + 1) as f64 * TILE_DEG, (tj1 + 1) as f64 * TILE_DEG);
+        let poly = format!("POLYGON(({w} {s},{e} {s},{e} {n},{w} {n},{w} {s}))");
+        let placeholders = std::iter::repeat_n("?", want.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let (table, geom_cols) = match geo {
+            Geo::Lines => ("osm_lines", "ST_AsText(geom) AS wkt"),
+            Geo::Points => ("osm_points", "ST_X(geom) AS lon, ST_Y(geom) AS lat"),
+        };
+        let sql = format!(
+            "SELECT feature_type, osm_type, osm_id, subtype, name, tags_json, {geom_cols} \
+             FROM {table} WHERE feature_type IN ({placeholders}) \
+             AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) LIMIT ?"
+        );
+        // ⚠ `AssertSqlSafe`: audited — the interpolations are a table name and
+        // its geometry columns from the match above and a run of `?`
+        // placeholders whose length is `want.len()`. Every value is bound.
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for b in &want {
+            q = q.bind(*b);
+        }
+        let cap = CANDIDATE_LIMIT * want.len() as i64;
+        let label = match geo {
+            Geo::Lines => "lineTile",
+            Geo::Points => "pointTile",
+        };
+        let rows = self
+            .block(label, q.bind(&poly).bind(cap).fetch_all(&self.pool))
+            .with_context(|| format!("reading {table} tiles"))?;
+        Self::check_limit_at(rows.len(), table, &want.join(","), cap)?;
+        for r in rows {
+            let bucket: String = r
+                .try_get("feature_type")
+                .with_context(|| format!("{table}.feature_type"))?;
+            if !want.contains(&bucket.as_str()) {
+                bail!(
+                    "{table} returned feature_type {bucket:?}, which was not among the buckets asked for"
+                );
+            }
+            let key = (
+                r.try_get::<String, _>("osm_type")
+                    .with_context(|| format!("{table}.osm_type"))?,
+                r.try_get::<i64, _>("osm_id")
+                    .with_context(|| format!("{table}.osm_id"))?,
+            );
+            let held = self.tiles.rows.entry((geo, bucket.clone())).or_default();
+            if !held.contains_key(&key) {
+                let cached = match geo {
+                    Geo::Lines => {
+                        let wkt: String = r.try_get("wkt").context("osm_lines.geom has no WKT")?;
+                        // ⚠ `parse_linestring_wkt` swaps to `(lat, lon)`: WKT writes
+                        // `lon lat`, and Lean's `lineDistDeg` reads the first as the
+                        // latitude — the other order gives plausible wrong distances.
+                        let pts = parse_linestring_wkt(&wkt);
+                        // A way with one vertex is not a line — same guard as before.
+                        if pts.len() < 2 {
+                            continue;
+                        }
+                        let mbr = pts.iter().fold(
+                            [
+                                f64::INFINITY,
+                                f64::NEG_INFINITY,
+                                f64::INFINITY,
+                                f64::NEG_INFINITY,
+                            ],
+                            |m, (la, lo)| {
+                                [m[0].min(*la), m[1].max(*la), m[2].min(*lo), m[3].max(*lo)]
+                            },
+                        );
+                        CachedRow {
+                            mbr,
+                            osm_id: key.1,
+                            subtype: subtype_of(&r, table)?,
+                            name: name_of(&r, table)?,
+                            tags: tags_of(&r)?,
+                            geom: CachedGeom::Line(pts),
+                        }
+                    }
+                    Geo::Points => {
+                        let plat: f64 = r.try_get("lat").context("osm_points ST_Y")?;
+                        let plon: f64 = r.try_get("lon").context("osm_points ST_X")?;
+                        CachedRow {
+                            mbr: [plat, plat, plon, plon],
+                            osm_id: key.1,
+                            subtype: subtype_of(&r, table)?,
+                            name: name_of(&r, table)?,
+                            tags: tags_of(&r)?,
+                            geom: CachedGeom::Point(plat, plon),
+                        }
+                    }
+                };
+                held.insert(key.clone(), cached);
+            }
+            // Filed under each missing tile of its bucket it meets: a tile marked
+            // read below then holds every row of the bucket that meets it.
+            let Some(mbr) = held.get(&key).map(|c| c.mbr) else {
+                continue;
+            };
+            for (b, ti, tj) in &missing {
+                if *b != bucket {
+                    continue;
+                }
+                let (ts, tw) = (*ti as f64 * TILE_DEG, *tj as f64 * TILE_DEG);
+                if boxes_meet(&mbr, &[ts, ts + TILE_DEG, tw, tw + TILE_DEG]) {
+                    self.tiles
+                        .by_tile
+                        .entry((geo, bucket.clone(), *ti, *tj))
+                        .or_default()
+                        .push(key.clone());
+                }
+            }
+        }
+        for (b, ti, tj) in missing {
+            self.tiles.fetched.insert((geo, b, ti, tj));
+        }
+        Ok(())
+    }
+
+    /// The cached features of `bucket` whose box meets `bx`, in key order.
+    fn tile_answer(&self, geo: Geo, bucket: &str, bx: &[f64; 4]) -> Vec<Value> {
+        let mut keys: BTreeSet<&(String, i64)> = BTreeSet::new();
+        for ti in tile_of(bx[0])..=tile_of(bx[1]) {
+            for tj in tile_of(bx[2])..=tile_of(bx[3]) {
+                if let Some(ks) = self.tiles.by_tile.get(&(geo, bucket.to_string(), ti, tj)) {
+                    keys.extend(ks.iter());
+                }
+            }
+        }
+        let Some(held) = self.tiles.rows.get(&(geo, bucket.to_string())) else {
+            return Vec::new();
+        };
+        keys.into_iter()
+            .filter_map(|k| held.get(k))
+            .filter(|c| boxes_meet(&c.mbr, bx))
+            .map(CachedRow::row)
+            .collect()
     }
 
     /// The pre-filter box, as `[min_lat, max_lat, min_lon, max_lon]`.
@@ -645,11 +903,8 @@ impl RowSource for MirrorSource {
         Ok(Some(Value::Array(out)))
     }
 
-    /// Line candidates, in `osmspatial`'s positional form.
-    ///
-    /// ⚠ `parse_linestring_wkt` swaps to `(lat, lon)`: WKT writes `lon lat` and
-    /// Lean's `lineDistDeg` reads `c.1` as the latitude. The swapped version
-    /// produces distances that are wrong and entirely plausible.
+    /// Line candidates, in `osmspatial`'s positional form, from the tiles
+    /// ([`TileCache`]): the features whose box meets the candidate box.
     fn line_rows(
         &mut self,
         bucket: &str,
@@ -660,70 +915,19 @@ impl RowSource for MirrorSource {
         if !self.covered(bucket, lat, lon, radius_m)? {
             return Ok(None);
         }
-        let poly = Self::mbr_box_wkt(lat, lon, radius_m);
-        let rows = self
-            .block(
-                "lineRows",
-                sqlx::query(
-                    // ⚠ `tags_json` too. `nearbyLandmarks` needs the FULL tag
-                    // map — it spawns one landmark per tag key — and while this
-                    // column was absent from the line query that table could
-                    // not be answered at all, so served days lost venue names
-                    // (#1054). Buildings are ways, so the line side is exactly
-                    // where a venue's outline lives.
-                    "SELECT osm_id, subtype, name, tags_json, ST_AsText(geom) AS wkt \
-                     FROM osm_lines \
-                     WHERE feature_type = ? AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) \
-                     LIMIT ?",
-                )
-                .bind(bucket)
-                .bind(&poly)
-                .bind(CANDIDATE_LIMIT)
-                .fetch_all(&self.pool),
-            )
-            .with_context(|| format!("reading osm_lines for {bucket}"))?;
-        Self::check_limit(rows.len(), "osm_lines", bucket)?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let wkt: String = r.try_get("wkt").context("osm_lines.geom has no WKT")?;
-            let coords: Vec<Value> = parse_linestring_wkt(&wkt)
-                .into_iter()
-                .map(|(la, lo)| json!([bits(la), bits(lo)]))
-                .collect();
-            // A way with one vertex is not a line; `lineDistDeg` on a single
-            // point would measure to a vertex rather than along anything.
-            if coords.len() < 2 {
-                continue;
-            }
-            out.push(json!([
-                r.try_get::<i64, _>("osm_id").context("osm_lines.osm_id")?,
-                subtype_of(&r, "osm_lines")?,
-                name_of(&r, "osm_lines")?,
-                coords,
-                // ⚠ Position 4, matching `parseLineRow`. Lean treats it as
-                // optional, so an older caller sending four elements still
-                // parses — but this one always sends it.
-                tags_of(&r)?
-            ]));
-        }
+        let bx = Self::candidate_box(lat, lon, radius_m);
+        self.fetch_tiles(Geo::Lines, &[bucket], &bx)?;
+        let out = self.tile_answer(Geo::Lines, bucket, &bx);
+        Self::check_limit(out.len(), "osm_lines", bucket)?;
         Ok(Some(out))
     }
 
-    /// Point candidates, in `osmspatial`'s positional form.
+    /// Point candidates, in `osmspatial`'s positional form, from the tiles.
     ///
-    /// ⚠ `ST_X` is LONGITUDE and `ST_Y` is latitude: the geometry was built from
-    /// `POINT(lon lat)` WKT. The row set the fixtures carry is extracted with
-    /// this same pair of expressions (`osm-rowset.ts`).
-    ///
-    /// That leaves one worry, and it is now MEASURED rather than argued: the
-    /// capture read those doubles through the TypeScript driver's TEXT rendering
-    /// and this reads them in the binary protocol, so a stored coordinate whose
-    /// text form does not round-trip would differ in the last ULP and move every
-    /// distance computed from it. `backend mirror-check` against production on
-    /// 2026-08-22 found no such case — every difference between the two arms
-    /// moved `name` or `subtype`, and NONE moved `distanceM`, which a coordinate
-    /// difference could not avoid doing.
+    /// ⚠ The tiles read `ST_X` as LONGITUDE and `ST_Y` as latitude: the geometry
+    /// was built from `POINT(lon lat)` WKT. A coordinate read in the binary
+    /// protocol against the fixtures' text rendering was measured not to move
+    /// any distance (`backend mirror-check`).
     fn point_rows(
         &mut self,
         bucket: &str,
@@ -734,52 +938,18 @@ impl RowSource for MirrorSource {
         if !self.covered(bucket, lat, lon, radius_m)? {
             return Ok(None);
         }
-        let poly = Self::mbr_box_wkt(lat, lon, radius_m);
-        let rows = self
-            .block(
-                "pointRows",
-                sqlx::query(
-                    "SELECT osm_id, subtype, name, tags_json, \
-                            ST_X(geom) AS lon, ST_Y(geom) AS lat FROM osm_points \
-                     WHERE feature_type = ? AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) \
-                     LIMIT ?",
-                )
-                .bind(bucket)
-                .bind(&poly)
-                .bind(CANDIDATE_LIMIT)
-                .fetch_all(&self.pool),
-            )
-            .with_context(|| format!("reading osm_points for {bucket}"))?;
-        Self::check_limit(rows.len(), "osm_points", bucket)?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let plat: f64 = r.try_get("lat").context("osm_points ST_Y")?;
-            let plon: f64 = r.try_get("lon").context("osm_points ST_X")?;
-            out.push(json!([
-                r.try_get::<i64, _>("osm_id").context("osm_points.osm_id")?,
-                subtype_of(&r, "osm_points")?,
-                name_of(&r, "osm_points")?,
-                bits(plat),
-                bits(plon),
-                tags_of(&r)?
-            ]));
-        }
+        let bx = Self::candidate_box(lat, lon, radius_m);
+        self.fetch_tiles(Geo::Points, &[bucket], &bx)?;
+        let out = self.tile_answer(Geo::Points, bucket, &bx);
+        Self::check_limit(out.len(), "osm_points", bucket)?;
         Ok(Some(out))
     }
 
-    /// The four line buckets `nearbyWays` needs, in ONE query.
+    /// The four line buckets `nearbyWays` needs, read together.
     ///
-    /// ⚠ Coverage is still checked PER BUCKET. The batching is about round
-    /// trips, not about the gate: a coordinate the mirror cannot vouch for in
-    /// one bucket is still a decline for the whole answer, and folding the
-    /// buckets into one `IN` list would otherwise quietly answer for an area
-    /// that was never fetched.
-    ///
-    /// ⚠ `feature_type` is SELECTED BACK, not assumed from the query order.
-    /// MariaDB is free to return an `IN` list's rows in any order, and the
-    /// bucket becomes each way's `type` downstream — deriving it from position
-    /// would mislabel every way on some days and none on others.
+    /// ⚠ Coverage is checked PER BUCKET: a coordinate the mirror cannot vouch
+    /// for in one bucket declines the whole answer, and reading the buckets
+    /// together must not quietly answer for an area that was never fetched.
     ///
     /// ⚠ Every requested bucket gets an entry even when it matched no rows. An
     /// absent key and an empty one mean different things here — "no ways of this
@@ -795,10 +965,7 @@ impl RowSource for MirrorSource {
         // answer is the same — one bucket the mirror cannot vouch for declines
         // the whole thing — but `covered` is where a decline is RECORDED for
         // the fetch queue (#1658), and an early return records only the first
-        // uncovered bucket of four. The queue would then need a fetch, a
-        // re-fold and another fetch per bucket to converge, which is three
-        // extra rounds against a two-slot endpoint to learn what this one loop
-        // already knows.
+        // uncovered bucket of four.
         let mut all_covered = true;
         for b in buckets {
             if !self.covered(b, lat, lon, radius_m)? {
@@ -808,65 +975,19 @@ impl RowSource for MirrorSource {
         if !all_covered {
             return Ok(None);
         }
-        let poly = Self::mbr_box_wkt(lat, lon, radius_m);
-        let placeholders = std::iter::repeat_n("?", buckets.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "SELECT feature_type, osm_id, subtype, name, tags_json, ST_AsText(geom) AS wkt              FROM osm_lines              WHERE feature_type IN ({placeholders})                AND MBRIntersects(geom, ST_GeomFromText(?, 4326))              LIMIT ?"
-        );
-        // ⚠ `AssertSqlSafe`: audited — the only interpolation is the `?`
-        // placeholder run, whose length comes from `buckets.len()`. Every bucket
-        // NAME is bound.
-        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
-        for b in buckets {
-            q = q.bind(*b);
-        }
-        // ⚠ The candidate cap is now shared across four buckets where it used to
-        // be per bucket, so it is multiplied to keep the same headroom each had.
-        // Leaving it at the single-bucket value would silently truncate a dense
-        // coordinate — which reads as "fewer roads here", not as an error.
-        let cap = CANDIDATE_LIMIT * buckets.len() as i64;
-        let rows = self
-            .block("linesMulti", q.bind(&poly).bind(cap).fetch_all(&self.pool))
-            .context("reading osm_lines for the nearbyWays buckets")?;
-        Self::check_limit_at(rows.len(), "osm_lines", "nearbyWays buckets", cap)?;
-
-        let mut out: crate::rowset_answerer::LinesByBucket = buckets
+        let bx = Self::candidate_box(lat, lon, radius_m);
+        self.fetch_tiles(Geo::Lines, buckets, &bx)?;
+        let out: crate::rowset_answerer::LinesByBucket = buckets
             .iter()
-            .map(|b| ((*b).to_string(), Vec::new()))
+            .map(|b| ((*b).to_string(), self.tile_answer(Geo::Lines, b, &bx)))
             .collect();
-        for r in rows {
-            let bucket: String = r
-                .try_get("feature_type")
-                .context("osm_lines.feature_type")?;
-            let wkt: String = r.try_get("wkt").context("osm_lines.geom has no WKT")?;
-            let coords: Vec<Value> = parse_linestring_wkt(&wkt)
-                .into_iter()
-                .map(|(la, lo)| json!([bits(la), bits(lo)]))
-                .collect();
-            // A way with one vertex is not a line — same guard as `line_rows`.
-            if coords.len() < 2 {
-                continue;
-            }
-            let row = json!([
-                r.try_get::<i64, _>("osm_id").context("osm_lines.osm_id")?,
-                subtype_of(&r, "osm_lines")?,
-                name_of(&r, "osm_lines")?,
-                coords,
-                tags_of(&r)?
-            ]);
-            match out.iter_mut().find(|(b, _)| *b == bucket) {
-                Some((_, v)) => v.push(row),
-                // ⚠ Loud. A row whose `feature_type` is none of the four asked
-                // for means the WHERE clause and this grouping disagree, and
-                // dropping it silently would lose ways with no symptom.
-                None => bail!(
-                    "osm_lines returned feature_type {bucket:?}, which was not among the \
-                     buckets asked for — the query and the grouping disagree"
-                ),
-            }
-        }
+        let n: usize = out.iter().map(|(_, v)| v.len()).sum();
+        Self::check_limit_at(
+            n,
+            "osm_lines",
+            "nearbyWays buckets",
+            CANDIDATE_LIMIT * buckets.len() as i64,
+        )?;
         Ok(Some(out))
     }
 
