@@ -1055,7 +1055,11 @@ def dayResult (j : Json) : Json :=
     let tail := match tail.findIdx? (·.1 == "hsmmOverride") with
       | some k => tail.insertIdx! (k + 1) darkMove
       | none => tail.push darkMove
-    let chosen := #[unnamedRail, nameStays, nameMoves] ++ tail
+    -- A pause of a minute or two between two walks is part of one walk
+    -- (`mergePausesInWalks`), before the walks are named, so the joined walk is
+    -- named once from all its fixes.
+    let pauses : Verified.Geo.PassFold.Pass := ("pausesInWalks", Verified.Geo.SegmentMerge.mergePausesInWalks)
+    let chosen := #[pauses, unnamedRail, nameStays, nameMoves] ++ tail
     let chosen := chosen.map fun (n, f) => (n, fun s => DayEntry.Host.timed s!"pass.{n}" fun _ => f s)
     let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs
     -- The fold's output is the chain's input, which is the whole reason these

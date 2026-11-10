@@ -331,6 +331,58 @@ private def runFixes (dLat : Float) : Array AccFix :=
 #guard effectiveMode (absorbMoveInsidePlace (walkOut.set! 2 { walkOut[2]! with place := some "Home" })
   (officeStays ++ runFixes 0.00027))[1]! == "walking"
 
+/-! ## `mergePausesInWalks` -/
+
+/-- The longest still stretch between two walks that is a pause in the walk
+rather than a stop: of the 83 stops narrated between two walks on the
+confirmed days, the shortest is 3 minutes (a stop at a shop), and none is
+2 or less. -/
+def PAUSE_MAX_S : Int := 120
+
+/-- A still stretch of at most `PAUSE_MAX_S` between two walks that touch it
+is part of one walk with them: a pause at a crossing, not a stop at the
+nearest building (his rule: pauses in a walk are one walk; only a real stop at
+a place is a stay). The three become one walk segment, named afterwards from
+all its fixes. -/
+def mergePausesInWalks (segments : Array Seg) : Array Seg := Id.run do
+  let mut out : Array Seg := #[]
+  let mut i := 0
+  while i < segments.size do
+    let seg := segments[i]!
+    match out.back?, segments[i + 1]? with
+    | some prev, some next =>
+      if effectiveMode seg == "stationary" && seg.endTs - seg.startTs ≤ PAUSE_MAX_S
+          && effectiveMode prev == "walking" && effectiveMode next == "walking"
+          && prev.endTs == seg.startTs && seg.endTs == next.startTs then
+        let reason := s!"a pause of {seg.endTs - seg.startTs} s in a walk"
+        out := out.pop.push { prev with
+          endTs := next.endTs
+          wayName := none
+          roads := #[]
+          refinedReason := some (match prev.refinedReason with
+            | some r => if r == "" then reason else s!"{r}; {reason}"
+            | none => reason) }
+        i := i + 2
+      else
+        out := out.push seg
+        i := i + 1
+    | _, _ =>
+      out := out.push seg
+      i := i + 1
+  return out
+
+private def walkSeg (a b : Int) : Seg := { startTs := a, endTs := b, mode := "walking" }
+private def stillSeg (a b : Int) : Seg := { startTs := a, endTs := b, mode := "stationary", place := some "JFS" }
+-- Two minutes still between two walks: one walk.
+#guard (mergePausesInWalks #[walkSeg 0 600, stillSeg 600 720, walkSeg 720 1200]).map (fun s => (s.startTs, s.endTs, s.mode))
+  == #[(0, 1200, "walking")]
+-- Three minutes: a stop, kept.
+#guard (mergePausesInWalks #[walkSeg 0 600, stillSeg 600 780, walkSeg 780 1200]).size == 3
+-- Two pauses in one walk: one walk.
+#guard (mergePausesInWalks #[walkSeg 0 600, stillSeg 600 660, walkSeg 660 900, stillSeg 900 960, walkSeg 960 1200]).size == 1
+-- Still between a walk and a train: a wait, kept.
+#guard (mergePausesInWalks #[walkSeg 0 600, stillSeg 600 660, { walkSeg 660 900 with mode := "train" }]).size == 3
+
 /-- A mined place's id and centre, as the fold's `Env` carries it. -/
 structure KnownPlaceProjection where
   id : Int
