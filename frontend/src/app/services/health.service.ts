@@ -510,6 +510,13 @@ export class HealthService {
     return HealthService.body<SleepLog[]>(res);
   }
 
+  /** One date's activity row and sleep rows, whatever the Trends window. */
+  async getDay(date: string, signal?: AbortSignal): Promise<{ activity: ActivityDay[]; sleep: SleepLog[] }> {
+    const res = await this.fetch(`/api/day?date=${date}`, { signal });
+    if (!res.ok) throw new Error("Failed to fetch the day");
+    return HealthService.body<{ activity: ActivityDay[]; sleep: SleepLog[] }>(res);
+  }
+
   async getSleepStages(date = today(), signal?: AbortSignal): Promise<SleepStage[]> {
     const res = await this.fetch(`/api/sleep/stages?date=${date}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch sleep stages");

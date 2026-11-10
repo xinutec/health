@@ -67,6 +67,7 @@ pub fn router(state: AppState) -> Router {
         // capped per endpoint rather than here (see `routes::tables`).
         .route("/activity", get(tables::activity))
         .route("/sleep", get(tables::sleep))
+        .route("/day", get(tables::day))
         .route("/sleep/stages", get(tables::sleep_stages))
         .route("/heartrate/zones", get(tables::heartrate_zones))
         .route("/heartrate/intraday", get(tables::heartrate_intraday))

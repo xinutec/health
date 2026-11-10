@@ -193,7 +193,7 @@ fn outside_share_window(session: &UserSession, date: &str) -> Result<bool> {
 /// a `&'static str` parameter defeats it, and a query nobody checks is a
 /// renamed column away from a runtime 500.
 macro_rules! days_back_handler {
-    ($name:ident, $sql_const:ident, $sql:literal) => {
+    ($name:ident, $sql_const:ident, $sql:expr) => {
         /// The query this endpoint serves, exported so `backend rows-check` can
         /// verify the RENDERING of these exact rows against production.
         pub const $sql_const: &str = $sql;
@@ -254,15 +254,23 @@ days_back_handler!(
 // for a legacy row the backfill never touched, and for the case where it cannot
 // help — `CONVERT_TZ` also returns NULL when the server has no zone tables, and
 // that is why the fallback is written rather than assumed.
+macro_rules! sql_sleep_select {
+    () => {
+        "SELECT log_id, date, \
+         COALESCE(start_time_utc, CONVERT_TZ(start_time, tz, 'UTC')) AS start_time_utc, \
+         COALESCE(end_time_utc, CONVERT_TZ(end_time, tz, 'UTC')) AS end_time_utc, \
+         duration_ms, efficiency, minutes_asleep, minutes_awake, minutes_deep, \
+         minutes_light, minutes_rem, minutes_wake, is_main_sleep, tz \
+         FROM sleep"
+    };
+}
 days_back_handler!(
     sleep,
     SQL_SLEEP,
-    "SELECT log_id, date, \
-     COALESCE(start_time_utc, CONVERT_TZ(start_time, tz, 'UTC')) AS start_time_utc, \
-     COALESCE(end_time_utc, CONVERT_TZ(end_time, tz, 'UTC')) AS end_time_utc, \
-     duration_ms, efficiency, minutes_asleep, minutes_awake, minutes_deep, \
-     minutes_light, minutes_rem, minutes_wake, is_main_sleep, tz \
-     FROM sleep WHERE user_id = ? AND date >= ? ORDER BY date"
+    concat!(
+        sql_sleep_select!(),
+        " WHERE user_id = ? AND date >= ? ORDER BY date"
+    )
 );
 // ⚠ The second sort key is load-bearing: the frontend renders zones in the
 // order they arrive, and dropping it would order them by whatever the storage
@@ -467,6 +475,56 @@ whole_table_handler!(
     SQL_SYNC_STATE,
     "SELECT * FROM sync_state WHERE user_id = ?"
 );
+
+/// `GET /day?date=` — that date's `daily_activity` row and its sleep rows, in
+/// the shapes `/activity` and `/sleep` serve. The Today page's summary reads its
+/// day from here, so a day older than the Trends window still shows.
+pub async fn day(
+    State(st): State<AppState>,
+    Extension(session): Extension<UserSession>,
+    Query(p): Query<DateParams>,
+) -> Response {
+    match day_run(&st, &session, p).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "day read failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(crate::error::ErrorBody {
+                    error: "internal".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn day_run(st: &AppState, session: &UserSession, p: DateParams) -> Result<Response> {
+    let Some(date) = parse_date(p.date.as_deref()) else {
+        return Ok(bad_request("date must be YYYY-MM-DD"));
+    };
+    if outside_share_window(session, &date)? {
+        return Ok(Json(json!({ "activity": [], "sleep": [] })).into_response());
+    }
+    let activity = sqlx::query("SELECT * FROM daily_activity WHERE user_id = ? AND date = ?")
+        .bind(&session.user_id)
+        .bind(&date)
+        .fetch_all(&st.pool)
+        .await?;
+    let sleep = sqlx::query(concat!(
+        sql_sleep_select!(),
+        " WHERE user_id = ? AND date = ?"
+    ))
+    .bind(&session.user_id)
+    .bind(&date)
+    .fetch_all(&st.pool)
+    .await?;
+    Ok(Json(json!({
+        "activity": row_json::rows_to_json(&activity)?,
+        "sleep": row_json::rows_to_json(&sleep)?,
+    }))
+    .into_response())
+}
 
 /// `GET /sleep/stages?date=` — the stages of that date's MAIN sleep.
 pub async fn sleep_stages(

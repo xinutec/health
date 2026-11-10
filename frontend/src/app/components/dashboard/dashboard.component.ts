@@ -74,6 +74,13 @@ interface DayData {
 	failed: readonly string[];
 }
 
+/** One date's activity and sleep rows (`/api/day`). */
+interface DaySummary {
+	activity: ActivityDay[];
+	sleep: SleepLog[];
+	failed: readonly string[];
+}
+
 /** The Trends window: activity, sleep, HRV, body, breathing rate and SpO2.
  *  Does NOT depend on the selected day, so it is fetched once and the
  *  selected day is derived from it. */
@@ -312,6 +319,21 @@ export class DashboardComponent implements OnInit, OnDestroy {
 		},
 	});
 
+	/** The selected day's own activity and sleep rows, fetched by date: apart
+	 *  from `dayData` so the summary never waits on the location fold, and
+	 *  apart from the Trends window so a day older than it still has one. */
+	private readonly daySummary = resource<DaySummary, string | undefined>({
+		params: () => (this.dataReady() ? this.selectedDate() : undefined),
+		defaultValue: { activity: [], sleep: [], failed: [] },
+		loader: async ({ params: date, abortSignal }) => {
+			const failed: string[] = [];
+			const day = await this.health
+				.getDay(date, abortSignal)
+				.catch(missing(failed, "activity and sleep", { activity: [] as ActivityDay[], sleep: [] as SleepLog[] }));
+			return { ...day, failed };
+		},
+	});
+
 	/** Latches once the first day-load resolves. A day-navigation changes
 	 *  the resource's `params`, which Angular reports as `loading` (the
 	 *  same status as the very first load) — so status alone can't tell
@@ -346,7 +368,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	readonly velocity = computed(() => this.displayedDay().velocity);
 	/** The tables this view failed to load, as a phrase, or "" when none did. */
 	readonly missingTables = computed(() =>
-		listOf([...this.displayedDay().failed, ...this.windowData.value().failed]),
+		listOf([...this.displayedDay().failed, ...this.daySummary.value().failed, ...this.windowData.value().failed]),
 	);
 
 	/** Set when a velocity load rejected (network/server error), cleared at
@@ -361,8 +383,18 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	/** The day is still being decoded: the timeline says so, and the day
 	 *  reloads itself until its states arrive. */
 	readonly dayDecoding = computed(() => this.velocity()?.decoding === true && !this.dayLoading());
-	readonly latestActivity = computed(() => selectDayActivity(this.activity(), this.selectedDate()));
-	readonly latestSleep = computed(() => selectDayMainSleep(this.sleep(), this.selectedDate()));
+	/** From the Trends window when it holds the day (on screen at once), else
+	 *  from the day's own fetch: the window is the last N days only. */
+	readonly latestActivity = computed(
+		() =>
+			selectDayActivity(this.activity(), this.selectedDate()) ??
+			selectDayActivity(this.daySummary.value().activity, this.selectedDate()),
+	);
+	readonly latestSleep = computed(
+		() =>
+			selectDayMainSleep(this.sleep(), this.selectedDate()) ??
+			selectDayMainSleep(this.daySummary.value().sleep, this.selectedDate()),
+	);
 
 	/** In-body overlay + dim: a day's data is loading (first time or on
 	 *  navigation). This is the spinner the user sees while stepping days. */

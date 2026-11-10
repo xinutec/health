@@ -73,7 +73,14 @@ interface HealthMock {
  *  a test can resolve day-loads in any order; everything else resolves
  *  immediately. */
 function makeHealthMock(
-	opts: { activity?: ActivityDay[]; sleep?: SleepLog[]; shareWindow?: { from: string; to: string; location: boolean } } = {},
+	opts: {
+		activity?: ActivityDay[];
+		sleep?: SleepLog[];
+		/** What `/api/day` holds, when it differs from the Trends window (a day
+		 *  older than the window). */
+		dayRows?: { activity: ActivityDay[]; sleep: SleepLog[] };
+		shareWindow?: { from: string; to: string; location: boolean };
+	} = {},
 ): HealthMock {
 	const pending = new Map<string, Deferred<VelocityData>>();
 	const activityDaysSeen: number[] = [];
@@ -98,6 +105,13 @@ function makeHealthMock(
 		getBodyBefore: () => Promise.resolve(null),
 		getBreathing: () => Promise.resolve([]),
 		getSpo2: () => Promise.resolve([]),
+		// By date, as `/api/day` answers: every row stored for that day, whatever
+		// the Trends window holds.
+		getDay: (date: string) =>
+			Promise.resolve({
+				activity: (opts.dayRows?.activity ?? opts.activity ?? []).filter((a) => a.date.startsWith(date)),
+				sleep: (opts.dayRows?.sleep ?? opts.sleep ?? []).filter((s) => s.date.startsWith(date)),
+			}),
 		getSleepStages: () => Promise.resolve([]),
 		getHeartRateIntraday: () => Promise.resolve([]),
 		getVelocity: (date: string) => {
@@ -170,6 +184,25 @@ describe("DashboardComponent — selected-day summary cards", () => {
 
 		expect(cmp.latestSleep()).toBeNull();
 		expect(cmp.latestActivity()?.date).toBe(today);
+	});
+
+	it("shows a day older than the Trends window from its own fetch", async () => {
+		const old = "2026-02-03";
+		const mock = makeHealthMock({
+			// The window holds the last N days only; the day itself is stored.
+			activity: [activity("2026-05-09")],
+			sleep: [mainSleep("2026-05-09")],
+			dayRows: { activity: [activity(old, 6100)], sleep: [mainSleep(old, 410)] },
+		});
+		const fixture = setup(mock);
+		const cmp = fixture.componentInstance;
+		await boot(fixture);
+
+		cmp.selectedDate.set(old);
+		await pump(fixture);
+
+		expect(cmp.latestActivity()?.steps).toBe(6100);
+		expect(cmp.latestSleep()?.minutes_asleep).toBe(410);
 	});
 });
 
