@@ -51,9 +51,7 @@ pub struct RawTrackPoint {
 /// second wide.
 ///
 /// ⚠ **THE TWO HALVES COVER THE INPUT EXACTLY — no gap and no overlap.** Both
-/// bounds are inclusive (`Verified.Sync.chunkRange` documents its touching chunk
-/// endpoints as a deliberate duplicate, which is what fixes the convention), so
-/// the split has to be `[a, mid]` and `[mid + 1, b]`. Splitting at `mid` on both
+/// bounds are inclusive, so the split has to be `[a, mid]` and `[mid + 1, b]`. Splitting at `mid` on both
 /// sides would re-fetch whatever sits exactly on the boundary, and moving the
 /// low end instead would drop it.
 ///
@@ -70,8 +68,7 @@ pub fn split_window(a: i64, b: i64) -> Option<((i64, i64), (i64, i64))> {
 /// The result of a range fetch: the points, and how much of the walk failed.
 #[derive(Debug, Default)]
 pub struct TrackFetch {
-    /// Ascending by `ts`. Chunk boundaries are shared, so duplicates occur —
-    /// see `Verified.Sync.chunkRange`.
+    /// Ascending by `ts`.
     pub points: Vec<RawTrackPoint>,
     /// Devices whose points call failed and were skipped.
     ///
@@ -301,10 +298,8 @@ impl PhoneTrack {
     /// arithmetic that motivated it: a 7-day chunk at one fix per minute is
     /// 10 080 points from a single device, against a 10 000 cap.
     ///
-    /// ⚠ **THE HALVES DO NOT OVERLAP, unlike the chunking above.** The bounds
-    /// are inclusive at both ends — `Verified.Sync.chunkRange` documents its
-    /// touching endpoints as a deliberate duplicate — so `[a, mid]` and
-    /// `[mid + 1, b]` cover `[a, b]` exactly, with no gap and no repeated fix.
+    /// ⚠ **THE HALVES DO NOT OVERLAP.** The bounds are inclusive at both ends,
+    /// so `[a, mid]` and `[mid + 1, b]` cover `[a, b]` exactly, with no gap and no repeated fix.
     ///
     /// ⚠ **Iterative, not recursive**, because an async fn that calls itself
     /// needs boxing; the stack here is the recursion made visible. It
@@ -365,45 +360,13 @@ impl PhoneTrack {
 
         Ok((points, capped))
     }
-
-    /// Fetch a span wider than one request, in chunks Lean sizes.
-    ///
-    /// The chunking is `Verified.Sync.chunkRange`'s: consecutive windows that
-    /// share an endpoint, refused outright rather than truncated when the span
-    /// would take more requests than the bound allows.
-    pub async fn fetch_span(
-        &self,
-        pool: &MySqlPool,
-        start_date: &str,
-        end_date: &str,
-    ) -> Result<TrackFetch, NcError> {
-        let chunks = lean::chunk_range(
-            start_date,
-            end_date,
-            lean::TRACK_CHUNK_DAYS,
-            lean::MAX_TRACK_CHUNKS,
-        )
-        .map_err(NcError::Other)?;
-
-        let mut out = TrackFetch::default();
-        for (from, to) in chunks {
-            let mut chunk = self.fetch_range(pool, &from, &to).await?;
-            out.points.append(&mut chunk.points);
-            out.failed_devices += chunk.failed_devices;
-            out.capped_windows += chunk.capped_windows;
-        }
-        // Re-sorted across chunks: each chunk is ordered, the concatenation is
-        // not, and `ForwardTzSource` binary-searches this.
-        out.points.sort_by_key(|p| p.ts);
-        Ok(out)
-    }
 }
 
 /// The per-request point cap, as the TypeScript sends it.
 ///
 /// ⚠ PhoneTrack truncates at this rather than paginating, and there is no field
 /// in the response saying it did. The arithmetic is uncomfortably close: a
-/// 7-day chunk ([`lean::TRACK_CHUNK_DAYS`]) at one fix per minute is 10 080
+/// 7-day window at one fix per minute is 10 080
 /// points from a SINGLE device, which is over this cap. Whether real capture
 /// rates reach that is not measured here, and the silent-truncation shape means
 /// exceeding it would look like a quiet day rather than a lost tail. #1032.

@@ -494,9 +494,9 @@ pub async fn sleep_stages(
 ///
 /// ⚠ NOT a `const` read at the query site. `DL-SQLX-SCHEMA-TRUTH` resolves a
 /// literal, a `concat!`, or a crate-local zero-arg macro — a `const` path is
-/// opaque to it, so `sqlx::query(SQL_SLEEP_STAGES)` would be UNCHECKED SQL. The
-/// macro gives the parity harness something to compare against without trading
-/// the schema check away.
+/// opaque to it, so a `const` read at the query site would be UNCHECKED SQL. The
+/// macro lets `rows_check` share the literal without trading the schema check
+/// away.
 macro_rules! sql_sleep_stages {
     () => {
         "SELECT COALESCE(ts_utc, CONVERT_TZ(ts, tz, 'UTC')) AS ts_utc, stage, \
@@ -505,14 +505,6 @@ macro_rules! sql_sleep_stages {
     };
 }
 pub(crate) use sql_sleep_stages;
-
-/// The stage query this endpoint serves, exported so `backend rows-check` can
-/// verify the RENDERING of these exact rows against production.
-///
-/// ⚠ The mirror in `rows_check` DID drift, for a day, when the `#1532` repair
-/// landed in the route and not in the copy — which is why there is a const to
-/// compare against at all.
-pub const SQL_SLEEP_STAGES: &str = sql_sleep_stages!();
 
 async fn sleep_stages_run(st: &AppState, session: &UserSession, p: DateParams) -> Result<Response> {
     let Some(date) = parse_date(p.date.as_deref()) else {
@@ -581,10 +573,6 @@ macro_rules! sql_heartrate_intraday {
     };
 }
 pub(crate) use sql_heartrate_intraday;
-
-/// The query this endpoint serves, exported so `backend rows-check` can verify
-/// the RENDERING of these exact rows against production.
-pub const SQL_HEARTRATE_INTRADAY: &str = sql_heartrate_intraday!();
 
 /// `GET /heartrate/intraday?date=` — one day of per-minute heart rate.
 pub async fn heartrate_intraday(

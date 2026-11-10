@@ -152,20 +152,4 @@ impl NextcloudClient {
             Some(body_text)
         })
     }
-
-    /// GET and deserialise, treating an empty body as absent.
-    pub async fn get_json<T: serde::de::DeserializeOwned>(
-        &self,
-        pool: &MySqlPool,
-        path: &str,
-    ) -> Result<Option<T>, NcError> {
-        match self.get(pool, path).await? {
-            None => Ok(None),
-            Some(body) => {
-                Ok(Some(serde_json::from_str(&body).with_context(|| {
-                    format!("decoding the response to GET {path}")
-                })?))
-            }
-        }
-    }
 }

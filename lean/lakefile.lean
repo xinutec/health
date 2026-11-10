@@ -15,7 +15,7 @@ lean_lib Verified
 /-- The day request/response shape, and the asks the fold puts to its host. -/
 lean_lib DayEntry
 
-/-- The backend's decision table (`Verified.Sync` and friends), one `op` per
+/-- The backend's decision table (`Verified.Session` and friends), one `op` per
 request. -/
 lean_lib BackendEntry
 

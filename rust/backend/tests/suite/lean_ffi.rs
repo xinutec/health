@@ -1,7 +1,7 @@
 //! The Lean decisions, called through the C ABI (#982).
 //!
 //! The point of asking Lean at all is that the rules the backend runs ARE the
-//! ones in `Verified/Sync.lean`, and a pipe that carries the question wrongly
+//! ones in Lean, and a pipe that carries the question wrongly
 //! would look exactly like one that works.
 //!
 //! ⚠ ONE `#[test]` FUNCTION, DELIBERATELY. `health_backend_init` starts a
@@ -11,7 +11,7 @@
 //! reads as a Lean bug. Sections in order, each asserting with a message naming
 //! the case.
 //!
-//! The expected values are the ones in `Verified/Sync.lean`'s `#guard`s and in
+//! The expected values are the ones in the Lean modules' `#guard`s and in
 //! the Rust tests these replaced — so this failing means the FFI, not the rule.
 
 use backend::lean;
@@ -19,83 +19,6 @@ use backend::lean;
 #[test]
 fn the_lean_decisions_answer_through_the_ffi() {
     lean::init().expect("the Lean runtime must start");
-
-    // ---- the PhoneTrack chunk walk -----------------------------------------
-    let chunks = |v: &[(&str, &str)]| -> Vec<(String, String)> {
-        v.iter()
-            .map(|(a, b)| (a.to_string(), b.to_string()))
-            .collect()
-    };
-    assert_eq!(
-        lean::chunk_range("2026-08-01", "2026-08-17", 7, 60).unwrap(),
-        chunks(&[
-            ("2026-08-01", "2026-08-08"),
-            ("2026-08-08", "2026-08-15"),
-            ("2026-08-15", "2026-08-17"),
-        ]),
-        "the last chunk is clamped to the end rather than overshooting it"
-    );
-    // ⚠ Adjacent chunks SHARE an endpoint, so a boundary day is fetched twice.
-    // Asserted rather than merely documented: closing the interval would look
-    // like a tidy-up and would silently change which fixes exist.
-    let cs = lean::chunk_range("2026-08-01", "2026-08-17", 7, 60).unwrap();
-    for pair in cs.windows(2) {
-        assert_eq!(
-            pair[0].1, pair[1].0,
-            "chunk {:?} must end where {:?} begins",
-            pair[0], pair[1]
-        );
-    }
-    assert_eq!(
-        lean::chunk_range("2026-08-01", "2026-08-15", 7, 60).unwrap(),
-        chunks(&[
-            ("2026-08-01", "2026-08-08"),
-            ("2026-08-08", "2026-08-15"),
-            ("2026-08-15", "2026-08-15"),
-        ]),
-        "an exact multiple ends with a degenerate chunk — one wasted request, \
-         kept because the TypeScript's loop guard does the same"
-    );
-    assert_eq!(
-        lean::chunk_range("2026-08-17", "2026-08-17", 7, 60).unwrap(),
-        chunks(&[("2026-08-17", "2026-08-17")]),
-        "one day in, one chunk out"
-    );
-    assert!(
-        lean::chunk_range("2026-08-17", "2026-08-01", 7, 60)
-            .unwrap()
-            .is_empty(),
-        "backwards asks for nothing"
-    );
-    assert_eq!(
-        lean::chunk_range(
-            "2026-07-18",
-            "2026-08-17",
-            lean::TRACK_CHUNK_DAYS,
-            lean::MAX_TRACK_CHUNKS
-        )
-        .unwrap()
-        .len(),
-        5,
-        "the 30-day default forward window fits well inside the bound"
-    );
-    for (start, end, days, max) in [
-        // Over the chunk bound: refuses rather than fetching a prefix, because a
-        // prefix would stamp every row past it with a confident wrong zone.
-        ("2026-08-01", "2026-08-15", 7, 2),
-        ("2026-08-01", "2026-08-08", 7, 1),
-        ("2026-08-01", "2026-08-15", 7, 0),
-        // A non-positive step would ask for the same chunk forever.
-        ("2026-08-01", "2026-08-15", 0, 60),
-        ("2026-08-01", "2026-08-15", -7, 60),
-        ("garbage", "2026-08-17", 7, 60),
-        ("2026-02-30", "2026-08-17", 7, 60),
-    ] {
-        assert!(
-            lean::chunk_range(start, end, days, max).is_err(),
-            "chunkRange({start:?}, {end:?}, {days}, {max}) must refuse"
-        );
-    }
 
     // ---- a date as an instant ----------------------------------------------
     // The PhoneTrack query bounds. UTC midnight, matching what

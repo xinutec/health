@@ -4282,7 +4282,7 @@ def dispatch (j : Json) : Json :=
   | .ok "feasibility" => Feasibility.feasibilityResult j
   | .ok "ceilinggate" => CeilingGate.ceilingGateResult j
   | .ok "ceilingbless" => CeilingGate.ceilingBlessResult j
-  -- The backend's decision table (`Verified.Sync`, `Verified.Session`, …),
+  -- The backend's decision table (`Verified.Session`, `Verified.Share`, …),
   -- keyed on `op`. One process serves both tables so the host has one pipe to
   -- keep alive. ⚠ The payload rides under `req`, not merged into this object:
   -- some ops carry a `mode` of their own (`overpassQuery`'s is `bus`/`rail`), and

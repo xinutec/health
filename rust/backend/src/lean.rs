@@ -1,7 +1,7 @@
 //! Calling the Lean decisions.
 //!
 //! Every function here is one request to `verified_cli serve` (#1709) —
-//! `{"mode":"backend","op":…}` for the decision table in `Verified/Sync.lean`
+//! `{"mode":"backend","op":…}` for the decision table in `Verified/Session.lean`
 //! and its siblings, `{"mode":…}` for the algorithm modes — typed on this side
 //! so a caller never spells a wire shape. The process, the pool and the ask
 //! protocol are [`crate::lean_worker`]; this module is the vocabulary.
@@ -57,50 +57,6 @@ fn call_json<T: for<'de> Deserialize<'de>>(request: &Value) -> Result<T> {
 #[derive(Deserialize)]
 struct LeanError {
     error: String,
-}
-
-#[derive(Deserialize)]
-struct Window {
-    start: String,
-    end: String,
-}
-
-#[derive(Deserialize)]
-struct OptChunks {
-    value: Option<Vec<Window>>,
-}
-
-/// How many days of PhoneTrack history one request asks for.
-pub const TRACK_CHUNK_DAYS: i64 = 7;
-
-/// How many chunks one tz-inference window may be split into.
-pub const MAX_TRACK_CHUNKS: i64 = 60;
-
-/// See `Verified.Sync.chunkRange`.
-///
-/// The Lean `none` is an `Err` and NOT an empty list: empty means the span asks
-/// for nothing, `none` means it was malformed or would take more requests than
-/// the bound allows.
-///
-/// ⚠ Adjacent chunks share an endpoint by design, so a fix on a boundary day is
-/// fetched twice. See the Lean docstring for why that is kept.
-pub fn chunk_range(
-    start: &str,
-    end: &str,
-    days: i64,
-    max_chunks: i64,
-) -> Result<Vec<(String, String)>> {
-    let r: OptChunks = call_json(&serde_json::json!({
-        "op": "chunkRange", "start": start, "end": end,
-        "days": days, "maxChunks": max_chunks,
-    }))?;
-    let chunks = r.value.ok_or_else(|| {
-        anyhow!(
-            "refused track range {start}..{end}: unparseable, \
-             a non-positive step, or more than {max_chunks} chunks of {days} days"
-        )
-    })?;
-    Ok(chunks.into_iter().map(|w| (w.start, w.end)).collect())
 }
 
 /// One Google Health weigh-in. Mirrors `Verified.Weight.Weigh`.

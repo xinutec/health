@@ -25,14 +25,13 @@ import Verified.Geo.FocusMining
 import Verified.Hsmm.RouteGraph
 import Verified.Session
 import Verified.Share
-import Verified.Sync
 import Verified.VelocityCache
 
 /-!
 # The backend's C ABI entry point
 
 `rust/backend` links this the way `rust/day-shell` links `DayEntry`, so the
-decisions in `Verified.Sync` are called by the running backend rather than
+decisions in `Verified.Session` and its siblings are called by the running backend rather than
 reimplemented beside it.
 
 ⚠ IT IS A `lean_lib` AND NOT A `lean_exe`, for the reason `DayEntry`'s comment
@@ -151,15 +150,6 @@ private def optInt? (j : Json) (k : String) : Option Int :=
 def dispatch (j : Json) : Json :=
   match str? j "op" with
   | none => err "missing op"
-  | some "chunkRange" =>
-    match str? j "start", str? j "end", int? j "days", int? j "maxChunks" with
-    | some s, some e, some d, some m =>
-      match Verified.Sync.chunkRange s e d m with
-      | none => Json.mkObj [("value", Json.null)]
-      | some cs =>
-        Json.mkObj [("value", Json.arr (cs.map (fun (a, b) =>
-          Json.mkObj [("start", Json.str a), ("end", Json.str b)])).toArray)]
-    | _, _, _, _ => err "chunkRange: start, end, days, maxChunks required"
   -- Both answers in ONE call, deliberately: the delete boundary and the rows
   -- that replace what it deletes have to come from the SAME dedup, or the
   -- window and its contents can disagree.

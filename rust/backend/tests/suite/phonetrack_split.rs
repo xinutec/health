@@ -6,9 +6,7 @@
 //! asking again, so the arithmetic below is what stands between a lost tail and
 //! a correct one.
 //!
-//! ⚠ **Both bounds are INCLUSIVE.** `Verified.Sync.chunkRange` documents its
-//! touching chunk endpoints as a deliberate duplicate, which is what fixes the
-//! convention. So the halves must be `[a, mid]` and `[mid + 1, b]`: splitting at
+//! ⚠ **Both bounds are INCLUSIVE.** So the halves must be `[a, mid]` and `[mid + 1, b]`: splitting at
 //! `mid` twice re-fetches the boundary second, and `[mid, b]` with `[a, mid - 1]`
 //! would drop it. Coverage is asserted second by second below rather than
 //! argued.
