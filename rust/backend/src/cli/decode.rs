@@ -1,8 +1,8 @@
 //! The HSMM decode of a day and the OSM rows it needs: `decode-day` and the
 //! day-level OSM loaders shared with `day-live`.
 
-use super::refresh::*;
 use anyhow::{Context, Result};
+use backend::rail_route::{RAIL_CORRIDOR_LINE_LIMIT, line_bits, parse_point_wkt};
 use backend::{db, decode_fixture};
 
 /// Persist a day's HSMM decode, overwriting any existing row.
@@ -751,7 +751,7 @@ pub(crate) async fn route_graph_rows(
     let mut ways = Vec::with_capacity(line_rows.len());
     for r in &line_rows {
         let wkt: String = r.try_get("wkt")?;
-        let geom = parse_linestring_wkt(&wkt);
+        let geom = line_bits(&wkt);
         if geom.len() < 2 {
             continue;
         }

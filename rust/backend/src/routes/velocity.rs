@@ -442,20 +442,11 @@ pub async fn compute_with(
     });
     mark(&mut timing, "watchBattery");
 
-    // ⚠ The rail-route fill is IDENTIFIED but not RUN. `unsnappedTrainRoutes`
-    // names the legs whose route is missing; the TypeScript's miss-driven fill
-    // worker (#363, 2026-07) was not ported. Logging the count rather than
-    // silently doing nothing is the difference between a known gap and a
-    // forgotten one: those legs draw raw until `refresh-rail-routes` runs at
-    // 05:00.
-    if let Ok(candidates) = rail_fill_candidates(&out, &h)
-        && !candidates.is_empty()
-    {
-        tracing::info!(
-            date,
-            count = candidates.len(),
-            "train legs want a route fill; the fill worker is not ported yet (#363)"
-        );
+    // A train leg whose label has no route yet is offered to the fill, which
+    // draws it from today's fixes for the next fold (`crate::rail_route`).
+    match rail_fill_candidates(&out, &h) {
+        Ok(candidates) => crate::rail_route::offer(candidates),
+        Err(e) => tracing::warn!(date, error = %format!("{e:#}"), "rail fill scan failed"),
     }
 
     Ok(json!({

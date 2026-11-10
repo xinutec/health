@@ -68,6 +68,7 @@ pub mod nominatim;
 pub mod osm_mirror;
 pub mod osm_trace;
 pub mod overpass;
+pub mod rail_route;
 pub mod rest_hr;
 pub mod routes;
 pub mod row_json;

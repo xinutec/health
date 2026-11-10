@@ -890,7 +890,9 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
     let mut routes: Vec<(String, serde_json::Value)> = Vec::new();
     for (key, acc) in &by_route {
         let snapped =
-            match rail_route_geometry(&pool, key, acc.start_ts, acc.end_ts, &acc.fixes).await? {
+            match backend::rail_route::geometry(&pool, key, acc.start_ts, acc.end_ts, &acc.fixes)
+                .await?
+            {
                 Some(g) => Some(g),
                 None => relation_route_geometry(key, acc.start_ts, acc.end_ts, &acc.fixes).await?,
             };
@@ -937,116 +939,6 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
     eprintln!("rail_route_cache upserted: {} routes", routes.len());
     pool.close().await;
     Ok(())
-}
-
-/// The corridor around a pooled fix cloud, snapped — `computeRailRoute`'s twin.
-///
-/// Corridor-weighted snap first; if that refuses (thin cloud, ambiguous
-/// corridor) and the key names a line, route between the two stations over ONLY
-/// that line's ways. `None` means LEAVE IT RAW — never a guessed path.
-///
-/// ⚠ The line-restricted retry passes the SAME way list. Lean's
-/// `snapTrainSegmentOnLine` does the filtering itself with `wayOnLine`, so
-/// nothing is asked of this caller beyond the full list — which is why the
-/// fallback needs no second query and no station lookup here.
-pub(crate) async fn rail_route_geometry(
-    pool: &sqlx::MySqlPool,
-    key: &str,
-    start_ts: f64,
-    end_ts: f64,
-    fixes: &[(f64, f64)],
-) -> Result<Option<Vec<serde_json::Value>>> {
-    use sqlx::Row as _;
-
-    if fixes.is_empty() {
-        return Ok(None);
-    }
-    // The bbox the corridor is scanned over, padded like `corridorBox`.
-    let (mut min_lat, mut max_lat) = (f64::INFINITY, f64::NEG_INFINITY);
-    let (mut min_lon, mut max_lon) = (f64::INFINITY, f64::NEG_INFINITY);
-    for (la, lo) in fixes {
-        min_lat = min_lat.min(*la);
-        max_lat = max_lat.max(*la);
-        min_lon = min_lon.min(*lo);
-        max_lon = max_lon.max(*lo);
-    }
-    // ⚠ A METRES margin converted to degrees, with the longitude term corrected
-    // for latitude — NOT a fixed degree pad. A constant 0.01 deg would be ~1.1 km
-    // north-south everywhere but only ~700 m east-west in London and ~1.1 km at
-    // the equator, so the corridor would silently narrow the further north the
-    // ride was. This mirrors `corridorBox`.
-    let d_lat = RAIL_CORRIDOR_MARGIN_M / 111_320.0;
-    let mid_lat = (min_lat + max_lat) / 2.0;
-    let d_lon =
-        RAIL_CORRIDOR_MARGIN_M / (111_320.0 * (mid_lat * std::f64::consts::PI / 180.0).cos());
-    let (min_lat, max_lat) = (min_lat - d_lat, max_lat + d_lat);
-    let (min_lon, max_lon) = (min_lon - d_lon, max_lon + d_lon);
-    let poly = format!(
-        "POLYGON(({min_lon} {min_lat},{max_lon} {min_lat},{max_lon} {max_lat},\
-         {min_lon} {max_lat},{min_lon} {min_lat}))"
-    );
-
-    // ⚠ `feature_type = 'railway'`, the mirror's BUCKET. `subtype` carries the
-    // OSM value (rail, subway, station, …); filtering on subtype here would
-    // drop the ways `isRailSubtype` is meant to judge.
-    let line_rows = sqlx::query(
-        "SELECT name, subtype, ST_AsText(geom) AS wkt FROM osm_lines \
-         WHERE feature_type = 'railway' \
-           AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) LIMIT ?",
-    )
-    .bind(&poly)
-    .bind(RAIL_CORRIDOR_LINE_LIMIT)
-    .fetch_all(pool)
-    .await
-    .context("querying the rail corridor")?;
-
-    let mut lines: Vec<serde_json::Value> = Vec::with_capacity(line_rows.len());
-    for r in &line_rows {
-        let wkt: String = r.try_get("wkt")?;
-        let coords = parse_linestring_wkt(&wkt);
-        if coords.len() < 2 {
-            continue;
-        }
-        lines.push(serde_json::json!({
-            "name": r.try_get::<Option<String>, _>("name")?,
-            "subtype": r.try_get::<Option<String>, _>("subtype")?,
-            "coords": coords,
-        }));
-    }
-
-    let station_rows = sqlx::query(
-        "SELECT name, subtype, ST_AsText(geom) AS wkt FROM osm_points \
-         WHERE feature_type = 'railway' \
-           AND subtype IN ('station','halt','stop','subway_entrance','tram_stop') \
-           AND MBRIntersects(geom, ST_GeomFromText(?, 4326))",
-    )
-    .bind(&poly)
-    .fetch_all(pool)
-    .await
-    .context("querying rail stations")?;
-
-    let mut stations: Vec<serde_json::Value> = Vec::with_capacity(station_rows.len());
-    for r in &station_rows {
-        let wkt: String = r.try_get("wkt")?;
-        let Some((lat, lon)) = parse_point_wkt(&wkt) else {
-            continue;
-        };
-        stations.push(serde_json::json!({
-            "name": r.try_get::<Option<String>, _>("name")?,
-            "subtype": r.try_get::<Option<String>, _>("subtype")?,
-            "latBits": backend::fold_payload::bits(lat),
-            "lonBits": backend::fold_payload::bits(lon),
-        }));
-    }
-
-    for on_line in [false, true] {
-        if let Some(path) =
-            backend::lean::rail_snap(key, start_ts, end_ts, &lines, &stations, fixes, on_line)?
-        {
-            return Ok(Some(path));
-        }
-    }
-    Ok(None)
 }
 
 /// How far around a ride's fixes its two stations are looked for (m): a TGV's
@@ -1230,51 +1122,6 @@ pub(crate) async fn relation_route_geometry(
     Ok(best.map(|(_, p)| p))
 }
 
-/// `LINESTRING(lon lat, …)` → `[[latBits, lonBits], …]`.
-///
-/// ⚠ WKT IS `lon lat`, THE OTHER WAY ROUND. Getting it backwards puts every
-/// rail way in the wrong hemisphere, where the graph builds fine and the snap
-/// simply never finds a route — a silent empty answer rather than an error.
-pub(crate) fn parse_linestring_wkt(wkt: &str) -> Vec<serde_json::Value> {
-    let Some(inner) = wkt
-        .trim()
-        .strip_prefix("LINESTRING(")
-        .and_then(|s| s.strip_suffix(')'))
-    else {
-        return Vec::new();
-    };
-    inner
-        .split(',')
-        .filter_map(|pair| {
-            let mut it = pair.split_whitespace();
-            let lon: f64 = it.next()?.parse().ok()?;
-            let lat: f64 = it.next()?.parse().ok()?;
-            Some(serde_json::json!([
-                backend::fold_payload::bits(lat),
-                backend::fold_payload::bits(lon)
-            ]))
-        })
-        .collect()
-}
-
-/// `POINT(lon lat)` → `(lat, lon)`. Same axis-order warning as above.
-pub(crate) fn parse_point_wkt(wkt: &str) -> Option<(f64, f64)> {
-    let inner = wkt
-        .trim()
-        .strip_prefix("POINT(")
-        .and_then(|s| s.strip_suffix(')'))?;
-    let mut it = inner.split_whitespace();
-    let lon: f64 = it.next()?.parse().ok()?;
-    let lat: f64 = it.next()?.parse().ok()?;
-    Some((lat, lon))
-}
-
-/// Margin (m) around a train run's fixes when reading its rail corridor — wide
-/// enough that the line and BOTH stations fall inside the box even where the
-/// fixes scatter off the track. The TypeScript's `RAIL_CORRIDOR_MARGIN_M`.
-pub(crate) const RAIL_CORRIDOR_MARGIN_M: f64 = 1500.0;
-/// The TypeScript's `LIMIT 12000`.
-pub(crate) const RAIL_CORRIDOR_LINE_LIMIT: i64 = 12000;
 /// The TypeScript's `DEFAULT_WINDOW_DAYS`.
 pub(crate) const RAIL_DEFAULT_WINDOW_DAYS: i64 = 21;
 

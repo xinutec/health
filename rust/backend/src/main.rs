@@ -347,6 +347,10 @@ async fn serve() -> Result<()> {
         }
     });
 
+    // Today's train rides on a route first ridden today, drawn without waiting
+    // for the nightly job (`backend::rail_route`).
+    backend::rail_route::start(pool.clone());
+
     let state = AppState::new(pool, cfg, http);
     // Warm the walk memo a minute after start, once the pod has settled (#1921).
     let warm = state.clone();
