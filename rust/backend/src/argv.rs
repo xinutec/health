@@ -69,98 +69,12 @@ pub enum Command {
     },
     /// the full HRV + resting-HR history as CSV (#1733)
     HrvHistory,
-    /// which daily_activity columns hold data (#260)
-    ColumnFill,
     /// the shape of heart_rate_zones (#1223)
     ZonesCensus,
-    /// id gaps in focus_places — were places mass-deleted? (#1140)
-    FocusAudit,
     /// every venue-prior snapshot and the current blob, as the serving path resolves them (#1845)
     VenuePriorSnapshots { user: String, out_dir: String },
-    /// which timezones are stored, and could inference change them? (#1037)
-    TzCensus,
     /// field NAMES and leaf types from Google Health; never values
     GoogleProbe,
-    /// Google against the stored rows, per stream
-    GoogleCompare,
-    /// Google heart-rate samples against heart_rate_intraday (#260)
-    GoogleCompareIntraday {
-        #[arg(default_value_t = 7)]
-        days: i64,
-    },
-    /// re-fetch a wide sleep window through the routine writer (#1491)
-    GoogleBackfillSleep {
-        days: i64,
-        #[arg(long)]
-        write: bool,
-        /// also write a session shorter than the one it replaces
-        #[arg(long, requires = "write")]
-        allow_shrink: bool,
-    },
-    /// re-fetch step minutes through the routine writer, storing each instant
-    GoogleBackfillSteps {
-        /// first day archived, by wall clock (YYYY-MM-DD)
-        #[arg(long, value_parser = parse_date)]
-        from: chrono::NaiveDate,
-        /// first day NOT archived, by wall clock (YYYY-MM-DD)
-        #[arg(long, value_parser = parse_date)]
-        until: chrono::NaiveDate,
-        #[arg(long)]
-        write: bool,
-    },
-    /// archive Google's types with no table of their own into google_points (#1886)
-    GoogleArchivePoints {
-        /// first day archived (YYYY-MM-DD, UTC)
-        #[arg(long, value_parser = parse_date)]
-        from: chrono::NaiveDate,
-        /// first day NOT archived (YYYY-MM-DD, UTC)
-        #[arg(long, value_parser = parse_date)]
-        until: chrono::NaiveDate,
-        /// one type (e.g. sedentary-period); every archived type when absent
-        #[arg(long = "type")]
-        data_type: Option<String>,
-        #[arg(long)]
-        write: bool,
-    },
-    /// write every recorded workout Google holds (#1886)
-    GoogleSyncExercise,
-    /// fetch the GPS track (TCX) of every GPS workout that has none stored (#1886)
-    GoogleSyncExerciseRoutes {
-        /// at most this many sessions this run
-        #[arg(long)]
-        limit: Option<usize>,
-    },
-    /// archive every SpO2 reading Google holds over a UTC date range (#1886)
-    GoogleArchiveSpo2 {
-        /// first day archived (YYYY-MM-DD, UTC)
-        #[arg(long, value_parser = parse_date)]
-        from: chrono::NaiveDate,
-        /// first day NOT archived (YYYY-MM-DD, UTC)
-        #[arg(long, value_parser = parse_date)]
-        until: chrono::NaiveDate,
-        #[arg(long)]
-        write: bool,
-    },
-    /// Google sleep sessions against sleep + sleep_stages (#260)
-    GoogleCompareSleep {
-        #[arg(default_value_t = 7)]
-        days: i64,
-    },
-    /// Google HRV samples against hrv_intraday.rmssd (#260)
-    GoogleCompareHrv {
-        #[arg(default_value_t = 7)]
-        days: i64,
-    },
-    /// Google zone bounds + interval sums against heart_rate_zones (#260)
-    GoogleCompareZones {
-        #[arg(default_value_t = 7)]
-        days: i64,
-    },
-    /// Google step intervals against steps_intraday: width + sources (#260)
-    GoogleCompareSteps {
-        #[arg(default_value_t = 7)]
-        days: i64,
-    },
     /// compare stored rows against a date
     RowsCheck {
         user: String,

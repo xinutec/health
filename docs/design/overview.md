@@ -70,8 +70,8 @@ depends on. The entry points are subcommands of `bin/backend`; the list is
 - the refresh jobs (`decode-day`, `refresh-focus-places`, `refresh-rail-*`,
   `refresh-bus-routes`; `fetch-osm` and `fetch-geocodes` run the sidecar's
   drain by hand) and the operator tools
-  (`day`, `velocity`, `census`, `mirror-check`, `rows-check`, the
-  `google-compare*` family).
+  (`day`, `velocity`, `census`, `mirror-check`, `rows-check`,
+  `google-probe`).
 
 ### Frontend (`frontend/`)
 

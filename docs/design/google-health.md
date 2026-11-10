@@ -63,7 +63,6 @@ Everything else Google holds of the Fitbit years is archived (#1886): the typed
 tables, `exercise_sessions` with `exercise_routes`, and `google_points` for the
 types with no table of their own (`google::archive::ARCHIVE_TYPES`).
 
-⚠ The comparison instruments (`backend google-compare*`) read both APIs while
-both still answer; after the shutdown a discrepancy is permanent and invisible.
+The Fitbit API is gone, so the comparison instruments that read both are cut.
 `probe_one`'s `pageSize=1` reports session and interval types as empty — two
 streams were nearly lost to that.

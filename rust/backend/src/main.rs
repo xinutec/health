@@ -25,7 +25,6 @@ mod cli;
 use cli::census::*;
 use cli::day::*;
 use cli::decode::*;
-use cli::google::*;
 use cli::mirror::*;
 use cli::refresh::*;
 use cli::session::*;
@@ -198,37 +197,9 @@ async fn main() -> Result<()> {
             _ => hr_trend(since.as_deref().unwrap_or("2026-06-03"), json).await,
         },
         C::HrvHistory => hrv_history().await,
-        C::ColumnFill => column_fill().await,
         C::ZonesCensus => zones_census().await,
-        C::FocusAudit => focus_audit().await,
         C::VenuePriorSnapshots { user, out_dir } => venue_prior_snapshots(&user, &out_dir).await,
-        C::TzCensus => tz_census().await,
         C::Freshness => freshness().await,
-        C::GoogleCompare => google_compare().await,
-        C::GoogleCompareHrv { days } => google_compare_hrv(days).await,
-        C::GoogleCompareZones { days } => google_compare_zones(days).await,
-        C::GoogleCompareSteps { days } => google_compare_steps(days).await,
-        C::GoogleBackfillSleep {
-            days,
-            write,
-            allow_shrink,
-        } => google_backfill_sleep(days, write, allow_shrink).await,
-        C::GoogleBackfillSteps { from, until, write } => {
-            google_backfill_steps(from, until, write).await
-        }
-        C::GoogleSyncExercise => google_sync_exercise().await,
-        C::GoogleSyncExerciseRoutes { limit } => google_sync_exercise_routes(limit).await,
-        C::GoogleArchivePoints {
-            from,
-            until,
-            data_type,
-            write,
-        } => google_archive_points(from, until, data_type.as_deref(), write).await,
-        C::GoogleArchiveSpo2 { from, until, write } => {
-            google_archive_spo2(from, until, write).await
-        }
-        C::GoogleCompareSleep { days } => google_compare_sleep(days).await,
-        C::GoogleCompareIntraday { days } => google_compare_intraday(days).await,
         C::MirrorCheck { fixture } => mirror_check(&fixture).await,
         // #1660: the golden-day writer.
         C::CaptureDay {
