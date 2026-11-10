@@ -1,53 +1,31 @@
-//! The ground-truth narratives, parsed by Lean, against what the TypeScript got.
+//! The ground-truth narratives, parsed by Lean, against blessed totals.
 //!
-//! `tests/golden/ground-truth/*.md` is the only NON-SELF-REFERENTIAL truth
-//! signal in the corpus: every other check compares the pipeline against itself
-//! or against previously-blessed pipeline output. Its parser went with the
-//! TypeScript (#975) and is ported in `Verified.Eval.GroundTruth` (#1290).
+//! `tests/golden/ground-truth/*.md` is the corpus's only truth signal that is
+//! not self-referential: every other check compares the pipeline against itself
+//! or its blessed output. The parser is `Verified.Eval.GroundTruth`.
 //!
-//! # The oracle, and why it is three numbers rather than a file
+//! # The oracle is a handful of numbers, not a file
 //!
-//! The original `src/eval/ground-truth.ts` was recovered at `06346bd^` and run
-//! over these same 32 files on 2026-08-31. It produced:
+//! Row, enforceable, unparseable, zone, journey and leg totals are asserted
+//! below. They are not a fixture file because the narratives are gitignored
+//! (`tests/golden/*`): they name clinics, hotels and homes, and these repos are
+//! public. The directory's `README.md` has no `## Audit of` section and is
+//! filtered by name, so a real narrative that stops producing rows fails here
+//! rather than being excluded.
 //!
-//!     31 narratives   395 rows   349 enforceable   5 unparseable truth cells
-//!     2 declare their own zone (`Times:`) — one CEST, one UTC
+//! ⚠ Unparseable is a count of rows, not of distinct shapes.
 //!
-//! ⚠ THE DIRECTORY HOLDS 32 `.md` FILES, NOT 31. One is a `README.md` with no
-//! `## Audit of` section, so it parses to zero rows in both implementations.
-//! It is filtered by NAME here rather than by "produced no rows", because a
-//! real narrative that silently stopped producing rows must fail this test, not
-//! be quietly excluded by the same rule.
-//!
-//! Those totals are asserted below. They are NOT written to a fixture file
-//! because the narratives are gitignored (`tests/golden/*`) and a checked-in
-//! expectation derived from them would leak the same content the ignore exists
-//! to keep out — the places are clinics, hotels and homes, and these repos are
-//! public (#860).
-//!
-//! ⚠ THE UNPARSEABLE COUNT IS 5 ROWS, NOT 1 SHAPE, and getting that wrong is
-//! the mistake this note exists to stop. A first pass at these constants read
-//! "1" off a DISTINCT-SHAPE extraction — 105 distinct parse shapes over the 395
-//! rows, of which `null` was one shape — and wrote it in as a row count. The
-//! corpus caught it immediately. When re-deriving, count ROWS.
-//!
-//! ⚠ SO IF YOU EDIT A NARRATIVE, THESE NUMBERS MOVE and this test goes red. That
-//! is correct and it is the whole point: the corpus is a fixture, and a row
-//! appearing, vanishing or changing what it asserts must be DELIBERATE.
-//!
-//! ⚠ **THE NUMBERS ARE A TRIPWIRE, NOT A CROSS-CHECK.** There is no second
-//! implementation to re-derive them from (the user, 2026-09-20: "End TS
-//! comparison everywhere"), so moving one is an assertion by whoever moves it.
-//! Adjust a constant ONLY with the narrative edit that caused it, in the same
-//! commit, and say in the message which rows moved and why. A constant nudged
-//! on its own to make a red gate green destroys the only signal this file has.
+//! ⚠ The numbers are a tripwire, not a cross-check: there is no second
+//! implementation to re-derive them from. Edit a narrative and they move, which
+//! is the point. Change a constant only with the narrative edit that caused it,
+//! in the same commit, saying which rows moved and why; a constant nudged to
+//! turn a red gate green destroys the only signal this file has.
 //!
 //! # Why the reply carries civil time
 //!
-//! Resolving a wall clock in a named zone needs the tz database, which is data
-//! and IO. Lean stops at the anchored `(day, hh, mm)`; `timezone.rs` resolves
-//! it. This test therefore checks the ANCHORING — the part that is logic — and
-//! leaves the conversion to the code that owns it.
+//! Resolving a wall clock in a named zone needs the tz database, which is data.
+//! Lean stops at the anchored `(day, hh, mm)` and `timezone.rs` resolves it, so
+//! this test checks the anchoring, the part that is logic.
 //!
 //! # Local-only
 //!
@@ -63,27 +41,18 @@ const NARRATIVES: &str = concat!(
     "/../../tests/golden/ground-truth"
 );
 
-/// Measured by running the recovered TypeScript over this corpus, 2026-08-31.
-/// Narratives written AFTER the TypeScript went (#975), NAMED rather than
-/// counted.
+/// Narratives outside the blessed totals, named rather than counted.
 ///
-/// ⚠ **The header above says to re-derive these numbers by re-running the
-/// recovered TypeScript. That is no longer possible**, and pretending otherwise
-/// would either freeze the corpus at its 2026-08-13 shape or quietly reduce the
-/// constants to "whatever Lean now says", which is exactly what the header
-/// forbids. So the TS-blessed counts below stay EXACT over the TS-era files,
-/// and a narrative written since is listed here instead.
-///
-/// Listing rather than counting is the point: adding one is a deliberate act
-/// with a name attached, and it cannot dilute a number a human blessed from the
-/// other implementation. It is the same split `head_corpus` makes for a day
-/// with no `tsArm` — the fourth place #975 blocked the corpus from growing.
+/// The totals below were blessed once over a fixed set of files and stay exact
+/// over them; a narrative written since is listed here, so adding one is a
+/// deliberate, named act that cannot dilute a blessed number. `head_corpus`
+/// makes the same split for a day with no `tsArm`.
 const POST_TS: &[&str] = &[
-    // The coverage cliff (#1658), and now two confirmed venue misnamings on
-    // ground that was blank until #1076's fetch ran (#325).
+    // The coverage cliff, and two confirmed venue misnamings on ground that
+    // was blank until the geocode fetch ran.
     "2026-09-06.md",
-    // The Nonos day (#325's freshest instance). ⚠ It does NOT pin #1659 — the
-    // raw mode never reaches `statesOut`.
+    // The Nonos day. It does not pin the raw-mode defect: the raw mode never
+    // reaches `statesOut`.
     "2026-09-14.md",
     // The CONTROL: no known defects, which nothing else in the corpus offers.
     "2026-09-15.md",
@@ -115,19 +84,19 @@ const POST_TS: &[&str] = &[
     "2026-10-17.md",
     // A café served by its place's amenity label; one row, known-wrong.
     "2026-10-25.md",
-    // The same café on two earlier days, by his "always Urban Social Coffee
-    // there"; one row each, known-wrong.
+    // The same café on two earlier days, by the user's "always Urban Social
+    // Coffee there"; one row each, known-wrong.
     "2026-07-12.md",
     "2026-08-08.md",
     // Narrated live: the café, Drury, the Vue and Chinatown; the three venues
     // the picker misnames are known-wrong.
     "2026-11-01.md",
-    // Drury 188-189 on two afternoons he named it in writing that morning; one
-    // row each, served right.
+    // Drury 188-189 on two afternoons the user named it in writing that
+    // morning; one row each, served right.
     "2026-09-27.md",
     "2026-10-11.md",
-    // One row each from what he wrote that day in another session: a café,
-    // a hospital, the office.
+    // One row each from what the user wrote that day in another session: a
+    // café, a hospital, the office.
     "2026-05-17.md",
     "2026-07-19.md",
     "2026-07-31.md",
@@ -135,89 +104,17 @@ const POST_TS: &[&str] = &[
     "2026-08-25.md",
     "2026-10-20.md",
     "2026-10-27.md",
-    // Two days from what he wrote within a week: the Eurostar home through
-    // Brussels, and a restaurant by Liverpool Street.
+    // Two days from what the user wrote within a week: the Eurostar home
+    // through Brussels, and a restaurant by Liverpool Street.
     "2026-05-10.md",
     "2026-05-16.md",
-    // A day at the office he said he never left; its walks out and the stay
-    // at the change station are known-wrong.
+    // A day at the office the user said they never left; its walks out and the
+    // stay at the change station are known-wrong.
     "2026-11-03.md",
 ];
 
-/// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
-/// the header asks for. On 2026-09-21 its evening row — one vague
-/// `shop dwell(s)` over a ~10-minute window — was replaced by FOUR: the two
-/// walking halves of the out-and-back, and the two dwells between them, which
-/// the day's own GPS and step series resolve into two separate stops 49 m
-/// apart. The user confirmed the count; they had not remembered it when the
-/// original row was written.
-///
-/// So: rows +3, enforceable +3 (all four carry `{user}`), one more walking leg
-/// and one more journey. Every other TS-era file is untouched and these numbers
-/// are still exact over them. The two dwells stand as known-error — they are
-/// #185 case C, still absorbed into a flat walk.
-///
-/// 2026-09-30: 06-18's `partial` walk home became three rows (walk, the
-/// pharmacy stop, walk) once #185 carved the stop — rows +2, enforceable +3
-/// (the `partial` row enforced nothing), one more journey and one more walking
-/// leg, since a stop of that length splits the walk home in the truth too.
-///
-/// 2026-10-05: 04-29 16:50–17:41 re-derived from `stationary` to `walking` (the
-/// step series shows 95–119/min; the old "zero steps" was read an hour off) —
-/// rows and enforceable unchanged, one more journey and one more walking leg.
-///
-/// 2026-10-05: 07-16's Euston Square → King's Cross hop re-timed from the signal
-/// to 09:14–09:16, and the `partial` "09:15 – 09:17 walking" row it contradicts
-/// folded into its note — rows −1, enforceable unchanged, one walking leg fewer.
-///
-/// 2026-10-06: 07-16's "08:41 – 08:47 train" split on the steps into the
-/// Baker Street change walk (08:42–08:45) and the train to Euston Square
-/// (08:45–08:47) — rows +1, enforceable +1, one more walking leg.
-///
-/// Three walks the narratives had left out, settled from steps and
-/// fixes ({derived}): 06-16's King's Cross interchange (its two journeys join),
-/// 07-01's unclear "return to UCLH" replaced by the walk to Euston Square and
-/// a wait there, 07-06's walk from Work — rows +3, enforceable +3, unparseable
-/// −1 (the unclear cell), journeys −1, three more walking legs.
-///
-/// 04-29's "walking + brief stationary" at Arnhem settled from the steps (4 in
-/// nine minutes while the train stood: no transfer walk) into a `{derived}`
-/// stay — rows unchanged, enforceable +1 (the `likely correct` row enforced
-/// nothing).
-///
-/// 05-18, 06-23, 06-24 and 07-02's outbound rides change trains at Baker
-/// Street by the signal (steps, the fixes' dwell there, the ride against the
-/// return's; `{derived}`, he thinks so but does not remember clearly): each
-/// ride row becomes two rides and a walk — rows +8, enforceable +8, legs +8
-/// (four trains, four walks), journeys unchanged.
-///
-/// 05-22's change at Baker Street moved to where the steps put it (riding to
-/// 13:28, walking 13:29–13:33): a `{derived}` walk between the two train rows —
-/// rows +1, enforceable +1, legs +1 (a walk), journeys unchanged.
-///
-/// The five derived Baker Street change rows (05-18, 05-22, 06-23, 06-24,
-/// 07-02) written as a stay at the station, as his own rows write a change
-/// there (06-29, 07-01) — legs −5 (five walks), rows and journeys unchanged.
-///
-/// Those five read again from the steps, against his own rows (06-16's
-/// "walking (Baker Street interchange)", 06-29's walk before the stay): each is
-/// the walk between platforms, and 06-23's three still minutes after it are its
-/// platform wait — legs +5 (five walks), rows +1 and enforceable +1 (the wait),
-/// journeys unchanged.
-///
-/// 07-14's walk back to Euston Square split at its platform wait (no steps
-/// before the hop): rows +1, enforceable +1, legs and journeys unchanged.
-///
-/// 04-29's stay at Arnhem Centraal and the train after it are one ride: the
-/// train stood there and he stayed on it (4 steps in nine minutes) — rows −1,
-/// enforceable −1, legs and journeys unchanged (the journey re-keyed to 17:28).
-///
-/// The rides through the Jubilee-only platforms between Wembley Park and
-/// Finchley Road re-read from the signal: on 06-12 and 06-15 the stretch was
-/// ridden non-stop (a Metropolitan train) and the Jubilee taken on from
-/// Finchley Road, so each ride row becomes two `{derived}` rides — rows +2,
-/// enforceable +2, legs +2 (two trains), journeys unchanged. (09-14's is the
-/// mirror and outside this set.)
+/// The blessed totals over the files not in [`POST_TS`]. Each change since the
+/// blessing is explained in the commit that made it (`git log -p` on this file).
 const TS_FILES: usize = 31;
 const TS_ROWS: usize = 443;
 const TS_ENFORCEABLE: usize = 418;
@@ -261,9 +158,8 @@ fn the_narrative_corpus_matches_its_blessed_shape() {
     let mut failures: Vec<String> = Vec::new();
 
     for name in &names {
-        // ⚠ A POST-TS narrative is checked exactly as hard — it must parse, its
-        // civil times must resolve, its rows must anchor — but it feeds NONE of
-        // the TS-blessed totals, because no TypeScript ever read it.
+        // A narrative in `POST_TS` is checked as hard (it must parse, resolve
+        // and anchor) but feeds none of the blessed totals.
         let ts_blessed = !POST_TS.contains(&name.as_str());
         let md = std::fs::read_to_string(format!("{NARRATIVES}/{name}"))
             .unwrap_or_else(|e| panic!("reading {name}: {e}"));
@@ -282,16 +178,9 @@ fn the_narrative_corpus_matches_its_blessed_shape() {
             declared_tz += 1;
         }
         let day_rows = r["rows"].as_array().map_or(&[][..], Vec::as_slice);
-        // ⚠ THE RESOLVER DIVERGENCE — MEASURED, NOT ASSUMED. Lean stops at
-        // civil time; the original resolved through `fitbitTsToUnix` (an Intl
-        // round-trip) and this uses chrono, which handles DST ambiguity
-        // explicitly. They could disagree on a transition inside a narrated
-        // window.
-        //
-        // They do not, here: all 790 instants (395 start+end pairs) were
-        // resolved both ways on 2026-08-31 and agreed exactly. Re-check with
-        // `GT_DUMP_UNIX=1`, which prints `name start end` per row, against the
-        // recovered TypeScript — do not re-assume it.
+        // Lean stops at civil time and this resolves with chrono, which handles
+        // DST ambiguity explicitly. `GT_DUMP_UNIX=1` prints `name start end`
+        // per row, to check a resolution against another resolver.
         let zone = r["tz"].as_str().unwrap_or("Europe/London");
         let mut resolved: Vec<Value> = Vec::new();
         for row in day_rows {
@@ -322,9 +211,9 @@ fn the_narrative_corpus_matches_its_blessed_shape() {
             }
         }
 
-        // The ground-truth side of the decoder scoreboard (#1048). Rows go back
-        // to Lean RESOLVED — the zone conversion above is the only part of this
-        // chain that is not logic.
+        // The ground-truth side of the decoder scoreboard. Rows go back to Lean
+        // resolved; the zone conversion above is the only part of this chain
+        // that is not logic.
         let jreq = json!({ "mode": "journeys", "rows": resolved });
         let jreply = backend::lean::serve(&jreq.to_string())
             .unwrap_or_else(|e| panic!("{name}: journeys must answer: {e:#}"));
@@ -367,9 +256,9 @@ fn the_narrative_corpus_matches_its_blessed_shape() {
             if row["truth"].is_null() {
                 unparseable += 1;
             }
-            // ⚠ ANCHORING IS THE PART THIS TEST OWNS. An end day before its
-            // start day is never right, and it is the failure the day cursor
-            // would produce if the midnight-wrap rule were dropped.
+            // Anchoring is what this test owns: an end day before its start day
+            // is never right, and is what dropping the midnight-wrap rule
+            // would produce.
             let (sd, ed) = (row["startDay"].as_str(), row["endDay"].as_str());
             if let (Some(sd), Some(ed)) = (sd, ed)
                 && ed < sd

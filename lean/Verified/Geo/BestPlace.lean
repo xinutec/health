@@ -3,12 +3,12 @@ import Verified.Geo.VenuePrior
 import Verified.Geo.OpeningHours
 import Verified.Geo.SegmentMerge
 /-!
-# Naming a stay (port of `bestPlace` in `src/geo/osm.ts`)
+# Naming a stay
 
 Given a coordinate and, optionally, the stay window that happened there, which
-label does the timeline show? The TS answer is one function with two arms:
+label does the timeline show? One function with two arms:
 
-* **with a stay** — the venue-plausibility ranking (#246). Every Overpass
+* **with a stay**: the venue-plausibility ranking. Every Overpass
   landmark plus a Nominatim venue candidate compete on summed log-evidence,
   and the winner must clear a floor or nothing is named.
 * **without one** — `pickBestLandmark`, which is the same ranking with no stay
@@ -18,17 +18,11 @@ Both then fall through the same address chain.
 
 ## Why this is not a shell
 
-`Verified.Geo.PassFold.Env.bestPlace` and `Verified.Geo.DayChain`'s
-`sleepPlace` were both injected answers, on the reading that venue naming is an
-OSM question. Reading the function says otherwise, and it is the same finding
-as `reenrich` (#424): a callback is not a shell because it is a callback; it is
-a shell when what it does cannot be said in Lean.
-
-What `bestPlace` actually does is TWO mirror reads —
-`nearbyLandmarks(lat, lon, 100)` and `reverseGeocode(lat, lon, 18)`, plus
-`reverseGeocode(lat, lon, 16)` on the fall-through — followed by ranking and a
-chain of `if`s. The reads are shell and stay shell. Everything after them is
-arithmetic and string work, which is this module.
+Naming is not an injected answer: a callback is a shell only when what it does
+cannot be said in Lean. `bestPlace` is two mirror reads
+(`nearbyLandmarks(lat, lon, 100)` and `reverseGeocode(lat, lon, 18)`, plus
+`reverseGeocode(lat, lon, 16)` on the fall-through) followed by ranking and a
+chain of `if`s. The reads are shell; everything after them is this module.
 
 ## The one thing that genuinely cannot be said here
 
@@ -39,8 +33,7 @@ was written for exactly that split and its docstring states the contract. The
 same is true of `localHour`, the stay midpoint's hour, which the shape prior
 reads.
 
-That is a smaller shell than "the answer": the shell now supplies WHEN, and
-Lean decides WHAT.
+So the shell supplies when, and Lean decides what.
 
 ## Which arm the golden corpus actually reaches
 
@@ -52,10 +45,8 @@ truth floor grades the names that come back. The **no-stay** arm answers
 `DayChain`'s sleep-place attribution and the alight and Home/Work arms of that
 cascade, which read only the city from it.
 
-Until the stationary branch was ported (2026-09) the stay arm ran on one
-corpus day — 2026-08-09, through `consolidateJitterStays` — and the `#guard`s
-below were its only executable check. They are kept for the parts a corpus
-name cannot localise: which term moved a candidate, not only who won.
+The `#guard`s below pin what a corpus name cannot localise: which term moved a
+candidate, not only who won.
 
 ## Truthiness, twice, and they disagree
 
@@ -66,9 +57,7 @@ chain — after which `if (!name) return null` rejects it.
 
 The two differ on exactly one input: `amenity = ""` with a real `tourism`.
 `hasSpecificVenue` says yes, `nominatimVenueName` yields `""` and the candidate
-is dropped. Both are modelled as written rather than as intended, because a
-port that "fixes" this would diverge on that stay and the gate would call it a
-port bug.
+is dropped. Both are modelled as written.
 -/
 
 namespace Verified.Geo.BestPlace
@@ -218,9 +207,8 @@ def isLodgingLandmark (l : Landmark) : Bool :=
 
 /-- The CLOSEST lodging POI within {@link LODGING_OVERRIDE_DIST_M}.
 
-`Array.sort`'s ties are not the TS `Array.prototype.sort`'s, so this takes a
-minimum by a strict `<` rather than sorting — which keeps the FIRST of an exact
-distance tie, exactly as a stable sort would. -/
+A minimum by a strict `<` rather than a sort, which keeps the first of an exact
+distance tie, as a stable sort would. -/
 def pickLodgingOverride (landmarks : List Landmark) : Option Landmark :=
   (landmarks.filter fun l => isLodgingLandmark l && decide (l.distanceM ≤ LODGING_OVERRIDE_DIST_M)).foldl
     (fun best l => match best with
@@ -229,85 +217,67 @@ def pickLodgingOverride (landmarks : List Landmark) : Option Landmark :=
 
 /-! ## `placeLabel` -/
 
-/-- The bare venue name — the user's choice for the timeline (#344). The type
-still rides beside the label in the data for anything that needs it. -/
+/-- The bare venue name, the user's choice for the timeline. The type still
+rides beside the label in the data. -/
 private def named (name _type : String) : String := name
 
 /-- Everything before the first comma of `display_name`.
 
-The TS writes `?? "Unknown"` after the `[0]`, which cannot fire: `String.split`
-always returns at least one element, so the fallback is dead and is not
-modelled. An empty `displayName` yields `""` in both arms. -/
+`String.split` always returns at least one element, so no fallback is needed.
+An empty `displayName` yields `""`. -/
 private def firstPart (s : String) : String :=
   (s.splitOn ",").headD ""
 
-/-- OSM types that must never NAME a stay (the user, 2026-09-18).
+/-- OSM types that must never name a stay (the user's call).
 
-⚠ **The `"{type} on {road}"` fallback below produces a CATEGORY, not an
-identity** — "Wagamama" says where they were, "waste_basket on Barn Hill" says a bin
-exists nearby. Two kinds of type reach it and neither denotes somewhere a person
-visits:
+⚠ The `"{type} on {road}"` fallback below produces a category, not an identity:
+"Wagamama" says where the user was, "waste_basket on Barn Hill" says a bin
+exists nearby. Street furniture (a bin, a bench, a post box) is unnamed and on
+almost every street, so it names a stay by proximity, not because anyone went
+there.
 
-**street furniture** — a bin, a bench, a post box. Untended, unnamed, and present
-on almost every street, so it names a stay by accident of proximity rather than
-because he went there. `waste_basket on Barn Hill` is blessed in the corpus today.
-
-⚠ **HIGHWAY CLASSES ARE HANDLED SEPARATELY, in `HIGHWAY_CLASSES`** — they keep
-the street and drop the class, rather than being discarded. A bin carries no
-information; a road he was standing on does.
-
-⚠ A DELIBERATE DIVERGENCE FROM THE TYPESCRIPT, which reproduced the bin (#1076).
-Faithfulness is not the goal where the TS was wrong. -/
+Highway classes are handled separately, in `HIGHWAY_CLASSES`: they keep the
+street and drop the class. A bin carries no information; the road the user
+stood on does. -/
 def UNNAMEABLE_TYPES : List String :=
   [ -- street furniture: untended, unnamed, everywhere
     "waste_basket", "bench", "post_box", "bicycle_parking", "drinking_water",
     "telephone", "recycling", "street_lamp", "waste_disposal", "bollard",
     "vending_machine", "parking_meter", "clock", "hydrant", "grit_bin" ]
 
-/-- OSM highway classes. A stay that resolves to one of these is ON a street,
-which is worth saying — but `secondary` is OSM's vocabulary, not a person's
-(the user, 2026-09-18).
+/-- OSM highway classes. A stay that resolves to one of these is on a street,
+which is worth saying, but `secondary` is OSM's vocabulary, not a person's (the
+user's call).
 
-⚠ **DIFFERENT TREATMENT FROM `UNNAMEABLE_TYPES`, deliberately.** A bin names a
-stay by accident of proximity and carries no information, so it is dropped
-entirely. A highway class means the geocode resolved to the road he was actually
-on, so the ROAD is kept and only the class is discarded:
+Unlike `UNNAMEABLE_TYPES`, the road is kept and only the class discarded: a
+highway class means the geocode resolved to the road the user was on:
 
     "secondary on First Way"          ->  "First Way"
     "residential on Caledonian Road"  ->  "Caledonian Road"
 
-Both are blessed in the corpus, and the second is the `#guard` below — which
-moves with this, because the spec changed on purpose rather than by accident. -/
+The second is the `#guard` below. -/
 def HIGHWAY_CLASSES : List String :=
   [ "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
     "residential", "service", "living_street", "pedestrian", "track", "road",
     "footway", "path", "cycleway", "bridleway", "steps" ]
 
-/-- ⚠ **A HOUSE NUMBER IS PRECISION A STAY CENTROID CANNOT SUPPORT** (the user,
-2026-09-18: "area by default, street when confident").
+/-- ⚠ A house number is precision a stay centroid cannot support (the user's
+call: "area by default, street when confident").
 
-The geocode locates a POINT; the stay is a cloud of fixes, and the label claims
-a door. Measured over the 42-day corpus, every stay this branch ever named is
-spread **79-102 m** — several buildings wide — while the stays that resolve to a
-real venue sit at 19-58 m. So the number is not merely sometimes wrong, it is
-asserted from evidence that cannot distinguish one door from its neighbours.
+The geocode locates a point; the stay is a cloud of fixes, and the label claims
+a door. Every stay this branch named in the corpus is spread 79-102 m, several
+buildings wide, against 19-58 m for stays that resolve to a real venue; and
+where the ground truth can check the number, it was wrong every time.
 
-**And in the corpus it is wrong every time it is checkable.** Ground truth for
-2026-04-30 records `Plein 1944 187` for the flat at **161** ("same square, off by
-a house number"), and 2026-04-29 `Molenstraat 61A` for a hotel at **53**. Not one
-instance is confirmed right. There is nothing to trade away.
+The road is kept, the same rule as `HIGHWAY_CLASSES`: what the geocode
+legitimately located survives, and only the part it cannot support is dropped.
 
-⚠ **THE ROAD IS KEPT, and that is the same rule as `HIGHWAY_CLASSES` above** —
-whatever the geocode legitimately located survives, and only the part it cannot
-support is dropped:
+    "Elm Street 187"   ->  "Elm Street"
+    "Mill Road 77"     ->  "Mill Road"
 
-    "Plein 1944 187"   ->  "Plein 1944"
-    "Molenstraat 77"   ->  "Molenstraat"
-
-⚠ The branch CONDITION is unchanged, so `hasResidentialAddress` still decides the
-same way and the chain still returns the same `Result`. Only the rendering moves.
-Widening the condition would change which stays are named residential at all,
-which is the lodging work (#188/#189), not this. -/
+The branch condition is unchanged: `hasResidentialAddress` decides as before
+and only the rendering moves. Widening the condition would change which stays
+are named residential at all, which is lodging work, not this. -/
 def placeLabel (r : Result) : String :=
   let a := r.address
   if truthy a.amenity then named (a.amenity.getD "") r.type
@@ -328,15 +298,11 @@ def placeLabel (r : Result) : String :=
 
 /-- Everything the shell answers for one `bestPlace` question.
 
-`geocode` is a FUNCTION of the zoom rather than two resolved fields, and that is
-load-bearing. The TS asks zoom 18 up front and zoom 16 only at the bottom of the
-chain, so most calls never make the second request. A recorded lookup table
-answers by key and PANICS on a key the run never asked about (`LEAN_ABORT_ON_PANIC`,
-#428) — which is the behaviour we want, because Lean reaching the fall-through
-where the TS did not is exactly the kind of wiring divergence a field diff would
-not localise. Resolving both zooms eagerly would fire that panic on every call
-instead. Keeping it a function puts the zoom-16 application inside the branch
-that needs it, so the two arms ask the same questions or the gate says so. -/
+`geocode` is a function of the zoom rather than two resolved fields: zoom 18 is
+asked up front and zoom 16 only at the bottom of the chain, so most calls never
+make the second request. A recorded lookup table panics on a key the run never
+asked (`LEAN_ABORT_ON_PANIC`), so resolving both eagerly would panic on every
+call; as a function, the zoom-16 ask happens only in the branch that needs it. -/
 structure Reads where
   landmarks : List Poi
   /-- `osm.reverseGeocode(lat, lon, zoom)` at this coordinate. -/
@@ -349,9 +315,8 @@ def DETAIL_ZOOM : Int := 18
 /-- The fall-through zoom: a square, a park, a neighbourhood. -/
 def AREA_ZOOM : Int := 16
 
-/-- Which branch of the chain named the place (#325, 2026-09-30) — the fact
-the confidence beside a name is measured on: each branch's hit rate on the
-confirmed corpus stays is the number the app shows. -/
+/-- Which branch of the chain named the place: the confidence beside a name is
+each branch's hit rate on the confirmed corpus stays. -/
 inductive Source where
   /-- The stay lies inside the venue's footprint. -/
   | enclosing
@@ -382,7 +347,7 @@ def Source.key : Source → String
 `bestPlace`, whole, with the branch that answered (`Source`).
 
 Reads the two (or three) geocodes the shell already answered and returns the
-`NominatimResult` the TS would, or `none` when nothing names the place.
+`NominatimResult`, or `none` when nothing names the place.
 
 `stay` present selects the plausibility ranking; absent selects
 `pickBestLandmark`, which is `rankVenues` with no context. `preferResidential`
@@ -393,9 +358,8 @@ def bestPlaceSourced (reads : Reads) (stay : Option StayShape) (priors : Option 
   let landmarks := reads.landmarks.map (toLandmark reads.samples stay.isSome)
   let openSpace := (reads.landmarks.find? (·.inside)).map (toLandmark reads.samples stay.isSome)
   let detailed := reads.geocode DETAIL_ZOOM
-  -- `bestLandmark` and `nominatimWon` are the two `let`s the TS threads through
-  -- the chain; they are computed here and read below. The third component says
-  -- whether near-field dominance decided the ranking.
+  -- `bestLandmark` and `nominatimWon` thread through the chain; the third
+  -- component says whether near-field dominance decided the ranking.
   let (bestLandmark, nominatimWon, byNearField) : Option Landmark × Bool × Bool :=
     match stay with
     | some _ =>
@@ -428,9 +392,9 @@ def bestPlaceSourced (reads : Reads) (stay : Option StayShape) (priors : Option 
     then detailed.map (·, .geocodeVenue)
   else rest bestLandmark rankedSource detailed reads.geocode preferResidential landmarks openSpace
 where
-  /-- The tail of the chain. Split out only because Lean has no early `return`;
-  the ORDER is the TS's and is load-bearing — the lodging override must beat the
-  residential address, and both must beat the landmark. -/
+  /-- The tail of the chain, split out because Lean has no early `return`. The
+  order is load-bearing: the lodging override beats the residential address,
+  and both beat the landmark. -/
   rest (bestLandmark : Option Landmark) (rankedSource : Source) (detailed : Option Result)
       (geocode : Int → Option Result) (preferResidential : Bool)
       (landmarks : List Landmark) (openSpace : Option Landmark) : Option (Result × Source) :=
@@ -439,26 +403,25 @@ where
       | some lodging => some (withAddressFrom (landmarkToResult lodging) detailed, .lodging)
       | none => afterLodging bestLandmark rankedSource detailed geocode preferResidential openSpace
     else afterLodging bestLandmark rankedSource detailed geocode preferResidential openSpace
-  /-- `geocode AREA_ZOOM` is applied HERE and nowhere earlier — this is the only
-  branch the TS asks it on, and asking it sooner would put a request on the wire
-  the run never made. -/
+  /-- `geocode AREA_ZOOM` is applied here and nowhere earlier: this is the only
+  branch that asks it, and asking sooner would put an unneeded request on the
+  wire. -/
   afterLodging (bestLandmark : Option Landmark) (rankedSource : Source) (detailed : Option Result)
       (geocode : Int → Option Result) (preferResidential : Bool)
       (openSpace : Option Landmark) : Option (Result × Source) :=
-    -- ⚠ A geocode that names a VENUE is not the neutral address this arm is
-    -- for. A venueless mined cluster asks for an address so that a
-    -- low-confidence nearby venue does not name it — and the zoom-18 result at
-    -- 09-06 18:20 local was `Fireaway Pizza, 47, The Parade`: a house number, a
-    -- road, and the wrong restaurant, which `placeLabel` prints amenity-first.
-    -- So the shortcut takes only a venue-free address; a venue-bearing one
-    -- falls through to the ranked landmark like any other (#325, 2026-09-28).
+    -- ⚠ A geocode that names a venue is not the neutral address this arm is
+    -- for: a venueless cluster asks for an address so a low-confidence nearby
+    -- venue does not name it, and a zoom-18 result can be `Fireaway Pizza, 47,
+    -- The Parade`, the wrong restaurant printed amenity-first. So the shortcut
+    -- takes only a venue-free address; a venue-bearing one falls through to the
+    -- ranked landmark.
     if preferResidential && detailed.any (fun d => hasResidentialAddress d && !hasSpecificVenue d)
       then detailed.map (·, .residential)
     else match bestLandmark with
     | some bl => some (withAddressFrom (landmarkToResult bl) detailed, rankedSource)
     | none =>
       -- No venue named it: an open space it lies inside does, before any
-      -- address (2026-10-03, Cristina Enea).
+      -- address.
       match openSpace with
       | some o => some (withAddressFrom (landmarkToResult o) detailed, .openSpace)
       | none =>
@@ -511,11 +474,11 @@ private def poi (n t s : String) (d : Float) : Poi :=
 #guard placeLabel (res "office" "building" { A with building := some "Kings Place" }) == "Kings Place"
 private def buildingNoType : Address :=
   { A with building := some "Kings Place", houseNumber := some "90", road := some "York Way" }
--- ⚠ CHANGED 2026-09-19 from "York Way 90" (the user's call). The number is
--- precision a stay centroid cannot support; the road survives. See `placeLabel`.
+-- The number is precision a stay centroid cannot support; the road survives.
+-- See `placeLabel`.
 #guard placeLabel (res "" "building" buildingNoType) == "York Way"
--- ⚠ CHANGED 2026-09-19 from "Elm Street 161". `161` is the parents' real flat
--- number and the corpus labelled it 187 — the case this rule exists for.
+-- The case this rule exists for: the corpus labelled a flat with the wrong
+-- house number.
 #guard placeLabel (res "house" "building" { A with houseNumber := some "161", road := some "Elm Street" })
   == "Elm Street"
 -- ⚠ A house number with NO road still falls through, rather than printing a bare
@@ -524,9 +487,8 @@ private def buildingNoType : Address :=
   == "Somewhere"
 #guard placeLabel (res "square" "place" { A with pedestrian := some "Granary Square" })
   == "Granary Square"
--- ⚠ CHANGED 2026-09-18 from "residential on Caledonian Road" (the user's call).
--- The class is OSM's word, not a person's; the street is what locates them. See
--- `HIGHWAY_CLASSES`.
+-- The class is OSM's word, not a person's; the street is what locates the user.
+-- See `HIGHWAY_CLASSES`.
 #guard placeLabel (res "residential" "highway" { A with road := some "Caledonian Road" })
   == "Caledonian Road"
 -- …and a type that is NEITHER furniture nor a highway class still says both.
@@ -632,10 +594,9 @@ private def landmarkVsStreet : Reads :=
 #guard (bestPlace landmarkVsStreet (some stay) none false).map placeLabel == some "Olivomare"
 
 -- Nothing nearby, a residential geocode: the STREET is the honest label.
--- ⚠ CHANGED 2026-09-19 from "Downing Street 10". `hasResidentialAddress` still
--- selects this result — the chain is untouched — and only the rendering drops the
--- number it cannot support. That separation is the point: this guard is what
--- would catch a future edit that widened the CONDITION instead.
+-- `hasResidentialAddress` still selects this result and only the rendering
+-- drops the number; this guard would catch an edit that widened the condition
+-- instead.
 private def downing : Result :=
   res "house" "building" { A with houseNumber := some "10", road := some "Downing Street" }
 private def addressOnly : Reads := { landmarks := [], geocode := geo (some downing) none }
@@ -663,13 +624,12 @@ private def lodgingReads : Reads := { landmarks := [nearerCafe, guesthouse], geo
 #guard (bestPlace lodgingReads none none true).map placeLabel == some "Sea View"
 #guard (bestPlace lodgingReads none none false).map placeLabel == some "Beach Cafe"
 
--- The residential shortcut takes only a VENUE-FREE address (#325, 2026-09-28).
--- 09-06 18:20 local, in shape: a stay, the restaurant at 13 m, the pizza place
--- at 57 m ALSO among the landmarks (so the geocode's venue candidate is
--- skipped, as in `bestPlace`), and a venueless cluster preferring an address.
--- The zoom-18 geocode is `Fireaway Pizza, 47, The Parade` — a house number, a
--- road, and a venue: the ranked landmark names the stay. The same address
--- without the venue is taken, and labels as its road.
+-- The residential shortcut takes only a venue-free address. In shape: a stay,
+-- the restaurant at 13 m, the pizza place at 57 m also among the landmarks (so
+-- the geocode's venue candidate is skipped), and a venueless cluster
+-- preferring an address. The zoom-18 geocode is `Fireaway Pizza, 47, The
+-- Parade`, a house number, a road and a venue: the ranked landmark names the
+-- stay. The same address without the venue is taken, and labels as its road.
 private def trattoria : Poi := { name := "L'artista", type := "amenity", subtype := "restaurant", distanceM := 13 }
 private def pizzaPlace : Poi := { name := "Fireaway Pizza", type := "amenity", subtype := "fast_food", distanceM := 57 }
 private def eveningStay : StayShape := ⟨1788715200, 1788719520, 18⟩

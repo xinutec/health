@@ -10,9 +10,8 @@ import ServeEntry.Wire
 `walkgate`, `groundtruth`, `journeys`, `decoderscore`, `truthcheck`,
 `floorgate`, `journeyshape`, `feasibility` and the ceiling gates: the modes
 `verified_cli serve` dispatches on that nothing SERVES — each measures a
-corpus against a blessed file and returns a verdict. They lived beside the
-serving modes in `ServeEntry.lean` (3.7k lines) until 2026-10-06; the mode
-table there still names each of them, so this is a move, not a change.
+corpus against a blessed file and returns a verdict. `ServeEntry.lean`'s mode
+table names each of them.
 -/
 
 open Lean (Json)
@@ -23,14 +22,11 @@ open Verified.Hsmm
 
 `Verified.Eval.WalkMetrics` and `Verified.Eval.WalkGate` over a corpus in one
 call: measure every drawn walk, compare each against its blessed floor, and
-return BOTH the current metrics (ready to re-bless) and the verdict. This is
-#1048's Group B — the oracle is `tests/golden/walk-baseline.json`, a FILE, so
-replacing the code under it loses nothing, unlike the parity gates whose oracle
-was the TypeScript itself.
+return both the current metrics (ready to re-bless) and the verdict. The
+oracle is a file, `tests/golden/walk-baseline.json`.
 
-⚠ It sits in the mode table beside `coverage` and `gpsoutliers`, which nothing
-serves either. A separate entry point was the alternative, and #982 exists
-precisely because handlers that lived beside `main` could not be linked at all.
+It sits in the mode table, like `coverage` and `gpsoutliers`, rather than in a
+separate entry point: handlers beside a `main` cannot be linked into the host.
 
 ⚠ COORDINATES CROSS AS PLAIN JSON NUMBERS, NOT ON THE 1e-7 GRID `match` uses.
 That mode quantises because its matcher is integer-exact by design. The referee
@@ -94,20 +90,19 @@ private structure WalkIn where
   drawn : Array LatLon
   raw : Array LatLon
   acceptedNames : Array String
-  /-- The matcher's identity report for this leg (#1464): named ways and their
+  /-- The matcher's identity report for this leg: named ways and their
   metres, longest first. A DIAGNOSTIC — nothing here scores it. -/
   wayUm : Array (String × Nat) := #[]
-  /-- Does the mirror hold building outlines for the ground THIS leg ran over
-  (#1501)?
+  /-- Does the mirror hold building outlines for the ground THIS leg ran over?
 
   ⚠ `offPathBuildingCrossingM` reads 0.0 for two different worlds — a line that
   crosses no wall, and a line over ground with no walls to cross. The day-level
   `buildings.isEmpty` test below cannot separate them, because coverage varies
-  per LOCATION: 2026-09-06 answered three of its four `buildingsNear` keys and
-  left one empty, so its Watford walks would have scored a clean 0.0 off
-  outlines fetched 20 km away.
+  per location: a day can answer three of its four `buildingsNear` keys and
+  leave one empty, and its walks there would score a clean 0.0 off outlines
+  fetched 20 km away.
 
-  The fold itself says so now: `Seg.walkBuildingsMeasured` (#1678) records
+  The fold itself says so now: `Seg.walkBuildingsMeasured` records
   whether the `buildingsNear` read for the leg's ground answered, and the
   harness copies it onto this row rather than reconstructing it from a trace.
 
@@ -140,10 +135,9 @@ private structure DayIn where
 /-- Resolve a day's geometry: either INLINE arrays, or indices into the
 request-level tables.
 
-⚠ The tables exist because 91% of this request was duplication — measured
-2026-09-03 over the 42-day corpus: 713,183 way items but 59,606 distinct, so
-each way crossed the wire ~12 times, and the request was 145 MiB (a 3.9 GB
-`serde_json::Value` on the caller's side and ~2.9 GB of `Json` here). Indices
+⚠ The tables exist because 91% of the request was duplication: each way
+crossed the wire ~12 times, and the request was 145 MiB (3.9 GB of
+`serde_json::Value` on the caller's side, ~2.9 GB of `Json` here). Indices
 change nothing the referee computes; they change what has to be held in
 memory at once, which is what made a gate run and a parallel build starve
 each other.
@@ -236,7 +230,7 @@ private def measure (d : DayIn) (wantP90 : Bool) (w : WalkIn) : WalkEntry :=
     stallM := maxCorridorStall w.raw w.drawn
     speedKmh := if span > 0 then (sc.drawnLengthM / span) * 3.6 else 0
     routeCorr := onNamedWayFraction w.drawn w.acceptedNames d.ways
-    -- ⚠ UNMEASURED IS NOT CLEAN (#1501). `none` when the day holds no outlines
+    -- ⚠ UNMEASURED IS NOT CLEAN. `none` when the day holds no outlines
     -- at all, and now also when none were fetched for THIS leg's ground — the
     -- distinction coverage actually varies along.
     offPathM := if d.buildings.isEmpty || !w.buildingsMeasured then none
@@ -244,7 +238,7 @@ private def measure (d : DayIn) (wantP90 : Bool) (w : WalkIn) : WalkEntry :=
     lenM := sc.drawnLengthM
     budgetM := stepBudgetM d.steps (Float.ofInt w.startTs) (Float.ofInt w.endTs)
     wayUm := w.wayUm
-    -- ⚠ COVERAGE, recorded and not scored (#1501). `maxFixDistToLine` is the
+    -- ⚠ COVERAGE, recorded and not scored. `maxFixDistToLine` is the
     -- MAXIMUM on purpose: the display gate already asks a quantile of the same
     -- two tracks, and a quantile cannot see a line that abandons part of a
     -- walk. Cheap enough to take unconditionally — unlike `p90M`, nothing here
@@ -262,7 +256,7 @@ private def entryJson (e : WalkEntry) : Json :=
     ("stallM", fBits e.stallM), ("speedKmh", fBits e.speedKmh),
     ("routeCorr", oBits e.routeCorr), ("offPathM", oBits e.offPathM),
     ("lenM", fBits e.lenM), ("budgetM", oBits e.budgetM),
-    -- ⚠ PASSED THROUGH, NEVER SCORED (#1464). It rides the referee's wire so
+    -- ⚠ PASSED THROUGH, NEVER SCORED. It rides the referee's wire so
     -- `WALK_GATE_DUMP` can print it beside the metrics; no floor holds it and
     -- no delta is computed from it.
     ("wayUm", Json.arr (e.wayUm.map fun (n, um) =>
@@ -321,10 +315,10 @@ end WalkGate
 
 /-! ## Ground-truth mode (`verified_cli groundtruth`) — a REFEREE input
 
-`Verified.Eval.GroundTruth.parseGroundTruth` over one narrative. #1290: the
-audit tables are the only non-self-referential truth signal in the corpus, and
-two consumers were blocked without them — `routeCorr` in the walk referee, and
-`score-decoder`, whose oracle IS the narrative.
+`Verified.Eval.GroundTruth.parseGroundTruth` over one narrative: the audit
+tables are the corpus's only non-self-referential truth signal, read by
+`routeCorr` in the walk referee and by `score-decoder`, whose oracle is the
+narrative.
 
 ⚠ THE REPLY CARRIES CIVIL TIME, NOT UNIX. Resolving a wall clock in a named zone
 needs the tz database, which is data and IO; the Lean side stops at the anchored
@@ -394,7 +388,7 @@ end GroundTruth
 /-! ## Journeys mode (`verified_cli journeys`)
 
 `Verified.Eval.Journeys.groundTruthJourneys` over RESOLVED audit rows — the
-ground-truth side of the `score-decoder` scoreboard (#1048). Rows arrive with
+ground-truth side of the `score-decoder` scoreboard. Rows arrive with
 unix `startTs`/`endTs` because the zone resolution is the shell's (see the
 `groundtruth` mode above).
 
@@ -460,7 +454,7 @@ def journeysResult (j : Json) : Json :=
 
 end Journeys
 
-/-! ## Decoder-scoreboard mode (`verified_cli decoderscore`) — #1048
+/-! ## Decoder-scoreboard mode (`verified_cli decoderscore`)
 
 Input: the `journeys`-mode rows EXTENDED with `provenance`, plus the decoded
 day's segments:
@@ -527,7 +521,7 @@ def decoderScoreResult (j : Json) : Json :=
       ("phantomRides", Lean.toJson phantoms),
       -- Per truth journey, for reading WHICH journeys fail and how: the scorer's
       -- own `bestOverlap` and `modeShape`, so the detail cannot disagree with
-      -- the count (2026-09-30).
+      -- the count.
       ("journeys", Json.arr (gtJ.map fun g =>
         let d := bestOverlap g decJ
         let shp := fun (x : Verified.Eval.Journeys.Journey) => Json.arr ((modeShape x).map Json.str)
@@ -544,8 +538,8 @@ end DecoderScore
 
 /-! ## Truth-check mode (`verified_cli truthcheck`)
 
-`Verified.Eval.TruthCheck.classifyDay` — the provenance-aware truth report
-(#1052). Rows arrive RESOLVED (unix seconds), as in `journeys` above, because
+`Verified.Eval.TruthCheck.classifyDay` — the provenance-aware truth report.
+Rows arrive RESOLVED (unix seconds), as in `journeys` above, because
 the zone resolution is the shell's; `states` are the drawn timeline legs.
 
 This is the corpus's only NON-SELF-REFERENTIAL gate: every other check compares
@@ -641,7 +635,7 @@ end TruthCheck
 /-! ## Floor-gate mode (`verified_cli floorgate`)
 
 `Verified.Eval.FloorGate` — the one-way ratchet shared by the truth floor and
-the journey floor (#1052).
+the journey floor.
 
 ⚠ THE FLOORS ARRIVE AS ARRAYS, NOT OBJECTS. A JSON object keyed by date is what
 the baseline FILES hold, but the wire here takes `[{ "date", "keys" }]` like
@@ -704,7 +698,7 @@ end FloorGate
 
 /-! ## Journey-shape mode (`verified_cli journeyshape`)
 
-`Verified.Eval.JourneyShape` — the journey referee (#1048). Builds the PIPELINE
+`Verified.Eval.JourneyShape` — the journey referee. Builds the PIPELINE
 side of the comparison from the drawn state legs and grades each ground-truth
 journey against it.
 
@@ -788,7 +782,7 @@ end JourneyShape
 
 /-! ## Feasibility mode (`verified_cli feasibility`)
 
-`Verified.Eval.Feasibility` — the worldline invariants (#1048). A
+`Verified.Eval.Feasibility` — the worldline invariants. A
 model-independent assertion on the DRAWN timeline: some outputs are impossible
 regardless of how the cascade produced them.
 
@@ -865,7 +859,7 @@ end Feasibility
 /-! ## Ceiling-gate modes (`ceilinggate`, `ceilingbless`)
 
 `Verified.Eval.CeilingGate` — the count-shaped sibling of `floorgate`, for the
-two standing-defect baselines (#1048).
+two standing-defect baselines.
 
 ⚠ `measured` AND `attempted` ARE BOTH REQUIRED and they are not the same list.
 `measured` is the days that produced a count; `attempted` is every day the run

@@ -2,11 +2,10 @@ import Verified.Geo.CorridorStall
 import Verified.FloatConst
 
 /-!
-# Walk-geometry referee metrics (#1048 Group B)
+# Walk-geometry referee metrics
 
-The metric PRODUCER behind `Verified.Eval.WalkGate` — a port of the four pure
-modules the deleted `score-walk-match` called: `src/eval/walk-score.ts`,
-`walk-plausibility.ts`, `walk-buildings.ts` and `walk-route-correctness.ts`.
+The metric producer behind `Verified.Eval.WalkGate`: walk score, plausibility,
+building crossings and route correctness.
 
 The gate asks "did this walk get worse?"; this file is what "worse" is measured
 with. It is separate from the ratchet on purpose: the ratchet is a handful of
@@ -15,8 +14,8 @@ mixing them would hide the one inside the other.
 
 ## No single number is truth
 
-That is the lesson of #293/#295, and it is why this reports a VECTOR per walk
-rather than a score. Each metric is confounded alone:
+So this reports a vector per walk rather than a score; each metric is
+confounded alone:
 
 * off-walkable p90 is snapper-biased — a phantom that hugs mapped ways scores
   well, and a reconstruction that rightly dissolves it scores worse. The gate
@@ -39,11 +38,11 @@ best possible answer.
 
 ## Exactness
 
-The arithmetic is float-for-float what V8 ran: the same planar
-lat/lon→metre approximation (111320 m/deg, `cos` at the segment midpoint), the
-same clamps, the same sampling steps. That matters because
-`tests/golden/walk-baseline.json` was blessed by the TypeScript, so a
-structurally different port would redden the gate on a healthy tree.
+The arithmetic is float-for-float the original implementation's, which
+blessed `tests/golden/walk-baseline.json`: the same planar lat/lon→metre
+approximation (111320 m/deg, `cos` at the segment midpoint), the same clamps,
+the same sampling steps. Structurally different arithmetic would redden the
+gate on a healthy tree.
 
 ⚠ Two known divergences, both argued to be below the gate's resolution:
 
@@ -94,8 +93,7 @@ abbrev Ring := Array LatLon
 
 ⚠ Not haversine. The referee measures a walk — hundreds of metres — where the
 equirectangular approximation is exact to well under the metric's resolution,
-and it is what the TypeScript used, so changing it here would move every value
-in the blessed baseline. -/
+and changing it would move every value in the blessed baseline. -/
 
 open Verified.FloatConst (pi hyp posInf)
 
@@ -264,9 +262,8 @@ def scoreWalk (drawn : Array LatLon) (startTs endTs : Float)
   let tortuosity := if straight > 1 then drawnLengthM / straight else 1
   let ped := if steps.isEmpty then none
              else some (pedometerDistanceM steps startTs endTs strideM)
-  -- ⚠ `ped && ped > 1` in the TS: a ZERO pedometer distance is falsy there and
-  -- yields null, not a division. Preserved — a leg with no counted steps has no
-  -- step error, it does not have an infinite one.
+  -- A pedometer distance of 1 m or less yields no step error, not a division:
+  -- a leg with no counted steps has no step error, not an infinite one.
   let stepDistanceError := match ped with
     | some p => if p > 1 then some ((drawnLengthM - p).abs / p) else none
     | none => none
@@ -296,11 +293,10 @@ def scoreWalk (drawn : Array LatLon) (startTs endTs : Float)
 /-! ⚠ **THE REFEREE KEEPS ITS OWN BODY, AND THAT IS A DELIBERATE DUPLICATE.**
 
 `Verified.Geo.CorridorStall` holds the same DP over `Pt`, because the DECISION
-gate needs it and `Verified.Geo` cannot import `Verified.Eval` (#1497). The
-obvious move — have this delegate to that one — SIGSEGVs the corpus gate.
-Bisected 2026-09-10: with the veto inert AND the fold-side DP disabled, so no
-line moves and no DP runs in the fold, the referee calling across the module
-boundary still crashes. The same DP ran here for months.
+gate needs it and `Verified.Geo` cannot import `Verified.Eval`. The
+obvious move, delegating to that one, SIGSEGVs the corpus gate: with the veto
+inert and the fold-side DP disabled, so no line moves and no DP runs in the
+fold, the referee calling across the module boundary still crashes.
 
 So there are two copies on purpose, and they are NOT an unnoticed second
 notion: the six `#guard`s below pin THIS one, `Verified.Geo.CorridorStall`
@@ -351,9 +347,8 @@ def maxCorridorStall (fixes path : Array LatLon) (tolM : Float := 15) : Float :=
       let byM := (b.lat - a.lat) * 111320.0
       let px := (v.lon - a.lon) * 111320.0 * cosLat
       let py := (v.lat - a.lat) * 111320.0
-      -- ⚠ `|| 1e-9` in the TS, which fires on a ZERO-length segment (two
-      -- identical fixes). Not the `=== 0 ? 0` used elsewhere in this file —
-      -- the two idioms differ and both are preserved as written.
+      -- A zero-length segment (two identical fixes) divides by 1e-9 here, not
+      -- the `0` used elsewhere in this file; the baseline was blessed with both.
       let l2raw := bx * bx + byM * byM
       let l2 := if l2raw == 0 || l2raw.isNaN then 1e-9 else l2raw
       let t := clamp01 ((px * bx + py * byM) / l2)
@@ -562,7 +557,7 @@ it already answered `false`. The box only decides WHICH rings are worth walking,
 never whether a point is inside one. Bounds are inclusive, so a point on the box
 edge still reaches the ray cast.
 
-⚠ **THIS IS NOT #1291's PRUNE.** That one bounded a NEAREST-way search, where a
+⚠ **This is not the nearest-way prune.** That one bounded a nearest-way search, where a
 bound bites only once the running best is small and nothing orders the ways —
 measured 3.3x SLOWER. Containment has no running best and no ordering: each ring
 is accepted or rejected on its own. The two share the word "prune" and nothing
@@ -681,19 +676,14 @@ def onNamedWayFraction (drawn : Array LatLon) (acceptedNames : Array String)
 
 /-! ## Witnesses
 
-⚠ EVERY NUMBER BELOW CAME OUT OF V8, not out of my arithmetic. The four
-TypeScript modules were checked out UNMODIFIED from `06346bd^` — #1048's
-recorded recovery point — and called directly; the harness that printed these is
-kept beside this file's history rather than in the tree, because it can only run
-against a deleted `src/` and would be a broken script here.
-
-That matters more than usual for this port. `tests/golden/walk-baseline.json`
-was blessed BY that TypeScript, so a port that is merely plausible would sit
-inside the gate's 5–30 m epsilons and read as agreement while being a different
-metric. These pin the arithmetic itself, at 1e-9, before the corpus is asked.
+⚠ Every number below is the original implementation's output, not hand
+arithmetic. `tests/golden/walk-baseline.json` was blessed by it, and a merely
+plausible metric would sit inside the gate's 5–30 m epsilons while measuring
+something else. These pin the arithmetic itself, at 1e-9, before the corpus is
+asked.
 
 The fixtures are a synthetic street grid near (51.5, −0.12) — a corner, a ring,
-three ways. No real coordinates (#860); the referee has no opinion about which
+three ways. No real coordinates; the referee has no opinion about which
 city it is in. -/
 
 section Witnesses
