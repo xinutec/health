@@ -17,8 +17,10 @@ the client's copy.
 `Verified.Eval.Journeys.groundTruthJourneys` also groups legs into journeys, and
 it is NOT the same rule: it absorbs a placeless stay (a platform wait) into the
 journey as a pause and ends it only at a stay with a place or a sleep. The
-timeline does not — any non-travelling row ends the run, because a visit
-between two transit legs is the thing the reader is looking at.
+timeline keeps a stay at a station beside a train or a bus in the journey (the
+wait for the tube is part of going home, `isStationWait`) and ends the run at
+any other non-travelling row, because a visit between two legs is the thing
+the reader is looking at.
 
 Both are right for their own question. The scorer asks "was this one trip?";
 the timeline asks "what should collapse into one row?". So this module shares
@@ -73,6 +75,18 @@ def legOfState (s : DayState) : Leg :=
     board := triple.map (·.board)
     alight := triple.map (·.alight) }
 
+/-- A stay at a station beside a train or a bus — the wait before boarding, a
+change of trains, the minutes after alighting — is part of the trip, not a
+visit: he walked to the station, waited for the tube and went home, one
+journey. A stay anywhere else ends the run. -/
+def isStationWait (states : Array DayState) (i : Nat) : Bool :=
+  match states[i]? with
+  | some s =>
+    s.mode == "stationary" && s.placeSource == some "station"
+      && ((states[i - 1]?).any (fun p => i > 0 && (p.mode == "train" || p.mode == "bus"))
+        || (states[i + 1]?).any (fun n => n.mode == "train" || n.mode == "bus"))
+  | none => false
+
 /-- Fold each run of two or more consecutive travelling states into one journey.
 
 A LONE travelling state is not a journey: the timeline leaves it as its own row,
@@ -86,7 +100,8 @@ def servedJourneys (states : Array DayState) : Array Journey := Id.run do
     if h : r.size ≥ 2 then
       acc.push { startTs := (r[0]'(by omega)).startTs, endTs := (r[r.size - 1]'(by omega)).endTs, legs := r }
     else acc
-  for s in states do
+  for h : i in [0:states.size] do
+    let s := states[i]
     -- ⚠ A CITY HEADER ENDS A RUN, because in the client it is a ROW and any
     -- non-travelling row ends one. The header appears before a state whose city
     -- is present and differs from the last one seen — tracked across ALL states,
@@ -96,7 +111,7 @@ def servedJourneys (states : Array DayState) : Array Journey := Id.run do
     if header then
       out := close run out
       run := #[]
-    if isJourneyMode s.mode then
+    if isJourneyMode s.mode || isStationWait states i then
       run := run.push (legOfState s)
     else
       out := close run out
@@ -121,11 +136,23 @@ private def TRAIN_LABEL : String := "Euston Square → King's Cross St Pancras �
 #guard (servedJourneys #[st 0 60 "walking"]).size == 0
 #guard (servedJourneys #[st 0 60 "stationary", st 60 120 "walking", st 120 180 "stationary"]).size == 0
 
--- A stay between two runs ENDS the first — the timeline's rule, and the one
--- place it parts company with the scorer, which would absorb a short stay.
+-- A stay that is not a station wait between two runs ENDS the first — the
+-- timeline's rule, and where it parts company with the scorer, which would
+-- absorb a short placeless stay.
 #guard (servedJourneys #[st 0 60 "walking", st 60 120 "train",
                          st 120 180 "stationary",
                          st 180 240 "walking", st 240 300 "bus"]).size == 2
+
+-- The walk to the station, the wait for the tube, the ride and the walk home:
+-- one journey of four legs.
+private def wait (a b : Int) : DayState :=
+  { st a b "stationary" with place := some "King's Cross St Pancras", placeSource := some "station" }
+#guard (servedJourneys #[st 0 60 "stationary", st 60 120 "walking", wait 120 180,
+                         st 180 240 "train", st 240 300 "walking", st 300 360 "stationary"]).map (·.legs.size)
+  == #[4]
+-- A stay at a station with no train or bus beside it is a visit: it ends the run.
+#guard (servedJourneys #[st 0 60 "walking", st 60 120 "walking", wait 120 180,
+                         st 180 240 "walking", st 240 300 "walking"]).size == 2
 
 -- A run that reaches the end of the day still closes.
 #guard (servedJourneys #[st 0 60 "stationary", st 60 120 "walking", st 120 180 "train"]).size == 1

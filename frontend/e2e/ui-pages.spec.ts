@@ -165,8 +165,11 @@ const VELOCITY = {
 		  city: "Greater London", tz: "Europe/London" },
 		{ startTs: DAY0 + 7 * 3600, endTs: DAY0 + 7 * 3600 + 1200, mode: "stationary",
 		  place: "Home", city: "Greater London", tz: "Europe/London" },
-		{ startTs: DAY0 + 7 * 3600 + 1200, endTs: DAY0 + 7 * 3600 + 1800, mode: "walking",
+		{ startTs: DAY0 + 7 * 3600 + 1200, endTs: DAY0 + 7 * 3600 + 1560, mode: "walking",
 		  wayName: "Wembley Park Boulevard", city: "Greater London", tz: "Europe/London" },
+		// The wait for the train is part of the journey (`ServedJourneys.isStationWait`).
+		{ startTs: DAY0 + 7 * 3600 + 1560, endTs: DAY0 + 7 * 3600 + 1800, mode: "stationary",
+		  place: "Euston Square", city: "Greater London", tz: "Europe/London" },
 		{ startTs: DAY0 + 7 * 3600 + 1800, endTs: DAY0 + 7 * 3600 + 3000, mode: "train",
 		  wayName: "Euston Square → King's Cross St Pancras · Circle Line",
 		  city: "Greater London", tz: "Europe/London" },
@@ -180,7 +183,8 @@ const VELOCITY = {
 			startTs: DAY0 + 7 * 3600 + 1200,
 			endTs: DAY0 + 7 * 3600 + 3300,
 			legs: [
-				{ startTs: DAY0 + 7 * 3600 + 1200, endTs: DAY0 + 7 * 3600 + 1800, mode: "walking" },
+				{ startTs: DAY0 + 7 * 3600 + 1200, endTs: DAY0 + 7 * 3600 + 1560, mode: "walking" },
+				{ startTs: DAY0 + 7 * 3600 + 1560, endTs: DAY0 + 7 * 3600 + 1800, mode: "stationary" },
 				{ startTs: DAY0 + 7 * 3600 + 1800, endTs: DAY0 + 7 * 3600 + 3000, mode: "train",
 				  line: "Circle Line", board: "Euston Square", alight: "King's Cross St Pancras" },
 				{ startTs: DAY0 + 7 * 3600 + 3000, endTs: DAY0 + 7 * 3600 + 3300, mode: "walking" },

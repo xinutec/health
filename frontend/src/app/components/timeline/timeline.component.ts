@@ -202,10 +202,13 @@ export class TimelineComponent {
 
     // List the transports in order by MODE only — "Train", "Bus" — not the
     // station-pair/line detail, which lives in the expanded legs. The walks
-    // are implied by the icon rail, and the destination is the visit row
+    // and the waits at a station are implied by the icon rail, and the
+    // destination is the visit row
     // directly below, so both would be noise here. Collapse consecutive
     // same-mode legs so a train interchange reads "Train", not "Train · Train".
-    const modes = legs.filter((l) => l.mode !== "walking").map((l) => modeStyle(l.mode).label);
+    const modes = legs
+      .filter((l) => l.mode !== "walking" && l.mode !== "stationary")
+      .map((l) => modeStyle(l.mode).label);
     const transitLabels = modes.filter((m, i) => i === 0 || m !== modes[i - 1]);
 
     const summaryLabel =
