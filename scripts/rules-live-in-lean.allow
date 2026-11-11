@@ -16,7 +16,6 @@
 # Calendar arithmetic. Genuinely constants of the world rather than decisions,
 # but still two declarations that could disagree.
 HOUR_BUCKETS
-MINUTES_PER_DAY
 METERS_PER_DEG_LAT
 
 # Location-tail cache shape and freshness. Read by the route AND by the Lean

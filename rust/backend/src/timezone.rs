@@ -193,10 +193,12 @@ pub fn local_date_at(ts_unix: i64, tz: Option<&str>) -> Result<String> {
     Ok(dt.with_timezone(&zone).format("%Y-%m-%d").to_string())
 }
 
-/// The `[hourLocal, dayOfWeekLocal]` pair for every minute of a local day.
+/// The `[hourLocal, dayOfWeekLocal]` pair for every minute of
+/// `[start_utc, end_utc)`, a local day's bounds.
 ///
-/// The tzdata half of `buildObservationTensor`. The tensor asks "what hour is it
-/// where the user is" 1440 times, and the answer is not pure — so the shell
+/// The tzdata half of `buildObservationTensor`, whose tensor has one row per
+/// entry: a DST day has 1380 or 1500. The tensor asks "what hour is it where
+/// the user is" once a minute, and the answer is not pure — so the shell
 /// resolves the whole table once and the decoder reads it by index, exactly as
 /// `local_stay_samples` does for opening hours.
 ///
@@ -209,13 +211,13 @@ pub fn local_date_at(ts_unix: i64, tz: Option<&str>) -> Result<String> {
 /// ⚠ THE TABLE IS RESOLVED PER MINUTE, NOT DERIVED FROM `start_utc`. A DST
 /// transition inside the day repeats or skips an hour, so `(m / 60) % 24` is
 /// wrong on exactly the two days a year the decoder is hardest to debug.
-pub fn local_ctx_table(start_utc: i64, tz: &str) -> Result<Vec<[u32; 2]>> {
+pub fn local_ctx_table(start_utc: i64, end_utc: i64, tz: &str) -> Result<Vec<[u32; 2]>> {
     let zone: Tz = tz
         .parse()
         .with_context(|| format!("{tz} is not a known timezone"))?;
-    (0..MINUTES_PER_DAY)
-        .map(|m| {
-            let ts = start_utc + i64::from(m) * 60;
+    (start_utc..end_utc)
+        .step_by(60)
+        .map(|ts| {
             let dt = chrono::DateTime::from_timestamp(ts, 0)
                 .with_context(|| format!("{ts} is not a representable instant"))?
                 .with_timezone(&zone);
@@ -223,13 +225,6 @@ pub fn local_ctx_table(start_utc: i64, tz: &str) -> Result<Vec<[u32; 2]>> {
         })
         .collect()
 }
-
-/// Minutes in a day, as the observation tensor counts them. ⚠ A FIXED 1440 even
-/// across a DST transition: the tensor is indexed by minute-of-day, and a 23- or
-/// 25-hour civil day still occupies exactly one row per index. `Verified.Hsmm.
-/// Observation.MINUTES_PER_DAY` is the twin, and `parseObservationInput` refuses
-/// a table of any other length.
-pub const MINUTES_PER_DAY: u32 = 1440;
 
 /// The stay's minutes as `(dayIdx, minuteOfDay)` in the venue's local zone —
 /// every minute of `[start, end)`, or the single instant at `start` for a

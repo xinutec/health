@@ -8,7 +8,7 @@
 //! request, so nothing could catch it.
 //!
 //! ⚠ The tensor must not cross the wire. Lean builds it from the day's fixes and
-//! two small lookup tables; shipping the 1440 rows instead is tens of MiB a day.
+//! two small lookup tables; shipping a row a minute instead is tens of MiB a day.
 
 use crate::with_record;
 use backend::lean;
@@ -90,9 +90,25 @@ fn an_empty_proximity_table_still_decodes() {
     assert!(!segs.as_array().unwrap().is_empty());
 }
 
-/// ⚠ THE LOOKUP TABLE IS EXACTLY ONE DAY. A short one would silently index out
-/// of range for every later minute, and the failure would look like a decode
-/// problem rather than a caller problem.
+/// A 25-hour day decodes through its last hour: the tensor is as long as
+/// `localCtx`, not a fixed 1440 rows.
+#[test]
+fn a_25_hour_day_is_decoded_to_its_end() {
+    setup();
+    let mut obs = observation(serde_json::json!([]));
+    obs["localCtx"] = serde_json::json!((0..1500).map(|m| [(m / 60) % 24, 1]).collect::<Vec<_>>());
+    let segs = lean::assemble_segments(&request(obs))
+        .expect("assemblesegments")
+        .expect("a viable path");
+    let last = segs.as_array().unwrap().last().unwrap()["endTs"]
+        .as_i64()
+        .unwrap();
+    assert!(last > T0 + 1440 * 60, "the last segment ends at {last}");
+}
+
+/// ⚠ THE LOOKUP TABLE IS ONE LOCAL DAY, and its length is the tensor's. A table
+/// far from 23 to 25 hours is a caller bug, refused here rather than decoded as
+/// a short day.
 #[test]
 fn a_short_local_ctx_is_refused_by_name() {
     setup();
@@ -102,8 +118,8 @@ fn a_short_local_ctx_is_refused_by_name() {
         .unwrap_err()
         .to_string();
     assert!(
-        err.contains("localCtx has 100 rows, not 1440"),
-        "the error must name the table and both counts, got: {err}"
+        err.contains("localCtx has 100 rows; a local day is 1320 to 1560 minutes"),
+        "the error must name the table, its count and the range, got: {err}"
     );
 }
 

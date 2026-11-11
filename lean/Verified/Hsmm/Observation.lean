@@ -2,21 +2,20 @@ import Verified.Fix
 /-!
 # Per-minute observation tensor
 
-Stitches the GPS / HR / step / sleep streams into one 1440-row day: per-minute
-median lat/lon + mean speed, mean HR, summed cadence, sleep-overlap `inBed`,
-watch-liveness cadence imputation, and the forward/backward nearest-fix
-scans.
+Stitches the GPS / HR / step / sleep streams into one row per minute of a
+local day (1440, or 1380 and 1500 on DST days): per-minute median lat/lon +
+mean speed, mean HR, summed cadence, sleep-overlap `inBed`, watch-liveness
+cadence imputation, and the forward/backward nearest-fix scans.
 
 The one thing Lean cannot do, IANA-timezone resolution (hour/day-of-week, and
-the day's UTC bounds), stays in the thin caller: this module takes `startUtc`
-and a per-minute `localCtx` lookup as inputs. Everything else is pure array
-logic over `median`/`mean`/sums, so it is bit-exact (no transcendentals; float
+the day's UTC bounds), stays in the thin caller: this module takes `startUtc`,
+the day's length in minutes, and a per-minute `localCtx` lookup as inputs.
+Everything else is pure array logic over `median`/`mean`/sums, so it is bit-exact (no transcendentals; float
 sums fold in a fixed order). UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Observation
 
-def MINUTES_PER_DAY : Nat := 1440
 def SECONDS_PER_MINUTE : Int := 60
 def WATCH_LIVENESS_WINDOW_MIN : Nat := 5
 
@@ -94,85 +93,82 @@ def mean (values : List Float) : Float :=
 /-- Minute index of a ts within the local day, or none when outside `[start, end)`. -/
 def bucketIndex (startUtc endUtc ts : Int) : Option Nat :=
   if ts < startUtc || ts ≥ endUtc then none
-  else
-    let m := ((ts - startUtc) / SECONDS_PER_MINUTE).toNat
-    if m ≥ MINUTES_PER_DAY then none else some m
+  else some ((ts - startUtc) / SECONDS_PER_MINUTE).toNat
 
-private def emptyBuckets {α : Type} : Array (Array α) :=
-  (List.replicate MINUTES_PER_DAY (#[] : Array α)).toArray
-
-/-- Bucket a stream into per-minute arrays, preserving input order within each
-    minute (so downstream `mean` folds are order-fixed). -/
-def bucketize {α : Type} (startUtc endUtc : Int) (tsOf : α → Int) (xs : List α) : Array (Array α) :=
+/-- Bucket a stream into `minutes` per-minute arrays, preserving input order
+    within each minute (so downstream `mean` folds are order-fixed). -/
+def bucketize {α : Type} (startUtc : Int) (minutes : Nat) (tsOf : α → Int) (xs : List α) :
+    Array (Array α) :=
+  let endUtc := startUtc + Int.ofNat minutes * SECONDS_PER_MINUTE
   xs.foldl (fun buckets x =>
     match bucketIndex startUtc endUtc (tsOf x) with
     | none => buckets
-    | some m => buckets.modify m (·.push x)) emptyBuckets
+    | some m => buckets.modify m (·.push x)) (Array.replicate minutes #[])
 
 private def ceilDiv (a b : Int) : Int := (a + b - 1) / b
 
 /-- Per-minute `inBed`: true when any sleep record overlaps the minute. -/
-def markInBed (startUtc : Int) (sleep : List SleepRec) : Array Bool :=
+def markInBed (startUtc : Int) (minutes : Nat) (sleep : List SleepRec) : Array Bool :=
   sleep.foldl (fun flags rec =>
     let startMin := max 0 ((rec.startTs - startUtc) / SECONDS_PER_MINUTE)
-    let endMin := min (Int.ofNat MINUTES_PER_DAY) (ceilDiv (rec.endTs - startUtc) SECONDS_PER_MINUTE)
-    (List.range MINUTES_PER_DAY).foldl (fun fs m =>
+    let endMin := min (Int.ofNat minutes) (ceilDiv (rec.endTs - startUtc) SECONDS_PER_MINUTE)
+    (List.range minutes).foldl (fun fs m =>
       if startMin ≤ (Int.ofNat m) && (Int.ofNat m) < endMin then fs.set! m true else fs) flags)
-    ((List.replicate MINUTES_PER_DAY false).toArray)
+    (Array.replicate minutes false)
 
 /-- Distance to the nearest alive minute at-or-before each index (0 if the
     minute itself is alive), or none when no alive minute precedes it. -/
 private def prevAliveDist (alive : Array Bool) : Array (Option Nat) :=
-  (List.range MINUTES_PER_DAY).foldl
+  (List.range alive.size).foldl
     (fun (st : (Option Nat) × Array (Option Nat)) m =>
       let last := if alive[m]?.getD false then some m else st.1
       (last, st.2.push (last.map (fun l => m - l))))
     (none, #[]) |>.2
 
 private def nextAliveDist (alive : Array Bool) : Array (Option Nat) :=
-  ((List.range MINUTES_PER_DAY).reverse.foldl
+  ((List.range alive.size).reverse.foldl
     (fun (st : (Option Nat) × Array (Option Nat)) m =>
       let next := if alive[m]?.getD false then some m else st.1
       (next, st.2.push (next.map (fun nx => nx - m))))
     (none, #[]) |>.2).reverse
 
-/-- Build the observation tensor. `localCtx m = (hourLocal, dayOfWeek)` and
+/-- Build the observation tensor, one row for each of the day's `minutes`.
+    `localCtx m = (hourLocal, dayOfWeek)` and
     `proximityAt ts = (roadDistM?, railDistM?)` are caller-resolved (tz / OSM);
     everything else is computed here. -/
 def buildObservationTensor
-    (startUtc : Int)
+    (startUtc : Int) (minutes : Nat)
     (points : List GpsPoint) (hr : List HrPoint) (steps : List StepPoint)
     (sleep : List SleepRec)
     (localCtx : Nat → Nat × Nat)
     (proximityAt : Int → Option Float × Option Float) : Array ObsRow :=
-  let endUtc := startUtc + (Int.ofNat MINUTES_PER_DAY) * SECONDS_PER_MINUTE
-  let gpsB := bucketize startUtc endUtc GpsPoint.ts points
-  let hrB := bucketize startUtc endUtc HrPoint.ts hr
-  let stepB := bucketize startUtc endUtc StepPoint.ts steps
-  let inBed := markInBed startUtc sleep
+  let gpsB := bucketize startUtc minutes GpsPoint.ts points
+  let hrB := bucketize startUtc minutes HrPoint.ts hr
+  let stepB := bucketize startUtc minutes StepPoint.ts steps
+  let inBed := markInBed startUtc minutes sleep
   -- Pass 1: per-minute aggregates.
-  let gpsArr : Array (Option GpsAgg) := (List.range MINUTES_PER_DAY).foldl (fun a m =>
+  let gpsArr : Array (Option GpsAgg) := (List.range minutes).foldl (fun a m =>
     let rows := gpsB[m]?.getD #[]
     a.push (if rows.isEmpty then none else
       let accs := rows.toList.filterMap GpsPoint.accuracyM
       some ⟨median (rows.toList.map GpsPoint.lat), median (rows.toList.map GpsPoint.lon),
             mean (rows.toList.map GpsPoint.speedKmh),
             if accs.isEmpty then none else some (median accs)⟩)) #[]
-  let hrArr : Array (Option Float) := (List.range MINUTES_PER_DAY).foldl (fun a m =>
+  let hrArr : Array (Option Float) := (List.range minutes).foldl (fun a m =>
     let rows := hrB[m]?.getD #[]
     a.push (if rows.isEmpty then none else some (mean (rows.toList.map HrPoint.bpm)))) #[]
-  let cad0 : Array (Option Float) := (List.range MINUTES_PER_DAY).foldl (fun a m =>
+  let cad0 : Array (Option Float) := (List.range minutes).foldl (fun a m =>
     let rows := stepB[m]?.getD #[]
     a.push (if rows.isEmpty then none else some (rows.foldl (fun s x => s + x.steps) 0.0))) #[]
   -- Pass 2: watch-liveness cadence imputation.
-  let alive : Array Bool := (List.range MINUTES_PER_DAY).foldl (fun a m =>
+  let alive : Array Bool := (List.range minutes).foldl (fun a m =>
     a.push (!(stepB[m]?.getD #[]).isEmpty || !(hrB[m]?.getD #[]).isEmpty)) #[]
-  let dayHasStepRows := (List.range MINUTES_PER_DAY).any (fun m => !(stepB[m]?.getD #[]).isEmpty)
+  let dayHasStepRows := (List.range minutes).any (fun m => !(stepB[m]?.getD #[]).isEmpty)
   let cad : Array (Option Float) :=
     if dayHasStepRows then
       let pd := prevAliveDist alive
       let nd := nextAliveDist alive
-      (List.range MINUTES_PER_DAY).foldl (fun a m =>
+      (List.range minutes).foldl (fun a m =>
         let c0 := cad0[m]?.getD none
         let impute := c0.isNone
           && (match pd[m]?.getD none with | some d => d ≤ WATCH_LIVENESS_WINDOW_MIN | none => false)
@@ -180,18 +176,18 @@ def buildObservationTensor
         a.push (if impute then some 0 else c0)) #[]
     else cad0
   -- Pass 3: forward prev-fix, backward next-fix.
-  let prevArr : Array (Option Fix) := (List.range MINUTES_PER_DAY).foldl
+  let prevArr : Array (Option Fix) := (List.range minutes).foldl
     (fun (st : (Option Fix) × Array (Option Fix)) m =>
       let ts := startUtc + (Int.ofNat m) * SECONDS_PER_MINUTE
       let running := match gpsArr[m]?.getD none with | some g => some ⟨ts, g.lat, g.lon⟩ | none => st.1
       (running, st.2.push running)) (none, #[]) |>.2
-  let nextArr : Array (Option Fix) := ((List.range MINUTES_PER_DAY).reverse.foldl
+  let nextArr : Array (Option Fix) := ((List.range minutes).reverse.foldl
     (fun (st : (Option Fix) × Array (Option Fix)) m =>
       let ts := startUtc + (Int.ofNat m) * SECONDS_PER_MINUTE
       let running := match gpsArr[m]?.getD none with | some g => some ⟨ts, g.lat, g.lon⟩ | none => st.1
       (running, st.2.push running)) (none, #[]) |>.2).reverse
   -- Assemble.
-  (List.range MINUTES_PER_DAY).foldl (fun a m =>
+  (List.range minutes).foldl (fun a m =>
     let ts := startUtc + (Int.ofNat m) * SECONDS_PER_MINUTE
     let (hour, dow) := localCtx m
     let (road, rail) := proximityAt ts
@@ -226,7 +222,7 @@ private def hrs : List HrPoint := [hp 20 60, hp 50 70, hp 210 80, hp 425 72]
 private def stps : List StepPoint := [sp 60 50, sp 480 30]
 
 private def tensor : Array ObsRow :=
-  buildObservationTensor 1784156400 pts hrs stps [] (fun _ => (0, 0)) (fun _ => (none, none))
+  buildObservationTensor 1784156400 1440 pts hrs stps [] (fun _ => (0, 0)) (fun _ => (none, none))
 
 /-- Project a minute to the fields the reference pins (fix ts shown relative to
     startUtc). -/
@@ -258,14 +254,20 @@ private def proj (o : ObsRow) :
 -- The same day before its last two fixes arrived: the fix at minute 7 reaches
 -- back over the dark minutes 2–6 (`nextGpsFix`), so they are the first to move.
 private def tensorEarly : Array ObsRow :=
-  buildObservationTensor 1784156400 (pts.take 3) hrs stps [] (fun _ => (0, 0)) (fun _ => (none, none))
+  buildObservationTensor 1784156400 1440 (pts.take 3) hrs stps [] (fun _ => (0, 0)) (fun _ => (none, none))
 #guard firstDiff tensor tensor == none
 #guard firstDiff tensorEarly tensor == some 2
 
 -- inBed marking: a record covering [start+90s, start+150s] marks minutes 1 and 2.
-#guard (markInBed 1784156400 [⟨1784156400 + 90, 1784156400 + 150⟩])[1]! == true
-#guard (markInBed 1784156400 [⟨1784156400 + 90, 1784156400 + 150⟩])[2]! == true
-#guard (markInBed 1784156400 [⟨1784156400 + 90, 1784156400 + 150⟩])[0]! == false
-#guard (markInBed 1784156400 [⟨1784156400 + 90, 1784156400 + 150⟩])[3]! == false
+#guard (markInBed 1784156400 1440 [⟨1784156400 + 90, 1784156400 + 150⟩])[1]! == true
+#guard (markInBed 1784156400 1440 [⟨1784156400 + 90, 1784156400 + 150⟩])[2]! == true
+#guard (markInBed 1784156400 1440 [⟨1784156400 + 90, 1784156400 + 150⟩])[0]! == false
+#guard (markInBed 1784156400 1440 [⟨1784156400 + 90, 1784156400 + 150⟩])[3]! == false
+
+-- A DST day's tensor is as long as the day: a 25-hour day keeps its last hour.
+#guard (buildObservationTensor 1784156400 1500 [gp 89940 51.5 (-0.1) 4] [] [] []
+          (fun _ => (0, 0)) (fun _ => (none, none))).size == 1500
+#guard ((buildObservationTensor 1784156400 1500 [gp 89940 51.5 (-0.1) 4] [] [] []
+          (fun _ => (0, 0)) (fun _ => (none, none)))[1499]!.gps).isSome
 
 end Verified.Hsmm.Observation

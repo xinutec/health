@@ -288,7 +288,7 @@ pub(crate) async fn decode_one(
             "hr": obs.get("hr").cloned().unwrap_or(serde_json::json!([])),
             "steps": obs.get("steps").cloned().unwrap_or(serde_json::json!([])),
             "sleep": obs.get("sleep").cloned().unwrap_or(serde_json::json!([])),
-            "localCtx": backend::timezone::local_ctx_table(bounds.start_utc, tz)?,
+            "localCtx": backend::timezone::local_ctx_table(bounds.start_utc, bounds.end_utc, tz)?,
             "proximity": osm.proximity,
         },
         "edges": edges,

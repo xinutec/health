@@ -562,7 +562,7 @@ private def parseStationNode (j : Json) : Except String Verified.Hsmm.TrainCandi
 
 /-! ## Building the observation tensor here, instead of receiving it
 
-The tensor is 1440 rows, built from small inputs: the day's fixes, three
+The tensor is a row per minute of the day, built from small inputs: the day's fixes, three
 biometric streams, and two per-minute lookup tables the shell resolves because
 they are not pure (the local hour/day-of-week, a timezone; the road/rail
 distances, an OSM query). So `assemblesegments` takes either a pre-built `obs`
@@ -587,9 +587,9 @@ private def parseSleepRec (j : Json) : Except String Verified.Hsmm.Observation.S
 /-- Build the tensor from raw materials.
 
 `localCtx` and `proximity` are lookup tables (JSON has no functions):
-`localCtx` is 1440 `[hourLocal, dayOfWeek]` pairs by minute; `proximity` is a
-sparse list of `[minuteTs, roadDistM|null, railDistM|null]` for the minutes
-with a fix. A minute missing from it is `(none, none)`, no evidence, not "far
+`localCtx` is one `[hourLocal, dayOfWeek]` pair per minute of the day, and
+its length is the tensor's; `proximity` is a sparse list of
+`[minuteTs, roadDistM|null, railDistM|null]` for the minutes with a fix. A minute missing from it is `(none, none)`, no evidence, not "far
 from both". -/
 private def parseObservationInput (v : Json)
     : Except String (Array Verified.Hsmm.Observation.ObsRow) := do
@@ -598,14 +598,15 @@ private def parseObservationInput (v : Json)
   let hr ← (← (← v.getObjVal? "hr").getArr?).mapM parseHrPoint
   let steps ← (← (← v.getObjVal? "steps").getArr?).mapM parseStepPoint
   let sleep ← (← (← v.getObjVal? "sleep").getArr?).mapM parseSleepRec
-  -- The local-time table: 1440 [hour, dayOfWeek] pairs.
+  -- The local-time table: [hour, dayOfWeek] per minute; a DST day has 1380 or 1500.
   let ctxArr ← (← (← v.getObjVal? "localCtx").getArr?).mapM (fun e => do
     let a ← e.getArr?
     let some h := a[0]? | throw "localCtx: a row is not [hour, dayOfWeek]"
     let some d := a[1]? | throw "localCtx: a row is not [hour, dayOfWeek]"
     pure ((← h.getNat?), (← d.getNat?)))
-  if ctxArr.size != Verified.Hsmm.Observation.MINUTES_PER_DAY then
-    throw s!"localCtx has {ctxArr.size} rows, not {Verified.Hsmm.Observation.MINUTES_PER_DAY}"
+  -- A local day is 23 to 25 hours; anything outside 22 to 26 is a caller bug.
+  if ctxArr.size < 22 * 60 || ctxArr.size > 26 * 60 then
+    throw s!"localCtx has {ctxArr.size} rows; a local day is 1320 to 1560 minutes"
   -- The proximity table, sparse and keyed by top-of-minute ts.
   let proxPairs ← (← (← v.getObjVal? "proximity").getArr?).mapM (fun e => do
     let a ← e.getArr?
@@ -619,7 +620,7 @@ private def parseObservationInput (v : Json)
     pure ((← tsJ.getInt?), road, rail))
   let proxMap : Std.HashMap Int (Option Float × Option Float) :=
     proxPairs.foldl (fun m (t, r, l) => m.insert t (r, l)) {}
-  return Verified.Hsmm.Observation.buildObservationTensor startUtc
+  return Verified.Hsmm.Observation.buildObservationTensor startUtc ctxArr.size
     points.toList hr.toList steps.toList sleep.toList
     (fun m => ctxArr.getD m (0, 0))
     (fun ts => proxMap.getD ts (none, none))

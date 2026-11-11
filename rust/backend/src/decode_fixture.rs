@@ -399,7 +399,7 @@ pub fn request(fx: &Value) -> Result<Value> {
             "hr": inputs["hr"],
             "steps": inputs["steps"],
             "sleep": inputs["sleep"],
-            "localCtx": crate::timezone::local_ctx_table(bounds.start_utc, tz)?,
+            "localCtx": crate::timezone::local_ctx_table(bounds.start_utc, bounds.end_utc, tz)?,
             "proximity": proximity,
         },
         "edges": edges,

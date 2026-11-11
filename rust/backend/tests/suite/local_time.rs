@@ -99,21 +99,17 @@ fn a_zero_length_stay_samples_its_start() {
 
 /// ⚠ THE OBSERVATION TENSOR'S TABLE IS RESOLVED PER MINUTE, and the two days a
 /// year that matters are the two days the decoder is hardest to debug. On a
-/// spring-forward day 01:00 local is followed by 03:00 local, so the naive
-/// `(m / 60) % 24` — which every fixture in this repo uses, because a fixture
-/// never spans a transition — is wrong for 22 of the 24 hours.
+/// spring-forward day 01:00 local is followed by 02:00 local, so the day has
+/// 1380 minutes and the naive `(m / 60) % 24` is wrong for 22 of its hours.
 #[test]
 fn the_local_ctx_table_follows_dst_rather_than_the_minute_index() {
     use backend::timezone::{date_bounds_utc, local_ctx_table};
 
     // 2026-03-29, the European spring forward: London's clocks go 00:59 → 02:00.
     let b = date_bounds_utc("2026-03-29", Some("Europe/London")).unwrap();
-    let t = local_ctx_table(b.start_utc, "Europe/London").unwrap();
-    assert_eq!(
-        t.len(),
-        1440,
-        "the table is one row per minute-of-day index"
-    );
+    let t = local_ctx_table(b.start_utc, b.end_utc, "Europe/London").unwrap();
+    assert_eq!(t.len(), 23 * 60, "one row per minute of the 23-hour day");
+    assert_eq!(t[t.len() - 1], [23, 0], "the last minute is 23:59");
     assert_eq!(t[0], [0, 0], "midnight on a Sunday");
     // Minute 60 is the hour that does not exist: local time is already 02:00.
     assert_eq!(t[59], [0, 0]);
@@ -127,7 +123,7 @@ fn the_local_ctx_table_follows_dst_rather_than_the_minute_index() {
     // check in this file.
     assert_ne!(
         t.iter().map(|p| p[0]).collect::<Vec<_>>(),
-        (0..1440).map(|m: u32| (m / 60) % 24).collect::<Vec<_>>()
+        (0..23 * 60).map(|m: u32| (m / 60) % 24).collect::<Vec<_>>()
     );
 
     // ⚠ SUNDAY IS 0 HERE AND 6 IN `local_stay_samples`. The two live in one file
@@ -136,7 +132,7 @@ fn the_local_ctx_table_follows_dst_rather_than_the_minute_index() {
     // in without noticing it shifts every hour profile by a day.
     let mon = date_bounds_utc("2026-03-30", Some("Europe/London")).unwrap();
     assert_eq!(
-        local_ctx_table(mon.start_utc, "Europe/London").unwrap()[0],
+        local_ctx_table(mon.start_utc, mon.end_utc, "Europe/London").unwrap()[0],
         [0, 1]
     );
     assert_eq!(
