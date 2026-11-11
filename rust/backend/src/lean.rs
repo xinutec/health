@@ -909,6 +909,35 @@ fn f64_from_bits_str(s: &str) -> Result<f64> {
     Ok(f64::from_bits(bits))
 }
 
+/// An `f64` as Lean writes it: the decimal of its IEEE-754 bit pattern. A
+/// string that is not one fails the decode, so it cannot stand in as 0.0.
+/// [`crate::fold_payload::bits`] writes the same string back.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(try_from = "String")]
+pub struct Bits(pub f64);
+
+impl TryFrom<String> for Bits {
+    type Error = anyhow::Error;
+    fn try_from(s: String) -> Result<Self> {
+        f64_from_bits_str(&s).map(Bits)
+    }
+}
+
+/// A `path` of `[latBits, lonBits, …]` vertices as the `{lat, lon}` list the
+/// rail cache stores. A malformed vertex fails the decode rather than leaving
+/// the line one vertex short.
+fn path_lat_lon(path: &serde_json::Value, mode: &str) -> Result<Vec<serde_json::Value>> {
+    let verts: Vec<Vec<Bits>> = serde_json::from_value(path.clone())
+        .with_context(|| format!("{mode}: a path vertex is not bit patterns"))?;
+    verts
+        .iter()
+        .map(|v| match v.as_slice() {
+            [lat, lon, ..] => Ok(serde_json::json!({ "lat": lat.0, "lon": lon.0 })),
+            _ => Err(anyhow!("{mode}: a path vertex has no lat/lon")),
+        })
+        .collect()
+}
+
 /// `Verified.Recovery.recoveryAsOf` — three streams, judged as of `day`.
 ///
 /// ⚠ Answers numbers only. Composing a readiness score is the CALLER's job and
@@ -1295,84 +1324,85 @@ pub fn shape_landmarks(
     points: &serde_json::Value,
     lines: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    #[derive(Deserialize)]
-    struct Wire {
-        value: Vec<serde_json::Map<String, serde_json::Value>>,
-    }
-
-    let feats = |v: &serde_json::Value, is_point: bool| -> Vec<serde_json::Value> {
+    // A spatial answer without `rows`, or a row without its distance, is a
+    // malformed answer: read as empty or as zero it would claim "no venues
+    // here", or put a venue on the stay itself.
+    let feats = |v: &serde_json::Value, is_point: bool| -> Result<Vec<serde_json::Value>> {
         v.get("rows")
             .and_then(serde_json::Value::as_array)
-            .map(|rows| {
-                rows.iter()
-                    .map(|r| {
-                        serde_json::json!({
-                            "name": r.get("name").and_then(serde_json::Value::as_str),
-                            // Already `[[k, v], …]` from the scored row.
-                            "tags": r.get("tags").cloned().unwrap_or_else(|| serde_json::json!([])),
-                            "distBits": r
-                                .get("distanceM")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("0"),
-                            "encloses": r
-                                .get("encloses")
-                                .and_then(serde_json::Value::as_bool)
-                                .unwrap_or(false),
-                            "isPoint": is_point,
-                        })
-                    })
-                    .collect()
+            .context("shapeLandmarks: a spatial answer without rows")?
+            .iter()
+            .map(|r| {
+                Ok(serde_json::json!({
+                    "name": r.get("name").and_then(serde_json::Value::as_str),
+                    // Already `[[k, v], …]` from the scored row.
+                    "tags": r.get("tags").cloned().unwrap_or_else(|| serde_json::json!([])),
+                    "distBits": r
+                        .get("distanceM")
+                        .and_then(serde_json::Value::as_str)
+                        .context("shapeLandmarks: a scored row without distanceM")?,
+                    // Only line rows carry it: a point encloses nothing.
+                    "encloses": r
+                        .get("encloses")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    "isPoint": is_point,
+                }))
             })
-            .unwrap_or_default()
+            .collect()
     };
+
+    /// One shaped landmark, as `Landmarks.shapeLandmarks` writes it.
+    #[derive(Deserialize)]
+    struct Shaped {
+        name: String,
+        #[serde(rename = "type")]
+        type_: String,
+        subtype: String,
+        #[serde(rename = "distanceMBits")]
+        distance_m: Bits,
+        enclosing: bool,
+        #[serde(default)]
+        inside: bool,
+        #[serde(rename = "openingHours")]
+        opening_hours: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Vec<Shaped>,
+    }
 
     let w: Wire = call_json(&serde_json::json!({
         "op": "shapeLandmarks",
-        "points": feats(points, true),
-        "lines": feats(lines, false),
+        "points": feats(points, true)?,
+        "lines": feats(lines, false)?,
     }))?;
 
     let out: Vec<serde_json::Value> = w
         .value
         .into_iter()
         .map(|m| {
-            let d = m
-                .get("distanceMBits")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|s| s.parse::<u64>().ok())
-                .map(f64::from_bits)
-                .unwrap_or(f64::INFINITY);
             let mut o = serde_json::Map::new();
-            o.insert("name".into(), m.get("name").cloned().unwrap_or_default());
-            o.insert("type".into(), m.get("type").cloned().unwrap_or_default());
-            o.insert(
-                "subtype".into(),
-                m.get("subtype").cloned().unwrap_or_default(),
-            );
+            o.insert("name".into(), m.name.into());
+            o.insert("type".into(), m.type_.into());
+            o.insert("subtype".into(), m.subtype.into());
             // A bit-pattern string, as `DayEntry.parsePoi` reads it (`jBits`);
             // a JSON number fails the fold's decode.
             o.insert(
                 "distanceM".into(),
-                serde_json::Value::String(crate::fold_payload::bits(d)),
+                crate::fold_payload::bits(m.distance_m.0).into(),
             );
             // `enclosing` is always present, as the recorded traces carry it;
             // only `openingHours` is conditional.
-            o.insert(
-                "enclosing".into(),
-                serde_json::Value::Bool(
-                    m.get("enclosing")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false),
-                ),
-            );
+            o.insert("enclosing".into(), m.enclosing.into());
             // Inside an open space's outline (`Landmarks.ENCLOSING_OPEN_SPACES`):
             // only when true, so the recorded traces, which never carry it,
             // read the same.
-            if m.get("inside").and_then(serde_json::Value::as_bool) == Some(true) {
-                o.insert("inside".into(), serde_json::Value::Bool(true));
+            if m.inside {
+                o.insert("inside".into(), true.into());
             }
-            if let Some(h) = m.get("openingHours").and_then(serde_json::Value::as_str) {
-                o.insert("openingHours".into(), serde_json::Value::String(h.into()));
+            if let Some(h) = m.opening_hours {
+                o.insert("openingHours".into(), h.into());
             }
             serde_json::Value::Object(o)
         })
@@ -1737,23 +1767,15 @@ pub fn relation_route(
     if let Some(e) = v.get("error") {
         anyhow::bail!("relationroute: {e}");
     }
-    let Some(path) = v.get("path").and_then(|p| p.as_array()) else {
+    let Some(path) = v.get("path").filter(|p| !p.is_null()) else {
         return Ok(None);
     };
-    let geom = path
-        .iter()
-        .filter_map(|p| {
-            let a = p.as_array()?;
-            let f = |i: usize| -> Option<f64> {
-                Some(f64::from_bits(a.get(i)?.as_str()?.parse::<u64>().ok()?))
-            };
-            Some(serde_json::json!({ "lat": f(0)?, "lon": f(1)? }))
-        })
-        .collect::<Vec<_>>();
-    let median = v
-        .get("medianM")
-        .and_then(|m| m.as_str()?.parse::<u64>().ok())
-        .map_or(f64::INFINITY, f64::from_bits);
+    let geom = path_lat_lon(path, "relationroute")?;
+    let median = f64_from_bits_str(
+        v.get("medianM")
+            .and_then(|m| m.as_str())
+            .context("relationroute: a path without its medianM")?,
+    )?;
     Ok(if geom.is_empty() {
         None
     } else {
@@ -1799,20 +1821,11 @@ pub fn rail_snap(
     }
     // `path: null` is a refusal, a normal answer (unresolved stations, a thin
     // cloud); an `error` is a malformed request.
-    let Some(path) = v.get("path").and_then(|p| p.as_array()) else {
+    let Some(path) = v.get("path").filter(|p| !p.is_null()) else {
         return Ok(None);
     };
     // Emitted as `[latBits, lonBits, tsBits]`; the cache stores `{lat, lon}`.
-    let geom = path
-        .iter()
-        .filter_map(|p| {
-            let a = p.as_array()?;
-            let f = |i: usize| -> Option<f64> {
-                Some(f64::from_bits(a.get(i)?.as_str()?.parse::<u64>().ok()?))
-            };
-            Some(serde_json::json!({ "lat": f(0)?, "lon": f(1)? }))
-        })
-        .collect::<Vec<_>>();
+    let geom = path_lat_lon(path, "railsnap")?;
     Ok(if geom.is_empty() { None } else { Some(geom) })
 }
 
@@ -1921,7 +1934,7 @@ pub struct GpsFix {
 pub fn drop_gps_outliers(points: &[GpsFix]) -> Result<Vec<GpsFix>> {
     #[derive(Deserialize)]
     struct Wire {
-        pts: Vec<(i64, String, String, String)>,
+        pts: Vec<(i64, Bits, Bits, Bits)>,
     }
     let pts: Vec<serde_json::Value> = points
         .iter()
@@ -1945,9 +1958,9 @@ pub fn drop_gps_outliers(points: &[GpsFix]) -> Result<Vec<GpsFix>> {
         .into_iter()
         .map(|(ts, lat, lon, speed)| GpsFix {
             ts,
-            lat: f64::from_bits(lat.parse().unwrap_or(0)),
-            lon: f64::from_bits(lon.parse().unwrap_or(0)),
-            speed_kmh: f64::from_bits(speed.parse().unwrap_or(0)),
+            lat: lat.0,
+            lon: lon.0,
+            speed_kmh: speed.0,
             accuracy_m: accuracy.get(&ts).copied(),
         })
         .collect())
@@ -1958,20 +1971,20 @@ pub fn drop_gps_outliers(points: &[GpsFix]) -> Result<Vec<GpsFix>> {
 // lookup. Every decision is `Verified.Hsmm.RailRoadProximity`'s; this side runs
 // `nearby_ways` and carries bytes.
 
-/// One location the shell must ask OSM about. The bit-pattern strings are its
-/// identity (Lean joins on them) and go back verbatim.
+/// One location the shell must ask OSM about. Its bit patterns are its
+/// identity (Lean joins on them) and go back exactly as they came.
 #[derive(Debug, Clone)]
 pub struct ProximityQuery {
-    lat_bits: String,
-    lon_bits: String,
+    lat: Bits,
+    lon: Bits,
 }
 
 impl ProximityQuery {
     pub fn lat(&self) -> f64 {
-        f64::from_bits(self.lat_bits.parse().unwrap_or(0))
+        self.lat.0
     }
     pub fn lon(&self) -> f64 {
-        f64::from_bits(self.lon_bits.parse().unwrap_or(0))
+        self.lon.0
     }
 }
 
@@ -1995,7 +2008,7 @@ pub fn proximity_queries(
     #[derive(Deserialize)]
     struct Wire {
         minutes: serde_json::Value,
-        queries: Vec<Vec<String>>,
+        queries: Vec<(Bits, Bits)>,
     }
     let pts: Vec<serde_json::Value> = points
         .iter()
@@ -2020,14 +2033,8 @@ pub fn proximity_queries(
     let queries = w
         .queries
         .into_iter()
-        .map(|q| match q.as_slice() {
-            [lat, lon] => Ok(ProximityQuery {
-                lat_bits: lat.clone(),
-                lon_bits: lon.clone(),
-            }),
-            _ => Err(anyhow!("proximityqueries: a query is not [lat, lon]")),
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .map(|(lat, lon)| ProximityQuery { lat, lon })
+        .collect();
     Ok(ProximityPlan {
         minutes: w.minutes,
         queries,
@@ -2072,8 +2079,8 @@ pub fn proximity_table(
         .iter()
         .map(|a| {
             serde_json::json!({
-                "lat": a.query.lat_bits,
-                "lon": a.query.lon_bits,
+                "lat": crate::fold_payload::bits(a.query.lat.0),
+                "lon": crate::fold_payload::bits(a.query.lon.0),
                 "ways": a.ways,
             })
         })
@@ -2380,6 +2387,9 @@ pub fn breaker_step(st: &BreakerState, event: &str, now_ms: u64) -> Result<Break
             .get("state")
             .cloned()
             .context("breaker returned no state")?,
-        open: val.get("open").and_then(|x| x.as_bool()).unwrap_or(false),
+        open: val
+            .get("open")
+            .and_then(|x| x.as_bool())
+            .context("breaker returned no open")?,
     })
 }

@@ -50,6 +50,7 @@ mod assemble_observation;
 mod auth_middleware;
 mod battery;
 mod bio_labels;
+mod bits_wire;
 mod bus_route_reach;
 mod capture_inputs_stamp;
 mod classification_inputs;

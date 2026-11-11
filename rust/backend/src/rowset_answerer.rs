@@ -733,9 +733,9 @@ impl<S: RowSource> OsmAnswerer<S> {
         if crate::fold::OSM_READS.contains(&miss.what.as_str()) {
             let p = key_parts(&miss.key);
             let (Some(lat), Some(lon), Some(r)) = (
-                p.first().map(|s| radius_of(s)),
-                p.get(1).map(|s| radius_of(s)),
-                p.get(2).map(|s| radius_of(s)),
+                p.first().map(|s| key_f64(s)).transpose()?,
+                p.get(1).map(|s| key_f64(s)).transpose()?,
+                p.get(2).map(|s| key_f64(s)).transpose()?,
             ) else {
                 return Ok(None);
             };
@@ -753,8 +753,8 @@ impl<S: RowSource> OsmAnswerer<S> {
         let (lat, lon) = (p[0], p[1]);
         // Parsed only to ask the question; the wire row is keyed by the
         // original strings.
-        let flat = f64::from_bits(lat.parse().unwrap_or(0));
-        let flon = f64::from_bits(lon.parse().unwrap_or(0));
+        let flat = key_f64(lat)?;
+        let flon = key_f64(lon)?;
 
         match miss.what.as_str() {
             // Four buckets plus the aeroway points, flattened with the bucket
@@ -775,10 +775,7 @@ impl<S: RowSource> OsmAnswerer<S> {
             // fields the table holds, so there is no shaping here.
             "nearbyStations" => {
                 let r = p.get(2).copied().unwrap_or("0");
-                let Some(rows) = self
-                    .source
-                    .point_rows("railway", flat, flon, radius_of(r))?
-                else {
+                let Some(rows) = self.source.point_rows("railway", flat, flon, key_f64(r)?)? else {
                     return Ok(None);
                 };
                 let v = spatial("nearbyStations", lat, lon, r, rows)?;
@@ -788,7 +785,7 @@ impl<S: RowSource> OsmAnswerer<S> {
 
             "linesAtPoint" => {
                 let r = p.get(2).copied().unwrap_or("0");
-                let Some(rows) = self.source.line_rows("railway", flat, flon, radius_of(r))? else {
+                let Some(rows) = self.source.line_rows("railway", flat, flon, key_f64(r)?)? else {
                     return Ok(None);
                 };
                 let v = spatial("linesAtPoint", lat, lon, r, rows)?;
@@ -878,10 +875,10 @@ impl<S: RowSource> OsmAnswerer<S> {
             // ⚠ The radius comes from the key, like `nearbyLandmarks`: the fold
             // asks at `Bus.TRANSIT_QUERY_RADIUS_M`.
             "transitStops" => {
-                let radius = p.get(2).map_or(
-                    crate::fold_payload::default_radius_m::NEARBY_TRANSIT_STOPS,
-                    |s| radius_of(s),
-                );
+                let radius = match p.get(2) {
+                    Some(s) => key_f64(s)?,
+                    None => crate::fold_payload::default_radius_m::NEARBY_TRANSIT_STOPS,
+                };
                 let Some(shaped) = nearby_transit_stops(&mut self.source, flat, flon, radius)?
                 else {
                     return Ok(None);
@@ -941,7 +938,11 @@ fn push_ways(out: &mut Vec<Value>, bucket: &str, answer: &Value) {
     }
 }
 
-/// A radius key part, as metres.
-fn radius_of(bits_str: &str) -> f64 {
-    f64::from_bits(bits_str.parse().unwrap_or(0))
+/// A key part as the `f64` its bit pattern spells. The fold writes keys from
+/// bit patterns, so one that is not is a fold defect: asking the mirror at
+/// (0, 0) instead would record "nothing here" as an answer.
+fn key_f64(bits_str: &str) -> Result<f64> {
+    Ok(f64::from_bits(bits_str.parse::<u64>().with_context(
+        || format!("a key part {bits_str:?} is not an IEEE-754 bit pattern"),
+    )?))
 }
