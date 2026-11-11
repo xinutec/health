@@ -1,11 +1,10 @@
 import Verified.Rail.Graph
 
 /-!
-# Dijkstra — a faithful port of `rail-snap.ts`'s `shortestPath`
+# Dijkstra: rail-snap's `shortestPath`
 
-Ported loop-for-loop from the TS implementation, including its tie
-behaviour, so path identity (not just path cost) can be pinned against the
-production code on identical quantised graphs:
+Loop for loop, including its tie behaviour, so path identity (not just path
+cost) is pinned on identical quantised graphs:
 
 * the binary min-heap sifts up while `parent > child` (stops on `≤`) and
   sifts down only to a strictly smaller child, left child preferred on
@@ -16,10 +15,9 @@ production code on identical quantised graphs:
 * the path is rebuilt by following `prev` from `dst` to the `-1` sentinel
   (here `n`).
 
-Two deliberate contract deltas, both "honest `none` over nonsense":
-out-of-range `src`/`dst` returns `none` (the TS code would read past its
-arrays), and a `prev` cycle — impossible for a real run — exhausts fuel to
-`none` instead of looping.
+Two deliberate contract choices, both "honest `none` over nonsense": out-of-range
+`src`/`dst` returns `none` rather than reading past the arrays, and a `prev`
+cycle (impossible for a real run) exhausts fuel to `none` instead of looping.
 
 Fuel is not a semantic knob: each pop consumes a push, and pushes are
 bounded by one per directed edge (a vertex settles once) plus the seed, so
@@ -28,7 +26,7 @@ bounded by one per directed edge (a vertex settles once) plus the seed, so
 
 namespace Verified.Rail
 
-/-- Binary min-heap of `(priority, vertex)` — the TS `MinHeap`. -/
+/-- Binary min-heap of `(priority, vertex)`. -/
 structure Heap where
   a : Array (Nat × Nat)
 deriving Repr, Inhabited
@@ -76,8 +74,8 @@ def push (h : Heap) (p v : Nat) : Heap :=
   let a := h.a.push (p, v)
   ⟨siftUp a (a.size - 1)⟩
 
-/-- The left-child step of the TS sift-down selection: the smaller of
-`i` and its left child (left preferred on ties by strict `<`). -/
+/-- The left-child step of the sift-down selection: the smaller of `i` and its
+left child (left preferred on ties by strict `<`). -/
 def sDown1 (a : Array (Nat × Nat)) (i : Nat) : Nat :=
   if 2 * i + 1 < a.size && (a.getD (2 * i + 1) (0, 0)).1 < (a.getD i (0, 0)).1 then
     2 * i + 1
@@ -119,8 +117,8 @@ def siftDownFast (a : Array (Nat × Nat)) : Nat → Nat → Array (Nat × Nat)
     · rfl
     · exact ih _ _
 
-/-- Pop the minimum. Mirrors TS: move the last element to the root and
-sift down (skipped when the heap becomes empty). -/
+/-- Pop the minimum: move the last element to the root and sift down (skipped
+when the heap becomes empty). -/
 def pop (h : Heap) : Option ((Nat × Nat) × Heap) :=
   match h.a[0]? with
   | none => none
@@ -157,21 +155,21 @@ def popFast (h : Heap) : Option ((Nat × Nat) × Heap) :=
 
 end Heap
 
-/-- Dijkstra working state. `dist[v] = none` is `+∞`; `prev[v] = n` is the
-TS `-1` sentinel. -/
+/-- Dijkstra working state. `dist[v] = none` is `+∞`; `prev[v] = n` is the "no
+predecessor" sentinel. -/
 structure DState where
   dist : Array (Option Nat)
   prev : Array Nat
   done : Array Bool
   heap : Heap
 
-/-- The TS `nd < (dist[v] ?? Infinity)`. -/
+/-- `nd < (dist[v] ?? Infinity)`. -/
 def improves (st : DState) (v nd : Nat) : Bool :=
   match st.dist.getD v none with
   | none => true
   | some dv => nd < dv
 
-/-- One edge relaxation — the body of the TS inner loop, strict `<`. -/
+/-- One edge relaxation, strict `<`. -/
 def relaxStep (u p : Nat) (st : DState) (tw : Nat × Nat) : DState :=
   if improves st tw.1 (p + tw.2) then
     { st with
@@ -181,7 +179,7 @@ def relaxStep (u p : Nat) (st : DState) (tw : Nat × Nat) : DState :=
   else st
 
 /-- Relax every edge out of `u` (settled at distance `p`), in adjacency
-order — the TS inner loop. -/
+order. -/
 def relaxAll (u p : Nat) (edges : Array (Nat × Nat)) (st : DState) : DState :=
   edges.foldl (init := st) (relaxStep u p)
 
@@ -199,8 +197,8 @@ def loop (g : Graph) (dst : Nat) : Nat → DState → DState
           (relaxAll u p (g.adj.getD u #[])
             { st with heap := h', done := st.done.setIfInBounds u true })
 
-/-- Follow `prev` from `dst` back to the sentinel, accumulating the path
-front-first (the TS builds reversed and flips; same result). -/
+/-- Follow `prev` from `dst` back to the sentinel, accumulating the path front
+first. -/
 def rebuild (prev : Array Nat) (n : Nat) : Nat → Nat → List Nat → Option (List Nat)
   | 0, _, _ => none
   | fuel + 1, v, acc =>

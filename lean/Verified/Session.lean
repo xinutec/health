@@ -1,11 +1,10 @@
 /-!
 # Session and share-viewer rules
 
-The decisions in front of every authenticated request. What is NOT here, and
-deliberately: the HMAC, the CSPRNG that mints a session id, and the constant-time
-compare. Those are `randomBytes`-shaped — there is nothing to prove about them
-beyond that they were asked for, and a Lean model of one would be fiction. The
-worked split is `src/share/token.ts`, recorded in `rust/backend/src/lib.rs`.
+The decisions in front of every authenticated request. What is not here, and
+deliberately: the HMAC, the CSPRNG that mints a session id, and the
+constant-time compare. There is nothing to prove about them beyond that they
+were asked for, and a Lean model of one would be fiction.
 
 What IS here is everything a wrong three-liner would silently change:
 
@@ -14,14 +13,13 @@ What IS here is everything a wrong three-liner would silently change:
 * **what a share recipient may do**, which is the rule protecting the owner's
   data from a link they forwarded.
 
-Pure and total. UNPROVEN; pinned by the `#guard`s, and the framing cases are what
-`verifyValue` actually returned under Node — see `lean/experiments/session-refs.mts`.
+Pure and total. UNPROVEN; pinned by the `#guard`s, including the framing cases.
 -/
 
 namespace Verified.Session
 
-/-- How long a session lasts UNUSED: a month (his call, 2026-11-10). Every use
-moves the expiry forward (`renewedExpiry`), so a login in use never ends, and a
+/-- How long a session lasts unused: a month (the user's call). Every use moves
+the expiry forward (`renewedExpiry`), so a login in use never ends, and a
 forgotten browser on a borrowed machine stops working a month after its last
 visit. -/
 def SESSION_TTL_MS : Int := 30 * 24 * 60 * 60 * 1000
@@ -66,11 +64,10 @@ def splitSigned (signed : String) : Option (String × String) :=
 
 /-- Is a session row still good?
 
-⚠ INCLUSIVE at the boundary: the TypeScript expires a row when `expires_at <
-now`, so a row expiring exactly now is still valid. Kept because flipping it
-would log a user out one millisecond earlier for no reason anyone could observe,
-and because the boundary is the sort of thing that gets flipped by accident when
-someone "tidies" the comparison. -/
+⚠ Inclusive at the boundary: a row expiring exactly now is still valid. Flipping
+it would log a user out one millisecond earlier for no reason anyone could
+observe, and the boundary is the sort of thing that gets flipped by accident
+when someone "tidies" the comparison. -/
 def sessionIsValid (expiresAtMs nowMs : Int) : Bool := nowMs ≤ expiresAtMs
 
 /-- Paths a share recipient may POST to despite being read-only.
@@ -117,8 +114,7 @@ def mayProceedSharing (isShareViewer hidesLocation : Bool) (method path : String
 
 /-! ## Guards
 
-The framing cases are what `verifyValue` returned under Node; regenerate with
-`npx tsx lean/experiments/session-refs.mts`. -/
+The framing cases are the original `verifyValue`'s answers. -/
 
 #guard splitSigned "abc.SIG" == some ("abc", "SIG")
 -- ⚠ The `lastIndexOf` case: a value containing dots round-trips whole.

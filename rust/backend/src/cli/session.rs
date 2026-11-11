@@ -6,11 +6,9 @@ use backend::{config::Config, db};
 
 /// Mint a session and print its cookie value, for end-to-end verification.
 ///
-/// ⚠ THIS CREATES REAL CREDENTIALS. It exists because the only honest way to
-/// compare the Rust backend against the TypeScript one is to send the SAME
-/// cookie to both — they share the sessions table, so a session minted here is
-/// accepted by either. Nothing else in the port can check an authenticated
-/// response body.
+/// ⚠ This creates real credentials. It exists to check an authenticated
+/// response end to end: a session minted here is as valid as one from a
+/// login.
 ///
 /// ⚠ Pair every call with `drop-session`. A session left behind is a working
 /// credential for the named user with the full TTL ahead of it, and nothing

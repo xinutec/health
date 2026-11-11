@@ -51,9 +51,8 @@ pub async fn by_token(pool: &MySqlPool, token: &str) -> Result<Option<ShareRow>>
     }))
 }
 
-/// Note that a link was used. Best-effort by design: the TypeScript fires this
-/// and forgets, and a failed bookkeeping write must not fail the read it
-/// accompanies.
+/// Note that a link was used. Best-effort by design: a failed bookkeeping write
+/// must not fail the read it accompanies.
 ///
 /// ⚠ Returns the error rather than swallowing it, so the caller decides to
 /// ignore it. A function that swallows its own failure cannot be tested for
@@ -79,9 +78,8 @@ pub async fn touch_last_accessed(pool: &MySqlPool, token: &str) -> Result<()> {
 /// the viewer's zone — the same argument `Verified.VelocityCache` needs and for
 /// the same reason: Lean has no zone database.
 ///
-/// ⚠ The display name is the OWNER's user id, matching the TypeScript. The
-/// frontend prefixes "Shared with you"; the backend does not pretend the
-/// recipient is someone else.
+/// ⚠ The display name is the owner's user id. The frontend prefixes "Shared
+/// with you"; the backend does not pretend the recipient is someone else.
 pub async fn resolve(pool: &MySqlPool, token: &str, today: &str) -> Result<Option<UserSession>> {
     let Some(row) = by_token(pool, token).await? else {
         return Ok(None);

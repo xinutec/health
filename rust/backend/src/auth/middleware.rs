@@ -1,6 +1,6 @@
 //! Turning a request into a session, and refusing the ones that should be.
 //!
-//! Two ways in, tried in the TypeScript's order:
+//! Two ways in, tried in this order:
 //!
 //!   1. the `session` cookie — the owner on their own dashboard;
 //!   2. `X-Share-Token` — a forwarded link, read-only, windowed.
@@ -32,8 +32,8 @@ use crate::auth::session::UserSession;
 use crate::auth::{session, share};
 use crate::state::AppState;
 
-/// The header a share recipient sends. Matches the TypeScript's `X-Share-Token`;
-/// header names are case-insensitive, so the spelling here is documentation.
+/// The header a share recipient sends. Header names are case-insensitive, so
+/// the spelling here is documentation.
 pub const SHARE_HEADER: &str = "x-share-token";
 
 /// Who is asking, and the session cookie to send back when its session was
@@ -94,10 +94,9 @@ pub async fn require_session(
     next: Next,
 ) -> Response {
     let now_ms = chrono::Utc::now().timestamp_millis();
-    // ⚠ The share window is anchored on the OWNER's civil date, resolved in
-    // UTC here because the recipient's zone is not known at this point — the
-    // `tz` query parameter belongs to the route, not to authentication. The
-    // TypeScript did the same (`new Date().toISOString().slice(0, 10)`), so a
+    // ⚠ The share window is anchored on the owner's civil date, resolved in
+    // UTC here because the recipient's zone is not known at this point (the
+    // `tz` query parameter belongs to the route, not to authentication), so a
     // link near midnight can differ by a day from what the viewer sees.
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
@@ -150,10 +149,10 @@ pub async fn require_session(
 /// ALLOWED, and then `require_session` attaches the session and runs the route.
 /// A read-only link could write, and nothing anywhere would say so.
 ///
-/// ⚠ That is not hypothetical laziness — it was MEASURED. Flipping the two
-/// layers in `routes::mod` on 2026-08-22 failed ZERO of the eleven tests that
-/// covered this, because the test that claimed to protect the order mirrored
-/// the stack rather than importing it and so only ever tested its own copy.
+/// ⚠ That is not hypothetical: flipping the two layers in `routes::mod` once
+/// failed zero of the eleven tests that covered this, because the test that
+/// claimed to protect the order mirrored the stack rather than importing it,
+/// and so only ever tested its own copy.
 ///
 /// Refusing here costs nothing in correct operation: mounted properly,
 /// `require_session` has already answered 401 and this never sees a request

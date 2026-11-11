@@ -78,11 +78,10 @@ def certify (g : Graph) (src dst : Nat) (done : Array Bool) (dist : Array (Optio
 the `dijkstraC_correct` guarantee; a certification failure returns `none`
 (honest refusal, same contract as the other `none`s).
 
-This is the TS `shortestPath`: `Main`'s `path` verb calls it, so it is what
-`LEAN_RAIL` actually serves. The rename has to be declared here because
-`Geo.RailSnap.shortestPath` is a SEPARATE and entirely uncalled copy of the
-same function — a name-matching coverage scan binds to that one, finds it
-unreachable, and reports the flagship served tenant as an unported gap. -/
+This is the served `shortestPath`: `Main`'s `path` verb calls it. The name is
+declared here because `Geo.RailSnap.shortestPath` is a separate, uncalled copy
+of the same function, and a name-matching coverage scan would bind to that one,
+find it unreachable, and report this one as missing. -/
 def dijkstraC (g : Graph) (src dst : Nat) : Option (List Nat) :=
   if src ≥ g.n ∨ dst ≥ g.n then none
   else

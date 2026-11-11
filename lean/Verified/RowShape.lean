@@ -8,35 +8,27 @@ is whatever columns the table has, rendered by whatever the MariaDB driver
 decided each SQL type becomes in JavaScript, then by `JSON.stringify`. Change
 any of those and the frontend reads a different type from the same endpoint.
 
-## The declared TypeScript types are NOT the shape
+## The declared column types are not the shape
 
-`src/db/tables.ts` declares `daily_rmssd: number | null` and, eleven lines
-above, comments that DECIMAL columns come back as strings. Both cannot be true;
-the comment is. So every mapping below is what the driver was OBSERVED to
-produce against production — `scripts/probe-row-shapes.mjs` — and not what the
-schema says it ought to.
+A column declared `number | null` may hold DECIMAL, which comes back as a
+string. So every mapping below is what the driver was observed to produce
+against production, not what the schema says it ought to.
 
 ## The four that surprise
 
-* **DATE is not a date.** `date` arrives as a JS `Date` and `JSON.stringify`
-  renders it in UTC, so a `DATE` column ships as `"2026-08-22T00:00:00.000Z"` —
-  a full timestamp, not `"2026-08-22"`.
+* **DATE is not a date.** It renders as a UTC timestamp, so a `DATE` column
+  ships as `"YYYY-MM-DDT00:00:00.000Z"`, a full timestamp, not `"YYYY-MM-DD"`.
 * **DECIMAL is a string.** Its exact server text, scale and all.
-* **BIGINT is a string too**, via the `BigInt.prototype.toJSON` patch in
-  `src/bigint-json.ts`. Without that patch `JSON.stringify` THROWS.
-* **`TINYINT(1)` is a NUMBER, `0` or `1`** — never `true`/`false`. ⚠ sqlx names
+* **BIGINT is a string too.**
+* **`TINYINT(1)` is a number, `0` or `1`**, never `true`/`false`. ⚠ sqlx names
   that column type `"BOOLEAN"`, so a host that trusts the name, decodes a Rust
   `bool` and serialises it emits `true` and silently changes the contract.
 
-⚠ The UTC rendering above is only correct because the serving pod's TZ is
-unset, and `JSON.stringify` of a `Date` uses UTC regardless. The TypeScript's
-wire format therefore DEPENDS ON ITS PROCESS TIMEZONE; under `TZ=Europe/London`
-a `DATE` would ship as the previous day at 23:00Z. A host that formats these
-strings directly, as this module does, has no such dependency — it is the same
-bytes production emits today, minus the ambient variable.
+⚠ The UTC rendering above is fixed by this module, not by any process
+timezone: a renderer that used the ambient zone would ship a `DATE` under
+`TZ=Europe/London` as the previous day at 23:00Z.
 
-Pure and total. UNPROVEN; every `#guard` is what the driver and `JSON.stringify`
-produced — see `lean/experiments/rowshape-refs.mts`.
+Pure and total. UNPROVEN; the `#guard`s pin the shapes the frontend reads.
 -/
 namespace Verified.RowShape
 
@@ -65,10 +57,10 @@ the wrong guess is invisible — it produces a well-formed response of the wrong
 type. The names are sqlx's (`MySqlTypeInfo::name`), which is where the host
 reads them from.
 
-⚠ FLOAT and DOUBLE are refused DELIBERATELY, not overlooked. Rendering a float
-to JSON means reproducing V8's shortest-round-trip algorithm exactly, and Rust's
-`serde_json` is known to disagree with it. None of the ten tables has such a
-column, so the choice is between a refusal and an unverified renderer. -/
+⚠ FLOAT and DOUBLE are refused deliberately: rendering a float to JSON the way a
+JavaScript client expects means reproducing shortest-round-trip formatting
+exactly, and no table has such a column, so the choice is between a refusal and
+an unverified renderer. -/
 def shapeOf (sqlType : String) : Option Shape :=
   match sqlType with
   -- ⚠ "BOOLEAN" is sqlx's name for TINYINT(1). The wire carries 0 or 1.

@@ -9,9 +9,9 @@ use backend::db;
 /// # Why this exists
 ///
 /// The Google Health migration needs to know which rows have a Google source
-/// and which do not. `backend google-probe` measured the far side: the watch
-/// series there begin 2023-04-16. This measures THIS side, so the two can be
-/// compared instead of one being assumed from the other.
+/// and which do not. `backend google-probe` measures the far side; this
+/// measures this side, so the two can be compared instead of one being assumed
+/// from the other.
 ///
 /// ⚠ FIVE GOOGLE STREAMS AGREEING ON ONE DATE IS NOT CORROBORATION. It is one
 /// observation of one system, and it could as easily be an artefact of how the
@@ -29,10 +29,9 @@ use backend::db;
 ///
 /// # Why this is an outcome check and not an error check
 ///
-/// On 2026-08-28 `daily_activity` stopped for over an hour because Fitbit began
-/// quoting an integer. `health-sync` exited 0 on every run; the only trace was
-/// one ERROR line in a pod log that nothing read. It surfaced because I happened
-/// to be watching a deploy for an unrelated reason.
+/// A sync stream can stop for an hour with every run exiting 0 and the only
+/// trace one ERROR line in a pod log that nothing reads (Fitbit once began
+/// quoting an integer). This asks the outcome question instead.
 ///
 /// ⚠ Watching for a known error string would not have caught it, and would not
 /// catch the NEXT one either — a stream that writes nothing without erroring
@@ -116,12 +115,11 @@ pub(crate) async fn freshness() -> Result<()> {
 
 /// What shape is `heart_rate_zones` actually in?
 ///
-/// ⚠ THE ROW COUNT ALONE CANNOT TELL JUNK FROM DUPLICATION. `backend coverage`
-/// read 24,332 rows starting 2010-01-01, where every other biometric table
-/// starts 2023-04-01 — but 24,332 over ~1,250 real days is ~19 rows a day and
-/// Fitbit reports four or five zones, so the surplus is either dates the watch
-/// never saw or a zone axis nobody expected. Those need opposite repairs, and
-/// deleting before knowing which would be a guess.
+/// ⚠ The row count alone cannot tell junk from duplication: rows starting in
+/// 2010 where every other biometric table starts in 2023, at ~19 a day
+/// where Fitbit reports four or five zones, are either dates the watch never
+/// saw or a zone axis nobody expected. Those need opposite repairs, and deleting
+/// before knowing which would be a guess.
 ///
 /// The primary key is `(user_id, date, zone_name)`, so rows ARE distinct
 /// triples: `rows / (days x zones x users)` is 1 when the table is exactly what
@@ -185,15 +183,14 @@ pub(crate) async fn zones_census() -> Result<()> {
         println!("  {z:<24} {n:>7} rows over {d} dates");
     }
 
-    // ⚠ THE OLDEST DATES, not a sample. A sentinel date is at one end by
-    // construction, and the question is whether 2010-01-01 is one row or a
-    // decade of them — which `LIMIT 20` from the oldest end answers and a
+    // ⚠ The oldest dates, not a sample. A sentinel date is at one end by
+    // construction, and the question is whether the earliest date is one row or
+    // a decade of them, which `LIMIT 20` from the oldest end answers and a
     // random sample cannot.
-    // ⚠ `CAST(SUM(...) AS CHAR)`, NOT the bare SUM. `SUM` over INT widens to
-    // DECIMAL in MariaDB, which sqlx decodes as neither i64 nor f64
-    // ([[reference_sqlx_mysql_type_traps]]) — and the first cut of this read it
-    // bare, printed `?` for every row, and left the one number that decides
-    // junk-versus-real unreadable. A cast on SOME columns is not a cast.
+    // ⚠ `CAST(SUM(...) AS CHAR)`, not the bare SUM. `SUM` over INT widens to
+    // DECIMAL in MariaDB, which sqlx decodes as neither i64 nor f64, leaving the
+    // one number that decides junk versus real unreadable. A cast on some
+    // columns is not a cast.
     let oldest = sqlx::query(
         "SELECT CAST(date AS CHAR) AS d, COUNT(*) AS n, \
          CAST(SUM(COALESCE(minutes, 0)) AS CHAR) AS total_minutes \
@@ -334,11 +331,10 @@ fn is_iso_date(s: &str) -> bool {
 
 /// Recent resting HR / HRV / breathing rate, one row per date since `since`.
 ///
-/// `backend hr-trend [--json] [SINCE]` — a table, or with `--json` the array
+/// `backend hr-trend [--json] [SINCE]`: a table, or with `--json` the array
 /// `[{"date", "rhr", "rmssd", "resp", "resp_deep", "resp_light", "resp_rem"}]`, a key present only where that table
-/// has a row for the day, `null` where the row holds no value. Replaces the
-/// Node probe deleted in 045bcbe; `~/Code/dicom-scan/refresh_hr_data.py` reads
-/// it through `scripts/prod-db.sh`.
+/// has a row for the day, `null` where the row holds no value.
+/// `~/Code/dicom-scan/refresh_hr_data.py` reads it through `scripts/prod-db.sh`.
 ///
 /// ⚠ DECIMAL columns are read as CHAR and parsed here — sqlx refuses them on a
 /// real row ([[reference_sqlx_mysql_type_traps]]).
@@ -506,10 +502,10 @@ pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> 
 /// The full HRV + resting-HR history as CSV, `date,hrv,rhr`, one row per day
 /// present in either table, ascending; an empty cell is a missing reading.
 ///
-/// `backend hrv-history` replaces the Node probe deleted in 045bcbe; it backs
-/// the long-term chart in the case file. ⚠ A recorded ZERO counts as
-/// missing: an RMSSD of 0 ms is a failed reading, not a measurement. Dropped
-/// here and not at ingest — `hrv_daily` keeps what Fitbit recorded, verbatim.
+/// `backend hrv-history` backs the long-term chart in the case file. ⚠ A
+/// recorded zero counts as missing: an RMSSD of 0 ms is a failed reading, not a
+/// measurement. Dropped here and not at ingest: `hrv_daily` keeps what Fitbit
+/// recorded, verbatim.
 pub(crate) async fn hrv_history() -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env().context("reading configuration")?;

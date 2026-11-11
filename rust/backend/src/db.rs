@@ -13,12 +13,8 @@ use anyhow::{Context, Result};
 use sqlx::MySqlPool;
 use sqlx::mysql::MySqlPoolOptions;
 
-/// Enough for the sync job's fan-out without being a second opinion about the
-/// server's needs. The TypeScript pool is 20, sized for `velocity.ts`'s
-/// `Promise.all` segment enrichment — a request-path concern that has not moved
-/// here yet. Sizing this at 20 now would be copying a number away from the
-/// measurement that justified it; it rises when the request path arrives and
-/// has its own reason to.
+/// Sized for the sync job's fan-out and a server that folds one day at a time
+/// (`fold_slot`).
 const MAX_CONNECTIONS: u32 = 8;
 
 pub async fn connect(database_url: &str) -> Result<MySqlPool> {

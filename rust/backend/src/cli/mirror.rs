@@ -56,7 +56,7 @@ pub(crate) struct MirrorHarvest {
 /// RATE, not a concurrency.
 ///
 /// The number comes from the endpoint's own statement of its terms rather than
-/// from taste. Measured 2026-08-29:
+/// from taste:
 ///
 ///     GET https://overpass-api.de/api/status
 ///       Rate limit: 2
@@ -67,11 +67,10 @@ pub(crate) struct MirrorHarvest {
 /// budget is spent over TIME, and 5 s is a pace a two-slot allowance can sustain
 /// while adding 90 s to an 18-tile run — against a 90-minute deadline.
 ///
-/// ⚠⚠ THIS DOES NOT FIX THE NIGHTLY CRON, AND THE COMMIT THAT ADDED IT SAID IT
-/// DID. The 56% -> 83% coverage gain behind this constant was measured from the
-/// MAC. `scripts/prod-db.sh` tunnels the DATABASE; the Overpass calls go out
-/// over the Mac's own network, so a dry run there never exercises the path the
-/// CronJob uses. Measured properly on 2026-08-29, from the pod's host:
+/// ⚠⚠ Measured from the Mac, a coverage gain says nothing about the nightly
+/// cron: `scripts/prod-db.sh` tunnels the database, but the Overpass calls go
+/// out over the Mac's own network, so a dry run there never exercises the path
+/// the CronJob uses. Measured from the pod's host:
 ///
 ///     isis -> 162.55.144.139:443   Connection refused, 0.013 s (forced IPv4 too)
 ///     amun -> overpass-api.de      200 in 0.11 s
@@ -81,13 +80,12 @@ pub(crate) struct MirrorHarvest {
 /// general egress healthy (github 200 in 0.08 s): `overpass-api.de` was refusing
 /// isis (188.165.200.180) at the far end.
 ///
-/// ⚠ **THAT REFUSAL WAS A BAN, AND IT HAS LIFTED — do not read the table above
-/// as a standing fact about this host.** #1153 closed it: the burst of eighteen
-/// back-to-back queries against a TWO-slot allowance is what earned the block,
-/// and once `wait_for_slot` asked `/api/status` first the same cron reached 35
-/// of 36 tiles (97%) from isis. So the endpoint WAS rate-limiting us; what was
-/// wrong was the axis every earlier fix measured, which is why slowing the job
-/// down changed nothing.
+/// ⚠ **That refusal was a ban, and it lifted; do not read the table above as a
+/// standing fact about this host.** A burst of eighteen back-to-back queries
+/// against a two-slot allowance earned the block, and once `wait_for_slot`
+/// asked `/api/status` first the same cron reached 35 of 36 tiles (97%). So the
+/// endpoint was rate-limiting; slowing the job down changed nothing because it
+/// was the wrong axis.
 ///
 /// The pacing stays because it is correct behaviour toward a two-slot endpoint
 /// and it is what got the Mac from 56% to 83%. It is not what fixed the cron —
@@ -265,9 +263,9 @@ pub(crate) async fn mirror_fetch(
         backend::overpass::wait_for_slot(client, SLOT_WAIT_CAP_S).await;
         let key = lean::tile_key(tile);
         let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
-        // ⚠ Fail fast while the breaker is open — the whole point is not to eat
+        // ⚠ Fail fast while the breaker is open: the whole point is not to eat
         // the timeout on calls that will not succeed. It still counts as a tile
-        // failure, exactly as `OverpassBreakerOpenError` does in the TypeScript.
+        // failure.
         breaker = lean::breaker_step(&breaker, "check", now_ms)?;
         if breaker.open {
             eprintln!(
@@ -280,9 +278,9 @@ pub(crate) async fn mirror_fetch(
         }
 
         let query = lean::overpass_query(mode, tile)?;
-        // ⚠ A TRANSIENT REFUSAL IS RETRIED ONCE, not surrendered: a skipped
-        // tile is a permanent hole in this run's coverage, and coverage is the
-        // quantity #1153 is about. A 504 is a timeout, not a verdict.
+        // ⚠ A transient refusal is retried once, not surrendered: a skipped tile
+        // is a permanent hole in this run's coverage, and a 504 is a timeout,
+        // not a verdict.
         //
         // ⚠ WHETHER IT EARNS ITS ~6 s IS NOT YET KNOWN — the tally below is what
         // settles it. If the nightlies print retries that never win, drop this.
@@ -376,10 +374,8 @@ pub(crate) async fn mirror_fetch(
             backend::overpass::Outcome::AllFailed { errors, .. } => {
                 let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
                 breaker = lean::breaker_step(&breaker, "failure", now_ms)?;
-                // ⚠ EVERY mirror is named. The 2026-08-25 dry run printed only
-                // `kumi.systems` on all six failed tiles, which reads as one
-                // endpoint being down while both were — #1153's misreading,
-                // reproduced here before it was fixed.
+                // ⚠ Every mirror is named: naming only the last one tried
+                // reads as one endpoint being down while both were.
                 eprintln!(
                     "  tile {}/{}: {} — skipped",
                     i + 1,
@@ -436,12 +432,10 @@ pub(crate) async fn mirror_plan(
     Ok(Some(plan))
 }
 
-/// ⚠ COVERAGE IS REPORTED BECAUSE A COUNT CANNOT SUBSTITUTE FOR IT. #1134's
-/// measured finding is that a route count is uncorrelated with the harm — a run
-/// fetching 796 of 995 routes while losing the ones the rider uses passed a
-/// count floor. What fraction of the AREA was refreshed is the quantity that is
-/// not, and printing it is reporting, not behaviour, so the parity diff against
-/// the TypeScript arm still holds.
+/// ⚠ Coverage is reported because a count cannot substitute for it: a route
+/// count is uncorrelated with the harm (a run fetching 796 of 995 routes while
+/// losing the ones the rider uses passes a count floor). What fraction of the
+/// area was refreshed is what matters.
 pub(crate) fn mirror_coverage_line(succeeded: usize, total: usize) -> String {
     let pct = if total == 0 {
         0.0

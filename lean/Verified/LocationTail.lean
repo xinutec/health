@@ -9,9 +9,9 @@ wrong by one character and looks right.
 ## The tail is a TAIL
 
 `/location/tail` answers "every fix after the one you already have", so the
-classification pipeline's lag can be filled with raw points. The TypeScript is
-`points.filter(p => p.ts > since).slice(-TAIL_MAX_POINTS)`, and both halves are
-inverted easily:
+classification pipeline's lag can be filled with raw points: the fixes with
+`ts > since`, the last `TAIL_MAX_POINTS` of them. Both halves are inverted
+easily:
 
 * `>` is STRICT. `>=` resends the point the caller named, which the map then
   draws twice.
@@ -19,20 +19,17 @@ inverted easily:
   OLDEST — which for a long tail means answering a request for recent movement
   with the stale head of the buffer and never reaching the present.
 
-⚠ The cap is silent in both implementations: a caller asking with an old
-`since` gets 2000 points and no indication that more were dropped. That is the
-TypeScript's behaviour and is preserved, but it means a client cannot use this
-endpoint to catch up from arbitrarily far back.
+⚠ The cap is silent: a caller asking with an old `since` gets 2000 points and no
+indication that more were dropped, so a client cannot use this endpoint to catch
+up from arbitrarily far back.
 
 ## Freshness is the same rule as the velocity cache
 
-Both caches here are ten seconds, and both are fresh iff `age < ttl` — the
-TypeScript writes one as `now - at < TTL` and the other as `now - at >= TTL`
-inverted, which is the same boundary said twice. [`Verified.VelocityCache`]
-already owns that comparison, so it is reused rather than restated.
+Both caches here are ten seconds, and both are fresh iff `age < ttl`.
+[`Verified.VelocityCache`] already owns that comparison, so it is reused rather
+than restated.
 
-Pure and total. UNPROVEN; every `#guard` is what `src/routes/api.ts` produced
-under Node — see `lean/experiments/locationtail-refs.mts`.
+Pure and total. UNPROVEN; the `#guard`s pin the original route's answers.
 -/
 namespace Verified.LocationTail
 

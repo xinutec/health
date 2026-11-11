@@ -117,10 +117,10 @@ def toFixedNExact (x : Float) (f : Nat) : Nat :=
     -- and flooring then lands on the LARGER candidate, as the spec requires.
     (2 * n + den) / (2 * den)
 
-/-! ⚠ A float literal inside a branch or a loop body is NOT hoisted by the
-compiler: it compiles to a `Float.ofScientific` call — big-integer shifts and
-a GMP allocation — on every pass (a quarter of `toFixedN`'s time, #1921; read
-the generated C for `l_Float_ofScientific(` inside the function). A module-level
+/-! ⚠ A float literal inside a branch or a loop body is not hoisted by the
+compiler: it compiles to a `Float.ofScientific` call (big-integer shifts and a
+GMP allocation) on every pass, a quarter of `toFixedN`'s time; read the
+generated C for `l_Float_ofScientific(` inside the function. A module-level
 `def` compiles to one cell, filled once. -/
 private def TEN_POW_7 : Float := 10000000.0
 private def HALF : Float := 0.5
@@ -222,11 +222,10 @@ def toFixedKey (x : Float) (f : Nat) : Option FixedKey :=
 /-- The coordinate-fusion key that the graph builders hash a vertex by — the
     comparable form of `` `${lat.toFixed(7)},${lon.toFixed(7)}` ``.
 
-    The `raw` arm is reachable only for a coordinate at or above `10^21`, where
-    the TS key would come from the unported `ToString`. Latitudes and longitudes
-    are bounded by ±90 / ±180, so it cannot arise from real data; it gives such
-    a point its own vertex rather than guessing at a spelling and fusing two
-    points that JS would have kept apart. -/
+    The `raw` arm is reachable only for a coordinate at or above `10^21`, which
+    `toFixed` does not format. Latitudes and longitudes are bounded by ±90 /
+    ±180, so it cannot arise from real data; it gives such a point its own
+    vertex rather than guessing at a spelling and fusing two distinct points. -/
 inductive CoordKey where
   | fused (lat lon : FixedKey)
   | raw (latBits lonBits : UInt64)
@@ -239,9 +238,8 @@ def coordKey7 (lat lon : Float) : CoordKey :=
 
 /-! ## Guards
 
-Reference values from `lean/experiments/tofixed-refs.mts`, run under the same
-V8 the backend runs on. These are EXACT string comparisons — no tolerance —
-because the whole point of the port is the rounding decision. -/
+Reference values are `Number.prototype.toFixed`'s. These are exact string
+comparisons, no tolerance, because the rounding decision is the whole point. -/
 
 section Guards
 

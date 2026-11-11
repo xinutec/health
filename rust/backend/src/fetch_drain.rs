@@ -1,11 +1,10 @@
 //! The fetch queue's drain, running continuously beside the serving pod.
 //!
-//! The fold DECLINES a lookup it has no data for and records it in
-//! `osm_fetch_queue` (`fetch_queue`). Until 2026-10-03 the Nominatim half was
-//! drained by a 07:00 CronJob and the Overpass half by nobody: 423 keys sat
-//! unattempted until a hand run. The user, 2026-10-01: *"Daily stuff was because
-//! it was slow. I think over time our logic should be fast and not daily but on
-//! demand."*
+//! The fold declines a lookup it has no data for and records it in
+//! `osm_fetch_queue` (`fetch_queue`); this drains both halves (Nominatim and
+//! Overpass) on demand rather than on a daily cron. The user's call: *"Daily
+//! stuff was because it was slow. I think over time our logic should be fast
+//! and not daily but on demand."*
 //!
 //! # Shape
 //!
@@ -209,12 +208,12 @@ pub async fn drain_geocodes(
 /// Drain `osm_fetch_queue`'s Overpass half: fill the base OSM mirror with the
 /// areas the serving path could not answer.
 ///
-/// ⚠ **THE SKIP IS THE POINT, and it is decided by the coverage gate rather
-/// than by a grid.** A day on new ground records dozens of declines a few
-/// hundred metres apart (2026-09-06 has 52 `nearbyWays` alone) and the first
-/// 10 km box answers nearly all of them. Re-asking `osm_covered` per key after
-/// each fetch collapses those into a handful of requests, and it cannot drift
-/// from what the serving path will conclude, because it IS that function.
+/// ⚠ **The skip is the point, and the coverage gate decides it rather than a
+/// grid.** A day on new ground records dozens of declines a few hundred metres
+/// apart, and the first 10 km box answers nearly all of them. Re-asking
+/// `osm_covered` per key after each fetch collapses those into a handful of
+/// requests, and it cannot drift from what the serving path will conclude,
+/// because it is that function.
 ///
 /// ⚠ A skipped key is `done`, not `failed`. It is answered now.
 ///

@@ -2,24 +2,22 @@ import Verified.JsNum
 /-!
 # One day's decoded segments → one `presence_log` row
 
-Port of `computeRow` in `src/hmm/presence-log.ts`, phase 1 of
-`docs/proposals/2026-06-presence-continuity.md`.
+`computeRow`: phase 1 of `docs/proposals/2026-06-presence-continuity.md`.
 
 The HSMM's output is per-minute and is compacted to `HmmSegment[]` for storage.
 This re-expands it to per-minute attribution and rolls the day up: which known
 place held the most minutes, and what state the day ENDED in — the seed the next
 day's continuation reads.
 
-Pure and total. UNPROVEN; the thresholds and the tie-break are the TypeScript's.
+Pure and total. UNPROVEN; the guards pin the thresholds and the tie-break.
 
 ## Two things that are not arithmetic
 
-⚠ **A TIE KEEPS THE FIRST PLACE SEEN.** The TypeScript accumulates into a
-`Map` and picks with a strict `>`, and a JS `Map` iterates in INSERTION order —
-so two places with equal minutes resolve to whichever the day's segments
-mentioned first. That is a real decision about a real day, not an artefact, and
-it is why this carries an insertion-ordered array rather than a hash map. The
-same trap is open on the PhoneTrack device map.
+⚠ **A tie keeps the first place seen**: places are accumulated in insertion
+order and picked with a strict `>`, so two places with equal minutes resolve to
+whichever the day's segments mentioned first. That is a real decision about a
+real day, not an artefact, and it is why this carries an insertion-ordered array
+rather than a hash map. The same trap is open on the PhoneTrack device map.
 
 ⚠ **A ZERO-MINUTE SEGMENT IS SKIPPED ENTIRELY**, before it can contribute to the
 denominator. `Math.round` sends anything under 30 seconds to zero, so a day of
@@ -37,7 +35,7 @@ posteriors yet, and this is the magnitude the design's worked example assumes.
 When it does, this constant goes and the value is read. -/
 def END_OF_DAY_BASELINE_POSTERIOR : Float := 0.95
 
-/-- One compacted HSMM segment, as `src/hmm/persist.ts` stores it. -/
+/-- One compacted HSMM segment, as `decoded_days` stores it. -/
 structure Segment where
   startTs : Int
   endTs : Int
@@ -51,8 +49,7 @@ structure Row where
   dominantPlaceId : Option Int
   dominantFraction : Float
   endOfDayPlaceId : Option Int
-  /-- Unix SECONDS. The TypeScript builds a `Date` from `endTs * 1000`; the
-      caller is what turns this into the column's type. -/
+  /-- Unix seconds; the caller turns this into the column's type. -/
   endOfDayTs : Option Int
   endOfDayPosterior : Float
   deriving Inhabited, Repr
@@ -96,9 +93,8 @@ def computeRow (segs : List Segment) : Option Row :=
   if segs.isEmpty then none else
   let (buckets, totalMinutes) := tally segs
   if totalMinutes == 0 then none else
-  -- ⚠ STRICT `>`, so the FIRST bucket with the maximum wins. With the array in
-  -- first-seen order this reproduces the `Map` iteration the TypeScript relies
-  -- on without meaning to.
+  -- ⚠ Strict `>`, so the first bucket with the maximum wins: with the array in
+  -- first-seen order, the first place seen.
   let (dominantPlaceId, dominantMinutes) :=
     buckets.foldl
       (fun (best : Option Int × Int) (p : Option Int × Int) =>
@@ -109,9 +105,8 @@ def computeRow (segs : List Segment) : Option Row :=
   let dominantFraction :=
     if dominantPlaceId.isSome then Float.ofInt dominantMinutes / Float.ofInt totalMinutes
     else 0.0
-  -- The day's final state, read off the LAST segment regardless of whether it
-  -- contributed minutes — the TypeScript indexes the array, it does not consult
-  -- the tally.
+  -- The day's final state, read off the last segment regardless of whether it
+  -- contributed minutes: the array, not the tally.
   let last := segs.getLast!
   let endOfDayPlaceId := if last.mode == "stationary" then last.placeId else none
   some
@@ -159,8 +154,8 @@ private def seg (a b : Int) (m : String) (p : Option Int) : Segment :=
 -- A stationary segment with no mined place seeds nothing either.
 #guard (computeRow [seg 0 3600 "stationary" none]).map (·.endOfDayPlaceId) == some none
 
--- ⚠ The LAST segment decides the end of day even when it contributed no
--- minutes, because the TypeScript indexes the array rather than the tally.
+-- ⚠ The last segment decides the end of day even when it contributed no
+-- minutes: the array decides, not the tally.
 #guard (computeRow [seg 0 3600 "stationary" (some 1),
                     seg 3600 3610 "walking" none]).map (·.endOfDayPlaceId) == some none
 

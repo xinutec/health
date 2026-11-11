@@ -17,7 +17,7 @@ open Verified.Rail
 private def lcg (s : Nat) : Nat := (s * 1103515245 + 12345) % 2147483648
 
 /-- Seeded undirected multigraph: `n` vertices, `m` edge insertions
-(self-loops skipped, parallels allowed — mirroring the TS builder). -/
+(self-loops skipped, parallels allowed, as the builder does). -/
 private def mkG (seed n m : Nat) : Graph := Id.run do
   let mut adj : Array (Array (Nat × Nat)) := Array.replicate n #[]
   let mut s := lcg (seed + 1)

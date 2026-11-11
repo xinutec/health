@@ -1,10 +1,7 @@
 //! Dump the fold request for one golden day, as the fold receives it.
 //!
-//! ⚠ THIS REPLACES `DAY_REQ_DUMP=… pnpm run day-gate`. That was the only way to
-//! get the request `rust-host-check.sh` feeds to both arms, and it ran
-//! `compare-day.ts` to do it — so deleting the TypeScript backend would
-//! have taken the host-equivalence check down with it, silently, by turning it
-//! into a permanent SKIP.
+//! ⚠ The way to get the request `rust-host-check.sh` feeds to both arms;
+//! without it the host-equivalence check would be a permanent skip.
 //!
 //! ⚠ AN EXAMPLE, NOT A `bin/backend` VERB. The golden corpus is a test artifact,
 //! and a production CLI that reads test fixtures is the wrong shape — it would

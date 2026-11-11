@@ -1,11 +1,11 @@
 /-!
 # Rail graph: spec substrate for the verified shortest path (V3)
 
-The meaning layer for `src/geo/rail-snap.ts`'s `shortestPath`. The TS side
-builds the weighted graph (float heuristics: fix-cloud penalties, gap
-bridging, vertex dedup) and exports it with ×2²⁰-quantised nonnegative
-integer weights — which fit Lean `Nat` scalars natively (measured ≤ ~2^35
-on real corridors), so no packed encoding is needed here.
+The meaning layer for rail-snap's `shortestPath`. The shell builds the weighted
+graph (float heuristics: fix-cloud penalties, gap bridging, vertex dedup) and
+exports it with ×2²⁰-quantised nonnegative integer weights, which fit Lean `Nat`
+scalars natively (≤ ~2^35 on real corridors), so no packed encoding is needed
+here.
 
 `oracleDist` is the exhaustive spec: the minimum cost over every simple
 path. Exponential — `#guard`-scale instances only, exactly like the HSMM
@@ -14,10 +14,10 @@ oracle.
 
 namespace Verified.Rail
 
-/-- Weighted directed adjacency: `adj[u]` lists `(v, w)` edges. The TS
-builder always inserts both directions, so rail graphs are undirected in
-practice; nothing here relies on it. Parallel edges may occur (two OSM
-ways sharing a node pair) — path cost uses the cheapest. -/
+/-- Weighted directed adjacency: `adj[u]` lists `(v, w)` edges. The builder
+always inserts both directions, so rail graphs are undirected in practice;
+nothing here relies on it. Parallel edges may occur (two OSM ways sharing a node
+pair); path cost uses the cheapest. -/
 structure Graph where
   adj : Array (Array (Nat × Nat))
 deriving Repr, Inhabited

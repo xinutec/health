@@ -1,9 +1,8 @@
 //! The application error type, with an axum `IntoResponse` so handlers can `?`.
 //!
-//! These status shapes are INHERITED and are not free to change: the frontend
-//! already branches on them, so an edit here is a client-visible API change
-//! even though nothing in this file mentions a client. They came from the
-//! TypeScript server the port replaced and match the sibling repos'.
+//! These status shapes are a contract: the frontend branches on them, so an
+//! edit here is a client-visible API change even though nothing in this file
+//! mentions a client. They match the sibling repos'.
 //!
 //! ⚠ `Other` is the only variant whose text is NOT shown. Everything else names
 //! something the caller can act on; an unexpected failure names nothing useful
@@ -54,9 +53,9 @@ impl From<sqlx::Error> for AppError {
 /// Every error answer's body, and the ONLY shape a caller sees on a failure.
 ///
 /// A struct rather than a `json!` because a handler that hand-builds JSON has no
-/// wire type at all — rustc checks nothing and the TypeScript side is a guess
-/// (DL-WIRE-UNTYPED-RESPONSE). One type here covers every route that returns
-/// `AppError`, which is the reason to put it here rather than per handler.
+/// wire type at all, and rustc checks nothing (DL-WIRE-UNTYPED-RESPONSE). One
+/// type here covers every route that returns `AppError`, which is the reason to
+/// put it here rather than per handler.
 #[derive(Serialize)]
 pub struct ErrorBody {
     pub error: String,

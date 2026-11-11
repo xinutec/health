@@ -1,7 +1,6 @@
 //! Runtime configuration, read from the environment at startup.
 //!
-//! The Rust backend is a DROP-IN for the TypeScript one, so it reads the
-//! variables `config.ts` reads and the k8s manifests already set —
+//! Reads the variables the k8s manifests set:
 //! `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`.
 //!
 //! It deliberately does NOT adopt `life`'s single `DATABASE_URL`, which is the
@@ -30,11 +29,10 @@ pub struct Config {
     pub db: DbConfig,
     /// Base URL of the Nextcloud instance, no trailing slash.
     ///
-    /// OPTIONAL, and the option is load-bearing rather than lenience: the TS
-    /// `loadSyncConfig` types this `.nullable()` and passes `null` when
-    /// `NC_BASE_URL` is unset, which is how a sync run with no PhoneTrack
-    /// source is spelled. Defaulting it to the production URL would make an
-    /// unconfigured job quietly reach for the real Nextcloud.
+    /// Optional, and the option is load-bearing rather than lenience: unset
+    /// `NC_BASE_URL` is how a sync run with no PhoneTrack source is spelled.
+    /// Defaulting it to the production URL would make an unconfigured job
+    /// quietly reach for the real Nextcloud.
     pub nextcloud_base_url: Option<String>,
     /// Shared secrets for `/internal/*`, consumed by the coach app.
     ///
@@ -50,10 +48,9 @@ pub struct Config {
     pub owntracks_tokens: Vec<String>,
     /// Where the dashboard is served from, for building share URLs.
     ///
-    /// ⚠ Has a DEFAULT rather than being an Option, matching `config.ts`.
-    /// `PUBLIC_BASE_URL` is UNSET on the serving pod (measured 2026-08-22), so
-    /// every share link production has ever issued came from this default. A
-    /// host without one would hand the user a link to nowhere.
+    /// ⚠ Has a default rather than being an Option: `PUBLIC_BASE_URL` is unset
+    /// on the serving pod, so every share link production issues comes from
+    /// this default. A host without one would hand the user a link to nowhere.
     pub public_base_url: String,
     /// The HMAC key behind every session cookie.
     ///
@@ -63,10 +60,9 @@ pub struct Config {
     /// dependency. `serve` demands it at startup instead, so the failure lands
     /// on the process that actually needs it.
     ///
-    /// ⚠ NO DEFAULT, ever. A defaulted signing key is a key everyone knows, and
+    /// ⚠ No default, ever. A defaulted signing key is a key everyone knows, and
     /// the failure is silent: cookies verify, sessions work, and anyone can mint
-    /// one. The TypeScript enforces `min(16)` on it; that check moves here when
-    /// the server does.
+    /// one.
     pub session_secret: Option<String>,
 }
 
@@ -81,12 +77,11 @@ pub struct DbConfig {
 
 /// The Nextcloud base URL the FOCUS cron uses.
 ///
-/// ⚠ NOT `Config::nextcloud_base_url`, which is `Option` and is `None` in
-/// production because `NC_BASE_URL` is unset there. The sync path types
-/// it nullable because "no PhoneTrack source" is a real state for it. The focus
-/// cron did not share that: the TypeScript it replaced defaulted the host to
-/// `https://dash.xinutec.org`, so it always fetched there whether or not the
-/// variable was set.
+/// ⚠ Not `Config::nextcloud_base_url`, which is `Option` and is `None` in
+/// production because `NC_BASE_URL` is unset there. The sync path types it
+/// nullable because "no PhoneTrack source" is a real state for it; the focus
+/// cron has always fetched from the default host whether or not the variable
+/// was set.
 ///
 /// Reading the shared config there would fetch ZERO points in the very
 /// deployment the cron has always worked in — and the result would look like a
@@ -98,7 +93,7 @@ pub fn focus_nc_base_url() -> String {
         .unwrap_or_else(|| FOCUS_DEFAULT_NC_BASE_URL.to_string())
 }
 
-/// The TypeScript focus cron's own default.
+/// The focus cron's default Nextcloud host.
 pub const FOCUS_DEFAULT_NC_BASE_URL: &str = "https://dash.xinutec.org";
 
 impl DbConfig {

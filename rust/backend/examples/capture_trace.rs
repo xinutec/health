@@ -1,10 +1,8 @@
 //! Capture a live day's OSM callback answers as an `osmTrace`.
 //!
-//! ⚠ **WHY THIS EXISTS: nothing has written an `osmTrace` since the TypeScript
-//! backend went.** Every reader of the format is in `day_shell::osm`;
-//! the writer was elsewhere and left with it. The corpus froze at 2026-08-13,
-//! so no recent day could become a gate — and recent days are where the
-//! defects are.
+//! ⚠ **The `osmTrace` writer.** Every reader of the format is in
+//! `day_shell::osm`; this records a recent day's trace so it can become a
+//! gate, since recent days are where the defects are.
 //!
 //! ⚠ **IT IS ONE THIRD OF A GOLDEN DAY, and saying so is the point.** A fixture
 //! carries `{meta, inputs, expected}`; `inputs.osmTrace` has TEN sections and
@@ -77,11 +75,10 @@ async fn main() -> Result<()> {
 
     let cap = backend::head::capture(&inputs, date, user).context("head capture")?;
 
-    // ⚠ THROUGH `fold_from_mirror_recording`, production's own entry point,
+    // ⚠ Through `fold_from_mirror_recording`, production's own entry point,
     // so the capture records what production records: the mirror is read on
-    // a blocking thread with a runtime handle, which is the only place it may
-    // be read from (health #1619 is the refusal answering every OSM read in
-    // the pod for weeks).
+    // a blocking thread with a runtime handle, the only place it may be read
+    // from.
     let now_ms = chrono::Utc::now().timestamp_millis();
     let (conv, row_set, mut trace, geocodes) = backend::mirror_source::fold_from_mirror_recording(
         pool.clone(),
@@ -94,10 +91,10 @@ async fn main() -> Result<()> {
     pool.close().await;
     let live_day: Value = serde_json::from_str(&conv.out).context("the live fold's reply")?;
 
-    // ⚠ The geocodes do NOT come from the recording answerer — that records
-    // the three matcher reads, and `reverseGeocode` travels the row source
-    // instead (#1071 records how that asymmetry hid a defect for weeks). Merged
-    // here so a captured fixture carries the section the 42 TypeScript days carry.
+    // ⚠ The geocodes do not come from the recording answerer, which records
+    // the three matcher reads; `reverseGeocode` travels the row source instead.
+    // Merged here so a captured fixture carries the section the older fixtures
+    // carry.
     if let (Some(section), Some(o)) = (geocodes, trace.as_object_mut()) {
         o.insert("reverseGeocode".into(), section);
     }
@@ -240,13 +237,12 @@ async fn main() -> Result<()> {
     }
 
     // ── the control ──────────────────────────────────────────────────────────
-    // ⚠ **DOES THE DECLINE LIST DO ANY WORK?** Day equality above says the
-    // capture is faithful; it does NOT say which part of it mattered. Replay
-    // once more with `declined` stripped: if the day is STILL identical, the
+    // ⚠ **Does the decline list do any work?** Day equality above says the
+    // capture is faithful; it does not say which part of it mattered. Replay
+    // once more with `declined` stripped: if the day is still identical, the
     // list is inert for this day and nobody should conclude from it that a
     // low-coverage day is being reproduced. Where it is not identical, that
-    // difference is precisely the gap a fixture could not express before
-    // (#1658 — 2026-09-06 declines 275 questions).
+    // difference is the gap a fixture without the list cannot express.
     let mut stripped = rs.clone();
     stripped.remove("declined");
     let stripped = Value::Object(stripped);
@@ -276,17 +272,15 @@ async fn main() -> Result<()> {
         "control: declined — live {} · replay {} · without `declined` {}",
         conv_declined, replay_declined, control_declined,
     );
-    // ⚠ THE DAY IS THE COARSER TEST AND IT MISSES THIS. On 2026-09-06 the output
-    // is identical either way, while the unanswerable count falls 108 -> 49:
-    // 59 coverage gaps answered as "nothing is there" instead of "nobody
-    // knows". That is the erasure #1658 is about, and comparing days alone
-    // reports it as no difference at all.
-    // ⚠ THE DIRECTION IS NAMED, because only one of the two is ordinary.
-    // Stripping `declined` can only turn an UNKNOWN into an empty answer, so the
-    // control must have FEWER unanswerable, never more. The other way round means
-    // the arms differ in something else — which is how a biased control reads,
-    // and this one WAS biased until 2026-09-19 (it withheld the trace the replay
-    // arm was given, so it varied along two axes at once).
+    // ⚠ The day is the coarser test and it misses this: the output can be
+    // identical either way while the unanswerable count falls (108 -> 49 on
+    // one day: 59 coverage gaps answered as "nothing is there" instead of
+    // "nobody knows"). Comparing days alone reports that as no difference.
+    // ⚠ The direction is named, because only one of the two is ordinary.
+    // Stripping `declined` can only turn an unknown into an empty answer, so the
+    // control must have fewer unanswerable, never more. The other way round
+    // means the arms differ in something else, which is how a biased control
+    // reads (the replay arm and the control must get the same trace).
     //
     // ⚠ And it is `usize`: the subtraction underflowed to 18446744073709551602
     // the first time the control came out ahead, printing a number rather than
@@ -323,12 +317,10 @@ async fn main() -> Result<()> {
     // ── the whole fixture ────────────────────────────────────────────────────
     // `{meta, inputs, expected}`, the shape a golden day carries.
     //
-    // ⚠ `expected.statesOut`, NOT under `tsArm`. A `tsArm` oracle was blessed
-    // from the OTHER IMPLEMENTATION and no day captured since #975 can have
-    // one; this is SELF-blessed — the pipeline's own output, frozen. It catches
-    // a REGRESSION and cannot catch "it was always wrong". The ground-truth
-    // narrative grades correctness, and the day must be named in
-    // `corpus::day::SELF_BLESSED` to be accepted.
+    // ⚠ `expected.statesOut`, not under `tsArm`: this is self-blessed, the
+    // pipeline's own output, frozen. It catches a regression and cannot catch
+    // "it was always wrong"; the ground-truth narrative grades correctness, and
+    // the day must be named in `corpus::day::SELF_BLESSED` to be accepted.
     //
     // ⚠ `meta.captureInputs` says what the capture was taken under. Without it
     // a fixture cannot notice the constants it depends on moving, and every

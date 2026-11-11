@@ -21,8 +21,8 @@ it with the classical algorithm invariants, built on the heap theorems of
 * `Relaxed` / `RelaxedExcept` — edges out of settled vertices don't
   shortcut. The `dst` early exit legitimately skips `dst`'s own pass;
   `feasibleCut` still holds there because every settled price is `≤ D`.
-* `potential` — pops strictly decrease `heap.size + Σ (undone adjacency)`,
-  so the TS fuel `E + n + 2` never exhausts.
+* `potential`: pops strictly decrease `heap.size + Σ (undone adjacency)`, so
+  the fuel `E + n + 2` never exhausts.
 
 Adjacency targets must be in range (`WFEdges`) — `relaxAll` silently
 drops out-of-range targets, which would break the relaxation invariant.
@@ -221,7 +221,7 @@ theorem inv_init (g : Graph) (src : Nat) (hsrc : src < g.n) :
 
 /-! ## One relaxation step -/
 
-/-- Case analysis on the TS `nd < (dist[v] ?? Infinity)` test. -/
+/-- Case analysis on the `nd < (dist[v] ?? Infinity)` test. -/
 private theorem improves_spec (st : DState) (v nd : Nat) :
     (improves st v nd = true ∧ ∀ dv, st.dist.getD v none = some dv → nd < dv) ∨
     (improves st v nd = false ∧ ∃ dv, st.dist.getD v none = some dv ∧ dv ≤ nd) := by
@@ -713,8 +713,8 @@ def undoneOut (g : Graph) (st : DState) : Nat :=
   ((List.range g.n).map
     (fun u => if st.done.getD u false then 0 else (g.adj.getD u #[]).size)).sum
 
-/-- Strictly decreases at every pop — the TS fuel `E + n + 2` never runs
-out before the heap does. -/
+/-- Strictly decreases at every pop: the fuel `E + n + 2` never runs out before
+the heap does. -/
 def potential (g : Graph) (st : DState) : Nat :=
   st.heap.a.size + undoneOut g st
 
@@ -1067,7 +1067,7 @@ theorem exit_certify {g : Graph} {src dst L D : Nat} {st : DState} (hwf : WFEdge
 
 `dijkstraSt` seeds the heap with exactly `(0, src)`, so the first
 iteration settles the source; from there `loop_spec` carries the
-invariant to an exit. The TS fuel covers the whole run because the
+invariant to an exit. The fuel covers the whole run because the
 potential starts at `1 + Σ out-degrees ≤ E + 1 < E + n + 2`. -/
 
 theorem foldl_add_sum : ∀ (l : List (Array (Nat × Nat))) (acc : Nat),

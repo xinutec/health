@@ -6,7 +6,7 @@ That makes this a SECURITY BOUNDARY rather than tidiness: a newline inside a
 label forges WHOLE LOG LINES, including further `client-event` lines attributed
 to someone else. The log stops being evidence, which is the one thing it is for.
 
-The TypeScript is two regexes and a slice:
+Two character classes and a cap:
 
     raw.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")
        .replace(/\s+/g, " ").trim()
@@ -23,23 +23,20 @@ Each part earns its place:
 * **The cap counts CODE POINTS**, not UTF-16 units and not bytes, so a
   multi-byte glyph is never split down the middle into a replacement character.
 
-⚠ THE RANGES BELOW WERE DERIVED FROM V8, NOT FROM A UNICODE CHART. Every code
-point in `[0, 0x10FFFF]` was tested against the two production regexes under
-Node and the matching ranges recorded — see `lean/experiments/logline-refs.mts`.
-Transcribing them by hand would have meant guessing which Unicode version the
-engine uses.
+⚠ The ranges below are the ones a JavaScript engine's regexes matched, derived
+by testing every code point in `[0, 0x10FFFF]`, not transcribed from a Unicode
+chart, which would have meant guessing the Unicode version.
 
-⚠ THEY ARE THEREFORE A SNAPSHOT OF ONE ENGINE VERSION. A future V8 that adopts
-a newer Unicode could classify a new code point as `Cf` and this would not know.
-The failure direction is a character passing through unflattened, so the cap and
-the whitespace collapse still hold — but a re-derivation belongs in any Node
-upgrade.
+⚠ So they are a snapshot of one Unicode version. A newer one could classify a
+new code point as `Cf` and this would not know. The failure direction is a
+character passing through unflattened, so the cap and the whitespace collapse
+still hold.
 
 Pure and total. UNPROVEN.
 -/
 namespace Verified.LogLine
 
-/-- `\p{Cc}`, `\p{Cf}`, `\p{Zl}`, `\p{Zp}` — as V8 matches them. Inclusive. -/
+/-- `\p{Cc}`, `\p{Cf}`, `\p{Zl}`, `\p{Zp}`. Inclusive. -/
 def CATEGORY_RANGES : List (Nat × Nat) :=
   [ (0, 31), (127, 159), (173, 173), (1536, 1541), (1564, 1564), (1757, 1757)
   , (1807, 1807), (2192, 2193), (2274, 2274), (6158, 6158), (8203, 8207)
@@ -47,7 +44,7 @@ def CATEGORY_RANGES : List (Nat × Nat) :=
   , (69821, 69821), (69837, 69837), (78896, 78911), (113824, 113827)
   , (119155, 119162), (917505, 917505), (917536, 917631) ]
 
-/-- `\s` — as V8 matches it. Inclusive.
+/-- `\s`. Inclusive.
 
 ⚠ NOT the same set as above and neither contains the other. U+00A0 and the
 U+2000 block are whitespace but not control-like, so they survive the first

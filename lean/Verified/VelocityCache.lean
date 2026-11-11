@@ -12,13 +12,12 @@ is the freshness rule and the two windows it chooses between.
 
 ## ⚠ The two TTLs are not one number with an exception
 
-A FINISHED day's classification is settled: replaying it tomorrow gives the same
-answer, so five minutes of staleness costs nothing. A day IN PROGRESS is a
-different object — every new fix can change it, and the pipeline's verdict on an
-unfinished journey is provisional by construction. A ride a minute old cannot yet
-be identified as the train it will turn out to be, and the full window leaves the
-superseded verdict on screen long after the pipeline corrected itself (reported
-2026-07-12).
+A finished day's classification is settled: replaying it tomorrow gives the same
+answer, so five minutes of staleness costs nothing. A day in progress is a
+different object: every new fix can change it, and the pipeline's verdict on an
+unfinished journey is provisional by construction. A ride a minute old cannot
+yet be identified as the train it will turn out to be, and the full window would
+leave the superseded verdict on screen long after the pipeline corrected itself.
 
 The short window is affordable precisely BECAUSE the day is partial: mid-morning
 there is simply less of it, so recomputing costs a few hundred milliseconds

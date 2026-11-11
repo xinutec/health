@@ -43,8 +43,7 @@ pub fn mint_id() -> Result<String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// A share token: 32 random bytes as base64url — the TypeScript's
-/// `generateShareToken`.
+/// A share token: 32 random bytes as base64url.
 ///
 /// ⚠ NOT [`mint_id`], which is the same 32 bytes as HEX. Both carry 256 bits,
 /// but a hex token is 64 characters and a base64url one is 43, and
@@ -60,11 +59,10 @@ pub fn mint_share_token() -> Result<String> {
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
-/// `<value>.<base64url-hmac-sha256>` — the TypeScript's `signValue`.
+/// `<value>.<base64url-hmac-sha256>`.
 ///
-/// ⚠ base64url with NO PADDING. Node's `digest("base64url")` omits `=`, so
-/// padding here would produce a signature that never matches one issued before
-/// the port.
+/// ⚠ base64url with no padding: padding would produce a signature that never
+/// matches one already issued.
 pub fn sign_value(secret: &str, value: &str) -> String {
     let sig = mac(secret, value);
     format!(
