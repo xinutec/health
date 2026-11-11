@@ -95,10 +95,10 @@ const BATCH_ROWS: usize = 200;
 
 /// Every workout Google holds, into `exercise_sessions`.
 ///
-/// ⚠ ALL OF THEM, EVERY RUN. Measured 2026-10-02: 756 sessions, one page, so a
-/// filter would save nothing — and a full read is what picks up a session
-/// Google edited after the fact. An edit REPLACES its row (keyed by point id):
-/// this is Google's record of the session, not a re-decision of ours.
+/// ⚠ All of them, every run: the sessions fit one page, so a filter would save
+/// nothing, and a full read is what picks up a session Google edited after the
+/// fact. An edit replaces its row (keyed by point id): this is Google's record
+/// of the session, not a re-decision of ours.
 pub async fn sync_exercise(
     pool: &MySqlPool,
     http: &reqwest::Client,

@@ -1,4 +1,4 @@
-//! The pipeline head: raw PhoneTrack fixes → `segsRaw`, without Node.
+//! The pipeline head: raw PhoneTrack fixes → `segsRaw`.
 //!
 //! `segsRaw` is the day fold's ONLY input, and every stage that produces it —
 //! GPS quality control, place-snap, the Kalman smoother, segmentation — has a
@@ -19,9 +19,9 @@
 //!
 //! ## The oracle is free
 //!
-//! Each golden fixture carries `expected.statesOut` — this arm's own last
-//! blessed output — computed from the same `inputs` this module reads. So the
-//! whole chain replays against the corpus with no DB and no Node.
+//! Each golden fixture carries `expected.statesOut`, this arm's own last blessed
+//! output, computed from the same `inputs` this module reads. So the whole
+//! chain replays against the corpus with no DB.
 //!
 //! ⚠ It is a REGRESSION oracle: it catches the answer MOVING and cannot catch
 //! "it was always wrong". Only the ground-truth narratives grade correctness.
@@ -79,9 +79,9 @@ const KALMAN_ADMIT_ACCURACY_M: f64 = 200.0;
 
 /// A `f64` on the Lean wire: its IEEE-754 bit pattern as a decimal string.
 ///
-/// JSON cannot carry a Float unrounded — Lean's printer emits six decimals and
-/// JS `JSON.parse` re-rounds past 2^53 — and the Kalman recursion moves on the
-/// seventh decimal of a fix. The TS twin is `float-bits.ts`.
+/// JSON cannot carry a Float unrounded (Lean's printer emits six decimals, and a
+/// JavaScript `JSON.parse` re-rounds past 2^53), and the Kalman recursion moves
+/// on the seventh decimal of a fix.
 fn bits(v: f64) -> Value {
     Value::String(v.to_bits().to_string())
 }
@@ -170,14 +170,13 @@ pub fn quality_filter(pts: &[Fix]) -> Result<Vec<Fix>> {
 
 /// `Verified.Geo.PlacePrior.snapToPlace` over the whole day in ONE call.
 ///
-/// ⚠ BATCHED ON PURPOSE. The TypeScript calls `snapToPlace` per fix inside a
-/// `.map`; a bridge round trip per fix would be thousands of calls for one day
-/// where every other tenant makes one. The reply is positional — one row per
-/// input fix, same order — so it zips straight back on.
+/// ⚠ Batched on purpose: a bridge round trip per fix would be thousands of
+/// calls for one day where every other tenant makes one. The reply is
+/// positional, one row per input fix in the same order, so it zips straight
+/// back on.
 ///
-/// With no known places the TS `.map` never runs, so the fixes pass through
-/// untouched; this mirrors that rather than asking Lean to snap against an
-/// empty table.
+/// With no known places the fixes pass through untouched, rather than asking
+/// Lean to snap against an empty table.
 pub fn snap_all(pts: &[Fix], places: &[Value]) -> Result<Vec<Fix>> {
     if places.is_empty() {
         return Ok(pts.to_vec());
@@ -378,10 +377,10 @@ pub fn run(inputs: &Value, date: &str) -> Result<Head> {
 
 /// `Verified.Geo.Velocity.appendBatteryTail (batterySeries pts) tail dayEndTs`.
 ///
-/// ⚠ ONE call, not two. The pipeline never wants the untailed series — the
-/// TypeScript writes the pair as a single expression — and splitting it across
-/// two round trips would let a caller ship the raw series by forgetting the
-/// second. The Lean mode is composed the same way for the same reason.
+/// ⚠ One call, not two. The pipeline never wants the untailed series, and
+/// splitting it across two round trips would let a caller ship the raw series
+/// by forgetting the second. The Lean mode is composed the same way for the
+/// same reason.
 ///
 /// The tail is the first reading AFTER the local day end, fetched cross-day. It
 /// sets the slope of the line the chart draws up to midnight when the phone went
@@ -399,10 +398,10 @@ pub fn battery_series(rows: &[&Value], tail: Option<&Value>, day_end_ts: i64) ->
                         // filter that drops them is Lean's, so both spellings
                         // have to arrive as null rather than as a zero level.
                         //
-                        // ⚠ THE ABSENT CASE IS NOT EXERCISED BY THE CORPUS.
-                        // Ablated 2026-08-21 by sending `0` for it: all 42 days
-                        // still agreed, because every PhoneTrack row the loader
-                        // produces carries the key. A synthetic test holds it —
+                        // ⚠ The absent case is not exercised by the corpus:
+                        // every PhoneTrack row the loader produces carries the
+                        // key, so sending `0` for it changes no golden day. A
+                        // synthetic test holds it,
                         // `battery_drops_a_missing_reading`.
                         match p.get("battery") {
                             None => Value::Null,
@@ -444,7 +443,7 @@ pub fn battery_series(rows: &[&Value], tail: Option<&Value>, day_end_ts: i64) ->
 }
 
 /// A PhoneTrack row from the loader's JSON. A row missing a coordinate is not a
-/// fix; the TS read `p.ts`/`p.lat`/`p.lon` off a typed row and never saw one.
+/// fix.
 fn parse_input_fix(v: &Value) -> Option<Fix> {
     Some(Fix {
         ts: v.get("ts")?.as_i64()?,
@@ -469,13 +468,13 @@ fn parse_input_fix(v: &Value) -> Option<Fix> {
 /// capture's other keys — they are intermediate boundaries kept for the day
 /// gate, not inputs.
 ///
-/// ⚠ AN EMPTY DAY WITHOUT A DECODE IS REFUSED RATHER THAN APPROXIMATED. When a day observes
-/// nothing, `tail.bracketPlace` carries the resolved NAME of the cross-day
-/// bracket centroid, and resolving it is a mirror `bestPlace` lookup this
-/// function has no adapter for. Omitting the field silently would produce a
-/// well-formed request for a different day — the exact defect #1055 fixed, in
-/// which the inference simply stopped happening. No golden day is empty, so
-/// this path is unexercised by the corpus and says so instead of guessing.
+/// ⚠ An empty day without a decode is refused rather than approximated. When a
+/// day observes nothing, `tail.bracketPlace` carries the resolved name of the
+/// cross-day bracket centroid, and resolving it is a mirror `bestPlace` lookup
+/// this function has no adapter for. Omitting the field silently would produce a
+/// well-formed request for a different day, in which the inference simply stops
+/// happening. No golden day is empty, so this path is unexercised by the corpus
+/// and says so instead of guessing.
 pub fn capture(inputs: &Value, date: &str, user: &str) -> Result<Value> {
     let head = run(inputs, date)?;
     let tz = inputs

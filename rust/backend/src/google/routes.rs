@@ -2,9 +2,9 @@
 //!
 //! Google serves a session's route as a TCX document, one request per
 //! session: `GET …/dataTypes/exercise/dataPoints/{id}:exportExerciseTcx?alt=media`
-//! (Health API release of 2026-03-24, `location.readonly` scope). There is no
-//! route data type to list; the session's `exerciseMetadata.hasGps` says which
-//! sessions have one, and `exercise_sessions.has_gps` is where that is kept.
+//! (`location.readonly` scope). There is no route data type to list; the
+//! session's `exerciseMetadata.hasGps` says which sessions have one, and
+//! `exercise_sessions.has_gps` is where that is kept.
 //!
 //! ⚠ THE DOCUMENT IS KEPT WHOLE (`tcx`). A trackpoint carries time, position,
 //! altitude, distance and heart rate; the two counts beside it are for a census,

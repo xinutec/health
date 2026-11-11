@@ -20,10 +20,10 @@
 //!
 //! # ⚠ Presence of a section is not presence of a trace
 //!
-//! 2026-08-12 carries all three matcher sections as EMPTY objects. Count the
-//! entries ([`TraceAnswerer::has_walk_capture`]) before calling a day
-//! measurable for walks; a harness that never answers the walk reads measures
-//! the matcher by not running it.
+//! A fixture can carry all three matcher sections as empty objects. Count the
+//! entries ([`TraceAnswerer::has_walk_capture`]) before calling a day measurable
+//! for walks; a harness that never answers the walk reads measures the matcher
+//! by not running it.
 
 use std::collections::HashMap;
 

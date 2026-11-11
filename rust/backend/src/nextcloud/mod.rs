@@ -8,11 +8,9 @@
 //! an `Authorization` header, and walk a session/device tree. None of it
 //! decides anything.
 //!
-//! The exception is how a date range becomes a set of requests. The TypeScript
-//! spelled that as a `for` loop over a mutated `Date`, three lines with two
-//! decisions hidden in them — what `new Date("YYYY-MM-DD")` means as an instant,
-//! and how wide a window one request may ask for. The first moved to
-//! `Verified.Civil.midnightUtc`; the second is the day's own window.
+//! The exception is how a date range becomes a set of requests: what a
+//! `YYYY-MM-DD` means as an instant (`Verified.Civil.midnightUtc`), and how wide
+//! a window one request may ask for (the day's own window).
 
 pub mod client;
 pub mod credentials;

@@ -6,9 +6,9 @@
 //! duplicated here — but sitting in the path lets the decision use context the
 //! phone cannot have: the user's recent trajectory, and the local hour.
 //!
-//! ⚠ IT NEVER DEMOTES (2026-09-23). The phone stays in Move mode; this chooses
-//! how often it locates — hourly at night when still, every 30 s by day,
-//! faster in a vehicle — and must never take it out.
+//! ⚠ It never demotes. The phone stays in Move mode; this chooses how often it
+//! locates (hourly at night when still, every 30 s by day, faster in a vehicle)
+//! and must never take it out.
 //!
 //! Every decision is written to `owntracks_decisions` as well as logged:
 //! a rollout replaces the pod and its stdout with it, and the one
@@ -412,8 +412,7 @@ async fn persist_motion(st: &AppState, device: &str, messages: &[Location]) {
                 lat,
                 lon,
                 // ⚠ Owntracks sends -1 for "no heading". Storing that as a
-                // bearing would be a FABRICATED direction — health #394 is the
-                // same defect elsewhere in the pipeline — so it becomes NULL.
+                // bearing would be a fabricated direction, so it becomes NULL.
                 cog: m.cog.filter(|c| *c >= 0.0).map(|c| c.round() as i64),
                 vel: m.vel.map(|v| v.round() as i64),
                 acc: m.acc.map(|a| a.round() as i64),

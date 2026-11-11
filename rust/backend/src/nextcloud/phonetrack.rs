@@ -1,4 +1,4 @@
-//! PhoneTrack GPS fixes. Port of the retired TypeScript `phonetrack.ts`.
+//! PhoneTrack GPS fixes.
 //!
 //! One Nextcloud user has sessions, each session has devices, and each device
 //! has points. There is no endpoint that returns points across devices, so a
@@ -10,11 +10,11 @@
 //! which zone a row was recorded in — a decision written into `tz` and
 //! `ts_utc` columns and never revisited. They are still the day's track.
 //!
-//! ⚠ **A DEVICE WHOSE FETCH FAILS CONTRIBUTES ZERO POINTS, WHICH IS EXACTLY
-//! WHAT A DEVICE THAT WAS SWITCHED OFF CONTRIBUTES.** The TypeScript logs each
-//! failure and returns the survivors, so a travel day whose only fixes came from
-//! the one device that 500ed is indistinguishable from a day spent at home — and
-//! the rows get stamped with the profile zone, confidently and wrongly.
+//! ⚠ **A device whose fetch fails contributes zero points, which is exactly
+//! what a device that was switched off contributes.** Returning the survivors
+//! alone would make a travel day whose only fixes came from the one device
+//! that failed indistinguishable from a day spent at home, and the rows would
+//! be stamped with the profile zone, confidently and wrongly.
 //!
 //! This port does not paper over that by failing the whole fetch, because the
 //! partial answer really is better than none for the common case of one stale
@@ -100,20 +100,13 @@ pub struct Session {
     /// omitted from this response" would otherwise both read as zero devices,
     /// and only one of them is a fact about the account.
     ///
-    /// ⚠ **`BTreeMap`, and the ORDER IS THE POINT.** The range fetch
+    /// ⚠ **`BTreeMap`, and the order is the point.** The range fetch
     /// concatenates points device by device and then sorts by timestamp with a
-    /// STABLE sort, so points sharing a timestamp keep whatever order this walk
-    /// produced. Rust randomises `HashMap` iteration per process, which made
-    /// that order differ between two runs of the same binary on the same day.
-    /// Measured 2026-08-22: 2026-08-20 has 95 duplicated timestamps out of 1465
-    /// points, so the ties are real — they simply did not cross a device
-    /// boundary that day.
-    ///
-    /// The original task asked for INSERTION order, to match the TypeScript's
-    /// `Object.values(session.devices)`. There is no TypeScript to match any
-    /// more, and the requirement it was standing in for was only ever
-    /// determinism — so this sorts by device key instead of taking a dependency
-    /// on `indexmap` to reproduce a dead runtime's iteration order.
+    /// stable sort, so points sharing a timestamp keep whatever order this walk
+    /// produced. A `HashMap` randomises iteration per process, which would make
+    /// that order differ between two runs of the same binary on the same day,
+    /// and duplicated timestamps are real (95 in one day's 1465 points).
+    /// Sorting by device key gives determinism, which is the requirement.
     #[serde(default)]
     devices: Option<std::collections::BTreeMap<String, WireDevice>>,
 }
@@ -207,12 +200,10 @@ impl PhoneTrack {
     /// Fetch every device's points between two dates, inclusive of both
     /// midnights.
     ///
-    /// ⚠ The bounds are UTC midnights from [`lean::midnight_utc`], NOT local
-    /// ones. That is what the TypeScript's `new Date("YYYY-MM-DD").getTime()`
-    /// computed and it is right here for a reason worth stating: the window
-    /// exists to find fixes near a wall clock whose zone is UNKNOWN, so
-    /// resolving its bounds in a local zone would need the answer the fetch is
-    /// being run to produce.
+    /// ⚠ The bounds are UTC midnights from [`lean::midnight_utc`], not local
+    /// ones, for a reason worth stating: the window exists to find fixes near a
+    /// wall clock whose zone is unknown, so resolving its bounds in a local zone
+    /// would need the answer the fetch is being run to produce.
     pub async fn fetch_range(
         &self,
         pool: &MySqlPool,
@@ -362,12 +353,11 @@ impl PhoneTrack {
     }
 }
 
-/// The per-request point cap, as the TypeScript sends it.
+/// The per-request point cap.
 ///
 /// ⚠ PhoneTrack truncates at this rather than paginating, and there is no field
 /// in the response saying it did. The arithmetic is uncomfortably close: a
-/// 7-day window at one fix per minute is 10 080
-/// points from a SINGLE device, which is over this cap. Whether real capture
-/// rates reach that is not measured here, and the silent-truncation shape means
-/// exceeding it would look like a quiet day rather than a lost tail. #1032.
+/// 7-day window at one fix per minute is 10 080 points from a single device,
+/// over this cap. Whether real capture rates reach that is not measured, and
+/// silent truncation would look like a quiet day rather than a lost tail.
 const MAX_POINTS: i64 = 10_000;

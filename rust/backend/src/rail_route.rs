@@ -34,11 +34,11 @@ use sqlx::MySqlPool;
 
 use crate::lean::FillCandidate;
 
-/// Margin (m) around a train run's fixes when reading its rail corridor — wide
-/// enough that the line and BOTH stations fall inside the box even where the
-/// fixes scatter off the track. The TypeScript's `RAIL_CORRIDOR_MARGIN_M`.
+/// Margin (m) around a train run's fixes when reading its rail corridor: wide
+/// enough that the line and both stations fall inside the box even where the
+/// fixes scatter off the track.
 pub const RAIL_CORRIDOR_MARGIN_M: f64 = 1500.0;
-/// The TypeScript's `LIMIT 12000`.
+/// The corridor read's row limit.
 pub const RAIL_CORRIDOR_LINE_LIMIT: i64 = 12000;
 /// How long a label the snap refused is left raw before it is tried again.
 pub const REFUSED_FOR: Duration = Duration::from_secs(6 * 60 * 60);

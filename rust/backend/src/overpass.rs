@@ -1,10 +1,9 @@
-//! The Overpass HTTP client — IO glue for the two OSM mirrors (#982 Tier 2).
+//! The Overpass HTTP client: IO glue for the two OSM mirrors.
 //!
-//! Port of the transport half of the retired TypeScript `osm-overpass.ts`. The DECISIONS this
-//! file appears to make are not made here: whether the breaker is open, and what
-//! a failure does to it, live in `Verified.Geo.OverpassBreaker`. What is left is
-//! genuinely IO — which URL, what timeout, which status codes are worth a
-//! second mirror.
+//! The decisions this file appears to make are not made here: whether the
+//! breaker is open, and what a failure does to it, live in
+//! `Verified.Geo.OverpassBreaker`. What is left is genuinely IO: which URL,
+//! what timeout, which status codes are worth a second mirror.
 //!
 //! ⚠ THE STATUS-CODE RULE IS NOT "RETRY ON !ok". A 4xx that is not 429 is
 //! PERMANENT — a malformed query — and is returned immediately without trying
@@ -20,8 +19,8 @@ use std::time::Duration;
 // dev-lint: allow-pii the contact address the mirrors ask for
 pub const USER_AGENT: &str = "health.xinutec.org (pippijn@xinutec.org)";
 
-/// ⚠ ORDER MATTERS: `overpass-api.de` first, `kumi.systems` second — the order
-/// the replaced TypeScript used, and the faster one.
+/// ⚠ Order matters: `overpass-api.de` first, the faster one, `kumi.systems`
+/// second.
 ///
 /// ⚠ EVERY MIRROR'S FAILURE IS CARRIED, NOT JUST THE LAST. Keeping only the
 /// final error makes a two-endpoint outage read as a one-endpoint one, because

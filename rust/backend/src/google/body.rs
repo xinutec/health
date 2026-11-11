@@ -81,12 +81,10 @@ pub async fn sync_google_weight(
         return Ok(out);
     }
 
-    // ⚠ ONE TRANSACTION. Between the delete and the inserts the window is
-    // EMPTY, and a failure there would leave the table with a hole where the
-    // stale-but-plausible values were — worse than either endpoint,
-    // because a gap in weight reads as "did not weigh" rather than as a failed
-    // sync. The TypeScript ran these as separate statements on a shared
-    // connection and had exactly that exposure.
+    // ⚠ One transaction. Between the delete and the inserts the window is
+    // empty, and a failure there would leave the table with a hole where the
+    // stale-but-plausible values were, worse than either endpoint, because a gap
+    // in weight reads as "did not weigh" rather than as a failed sync.
     let mut tx = pool.begin().await.context("opening the weight tx")?;
 
     let del = sqlx::query("DELETE FROM body WHERE user_id = ? AND date >= ?")
@@ -131,9 +129,8 @@ pub async fn sync_google_weight(
 /// Grams to the kilograms the column holds.
 ///
 /// ⚠ `weight_kg` is `DECIMAL(5,2)`, so MariaDB rounds to two places on the way
-/// in whatever this returns — 67 345 g stores as 67.35 and not 67.345. The
-/// division happens here in `f64` to match the TypeScript's `Number(g) / 1000`
-/// exactly; both then meet the same column rounding, so the stored values agree.
+/// in whatever this returns: 67 345 g stores as 67.35, not 67.345. The division
+/// is plain `f64`, so the column's rounding is the only rounding.
 fn kilograms(grams: i64) -> f64 {
     grams as f64 / 1000.0
 }

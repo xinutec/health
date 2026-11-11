@@ -2,8 +2,8 @@
 //!
 //! `/location/latest` and `/location/tail` both answer from PhoneTrack, and the
 //! Map tab polls both. Without a cache each poll is a nested walk of one HTTP
-//! call per device against Nextcloud, so the TypeScript kept a per-user entry
-//! for ten seconds and this does the same.
+//! call per device against Nextcloud, so each user's answer is kept for ten
+//! seconds.
 //!
 //! ⚠ Process-local, like the velocity cache, and for the same reason: a deploy
 //! restarts the pod and that is the invalidation. Ten seconds also means the
@@ -13,9 +13,8 @@
 //!
 //! `velocity_cache` serialises concurrent misses because computing a day is
 //! expensive enough that two of them at once matters. These are one bounded
-//! HTTP walk, and the TypeScript did not serialise them either — two polls
-//! landing together do two fetches and the second wins. Adding a lock would be
-//! a behaviour change dressed as an optimisation, so it is left out.
+//! HTTP walk, so two polls landing together do two fetches and the second wins;
+//! a lock would buy nothing worth its complexity.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -24,9 +23,8 @@ use serde::Serialize;
 
 /// The live marker: the freshest fix, or `None` when there is none.
 ///
-/// ⚠ The field order is the wire order — `preserve_order` is on, so serde emits
-/// these in declaration order and the TypeScript emits them in the order it
-/// writes the object literal. They must match.
+/// ⚠ The field order is the wire order: `preserve_order` is on, so serde emits
+/// these in declaration order, and the client reads that order.
 #[derive(Clone, Debug, Serialize)]
 pub struct LatestFix {
     pub lat: f64,
@@ -35,10 +33,9 @@ pub struct LatestFix {
     pub accuracy: Option<f64>,
 }
 
-/// One buffered point for the raw tail. ⚠ Three fields only: the TypeScript
-/// projects the tail down to `{lat, lon, ts}` and drops altitude, speed,
-/// accuracy and battery. Carrying them through would be a bigger response than
-/// production sends.
+/// One buffered point for the raw tail. ⚠ Three fields only: the tail is
+/// projected down to `{lat, lon, ts}`, dropping altitude, speed, accuracy and
+/// battery, which would only make the response bigger.
 #[derive(Clone, Debug, Serialize)]
 pub struct TailPoint {
     pub lat: f64,

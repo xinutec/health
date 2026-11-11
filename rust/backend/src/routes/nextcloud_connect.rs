@@ -315,10 +315,9 @@ pub async fn sync_filter(
 
 /// `POST /phonetrack/sync-filter`'s answer.
 ///
-/// ⚠ `datemin` is an `i64` epoch second, and that is why this needed no special
-/// number handling: integers are exact in both serde and `JSON.stringify`. A
-/// FLOAT column would not be — see `row_json::js_number_value`, and #1404 for
-/// the routes that carry them.
+/// ⚠ `datemin` is an `i64` epoch second, so it needs no special number
+/// handling: integers are exact in any JSON encoder. A float column would not
+/// be; see `row_json::js_number_value` for the routes that carry them.
 #[derive(Serialize)]
 pub struct SyncFilterResponse {
     pub ok: bool,

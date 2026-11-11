@@ -2,10 +2,9 @@
 //!
 //! # Why an outcome check and not an error check
 //!
-//! On 2026-08-28 `daily_activity` stopped for over an hour because Fitbit began
-//! quoting an integer. `health-sync` exited 0 on every run; the only trace was
-//! one ERROR line in a pod log that nothing read. It surfaced because someone
-//! happened to be watching a deploy for an unrelated reason.
+//! A sync stream can stop for an hour with every run exiting 0 and the only
+//! trace one ERROR line in a pod log that nothing reads (Fitbit once began
+//! quoting an integer). This asks whether each stream is current.
 //!
 //! ⚠ Watching for a known error string would not have caught it and would not
 //! catch the next one either — a stream that writes nothing WITHOUT erroring
@@ -19,11 +18,11 @@ pub struct Freshness {
     pub why: &'static str,
 }
 
-/// ⚠ ONE BOUND PER STREAM, NOT ONE FOR ALL. Measured 2026-08-28: every daily
-/// stream was same-day, `sleep` was one night behind, and `body` was TEN DAYS
-/// behind and perfectly healthy — weigh-ins are irregular. A single threshold is
-/// either so loose it never fires or so tight that `body` screams forever, and
-/// an alarm that cries wolf gets muted, which is worse than no alarm.
+/// ⚠ One bound per stream, not one for all: daily streams are same-day, `sleep`
+/// one night behind, and `body` can be ten days behind and perfectly healthy,
+/// since weigh-ins are irregular. A single threshold is either so loose it
+/// never fires or so tight that `body` screams forever, and an alarm that cries
+/// wolf gets muted, which is worse than no alarm.
 ///
 /// ⚠ Every bound is set ABOVE MEASURED NORMAL and each `why` carries the
 /// observation, so a later reader can tell a chosen bound from an invented one.

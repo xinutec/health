@@ -1,13 +1,11 @@
 //! The HTTP surface.
 //!
-//! ⚠ THIS IS PRODUCTION. It serves `health.xinutec.org` — the SPA shell, the
-//! static build and every `/api` route — and there is no TypeScript server
-//! left to fall back to — `server.ts` went with the TS arm. Treat a
-//! change here as a change to the live site.
+//! ⚠ This is production. It serves `health.xinutec.org`: the SPA shell, the
+//! static build and every `/api` route. Treat a change here as a change to the
+//! live site.
 //!
 //! `/velocity` answers from the OSM mirror through Lean rather than MariaDB's
-//! `ORDER BY ST_Distance … LIMIT 50` (#413: 0 of 315 timeline states moved on
-//! the swap; the corpus has been blessed against it since).
+//! `ORDER BY ST_Distance … LIMIT 50`; the corpus is blessed against it.
 //!
 //! # Nothing in this file decides anything
 //!
@@ -55,10 +53,10 @@ pub fn router(state: AppState) -> Router {
     // absent, so mounting these the wrong way round breaks EVERY request with a
     // 500 instead of quietly over-permitting one class of them.
     //
-    // That guard exists because the previous protection did not work: flipping
-    // these two on 2026-08-22 failed ZERO of the eleven tests that covered this,
-    // since each mirrored the stack instead of importing it.
-    // `tests/suite/share_route.rs` now asserts it through THIS router.
+    // That guard exists because a test that mirrors the stack instead of
+    // importing it cannot catch a flip of these two: one such flip failed zero
+    // of eleven tests. `tests/suite/share_route.rs` asserts it through this
+    // router.
     let api = Router::new()
         .route("/me", get(me::handler))
         .route("/velocity", get(velocity::handler))
@@ -178,12 +176,10 @@ pub fn router(state: AppState) -> Router {
         // layers bottom-up, so this one sees the finished body of every route,
         // API and static asset alike.
         //
-        // It is not a tuning knob. Measured in production 2026-08-30,
-        // `/api/heartrate/intraday` for one half-finished day was 2,556,228
-        // bytes with `encodedBodySize == decodedBodySize` — nothing was
-        // negotiating an encoding because the feature was not compiled in. That
-        // response is 18,656 rows each repeating `user_id` and `tz` in full, so
-        // it is mostly a constant and compresses to a fraction.
+        // It is not a tuning knob: without it, `/api/heartrate/intraday` for one
+        // half-finished day was 2,556,228 bytes with nothing negotiating an
+        // encoding. That response is 18,656 rows each repeating `user_id` and
+        // `tz` in full, so it is mostly a constant and compresses to a fraction.
         //
         // ⚠ Compression is CONTENT-NEGOTIATED: a client that sends no
         // `Accept-Encoding` still gets the identity body, so this cannot break

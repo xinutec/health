@@ -1,43 +1,26 @@
-//! The Rust backend skeleton.
+//! The backend: IO glue around the verified Lean core.
 //!
-//! # What this is, and what it is NOT
+//! # What this is, and what it is not
 //!
-//! The user, 2026-08-17: *"We want no TS backend. Logic should be in Lean. A bit
-//! of IO glue needs to be in Rust."* This crate is the IO glue — configuration,
-//! a connection pool, the cursor store, and the entrypoint that ties them
-//! together. **Nothing here decides anything.** If a module in this crate grows
-//! a rule about what a day means or when a segment is a walk, that rule belongs
-//! in Lean and its presence here is the bug.
-//!
-//! # ⚠ THE PLAN THIS HEADER USED TO DESCRIBE HAS COMPLETED
-//!
-//! ⚠ KEEP THE SECTIONS BELOW IN THE PRESENT TENSE. Written as plans they
-//! outlive the plan and tell a reader the opposite of what is live.
-//!
-//! Where it stands:
-//!
-//!   * the TS↔Lean per-tenant A/B retired with the TypeScript backend (
-//!     2026-08-26). `state.rs` still names `setVerifiedCoreOverride`; that
-//!     symbol exists nowhere but in prose.
-//!   * this crate serves `/api` — see `routes/`, which answers `/api/me`,
-//!     `/api/locations` and the biometric tables. `dist/server.js` is gone.
-//!   * the ingestion is Rust, and the Fitbit→Google cutover it was written for
-//!     is verified in prod.
-//!
-//! The paragraph below is kept because the RULE it states outlived the plan.
+//! The user's rule: *"We want no TS backend. Logic should be in Lean. A bit of
+//! IO glue needs to be in Rust."* This crate is the IO glue: configuration, a
+//! connection pool, the cursor store, the HTTP routes, the ingestion, and the
+//! entrypoint that ties them together. **Nothing here decides anything.** If a
+//! module in this crate grows a rule about what a day means or when a segment
+//! is a walk, that rule belongs in Lean and its presence here is the bug.
 //!
 //! # The Lean/Rust line, drawn by example
 //!
-//! The user, 2026-08-17: *"anything that can be in Lean should be in Lean."*
-//! `token.ts` is the worked example and the shape to copy. Four
-//! functions; the split is not 50/50 and was not a judgement call:
+//! *"Anything that can be in Lean should be in Lean."* Share links are the
+//! worked example and the shape to copy; the split is not 50/50 and was not a
+//! judgement call:
 //!
-//!   * `generateShareToken` reads the CSPRNG → **Rust**. There is nothing to
-//!     prove about `randomBytes(32)` beyond that it was asked for 32 bytes, and
-//!     a Lean model of it would be fiction.
-//!   * `buildShareUrl`, `shareableDateRange`, `clampShareDaysBack` are total
-//!     functions of their arguments → **Lean** (`Verified/Share.lean`), on top
-//!     of `Verified/Civil.lean`.
+//!   * generating a share token reads the CSPRNG → **Rust**. There is nothing
+//!     to prove about 32 random bytes beyond that they were asked for, and a
+//!     Lean model of them would be fiction.
+//!   * building the share URL, the shareable date range and the clamp on days
+//!     back are total functions of their arguments → **Lean**
+//!     (`Verified/Share.lean`), on top of `Verified/Civil.lean`.
 //!
 //! The test to apply at each module: *does this decide anything, or does it
 //! only move bytes?* Deciding goes to Lean even when it is three lines, because

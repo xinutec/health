@@ -18,9 +18,9 @@
 //! case would leave a user with a revoked app password looking at an empty map
 //! and no way to learn why.
 //!
-//! Anything else is a **400**. That is the TypeScript's choice and it is odd —
-//! a Nextcloud outage is not the caller's fault and 502 would describe it
-//! better — but the client keys off the status, so it is preserved.
+//! Anything else is a **400**. Odd (a Nextcloud outage is not the caller's
+//! fault and 502 would describe it better), but the client keys off the
+//! status, so it stays.
 //!
 //! # The share window is checked against TODAY, not the request
 //!
@@ -52,8 +52,7 @@ use crate::{lean, location_cache, row_json};
 /// JavaScript writes `120`, which is a different response for the same fix —
 /// measured, 8,790 bytes across one day.
 ///
-/// ⚠ Key order is the wire order and matches the TypeScript's object literal;
-/// `preserve_order` is what makes that hold.
+/// ⚠ Key order is the wire order; `preserve_order` is what makes that hold.
 fn wire_point(p: &crate::nextcloud::phonetrack::RawTrackPoint) -> Value {
     json!({
         "ts": p.ts,
@@ -94,7 +93,7 @@ fn nc_error_response<T: Serialize>(e: &NcError, not_linked: T, message: &'static
     }
 }
 
-/// `YYYY-MM-DD`, defaulting to today in UTC — the TypeScript's `dateParam`.
+/// `YYYY-MM-DD`, defaulting to today in UTC.
 fn parse_date(raw: Option<&str>) -> Option<String> {
     let Some(s) = raw else {
         return Some(chrono::Utc::now().format("%Y-%m-%d").to_string());
@@ -123,20 +122,18 @@ async fn outside_window(session: &UserSession, date: &str) -> anyhow::Result<boo
 
 /// Open PhoneTrack for this user.
 async fn open(st: &AppState, user_id: &str) -> Result<PhoneTrack, NcError> {
-    // ⚠ AN UNSET `NC_BASE_URL` FALLS BACK TO THE DEFAULT — it does NOT mean
-    // "not linked". `NC_BASE_URL` is in fact EMPTY on the serving pod today
-    // (measured, 2026-08-22), and `config.ts` answers that with
-    // `.default("https://dash.xinutec.org")` on the API path, which is why the
-    // live map works in production.
+    // ⚠ An unset `NC_BASE_URL` falls back to the default; it does not mean
+    // "not linked". `NC_BASE_URL` is empty on the serving pod, so the default
+    // is what makes the live map work in production.
     //
     // Treating unset as not-linked here — which is what this first did — would
     // have answered EVERY caller with an empty map and a 200, indistinguishable
     // from an account that genuinely has no Nextcloud. Nothing would have
     // failed; the map would just have been blank.
     //
-    // ⚠ The SYNC path's `None` is a different question and keeps its meaning:
-    // there, unset legitimately means "do not do PhoneTrack tz inference"
-    // (health #1037). `DAY_NEXTCLOUD_BASE_URL` carries that same split.
+    // ⚠ The sync path's `None` is a different question and keeps its meaning:
+    // there, unset legitimately means "do not do PhoneTrack tz inference".
+    // `DAY_NEXTCLOUD_BASE_URL` carries that same split.
     let base = st
         .cfg
         .nextcloud_base_url
@@ -159,9 +156,7 @@ fn fix_json(fix: Option<&LatestFix>) -> Value {
     }
 }
 
-/// One tail point. ⚠ Three keys only — the TypeScript projects the tail down to
-/// `{lat, lon, ts}` and drops the rest.
-/// One point of `/location/tail`.
+/// One point of `/location/tail`. ⚠ Three keys only: `{lat, lon, ts}`.
 ///
 /// ⚠ `JsNumber`, NOT `f64`. This route's floats are coordinates, and a plain
 /// `f64` field prints `120.0` where the encoder this replaced printed `120` —
@@ -214,10 +209,9 @@ pub async fn locations(
 
     match fetched {
         Ok(f) => {
-            // ⚠ `failed_devices` is NOT surfaced to the caller, matching the
-            // TypeScript, which warns per device and answers 200 either way. It
-            // IS logged with a count, so a short day can be explained after the
-            // fact rather than looking like a quiet day.
+            // ⚠ `failed_devices` is not surfaced to the caller, which gets a 200
+            // either way. It is logged with a count, so a short day can be
+            // explained after the fact rather than looking like a quiet day.
             if f.failed_devices > 0 {
                 tracing::warn!(
                     user = %session.user_id, date = %date, failed_devices = f.failed_devices,
@@ -304,10 +298,10 @@ pub async fn tail(
         Err(e) => return internal(&e),
     }
 
-    // ⚠ `Number(c.req.query("since") ?? 0)`: absent is 0, and anything
-    // unparseable is NaN — against which EVERY `p.ts > since` is false, so the
-    // TypeScript answers an empty tail rather than the whole buffer. Mapping a
-    // bad value to 0 here would do the opposite and dump 2000 points.
+    // ⚠ `since` absent is 0, and anything unparseable is NaN, against which
+    // every `p.ts > since` is false, so the answer is an empty tail rather than
+    // the whole buffer. Mapping a bad value to 0 here would do the opposite and
+    // dump 2000 points.
     let since = match p.since.as_deref() {
         None => Some(0.0_f64),
         Some(s) => {

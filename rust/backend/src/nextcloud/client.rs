@@ -1,4 +1,4 @@
-//! Thin Nextcloud HTTP client. Port of the retired TypeScript `client.ts`.
+//! Thin Nextcloud HTTP client.
 //!
 //! Basic Auth with the stored app password on every request, plus the
 //! `OCS-APIRequest` header Nextcloud requires for its OCS endpoints.
@@ -28,8 +28,8 @@ impl NextcloudClient {
     /// Resolve the user's credentials and bind a client to them.
     ///
     /// Fails with [`NcError::NotLinked`] or [`NcError::ReauthRequired`] before
-    /// any HTTP happens — the pre-flight the TypeScript's `openPhoneTrack` does
-    /// explicitly, moved into construction so it cannot be skipped.
+    /// any HTTP happens: the pre-flight is part of construction so it cannot be
+    /// skipped.
     pub async fn connect(
         http: reqwest::Client,
         pool: &MySqlPool,

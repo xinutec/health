@@ -5,12 +5,12 @@
 //!
 //! # Two spellings of the same fact, on purpose
 //!
-//! ⚠ `fitbitLinked`/`nextcloudLinked` are LEGACY booleans kept for older SPA
+//! ⚠ `fitbitLinked`/`nextcloudLinked` are legacy booleans kept for older SPA
 //! builds, and they are not the same question as `connections.*.status`. A
-//! revoked credential is `needs_reauth` AND `linked: true`, so an old build
+//! revoked credential is `needs_reauth` and `linked: true`, so an old build
 //! shows "connected" for an account that cannot fetch anything. Narrowing the
 //! boolean to `active` would be more truthful and would change what those
-//! builds render, so the port keeps the TypeScript's answer.
+//! builds render, so it stays.
 //!
 //! # `shareWindow` is how a recipient learns their own bounds
 //!
@@ -56,9 +56,8 @@ pub struct ShareWindow {
 
 /// `GET /me`'s answer.
 ///
-/// ⚠ FIELD ORDER IS WIRE ORDER — `preserve_order` is on and this matched the
-/// TypeScript's object literal when it was a `json!`. serde emits struct fields
-/// in declaration order, so reordering them here is a wire change.
+/// ⚠ Field order is wire order: `preserve_order` is on, and serde emits struct
+/// fields in declaration order, so reordering them here is a wire change.
 ///
 /// ⚠ `shareWindow` is `Option` WITHOUT `skip_serializing_if`: the owner's
 /// answer carries an explicit `null`, which is what the SPA distinguishes from

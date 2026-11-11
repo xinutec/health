@@ -1,6 +1,6 @@
 //! Google OAuth 2.0: a stored refresh token for a short-lived access token.
 //!
-//! Port of the retired TypeScript `oauth.ts`.
+//! The Google OAuth token exchange and refresh.
 //!
 //! The refresh token is obtained once through user consent and stored as a
 //! secret; this mints access tokens server-side with no phone in the loop.
@@ -71,10 +71,10 @@ pub async fn access_token(http: &reqwest::Client, creds: &GoogleCreds) -> Result
     let parsed: TokenResponse =
         serde_json::from_str(&body).context("decoding the token response")?;
 
-    // ⚠ BOTH conditions, as the TypeScript does. Google can answer 200 with no
-    // `access_token` on some error shapes, and taking the status alone would
-    // hand an empty bearer to the next request — which fails as a 401 and reads
-    // like a revoked grant rather than a malformed token response.
+    // ⚠ Both conditions. Google can answer 200 with no `access_token` on some
+    // error shapes, and taking the status alone would hand an empty bearer to
+    // the next request, which fails as a 401 and reads like a revoked grant
+    // rather than a malformed token response.
     match parsed.access_token {
         Some(t) if status.is_success() && !t.is_empty() => Ok(t),
         _ => Err(anyhow!(

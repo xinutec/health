@@ -1,10 +1,9 @@
 //! The raw archive: every Google type we hold no table for, into `google_points`.
 //!
-//! Fitbit's Web API ends on 2026-10-30, and with it the only other copy of this
-//! history. Measured 2026-10-02: activity-level 1.12M points, distance 402k,
-//! active-zone-minutes 43k, swim-lengths 32k, sedentary-period 19k,
-//! respiratory-rate-sleep-summary 1.4k, nutrition-log 2 — back to 2023 (2022
-//! for nutrition).
+//! The Fitbit Web API was the only other copy of this history: activity-level
+//! 1.12M points, distance 402k, active-zone-minutes 43k, swim-lengths 32k,
+//! sedentary-period 19k, respiratory-rate-sleep-summary 1.4k, nutrition-log 2,
+//! back to 2023 (2022 for nutrition).
 //!
 //! ⚠ LOSSLESS, NOT TYPED. The time is normalised into columns (both instants to
 //! the millisecond, both offsets, the wall clock) and the rest of the type's
@@ -117,11 +116,11 @@ pub fn parse_point(pt: &serde_json::Value, key: &str) -> Option<PointRow> {
 
 /// Number the points that share a `(start, source)`: 0, 1, … in payload order.
 ///
-/// ⚠ NOT SERVING ORDER. Mid-2024 Google serves up to three activity-level points
+/// ⚠ Not serving order. Mid-2024 Google serves up to three activity-level points
 /// for one minute from one watch, often with different levels, with nothing in
-/// them to tell them apart (measured 2026-10-02: 4,613 such minutes in July
-/// 2024 alone). Keeping all of them needs a key part; ordering by payload makes
-/// a re-fetch number them the same, so `INSERT IGNORE` stays idempotent.
+/// them to tell them apart (thousands of such minutes a month). Keeping all of
+/// them needs a key part; ordering by payload makes a re-fetch number them the
+/// same, so `INSERT IGNORE` stays idempotent.
 #[must_use]
 pub fn number_points(mut rows: Vec<PointRow>) -> Vec<(PointRow, i32)> {
     rows.sort_by(|a, b| {

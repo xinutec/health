@@ -88,11 +88,11 @@ fn grams(v: &serde_json::Value) -> Option<i64> {
 
 /// Map one page's data points, skipping those that cannot name a day or a mass.
 ///
-/// ⚠ A point missing either field is DROPPED rather than refused, matching the
-/// TypeScript's `continue`. That is safe only because the dedup downstream keys
-/// on the civil date: a point with no date cannot place itself, so keeping it
-/// would mean inventing one. It is NOT safe to extend this to other fields —
-/// dropping a point can move the replace boundary and strand stale rows.
+/// ⚠ A point missing either field is dropped rather than refused. That is safe
+/// only because the dedup downstream keys on the civil date: a point with no
+/// date cannot place itself, so keeping it would mean inventing one. It is not
+/// safe to extend this to other fields: dropping a point can move the replace
+/// boundary and strand stale rows.
 pub fn parse_page(body: &str) -> Result<(Vec<Weigh>, Option<String>)> {
     let page: ListResponse = serde_json::from_str(body).context("decoding a google weight page")?;
     let mut out = Vec::new();
@@ -136,10 +136,10 @@ pub fn body_fat_pct(r: &Weigh) -> f64 {
 fn reading(sample_time: Option<&SampleTime>, value: i64) -> Option<Weigh> {
     let date = sample_time?.civil_time.as_ref()?.date.as_ref()?;
     Some(Weigh {
-        // The same `YYYY-MM-DD` the TypeScript builds by padding. Not routed
-        // through `Verified.Civil.formatDate`: these three integers are
-        // Google's own civil date, already split, so there is no arithmetic
-        // to get wrong — only zero-padding.
+        // Zero-padded `YYYY-MM-DD`. Not routed through
+        // `Verified.Civil.formatDate`: these three integers are Google's own
+        // civil date, already split, so there is no arithmetic to get wrong,
+        // only zero-padding.
         date: format!("{:04}-{:02}-{:02}", date.year, date.month, date.day),
         grams: value,
         ts: sample_time
@@ -241,11 +241,11 @@ pub struct DailyValue {
 
 /// The per-type ceiling on `windowSizeDays * pageSize`.
 ///
-/// ⚠ NOT A PAGE SIZE. Google bounds the DURATION a page implies, so a pageSize
-/// of 100 with the default one-day window asks for 100 days and is refused —
+/// ⚠ Not a page size. Google bounds the duration a page implies, so a pageSize
+/// of 100 with the default one-day window asks for 100 days and is refused,
 /// reported as `INVALID_ROLLUP_QUERY_DURATION` against `range`, which is
-/// blameless. Measured 2026-08-27: 90 for steps/distance/floors/altitude,
-/// 14 for active-minutes and total-calories.
+/// blameless: 90 for steps/distance/floors/altitude, 14 for active-minutes and
+/// total-calories.
 ///
 /// 14 is every type's floor, so one width is always legal. A caller wanting a
 /// longer span asks for more windows, not a bigger page.
@@ -637,10 +637,9 @@ pub struct GoogleSleepSession {
     pub log_id: i64,
     /// The civil date the sleep ENDED.
     ///
-    /// ⚠ NOT always what Fitbit's `dateOfSleep` carries, though this parser was
-    /// written believing it was. Measured 2026-09-08: 8 Fitbit-written rows date
-    /// a night to the day it STARTED (e.g. 27 Aug 21:06 -> 28 Aug 08:59, dated
-    /// 2026-08-27). So the two writers can disagree about one night, and since
+    /// ⚠ Not always what Fitbit's `dateOfSleep` carries: some Fitbit-written
+    /// rows date a night to the day it started (21:06 → 08:59 dated to the
+    /// first day). So the two writers can disagree about one night, and since
     /// `date` overwrites on duplicate, the last writer decides.
     pub date: String,
     pub start_time: String,
@@ -782,12 +781,12 @@ pub fn parse_sleep_point(pt: &serde_json::Value) -> Option<GoogleSleepSession> {
 
 /// A JSON number, whether or not Google quoted it.
 ///
-/// ⚠ **A QUOTED NUMBER IS NOT AN ABSENT ONE.** `as_f64()` returns `None` on a
+/// ⚠ **A quoted number is not an absent one.** `as_f64()` returns `None` on a
 /// string, so a field Google serialises as `"62"` is dropped exactly like a
-/// missing one — and a whole stream of them reports as zero days, which reads as
-/// "Google does not carry this". Measured 2026-08-28:
-/// `dailyRestingHeartRate.beatsPerMinute` is a STRING, and 1258 real points were
-/// being discarded silently while `google-compare` printed `google 0 days`.
+/// missing one, and a whole stream of them reports as zero days, which reads
+/// as "Google does not carry this". `dailyRestingHeartRate.beatsPerMinute` is
+/// a string, and its real points would vanish while `google-compare` printed
+/// `google 0 days`.
 ///
 /// ⚠ This is NOT a permissive fallback. A string that does not parse still
 /// yields `None`, because a value we cannot read is not a value we may guess.

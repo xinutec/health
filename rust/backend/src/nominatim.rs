@@ -1,17 +1,14 @@
-//! Reverse geocoding through Nominatim, and the cache the TypeScript left behind.
+//! Reverse geocoding through Nominatim, and its cache.
 //!
-//! The port of the retired TypeScript `osm.ts`'s `reverseGeocode` and its `withCache` wrapper.
-//! Production has never made this call since the TypeScript went, which
-//! is why a captured day cannot answer the `reverseGeocode` keys every golden
-//! day holds — see [`crate::rowset_answerer`], which declines them on purpose.
+//! A captured day cannot answer the `reverseGeocode` keys from this; see
+//! [`crate::rowset_answerer`], which declines them on purpose.
 //!
 //! # The cache table already exists, and reproducing its key EXACTLY is the point
 //!
 //! `osm_cache` is keyed `(query_type, lat_rounded DECIMAL(7,4), lon_rounded
-//! DECIMAL(7,4))`. It holds whatever the TypeScript fetched, under
-//! `nominatim_z18` / `nominatim_z16`. A rounding that disagrees with the
-//! TypeScript's by one unit in the last place does not fail — it MISSES, quietly,
-//! and re-fetches something already paid for.
+//! DECIMAL(7,4))`, under `nominatim_z18` / `nominatim_z16`. A rounding that
+//! disagrees with the stored rows by one unit in the last place does not fail:
+//! it misses, quietly, and re-fetches something already paid for.
 //!
 //! ⚠ **`Math.round` and `f64::round` disagree on exactly the coordinates this
 //! sees.** JS rounds a half toward +∞; Rust rounds a half away from zero. On a
@@ -88,9 +85,9 @@ pub fn queue_key(lat: f64, lon: f64) -> String {
 /// One Nominatim answer, in the shape the fold's `osmTrace.reverseGeocode`
 /// section carries and `Verified.Geo.BestPlace` reads.
 ///
-/// ⚠ The field names are the TypeScript's, not Nominatim's: `displayName` from
+/// ⚠ The field names are the wire format's, not Nominatim's: `displayName` from
 /// `display_name`, and `category` from **`class`** falling back to `category`.
-/// A golden fixture is written in these names, so they are wire format.
+/// A golden fixture is written in these names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Geocode {
     #[serde(rename = "displayName")]
@@ -126,9 +123,8 @@ pub fn narrow(body: &str) -> Option<Geocode> {
     Some(Geocode {
         display_name,
         kind: r.kind.unwrap_or_default(),
-        // ⚠ `class` first. The TypeScript reads `data.class ?? data.category`,
-        // and Nominatim sends `class`; reading `category` first would take an
-        // absent field and record the wrong vocabulary.
+        // ⚠ `class` first: Nominatim sends `class`, and reading `category`
+        // first would take an absent field and record the wrong vocabulary.
         category: r.class.or(r.category).unwrap_or_default(),
         address: r.address.unwrap_or_default(),
     })
@@ -178,13 +174,12 @@ pub async fn cache_get(pool: &MySqlPool, zoom: i64, lat: f64, lon: f64) -> Resul
             at_ms: neg._at,
         }));
     }
-    // `null` parses to `Answer(None)` — the TypeScript cached exactly that.
+    // `null` parses to `Answer(None)`: a cached "nothing here".
     //
-    // ⚠ A row that is NEITHER the sentinel nor a geocode is CORRUPT, and must
+    // ⚠ A row that is neither the sentinel nor a geocode is corrupt, and must
     // not read as "nothing is there". That default would turn a damaged cache
-    // into a permanent, silent blank at one coordinate — the shape #1501 is
-    // about one layer down, where an empty answer and an unmeasured one are
-    // indistinguishable.
+    // into a permanent, silent blank at one coordinate, where an empty answer
+    // and an unmeasured one are indistinguishable.
     let answer: Option<Geocode> = serde_json::from_str(&text)
         .with_context(|| format!("osm_cache holds an unreadable {} row", query_type(zoom)))?;
     Ok(Some(Cached::Answer(answer)))

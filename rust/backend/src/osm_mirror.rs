@@ -1,27 +1,24 @@
 //! The base OSM mirror's WRITE half — the Overpass fetch that fills
 //! `osm_lines`, `osm_points` and `osm_coverage`.
 //!
-//! Port of the retired TypeScript `osm-local.ts`'s `fetchAndStore` half; the
-//! READ half is [`crate::mirror_source`]. Until this existed nothing in the tree
-//! wrote those three tables: the mirror was a dead snapshot of whatever the
-//! TypeScript had left, and ground it had never fetched stayed blank for good.
+//! The write half of the OSM mirror; the read half is
+//! [`crate::mirror_source`]. Without it the mirror would be a frozen snapshot,
+//! and ground never fetched would stay blank for good.
 //!
 //! # Recovered, not reinvented
 //!
-//! The tag filters, the bucket precedence and the WKT shapes below are lifted
-//! from `06346bd^:src/geo/osm-local.ts` rather than derived afresh. The rows
-//! those queries wrote are STILL IN PRODUCTION, and a query of a different shape
-//! would write rows that disagree with their neighbours — a mirror half-filled
-//! by two different definitions of `highway` is worse than one half-empty.
+//! The tag filters, the bucket precedence and the WKT shapes below match the
+//! rows already in the mirror, and a query of a different shape would write
+//! rows that disagree with their neighbours: a mirror half-filled by two
+//! different definitions of `highway` is worse than one half-empty.
 //!
-//! # A fetch is OUT OF BAND, and that is what lifts the TypeScript's box limit
+//! # A fetch is out of band, which lifts the box limit
 //!
-//! `ensureCovered` fetched INSIDE the velocity request, in a 512 MiB pod, which
-//! is why buildings were pinned to a 500 m half-width — a 10 km box of London
-//! footprints was a volume bomb on the serving path. This runs in the
-//! drain beside the pod ([`crate::fetch_drain`]), with no request waiting on it
-//! and its own memory, so the box is sized to the QUESTION instead: see
-//! [`half_width_for`], the one deliberate departure from the TypeScript.
+//! Fetching inside a velocity request in a 512 MiB pod pinned buildings to a
+//! 500 m half-width: a 10 km box of London footprints is a volume bomb on the
+//! serving path. This runs in the drain beside the pod
+//! ([`crate::fetch_drain`]), with no request waiting on it and its own memory,
+//! so the box is sized to the question instead: see [`half_width_for`].
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value};
@@ -51,7 +48,7 @@ pub struct Bbox {
 /// neighbourhood rather than a few hundred metres of travel.
 pub const DEFAULT_HALF_WIDTH_M: f64 = 5000.0;
 
-/// The TypeScript's building half-width, kept as the FLOOR rather than the cap.
+/// The old in-request building half-width, kept as the floor rather than the cap.
 ///
 /// Buildings are dense enough that a 10 km box is millions of footprints, so a
 /// building fetch still starts small — but see [`half_width_for`] for why it no
@@ -118,7 +115,7 @@ pub fn fetch_bbox_around(lat: f64, lon: f64, half_width_m: f64) -> Bbox {
     }
 }
 
-/// The tag filters that land in each bucket, verbatim from the TypeScript.
+/// The tag filters that land in each bucket.
 ///
 /// ⚠ ONE FETCH BRINGS BOTH SHAPES. `railway` asks for stations (nodes) AND rail
 /// lines (ways) in the same query, because the bucket is the OSM tag namespace
@@ -230,8 +227,8 @@ const FEATURE_TYPE_RULES_TAIL: [(&str, &str); 2] =
 /// Highway-tagged NODES that are furniture rather than road.
 ///
 /// ⚠ Their own bucket, so a road-way lookup never mixes with them: a vehicle
-/// dwelling repeatedly AT bus stops is a bus, and dwelling at signals is any
-/// road vehicle, which is the evidence #328's discriminator reads.
+/// dwelling repeatedly at bus stops is a bus, and dwelling at signals is any
+/// road vehicle, which is the evidence the bus discriminator reads.
 const TRANSIT_STOP_HIGHWAY_SUBTYPES: [&str; 2] = ["bus_stop", "traffic_signals"];
 
 /// One parsed OSM element, ready for `osm_points` or `osm_lines`.
@@ -258,14 +255,14 @@ impl Feature {
 /// Translate one Overpass element, or `None` when it carries no tag we bucket
 /// or no usable geometry.
 ///
-/// ⚠ A RELATION IS DROPPED. `out tags geom` returns them for some filters and
-/// neither geometry table can hold one; the TypeScript dropped them too, so a
-/// mirror written here matches the rows already in production.
+/// ⚠ A relation is dropped. `out tags geom` returns them for some filters and
+/// neither geometry table can hold one, so a mirror written here matches the
+/// rows already in it.
 #[must_use]
 ///
-/// `venue_tags` is [`crate::lean::venue_tags`]: a NAMED feature with one of
-/// those tags and no venue tag of its own is a landmark — a hotel mapped as the
-/// building alone (2026-10-01), a beach (2026-10-03).
+/// `venue_tags` is [`crate::lean::venue_tags`]: a named feature with one of
+/// those tags and no venue tag of its own is a landmark (a hotel mapped as the
+/// building alone, a beach).
 pub fn parse_element(el: &Value, venue_tags: &[(String, Vec<String>)]) -> Option<Feature> {
     let kind = el.get("type")?.as_str()?;
     let id = el.get("id")?.as_i64()?;
@@ -339,18 +336,17 @@ pub fn parse_element(el: &Value, venue_tags: &[(String, Vec<String>)]) -> Option
     })
 }
 
-/// How many rows go into one INSERT. The TypeScript's number.
+/// How many rows go into one INSERT.
 const UPSERT_BATCH: usize = 500;
 
 /// Bulk-upsert features into one geometry table. Returns rows written.
 ///
-/// ⚠ `feature_type` FOLLOWS THE PARSE on a duplicate key. `parse_element` files
+/// ⚠ `feature_type` follows the parse on a duplicate key. `parse_element` files
 /// an element from its tags alone, whichever bucket's query returned it, so a
 /// re-fetch that files a row differently is a rule that changed (or OSM that
-/// did), and the row must move with it: the Gare Montparnasse halls were
-/// fetched as buildings on 2026-10-01, `building=train_station` joined the venue
-/// tags on 10-03, and the landmark fetch that returned them left them buildings
-/// — invisible to every landmark reader.
+/// did), and the row must move with it: halls fetched as buildings before
+/// `building=train_station` joined the venue tags would otherwise stay
+/// buildings, invisible to every landmark reader.
 ///
 /// ⚠ WRITTEN OUT TWICE, points and lines, for `DL-SQLX-SCHEMA-TRUTH`'s reason:
 /// SQL that reaches the driver through a variable cannot be checked against the
@@ -431,10 +427,9 @@ async fn upsert_lines(pool: &MySqlPool, features: &[&Feature]) -> Result<u64> {
 /// Record that a box has been fetched for a bucket, under `vocab` when the
 /// bucket's boxes are keyed by one ([`vocab_for`]).
 ///
-/// ⚠ WRITTEN LAST, after the rows are in. A coverage row is a PROMISE that the
+/// ⚠ Written last, after the rows are in. A coverage row is a promise that the
 /// area can be answered from the mirror; writing it before the features would
-/// make a crash mid-insert look like a fetched area with no roads in it, which
-/// is the shape #976 is about.
+/// make a crash mid-insert look like a fetched area with no roads in it.
 pub async fn record_coverage(
     pool: &MySqlPool,
     feature_type: &str,

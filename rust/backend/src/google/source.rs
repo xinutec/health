@@ -34,8 +34,8 @@ pub struct Stream {
     pub why: &'static str,
 }
 
-/// The roster, first measured 2026-08-27 against the live Google account and
-/// prod; each `why` carries the date of its own measurement.
+/// The roster, measured against the live Google account and prod; each `why`
+/// carries its own measurement.
 pub const STREAMS: &[Stream] = &[
     Stream {
         name: "body",

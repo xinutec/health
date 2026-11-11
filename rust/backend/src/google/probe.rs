@@ -68,10 +68,10 @@ const DAILY_TYPES: &[&str] = &[
     "daily-oxygen-saturation",
     "daily-respiratory-rate",
     "daily-sleep-temperature-derivations",
-    // ⚠ MEASURED NOT ONE-PER-DAY, 2026-08-27: it ran past 500,000 points and
-    // hit the page bound, where the five above land at ~1,200. Kept because the
-    // bound is now reported out loud, and a type that does not fit the
-    // assumption is worth seeing say so rather than being quietly dropped.
+    // ⚠ Not one per day: it runs past 500,000 points and hits the page bound,
+    // where the five above land at ~1,200. Kept because the bound is reported
+    // out loud, and a type that does not fit the assumption is worth seeing say
+    // so rather than being quietly dropped.
     "daily-heart-rate-zones",
     // A weigh-in's sibling: how much body-fat history is there to backfill?
     "body-fat",
@@ -92,12 +92,12 @@ const CANDIDATES: &[&str] = &[
     "sleep",
     // fitbit::sync::hrv — samples, and the nightly figure.
     "heart-rate-variability",
-    // ⚠ CARRIES BOTH `hrv_daily` COLUMNS, in this one type: the daily average
-    // AND `deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds`. HRV has
-    // NO per-stage sibling type — `heart-rate-variability-sleep-summary` was
-    // guessed from `respiratory-rate-sleep-summary` and measured 2026-08-28 as
-    // HTTP 400 `INVALID_PARENT_DATA_TYPE_COLLECTION`, "not supported". Written
-    // down so the analogy is not drawn a second time; the deep figure is here.
+    // ⚠ Carries both `hrv_daily` columns, in this one type: the daily average
+    // and `deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds`. HRV has
+    // no per-stage sibling type: `heart-rate-variability-sleep-summary`, guessed
+    // from `respiratory-rate-sleep-summary`, answers HTTP 400
+    // `INVALID_PARENT_DATA_TYPE_COLLECTION`, "not supported". Written down so
+    // the analogy is not drawn a second time; the deep figure is here.
     "daily-heart-rate-variability",
     // fitbit::sync::daily — SpO2, breathing rate, temperature.
     "oxygen-saturation",
@@ -272,10 +272,10 @@ async fn depth_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
         }
     }
 
-    // ⚠ SAY SO WHEN THE WALK WAS CUT SHORT. A bounded scan that prints its
-    // partial total beside a date reads as a complete series — `daily-heart-rate-zones`
-    // reported "500000 points 0657-09-14 → 2026-08-27" on the first run, which
-    // is not a finding about the data but a finding about this loop. A silent
+    // ⚠ Say so when the walk was cut short. A bounded scan that prints its
+    // partial total beside a date reads as a complete series
+    // (`daily-heart-rate-zones` once reported "500000 points" over an impossible
+    // date range), which is a finding about this loop, not the data. A silent
     // cap is the failure this whole instrument exists to avoid.
     let note = if hit_bound {
         format!(

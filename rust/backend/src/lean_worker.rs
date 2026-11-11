@@ -280,14 +280,14 @@ impl Worker {
         // still RECORDED, because how often the fold asks is a fact about the
         // fold, not about the cache.
         //
-        // ⚠ MEMOISED AS THE REPLY LINE, NOT THE TREE. A walkable-roads answer
-        // over a London walk is 20,000 ways as a `Value` — every vertex a
+        // ⚠ Memoised as the reply line, not the tree. A walkable-roads answer
+        // over a London walk is 20,000 ways as a `Value` (every vertex a
         // two-element array of bit strings, an order of magnitude over its
-        // text — and a day asks for several. Holding those trees for the whole
-        // call, plus the clone each insert took, WAS the fold's working set
-        // (#1071: 200 MiB a fold, the third fold OOM-killed the pod). The tree
-        // lives only until it is serialised; what the memo keeps is the line
-        // Lean is sent, shared, never copied.
+        // text), and a day asks for several. Holding those trees for the whole
+        // call, plus the clone each insert took, was the fold's working set
+        // (200 MiB a fold; the third fold OOM-killed the pod). The tree lives
+        // only until it is serialised; what the memo keeps is the line Lean is
+        // sent, shared, never copied.
         let mut memo: std::collections::HashMap<Ask, (std::sync::Arc<str>, bool)> =
             Default::default();
         loop {

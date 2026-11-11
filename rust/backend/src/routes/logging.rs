@@ -8,11 +8,10 @@
 //! # ⚠ The log is evidence, and the client can write to it
 //!
 //! A label is verbatim UI text placed into a line as `label=…`. A newline
-//! inside it forges WHOLE LINES, including further `client-event` lines
-//! attributed to someone else — so the flattening in
-//! `Verified.LogLine.oneLine` is the security boundary of this file, not
-//! tidiness. It is called rather than reimplemented, because it depends on
-//! Unicode tables derived from V8.
+//! inside it forges whole lines, including further `client-event` lines
+//! attributed to someone else, so the flattening in `Verified.LogLine.oneLine`
+//! is the security boundary of this file, not tidiness. It is called rather
+//! than reimplemented, because it depends on derived Unicode tables.
 //!
 //! # ⚠ `user=` and `actor=` are different questions
 //!
@@ -24,9 +23,9 @@
 //! # The caps
 //!
 //! A per-batch cap so one POST cannot become a log flood, and a per-label cap
-//! so one event cannot bloat a line. ⚠ Events past the cap are DROPPED
-//! silently, matching the TypeScript — a client sending 200 events is told
-//! nothing about the 100 that vanished.
+//! so one event cannot bloat a line. ⚠ Events past the cap are dropped
+//! silently: a client sending 200 events is told nothing about the 100 that
+//! vanished.
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -48,7 +47,7 @@ const MAX_EVENT_NAME: usize = 100;
 /// Most UTF-16 units of serialised `data`.
 const MAX_DATA: usize = 4000;
 
-/// `"owner"` or `"share"` — the TypeScript's `actorOf`.
+/// `"owner"` or `"share"`.
 fn actor_of(session: &UserSession) -> &'static str {
     if session.share_viewer.is_some() {
         "share"
@@ -59,9 +58,8 @@ fn actor_of(session: &UserSession) -> &'static str {
 
 /// `String.prototype.slice(0, n)`, which counts UTF-16 CODE UNITS.
 ///
-/// ⚠ NOT code points — unlike `oneLine`'s cap, which does. The TypeScript uses
-/// two different truncations in the same file and this is the faithful one for
-/// `event` and `data`.
+/// ⚠ Not code points, unlike `oneLine`'s cap, which does count them: the two
+/// truncations differ, and this one is for `event` and `data`.
 ///
 /// ⚠ ONE DELIBERATE DIVERGENCE. JavaScript will cut a surrogate PAIR in half
 /// and emit a lone surrogate; a Rust `String` cannot hold one, so this stops at
@@ -82,7 +80,7 @@ fn truncate_utf16(s: &str, max_units: usize) -> String {
     out
 }
 
-/// `String(x ?? "")` for a JSON value, as the TypeScript coerces it.
+/// `String(x ?? "")` for a JSON value.
 ///
 /// ⚠ A missing field and an explicit `null` both become `""`, and a NUMBER
 /// becomes its JS rendering — which is why this goes through the same number
@@ -173,10 +171,8 @@ pub async fn client_log(
         )
             .into_response();
     };
-    // ⚠ An ARRAY is refused here while `/telemetry` requires one. `typeof [] is
-    // "object"` in JavaScript, so the TypeScript's `typeof body !== "object"`
-    // ACCEPTS an array — reproduced rather than tightened, since a client
-    // sending one currently gets a 204 and a log line.
+    // ⚠ An array is accepted here while `/telemetry` requires one, deliberately
+    // kept: a client sending one gets a 204 and a log line.
     if !body.is_object() && !body.is_array() {
         return (
             StatusCode::BAD_REQUEST,
@@ -210,10 +206,10 @@ pub async fn client_log(
         },
     };
 
-    // ⚠ NOT flattened. This matches the TypeScript, and it means `/client-log`
-    // can still inject newlines into the log where `/telemetry` cannot. It is
-    // the same class of hole the flattening exists to close; closing it here
-    // would change what production logs, so it is recorded rather than fixed.
+    // ⚠ Not flattened, so `/client-log` can still inject newlines into the log
+    // where `/telemetry` cannot. It is the class of hole the flattening exists to
+    // close; closing it here would change what production logs, so it is
+    // recorded rather than fixed.
     if data_str.is_empty() {
         tracing::info!("[client/{}] {event}", session.user_id);
     } else {

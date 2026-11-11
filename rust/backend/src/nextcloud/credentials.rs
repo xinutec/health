@@ -1,4 +1,4 @@
-//! The Nextcloud app-password store. Port of the retired TypeScript `credentials.ts`.
+//! The Nextcloud app-password store.
 //!
 //! # Why there is no refresh here, and no lock either
 //!
@@ -6,10 +6,9 @@
 //! crossing the expiry boundary cannot both rotate a single-use refresh token.
 //! None of that applies to an app password: it is a long-lived credential from
 //! Nextcloud's Login Flow v2 with no expiry and nothing to rotate, sent as HTTP
-//! Basic Auth on every request. The TypeScript's own header records that this
-//! shape was CHOSEN to end a cross-pod refresh race — the auth pod and the sync
-//! cron each noticing "expires soon" and the loser being told its refresh token
-//! was already spent.
+//! Basic Auth on every request. That shape was chosen to end a cross-pod
+//! refresh race: the auth pod and the sync cron each noticing "expires soon",
+//! and the loser told its refresh token was already spent.
 //!
 //! So this module is CRUD and nothing else. Reads are one row by primary key.
 //! Adding a cache here would reintroduce the coherence question that removing

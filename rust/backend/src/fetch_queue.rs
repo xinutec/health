@@ -9,10 +9,9 @@
 //! recorded that anyone had asked.
 //!
 //! Fetching inline would fix that and put a network round trip on the serving
-//! path, which is where the fold's latency already hurts (#1071 measures ~27 s
-//! on a heavy day). So the request RECORDS and the drain FETCHES, within
-//! seconds and off the response path: the day is blank once and right on its
-//! next view (`crate::fetch_drain`).
+//! path, where the fold's latency already hurts. So the request records and the
+//! drain fetches, within seconds and off the response path: the day is blank
+//! once and right on its next view (`crate::fetch_drain`).
 //!
 //! # `kind` is `osm_cache.query_type`
 //!
