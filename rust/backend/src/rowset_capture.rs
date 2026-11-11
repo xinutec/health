@@ -1,10 +1,9 @@
 //! Recording what the answerer asked the mirror, as an `osmRowSet`.
 //!
-//! ⚠ **WHY: nothing has written one since the TypeScript went.** The
-//! corpus froze at 2026-08-13, so no recent day could become a gate — and
-//! recent days are where the defects are. `osm_trace`'s
-//! recording answerer does the three matcher-read sections; this is the other
-//! half, the rows the ANSWERER serves its seven tables from.
+//! ⚠ **The row-set writer**, so a recent day can become a gate, since recent
+//! days are where the defects are. `osm_trace`'s recording answerer does the
+//! three matcher-read sections; this is the other half, the rows the answerer
+//! serves its seven tables from.
 //!
 //! It wraps any [`RowSource`] and delegates, so the capture sees exactly what
 //! production asked and got, rather than a second copy of the queries.
@@ -16,10 +15,10 @@
 //! positional form does not carry. This converts, which means the proof cannot
 //! be "the keys match": it has to be that the DAY comes out the same.
 //!
-//! ⚠ **AND IT RECORDS THE DECLINES.** Where the mirror cannot vouch for an area
+//! ⚠ **And it records the declines.** Where the mirror cannot vouch for an area
 //! it answers `None`, and a row set that dropped that would replay the day
-//! better than production runs it — 108 keys on 2026-09-06, the whole of
-//! #1658's defect, blessed away. See `RowSetSource::declined`.
+//! better than production runs it, blessing the gap away. See
+//! `RowSetSource::declined`.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -65,9 +64,9 @@ pub struct Recorded {
     rail_ways: Vec<Value>,
     stations: Option<Vec<Value>>,
     declined: Vec<String>,
-    /// Geocodes the source answered, keyed `lat|lon|zoom` in PLAIN DECIMALS —
-    /// the format the 42 TypeScript-written fixtures use, so a captured section
-    /// is diffable against them.
+    /// Geocodes the source answered, keyed `lat|lon|zoom` in plain decimals,
+    /// the format the older fixtures use, so a captured section is diffable
+    /// against them.
     geocodes: BTreeMap<String, Value>,
 }
 
@@ -106,10 +105,10 @@ impl Recorded {
     /// The `osmRowSet` a fixture carries.
     pub fn row_set(&self) -> Value {
         json!({
-            // ⚠ Kept for shape only: nothing reads it, and the DECLINES below
-            // are what actually reproduce a gap. Emitting an empty list rather
-            // than omitting it keeps a captured fixture diffable against the 42
-            // the TypeScript made.
+            // ⚠ Kept for shape only: nothing reads it, and the declines below
+            // are what reproduce a gap. Emitting an empty list rather than
+            // omitting it keeps a captured fixture diffable against the older
+            // ones.
             "coverage": Value::Object(serde_json::Map::new()),
             "points": self.points.values().cloned().collect::<Vec<_>>(),
             "lines": self.lines.values().cloned().collect::<Vec<_>>(),
@@ -128,7 +127,7 @@ impl Recorded {
     ///
     /// ⚠ Omitted rather than emitted empty when nothing was answered. An empty
     /// section is a day that asked and got nothing; an absent one is a day whose
-    /// source could not answer. #1660 grades on that difference.
+    /// source could not answer, and the gates grade on that difference.
     pub fn geocode_section(&self) -> Option<Value> {
         if self.geocodes.is_empty() {
             return None;
@@ -205,12 +204,12 @@ impl Recorded {
 }
 
 impl<S: RowSource> RowSource for RecordingSource<S> {
-    // ⚠ THE THREE MATCHER READS FORWARD. The trait defaults them to a decline
-    // because a ROW SET has no arm for them, and a recorder that inherited that
-    // default asked the mirror nothing: the 2026-08-06 re-capture came back
-    // with every walkable-roads read declined and a moved timeline. The
-    // answers are recorded by the `RecordingAnswerer` above as `osmTrace`
-    // sections; a `None` here is a decline the replay reproduces by absence.
+    // ⚠ The three matcher reads forward. The trait defaults them to a decline
+    // because a row set has no arm for them, and a recorder that inherited that
+    // default would ask the mirror nothing: every walkable-roads read declined
+    // and a moved timeline. The answers are recorded by the
+    // `RecordingAnswerer` above as `osmTrace` sections; a `None` here is a
+    // decline the replay reproduces by absence.
     fn walkable_roads(&mut self, lat: f64, lon: f64, radius_m: f64) -> Result<Option<Value>> {
         self.inner.walkable_roads(lat, lon, radius_m)
     }
@@ -359,8 +358,8 @@ impl<S: RowSource> RowSource for RecordingSource<S> {
     fn geocode(&mut self, lat: f64, lon: f64, zoom: i64) -> Result<Option<Value>> {
         let found = self.inner.geocode(lat, lon, zoom)?;
         if let Some(answer) = &found {
-            // ⚠ PLAIN DECIMALS, matching the TypeScript's own section — NOT the
-            // bit patterns the fold's miss key uses. `fold_payload::geocode_table`
+            // ⚠ Plain decimals, as the older fixtures' sections are, not the bit
+            // patterns the fold's miss key uses. `fold_payload::geocode_table`
             // converts on the way in, and a section written in bits would parse
             // to ~4.6e18 and match nothing.
             self.rec()

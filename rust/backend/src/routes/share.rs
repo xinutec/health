@@ -15,8 +15,8 @@
 //! # `daysBack` CLAMPS here and REJECTS on a read
 //!
 //! ⚠ `?days=400` on `/activity` is an error; `daysBack: 400` here is silently
-//! narrowed to 365. Same API, same domain, opposite behaviour — and both are
-//! the TypeScript's. See `Verified.Share.clampShareDaysBack` against
+//! narrowed to 365. Same API, same domain, opposite behaviour, both kept
+//! because clients rely on them. See `Verified.Share.clampShareDaysBack` against
 //! `Verified.ApiWindow.validateDays`.
 //!
 //! ⚠ A non-number is a THIRD case, distinct from out-of-range: it is not
@@ -62,11 +62,9 @@ pub struct Body {
 
 /// `daysBack` from a JSON body, as `clampShareDaysBack` sees it.
 ///
-/// ⚠ `typeof value !== "number"` in the TypeScript, so a numeric STRING is not
-/// a number: `{"daysBack": "7"}` is refused, not parsed. That is the opposite
-/// of the query-parameter path, where everything arrives as a string and is
-/// coerced. Accepting `"7"` here would be a kindness that production does not
-/// extend.
+/// ⚠ A numeric string is not a number: `{"daysBack": "7"}` is refused, not
+/// parsed. That is the opposite of the query-parameter path, where everything
+/// arrives as a string and is coerced.
 fn days_back_of(body: Option<&Body>) -> Option<i64> {
     let v = body?.days_back.as_ref()?;
     // `Math.floor`, so toward negative infinity — and then clamped, which is
@@ -75,7 +73,7 @@ fn days_back_of(body: Option<&Body>) -> Option<i64> {
     n.is_finite().then(|| n.floor() as i64)
 }
 
-/// One share row, rendered as the TypeScript renders it.
+/// One share row, as the client reads it.
 ///
 /// ⚠ `createdAt` is `Date.toISOString()`, which is the same string
 /// `JSON.stringify` produces for a Date — so this reuses the row renderer's

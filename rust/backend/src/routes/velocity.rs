@@ -38,16 +38,16 @@ pub struct Params {
     walk_match: Option<String>,
 }
 
-/// `YYYY-MM-DD`, and nothing else. The TypeScript's `dateParam` regex.
-/// Folds run ONE AT A TIME per process.
+/// `YYYY-MM-DD`, and nothing else.
+/// Folds run one at a time per process.
 ///
-/// ⚠ Measured from the node, 2026-09-25: a fourteen-day browse at fourteen
-/// seconds a day stacked three folds, and the kernel killed the backend at
-/// 428 MiB anonymous memory (the 512 MiB pod limit, three Lean children beside
-/// it), then again at 472 MiB with two in flight once the arenas of the first
-/// burst were resident. A fold's working set is its OSM answers as JSON trees —
-/// 10,000–20,000 ways per walkable-roads ask over a London walk — and two of
-/// those do not fit beside what the previous one leaves behind.
+/// ⚠ A fourteen-day browse at fourteen seconds a day stacked three folds, and
+/// the kernel killed the backend at 428 MiB anonymous memory (the 512 MiB pod
+/// limit, three Lean children beside it), then again at 472 MiB with two in
+/// flight once the arenas of the first burst were resident. A fold's working
+/// set is its OSM answers as JSON trees (10,000–20,000 ways per walkable-roads
+/// ask over a London walk), and two of those do not fit beside what the
+/// previous one leaves behind.
 ///
 /// Requests QUEUE here rather than stack. The permit is taken inside the
 /// cache-miss path, so a day already seated is served while another folds, and
@@ -111,11 +111,10 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
     let now_ms = chrono::Utc::now().timestamp_millis();
     let now_s = now_ms / 1000;
 
-    // ⚠ The default date is TODAY IN UTC, matching the TypeScript's
-    // `new Date().toISOString().slice(0, 10)` — NOT the viewer's local date,
-    // even though `tz` may say otherwise. Changing it would silently move which
-    // day a bare `/velocity` returns for anyone east or west of UTC at the
-    // boundary; that is a product decision, not a port detail.
+    // ⚠ The default date is today in UTC, not the viewer's local date, even
+    // though `tz` may say otherwise. Changing it would silently move which day
+    // a bare `/velocity` returns for anyone east or west of UTC at the
+    // boundary; that is a product decision.
     let date = p
         .date
         .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
@@ -250,11 +249,10 @@ pub async fn compute(st: &AppState, user_id: &str, date: &str, tz: Option<&str>)
 
 /// [`compute`] with the pedestrian matcher switchable.
 ///
-/// ⚠ `walk_match = false` is `?walkMatch=0`, the RAW BASELINE the map compares
-/// the matched line against. It reaches the fold as `env.walkMatch`, and until
-/// #1619 it reached nothing at all: the query parameter was spent entirely on
-/// the cache key, so both arms computed the identical day and the A/B compared
-/// a value with itself. ⚠ That was invisible while every walk drew raw anyway.
+/// ⚠ `walk_match = false` is `?walkMatch=0`, the raw baseline the map compares
+/// the matched line against. It reaches the fold as `env.walkMatch`; spent only
+/// on the cache key, both arms would compute the identical day and the A/B
+/// would compare a value with itself.
 pub async fn compute_with(
     st: &AppState,
     user_id: &str,
@@ -282,12 +280,10 @@ pub async fn compute_with(
     let mut phase = std::time::Instant::now();
     let mut mark = |timing: &mut serde_json::Map<String, Value>, name: &str| {
         timing.insert(name.into(), json!(phase.elapsed().as_millis() as u64));
-        // ⚠ RSS PRINTED, NEVER SHIPPED. `timing` goes over the wire into
-        // `VelocityData.timing`, so putting a memory figure in it would change
-        // the served shape and the generated TS types for a diagnostic. #1071
-        // is a memory fault and the per-phase split is the thing five wrong
-        // accounts of it were all missing; `FOLD_SPLIT` already gates the
-        // per-round half of the same picture.
+        // ⚠ RSS printed, never shipped. `timing` goes over the wire into
+        // `VelocityData.timing`, so a memory figure in it would change the
+        // served shape and the generated TS types for a diagnostic.
+        // `FOLD_SPLIT` already gates the per-round half of the same picture.
         if std::env::var_os("FOLD_SPLIT").is_some() {
             eprintln!("  phase {name}: RSS {} MiB", crate::fold::rss_mib());
         }
@@ -468,10 +464,7 @@ pub async fn compute_with(
         // ⚠ DECODED, not forwarded. See `decode_episode_bits` — the fold's
         // bit-string coordinates hung the Android app for a full day.
         "episodes": decode_episode_bits(out.get("episodes").cloned().unwrap_or_else(|| json!([]))),
-        // The timeline's collapsible journeys, assembled server-side. The
-        // client folded its own until #339 put `city` on a state and made the two
-        // rules agree; measured over 41 replayable days, both produce the same 102
-        // journeys.
+        // The timeline's collapsible journeys, assembled server-side.
         "journeys": out.get("journeys").cloned().unwrap_or_else(|| json!([])),
         // `Battery` is already `(ts, level)` pairs — the chart's own shape.
         "battery": h.battery.iter().map(|(ts, l)| json!({ "ts": ts, "level": l })).collect::<Vec<_>>(),
@@ -504,9 +497,9 @@ fn timing_with(
     // dominated by round trips over an SSH tunnel; with the count beside it the
     // two can be compared against an in-cluster run instead of guessed at.
     out.insert("mirrorQueries".into(), json!(mirror_queries));
-    // ⚠ The two halves of `fold`, so nobody has to divide it by the query count
-    // and call the result a per-query cost — which is what #1071 did, and it was
-    // wrong. `fold` minus these two is the fold's own work.
+    // ⚠ The two halves of `fold`, so nobody divides it by the query count and
+    // calls the result a per-query cost. `fold` minus these two is the fold's
+    // own work.
     out.insert("foldDbMs".into(), json!(db_ms));
     out.insert("foldLeanMs".into(), json!(lean_ms));
     Value::Object(out)

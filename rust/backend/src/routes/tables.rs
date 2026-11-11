@@ -10,10 +10,9 @@
 //! # Two windows, two different refusals
 //!
 //! ⚠ A share recipient asking for a date outside their window gets `[]` and a
-//! **200** from the single-day endpoints, while `/velocity` gives them a 403.
-//! That is the TypeScript's behaviour and it is preserved deliberately: the
-//! frontend paging through days treats a 200 with no rows as "nothing that day"
-//! and keeps rendering, and turning that into an error would break paging at
+//! **200** from the single-day endpoints, while `/velocity` gives them a 403,
+//! deliberately: the frontend paging through days treats a 200 with no rows as
+//! "nothing that day" and keeps rendering, and an error would break paging at
 //! the window edge rather than at the request.
 //!
 //! ⚠ The multi-day endpoints have no such branch at all. They are capped
@@ -53,13 +52,11 @@ pub struct DateParams {
 
 /// `Number(s)`, as `z.coerce.number()` calls it.
 ///
-/// ⚠ `pub` so `tests/suite/row_json.rs` can hold it against the zod outputs measured
-/// in `lean/experiments/apiwindow-refs.mts`. Integration tests are a separate
-/// crate, so `pub(crate)` would be invisible to them.
+/// ⚠ `pub` so `tests/suite/row_json.rs` can pin it. Integration tests are a
+/// separate crate, so `pub(crate)` would be invisible to them.
 ///
 /// ⚠ Not `s.parse::<f64>()`. Three of these differences change which requests
-/// are answered, and all three were measured against zod itself — see the
-/// `daysParam` section of `lean/experiments/apiwindow-refs.mts`:
+/// are answered, so they follow JavaScript's `Number()` exactly:
 ///
 ///   * `Number("")` is `0`, NOT `NaN`. An empty `?days=` is therefore a
 ///     rejection (0 is below the minimum) and not the 30-day default. A host
@@ -77,11 +74,9 @@ pub fn js_number(s: &str) -> f64 {
     if t.is_empty() {
         return 0.0;
     }
-    // ⚠ Every NaN below IS the contract, not a sentinel this function chose.
-    // `js_number` reimplements JavaScript's `Number()`, whose "not a number"
-    // answer is NaN; returning `Option<f64>` would make this stop mirroring the
-    // oracle in `lean/experiments/apiwindow-refs.mts` that the doc above pins it
-    // to, and the callers already read NaN as the rejection.
+    // ⚠ Every NaN below is the contract, not a sentinel this function chose:
+    // `js_number` implements JavaScript's `Number()`, whose "not a number"
+    // answer is NaN, and the callers read NaN as the rejection.
     if let Some(rest) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
         // dev-lint: allow-nan-sentinel — the contract, not a sentinel; see the note above the first branch
         return u64::from_str_radix(rest, 16).map_or(f64::NAN, |v| v as f64);
@@ -110,10 +105,7 @@ fn since_date(session: &UserSession, raw: Option<&str>) -> Result<Option<String>
     let Some(days) = lean::validate_days(raw.map(js_number))? else {
         return Ok(None);
     };
-    // ⚠ TODAY IN UTC. The TypeScript builds a local `Date`, shifts it with the
-    // local `setDate`, then reads it back with `toISOString` — so its window
-    // depends on the server's timezone and is only correct because the pod runs
-    // with TZ unset. This is that same window without the ambient variable.
+    // ⚠ Today in UTC, with no dependency on the server's timezone.
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let share_from = session.share_viewer.as_ref().map(|(f, _)| f.as_str());
     let since = lean::earliest_visible(&today, days, share_from)?
@@ -121,8 +113,7 @@ fn since_date(session: &UserSession, raw: Option<&str>) -> Result<Option<String>
     Ok(Some(since))
 }
 
-/// `YYYY-MM-DD` and nothing else — the TypeScript's `dateParam` regex. Absent
-/// defaults to today in UTC.
+/// `YYYY-MM-DD` and nothing else. Absent defaults to today in UTC.
 fn parse_date(raw: Option<&str>) -> Option<String> {
     let Some(s) = raw else {
         return Some(chrono::Utc::now().format("%Y-%m-%d").to_string());
@@ -247,13 +238,12 @@ days_back_handler!(
 // hide real data from the dashboard. The instant goes null; the night still
 // shows.
 //
-// ⚠ THE REPAIR IS A NET, NOT A PATH. Measured against production 2026-09-12
-// (`probe-served-instants.mjs`): all 1,270 sleep rows, all 37,780 stage
-// rows and all 32,587,081 intraday heart-rate rows already carry a stored
-// `_utc`, so the COALESCE reaches its second arm zero times today. It is here
-// for a legacy row the backfill never touched, and for the case where it cannot
-// help — `CONVERT_TZ` also returns NULL when the server has no zone tables, and
-// that is why the fallback is written rather than assumed.
+// ⚠ The repair is a net, not a path. Every sleep row, stage row and intraday
+// heart-rate row in production carries a stored `_utc`, so the COALESCE
+// reaches its second arm zero times. It is here for a legacy row the backfill
+// never touched, and for the case where it cannot help: `CONVERT_TZ` also
+// returns NULL when the server has no zone tables, which is why the fallback
+// is written rather than assumed.
 macro_rules! sql_sleep_select {
     () => {
         "SELECT log_id, date, \
@@ -429,13 +419,12 @@ days_back_handler!(
 
 /// The two whole-table reads: no window, no date, just the user's rows.
 ///
-/// ⚠ Neither has a share-window branch, and that is the TypeScript's behaviour
-/// rather than an omission here. A share recipient reading `/devices` sees the
-/// owner's watches and their last sync times; reading `/sync-state` sees the
-/// owner's per-stream cursors. Both are metadata about the account rather than
-/// about a date, so a date window has nothing to say about them — but it does
-/// mean these two endpoints are NOT narrowed by a share, which is worth knowing
-/// before a share link goes to someone new.
+/// ⚠ Neither has a share-window branch. A share recipient reading `/devices`
+/// sees the owner's watches and their last sync times; reading `/sync-state`
+/// sees the owner's per-stream cursors. Both are metadata about the account
+/// rather than about a date, so a date window has nothing to say about them,
+/// but it does mean these two endpoints are not narrowed by a share, which is
+/// worth knowing before a share link goes to someone new.
 macro_rules! whole_table_handler {
     ($name:ident, $sql_const:ident, $sql:literal) => {
         /// The query this endpoint serves, exported for `backend rows-check`.
@@ -467,9 +456,8 @@ macro_rules! whole_table_handler {
     };
 }
 
-// ⚠ No ORDER BY, matching the TypeScript. Row order is whatever the storage
-// engine returns; adding a sort here would be a nicer API and a different
-// response.
+// ⚠ No ORDER BY: row order is whatever the storage engine returns, and a sort
+// here would be a different response.
 whole_table_handler!(
     sync_state,
     SQL_SYNC_STATE,

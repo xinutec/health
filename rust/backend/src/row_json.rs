@@ -1,4 +1,4 @@
-//! `selectAll()` rows, rendered the way the TypeScript backend renders them.
+//! `selectAll()` rows, rendered as the client reads them.
 //!
 //! Twelve `/api` endpoints are one line of logic each — select every column of a
 //! table, hand the rows to `c.json`. The logic ports in a minute; the SHAPE is
@@ -7,12 +7,10 @@
 //! reads types out of it. Get one column's rendering wrong and the failure is
 //! invisible here and loud three layers away.
 //!
-//! ⚠ The TypeScript's own type declarations are NOT the contract.
-//! `tables.ts` declares `daily_rmssd: number | null` eleven lines below a
-//! comment saying DECIMAL columns arrive as strings. The mapping this module
-//! implements was MEASURED against production instead —
-//! `scripts/prod-db.sh node scripts/probe-row-shapes.mjs` — and the rule itself
-//! lives in `Verified.RowShape`, not here.
+//! ⚠ The declared column types are not the contract: a column declared a number
+//! may hold DECIMAL, which arrives as a string. The mapping this module
+//! implements was measured against production, and the rule itself lives in
+//! `Verified.RowShape`, not here.
 //!
 //! # What surprises
 //!
@@ -223,14 +221,12 @@ pub fn rows_to_json(rows: &[MySqlRow]) -> Result<Vec<Value>> {
 
 /// An `f64` that serializes the way `JSON.stringify` renders a JS number.
 ///
-/// ⚠ USE THIS IN EVERY RESPONSE STRUCT THAT CARRIES A FLOAT. A plain `f64` field
-/// does NOT agree with the encoder these routes used before they were typed:
-/// serde prints `120.0` and `-0.0` where V8 prints `120` and `0`, and that
-/// difference has already shipped once (see [`js_number_value`]).
+/// ⚠ Use this in every response struct that carries a float. A plain `f64`
+/// field prints `120.0` and `-0.0` where the client's contract is `120` and
+/// `0` (see [`js_number_value`]).
 ///
-/// So typing a route that carries coordinates with plain `f64` would REINTRODUCE
-/// the divergence this module exists to prevent, which is why #1404 split its
-/// remaining routes by whether they carry floats.
+/// So typing a route that carries coordinates with plain `f64` would
+/// reintroduce exactly the divergence this module exists to prevent.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JsNumber(pub f64);
 
@@ -250,7 +246,7 @@ impl serde::Serialize for JsNumber {
 /// `/locations` parity run against production differed by 8,790 bytes across
 /// 1,465 points for exactly this reason, and nothing else had caught it.
 ///
-/// The rules, measured from V8 in `lean/experiments/rowshape-refs.mts`:
+/// The rules, as JavaScript's number printing has them:
 ///
 ///   * an integral value prints with no decimal point (`120`, `-1`, `0`)
 ///   * `-0` prints as `0`
@@ -258,21 +254,21 @@ impl serde::Serialize for JsNumber {
 ///     also what `ryu` (and therefore `serde_json`) produces
 ///   * `NaN` and the infinities print as `null` — JSON has no way to say them
 ///
-/// ⚠ WHAT IS VERIFIED IS A RANGE. Integral values beyond 2^53 are handed to
-/// `serde_json`, whose exponent formatting is NOT known to match V8's (which
-/// switches to `1e+21` at that threshold and prints full digits below it). No
-/// value this API carries comes near that — latitude, longitude, altitude,
-/// speed, accuracy and battery are all far inside it — but a caller adding a
-/// column with genuinely huge numbers must re-measure rather than assume this
-/// covers them.
+/// ⚠ What is verified is a range. Integral values beyond 2^53 are handed to
+/// `serde_json`, whose exponent formatting is not known to match JavaScript's
+/// (which switches to `1e+21` at that threshold and prints full digits below
+/// it). No value this API carries comes near that (latitude, longitude,
+/// altitude, speed, accuracy and battery are all far inside it), but a caller
+/// adding a column with genuinely huge numbers must re-measure rather than
+/// assume this covers them.
 pub fn js_number_value(v: f64) -> Value {
     if !v.is_finite() {
         // ⚠ `JSON.stringify(NaN)` is `null`, not `NaN` — which is not valid
         // JSON — and not an error either.
         return Value::Null;
     }
-    // 2^53: above this an f64 cannot represent consecutive integers, and V8's
-    // shortest-round-trip digits stop agreeing with a plain integer conversion.
+    // 2^53: above this an f64 cannot represent consecutive integers, and the
+    // shortest round-trip digits stop agreeing with a plain integer conversion.
     const MAX_EXACT_INT: f64 = 9_007_199_254_740_992.0;
     if v.fract() == 0.0 && v.abs() <= MAX_EXACT_INT {
         // `as i64` is exact here, and it also folds `-0.0` to `0` the way
@@ -289,11 +285,9 @@ pub fn js_number_opt(v: Option<f64>) -> Value {
 
 /// The decoded segments in the field order node writes them in.
 ///
-/// ⚠ `Lean.Json.mkObj` SORTS ITS KEYS. The order `assembleSegmentsResult` spells
-/// — `startTs, endTs, mode, placeId, lineName, boardStation, alightStation` —
-/// does not survive; what comes back is alphabetical, measured 2026-08-26 rather
-/// than assumed. Node's is insertion order, from the object literal in
-/// `groupStatesIntoSegments` plus the two station fields assigned after it.
+/// ⚠ `Lean.Json.mkObj` sorts its keys. The order `assembleSegmentsResult`
+/// spells (`startTs, endTs, mode, placeId, lineName, boardStation,
+/// alightStation`) does not survive; what comes back is alphabetical.
 ///
 /// ⚠ `decoded_days.segments_json` IS TEXT, and the only real check on this port
 /// is a diff against node's row. Left alone, every row would differ on key order

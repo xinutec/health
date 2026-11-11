@@ -127,10 +127,9 @@ fn a_state_past_now_is_truncated_or_dropped_observed_or_not() {
 #[test]
 fn absent_optional_fields_survive_as_null_rather_than_vanishing() {
     lean::init().expect("the Lean runtime must start");
-    // ⚠ Lean's encoder emits every key, `null` for absent — the TypeScript's own
-    // capture OMITS them instead. A caller diffing a clipped day against an
-    // unclipped one must see the same spelling on both sides, which it does
-    // because both come from `Day.stateJson`.
+    // ⚠ Lean's encoder emits every key, `null` for absent. A caller diffing a
+    // clipped day against an unclipped one sees the same spelling on both
+    // sides, because both come from `Day.stateJson`.
     let bare = json!({
         "startTs": 100, "endTs": 200, "mode": "walking",
         "place": null, "city": null, "placeSource": null, "placeConfidence": null,

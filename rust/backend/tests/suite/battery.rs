@@ -9,9 +9,8 @@
 //! loader produces carries the key. A branch no fixture reaches is a branch
 //! only a written test can hold.
 //!
-//! The ALGORITHM is not under test here — `Verified.Geo.Velocity.batterySeries`
-//! is `#guard`ed against the Node references and `velocity-refs.mts` runs every
-//! verify. What is under test is which rows cross the wire and how.
+//! The algorithm is not under test here: `Verified.Geo.Velocity.batterySeries`
+//! is `#guard`ed. What is under test is which rows cross the wire and how.
 
 use backend::head::battery_series;
 use serde_json::{Value, json};

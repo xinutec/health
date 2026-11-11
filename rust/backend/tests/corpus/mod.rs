@@ -1,21 +1,19 @@
 //! One replay of one golden day, shared by every corpus grader.
 //!
-//! ⚠ **THE REPLAY WAS PAID FOUR TIMES.** `day_corpus`, `truth_corpus`,
-//! `journey_corpus` and `walk_gate` each rebuilt the same day from the same
-//! fixture and then graded it differently — measured 2026-09-03 at ~1.31 s/day,
-//! and far worse once the walk matcher started running in the fold:
-//! `user` 2934 s against 718 s wall on one row, because the matcher's ~305 s was
-//! paid per harness rather than per day. `corpus_gate` replays once per day and
-//! hands the result to all four.
+//! ⚠ **The replay is paid once.** Four graders (`day_corpus`, `truth_corpus`,
+//! `journey_corpus`, `walk_gate`) grading the same day each rebuilt it from the
+//! same fixture: `user` 2934 s against 718 s wall on one row, because the walk
+//! matcher's ~305 s was paid per harness rather than per day. `corpus_gate`
+//! replays once per day and hands the result to all four.
 //!
-//! ⚠ **THE GRADERS DO NOT ALL REPLAY THE SAME INPUT, and that is why `priors`
+//! ⚠ **The graders do not all replay the same input, which is why `priors`
 //! is a parameter rather than read from the environment here.** `day_corpus`
 //! and `truth_corpus` replace the fixture's captured `venuePriors` with
-//! `VENUE_PRIORS_FILE` for #343's A/B; `journey_corpus` and `walk_gate` never
+//! `VENUE_PRIORS_FILE` when it is set; `journey_corpus` and `walk_gate` never
 //! inject. A shared replay that guessed would either feed those two priors they
-//! did not ask for, or quietly stop #343's A/B from being an A/B — and
-//! **neither fails**, both produce plausible numbers. So `corpus_gate` replays
-//! each ARM it needs: one when `VENUE_PRIORS_FILE` is unset (every grader wants
+//! did not ask for, or quietly stop the injected arm being an arm, and
+//! **neither fails**: both produce plausible numbers. So `corpus_gate` replays
+//! each arm it needs: one when `VENUE_PRIORS_FILE` is unset (every grader wants
 //! the fixture's own blob, so they share it), two when it is set.
 //!
 //! ⚠ **THE TRACE IS INDEXED ONCE PER DAY, BEFORE ANY ARM,** and both arms
@@ -100,11 +98,10 @@ pub fn day_names(golden: &str) -> Vec<String> {
 /// actually replayed. This is what makes a four-arm ablation affordable — the
 /// full corpus is ~390 s a run.
 ///
-/// ⚠ **A TYPO MUST NOT RETAIN SILENTLY.** `CORPUS_DAYS=2026-13-01` matches no
-/// fixture, and a clean run over nothing reads exactly like a clean run over
-/// everything. Carried over from `WALK_DAYS`, which asserted this; the first
-/// version of `corpus_gate` dropped the assertion and left the empty result to
-/// be reported as "the corpus directory is empty", naming the wrong cause.
+/// ⚠ **A typo must not retain silently.** A `CORPUS_DAYS` date in month 13
+/// matches no fixture, and a clean run over nothing reads exactly like a clean run over
+/// everything; reported as "the corpus directory is empty", it would name the
+/// wrong cause.
 pub fn restrict(names: Vec<String>, filter: Option<String>) -> Vec<String> {
     let Some(only) = filter else { return names };
     let want: Vec<&str> = only
@@ -148,13 +145,13 @@ pub fn read_fixture(golden: &str, name: &str) -> Result<Value, String> {
 
 /// Which venue priors an A/B arm replays under.
 ///
-/// `VENUE_PRIORS_FILE=<blob.json>` is one blob for every day — the anachronism
-/// the serving path removed in #1405, kept for arms that want it on purpose.
-/// `VENUE_PRIORS_DIR=<dir>` holds `<as_of>.json` snapshots and `current.json`
-/// (what `backend venue-prior-snapshots` writes), and each fixture takes the
-/// newest snapshot at or before its date, else `current.json` — the rule
-/// `classification_inputs::venue_priors` serves by, so the arm names a day the
-/// way the pod does.
+/// `VENUE_PRIORS_FILE=<blob.json>` is one blob for every day, ignoring the
+/// as-of-the-day snapshots the serving path uses, for arms that want that on
+/// purpose. `VENUE_PRIORS_DIR=<dir>` holds `<as_of>.json` snapshots and
+/// `current.json` (what `backend venue-prior-snapshots` writes), and each
+/// fixture takes the newest snapshot at or before its date, else
+/// `current.json`, the rule `classification_inputs::venue_priors` serves by, so
+/// the arm names a day the way the pod does.
 pub enum Injection {
     File(Value),
     Dir(std::path::PathBuf),
@@ -229,10 +226,9 @@ pub fn with_priors(fx: &Value, priors: Option<&Value>) -> Value {
 /// `annotateWalkMatches` bails per leg, so the raw drawing survives looking
 /// exactly like a leg the matcher considered and left alone.
 ///
-/// ⚠ **PRESENCE OF THE KEY IS NOT PRESENCE OF A TRACE.** 2026-08-12 carries all
-/// three sections as EMPTY OBJECTS; a key-presence check calls that capturable
-/// and the loader then refuses it, which cost a 9-minute run to find out. Count
-/// the entries.
+/// ⚠ **Presence of the key is not presence of a trace.** A fixture can carry
+/// all three sections as empty objects; a key-presence check calls that
+/// capturable and the loader then refuses it. Count the entries.
 ///
 /// `Ok(None)` means the fixture captured no walk read, and the caller must
 /// record that day as unmeasured for walks.
@@ -244,12 +240,11 @@ pub fn load_trace(
     buildings: bool,
     drivable: bool,
 ) -> Result<Option<TraceAnswerer>, String> {
-    // ⚠ REFUSE A FIXTURE CAPTURED UNDER CONSTANTS THIS BUILD NO LONGER USES.
-    // The margin and the candidate limit are applied AFTER the ask key is
+    // ⚠ Refuse a fixture captured under constants this build no longer uses.
+    // The margin and the candidate limit are applied after the ask key is
     // formed, so moving one changes production and changes nothing any fixture
-    // answers — the gate stays green while the served day differs, and
-    // #328 is the same fault from the other side. Absent stamp is not a
-    // mismatch: the 42 fixtures predating this carry none.
+    // answers: the gate stays green while the served day differs. An absent
+    // stamp is not a mismatch: the older fixtures carry none.
     backend::osm_trace::check_capture_inputs(&fx["meta"]).map_err(|e| format!("{name}: {e}"))?;
 
     let trace = TraceAnswerer::from_fixture(

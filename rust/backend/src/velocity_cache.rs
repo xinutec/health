@@ -15,29 +15,26 @@
 //!
 //! # Held as bytes, and swept
 //!
-//! An entry is the day SERIALISED, not the parsed tree. A day is ~5 MB of JSON
+//! An entry is the day serialised, not the parsed tree. A day is ~5 MB of JSON
 //! and several times that as a `Value` (one allocation per number, string and
 //! object); thirty-two such trees pinned the serving pod at its 512 MiB limit
-//! (2026-09-25) while the entries were long past their five-minute window,
-//! because nothing dropped an entry until its key was read again or the bound
-//! was hit. Every read and every seat now sweeps the stale ones out, so what
-//! is held is what was viewed inside the window, and the parse on a hit is
-//! milliseconds against the seconds it saves.
+//! while the entries were long past their five-minute window, because nothing
+//! dropped an entry until its key was read again or the bound was hit. Every
+//! read and every seat sweeps the stale ones out, so what is held is what was
+//! viewed inside the window, and the parse on a hit is milliseconds against the
+//! seconds it saves.
 //!
 //! # Per-pod, cleared by restart
 //!
 //! No schema-version tag and no invalidation hook: a deploy restarts the pod
 //! and that is the invalidation. The cost is a cold cache after each deploy.
 //!
-//! ⚠ **`invalidateVelocityCache` and its generation counter are NOT ported, and
-//! that is a deletion rather than an omission.** In the TypeScript they existed
-//! for one caller — the verified-core master toggle, which swapped the Lean core
-//! for TS inside a live process. That toggle went with the TS arm, and
-//! with it the only thing that changed an answer without a restart. Anything
-//! that later changes the pipeline's answer under a RUNNING pod has to bring
-//! both back; this paragraph is the note that says so. The drain beside the
-//! pod (`fetch_drain`, 2026-10-03) changes the DATA under a running pod, not
-//! the pipeline; the five-minute window is what absorbs that.
+//! ⚠ **There is no invalidation and no generation counter**, because nothing
+//! changes an answer under a running pod: a deploy restarts it. Anything that
+//! later changes the pipeline's answer under a running pod has to bring both;
+//! this paragraph is the note that says so. The drain beside the pod
+//! (`fetch_drain`) changes the data under a running pod, not the pipeline; the
+//! five-minute window is what absorbs that.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -141,12 +138,11 @@ impl VelocityCache {
 
     /// Read `key`, or compute it and seat the result.
     ///
-    /// # Single-flight, and the one way it differs from the TypeScript
+    /// # Single-flight
     ///
-    /// Two concurrent requests for the same key must not both run the compute —
+    /// Two concurrent requests for the same key must not both run the compute:
     /// opening the dashboard in two tabs would otherwise fire two parallel OSM
-    /// enrichment runs over the same rows. The TypeScript shares the PROMISE, so
-    /// the second caller receives whatever the first produced, failure included.
+    /// enrichment runs over the same rows.
     ///
     /// This takes a per-key lock instead, and the waiter re-reads the cache
     /// after acquiring it. Same guarantee about parallelism; the difference is

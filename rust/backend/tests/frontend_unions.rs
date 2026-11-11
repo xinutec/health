@@ -5,15 +5,12 @@
 //! `Record<DayStateMode, …>` on the first, so a mode it has never heard of does
 //! not fail — it falls through to a default style, silently, in production.
 //!
-//! ⚠ THIS REPLACES `scripts/check-frontend-unions.mjs`, WHICH LOST ITS OTHER
-//! SIDE. That script compared the frontend against `src/sleep/day-state.ts`, and
-//! deleting the TypeScript backend takes the only closed `DayStateMode` with it.
-//! The replacement side is `Verified.Geo.WireVocab`, where the lists are tied by
-//! `#guard` to the closed types that DO exist — the HSMM's `Mode` inductive and
-//! `EpisodeGeometry.MOVING_MODES` — so neither end is a list nobody enforces.
+//! ⚠ The backend side is `Verified.Geo.WireVocab`, where the lists are tied by
+//! `#guard` to the closed types that exist (the HSMM's `Mode` inductive and
+//! `EpisodeGeometry.MOVING_MODES`), so neither end is a list nobody enforces.
 //!
-//! ⚠ IT IS A RUST TEST, NOT A NODE SCRIPT, on purpose: the point of #975 is that
-//! CI stops needing a TypeScript runtime to check the backend.
+//! A Rust test, not a Node script, so CI needs no JavaScript runtime to check
+//! the backend.
 //!
 //! ⚠ IT FAILS WHEN A TARGET CANNOT BE FOUND, not only when the sets disagree.
 //! A renamed type or a moved file would otherwise reduce this to a check of

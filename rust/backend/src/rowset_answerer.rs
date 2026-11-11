@@ -16,8 +16,7 @@
 //!
 //! ⚠ Key parts are reused verbatim. A miss arrives as the fold's bit patterns
 //! and the answer row starts with the same strings; a float round-tripped
-//! through text has disagreed with V8 by an ULP before. The parse below only
-//! asks the question.
+//! through text can disagree by an ULP. The parse below only asks the question.
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};

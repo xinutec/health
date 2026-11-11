@@ -9,10 +9,9 @@
 //! which is ~20x the text in heap (61 MiB for a 3.0 MB request, against 1 MiB
 //! for everything the fold then computes).
 //!
-//! ⚠ **THE DANGER IS A FILTER THAT IS TOO TIGHT, and it would be SILENT**: a
+//! ⚠ **The danger is a filter that is too tight, and it would be silent**: a
 //! dropped route is not an error downstream, it is a leg that reads as
-//! `driving` with no bus label — exactly the false negative #328 is about. So
-//! these tests pin the KEEP side hardest.
+//! `driving` with no bus label. So these tests pin the keep side hardest.
 
 use backend::fold_payload::reachable_bus_routes;
 use serde_json::{Value, json};

@@ -1,15 +1,14 @@
-//! The HSMM decode, replayed from the frozen fixtures (#1048's last item).
+//! The HSMM decode, replayed from the frozen fixtures.
 //!
 //! ```text
 //!   decoded_days inputs ── the decode_one chain, fixture-fed ── assemblesegments
 //!                                                              vs the fixture's `expected`
 //! ```
 //!
-//! This is the half `decoder_scoreboard.rs` deliberately does not do: the
-//! LIVE Lean decode of each day's raw materials, gated against the segments
-//! the TypeScript decoder was blessed to produce. Together they close #1048's
-//! gate list: a decoder change that shifts any day's segments fails HERE, and
-//! one that degrades journey structure fails the scoreboard.
+//! This is the half `decoder_scoreboard.rs` deliberately does not do: the live
+//! Lean decode of each day's raw materials, gated against the blessed segments.
+//! A decoder change that shifts any day's segments fails here, and one that
+//! degrades journey structure fails the scoreboard.
 //!
 //! The request each day replays is `backend::decode_fixture::request` — the
 //! same one `decode-bench` times, so the decoder that is measured is the

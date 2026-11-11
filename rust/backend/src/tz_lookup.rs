@@ -44,11 +44,10 @@ impl PolygonLookup {
     ///   (91, 0) / NaN      not a coordinate                   ->  "" -> None
     /// ```
     ///
-    /// So a GPS fix that is corrupt but still IN RANGE — a glitch dropping the
-    /// phone into the Atlantic — does not fall back to the profile zone. It
+    /// So a GPS fix that is corrupt but still in range (a glitch dropping the
+    /// phone into the Atlantic) does not fall back to the profile zone. It
     /// yields a confident `Etc/GMT+2` that is written into `tz` and looks like
-    /// an ordinary answer. Measured, not assumed; the npm `tz-lookup` the
-    /// TypeScript uses behaves the same way, so this is not a regression.
+    /// an ordinary answer.
     ///
     /// `None` is therefore reached only by a value that is not a coordinate at
     /// all. The empty string `tzf` returns for those is translated here, because

@@ -1,8 +1,7 @@
 //! Wall-clock ↔ UTC conversion for Fitbit timestamps.
 //!
-//! Port of the two functions in `timezone.ts` that every stream parser
-//! depends on. See `docs/design/timezone.md` for the three-tier storage
-//! contract this serves.
+//! The two functions every stream parser depends on. See
+//! `docs/design/timezone.md` for the three-tier storage contract this serves.
 //!
 //! # Fitbit sends a wall clock with no offset
 //!
@@ -11,25 +10,18 @@
 //! null when the tz is unknown — a guess stored in a UTC column is worse than
 //! an absent value, because nothing downstream can tell it was a guess.
 //!
-//! # How the TypeScript did it, and why the port does not copy that
-//!
-//! It had no tz database, so it round-tripped through `Intl`: pretend the
-//! components are UTC, render that instant in the target zone, measure how far
-//! the rendering diverged, and subtract. Ingenious and correct for the common
-//! case, but it silently picks ONE answer at a DST boundary without saying
-//! which, because the divergence it measures is whatever `Intl` rendered.
+//! # The two ambiguous cases
 //!
 //! `chrono-tz` has the real zone data, so this asks the question directly and
-//! the two ambiguous cases become visible rather than implicit:
+//! the two ambiguous cases are visible rather than implicit:
 //!
-//!   * SPRING FORWARD — the wall clock never happened. 01:30 on a night the
+//!   * SPRING FORWARD: the wall clock never happened. 01:30 on a night the
 //!     clocks jump 01:00 → 02:00 names no instant at all.
-//!   * FALL BACK — the wall clock happened TWICE, an hour apart.
+//!   * FALL BACK: the wall clock happened twice, an hour apart.
 //!
-//! ⚠ The choices below match what the TypeScript's round-trip produces, so the
-//! port does not silently re-time existing rows. They are written down because
-//! "whatever `Intl` did" is not a specification, and the next person to touch
-//! this needs to know a decision was made.
+//! ⚠ The choices below keep existing rows' instants stable. They are written
+//! down because the next person to touch this needs to know a decision was
+//! made.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Timelike, Utc};
@@ -37,10 +29,9 @@ use chrono_tz::Tz;
 
 /// Parse Fitbit's wall-clock form: `YYYY-MM-DD HH:MM:SS`, or the same with `T`.
 ///
-/// Trailing content is IGNORED, matching the TypeScript, whose regex is
-/// unanchored — a value carrying a `.000Z` suffix parses to the same wall clock
-/// rather than failing. Copied deliberately: rows written by the older path
-/// carry that shape.
+/// Trailing content is ignored: a value carrying a `.000Z` suffix parses to
+/// the same wall clock rather than failing, since stored rows carry that
+/// shape.
 pub fn parse_wall_clock(s: &str) -> Option<NaiveDateTime> {
     let b = s.as_bytes();
     if b.len() < 19 {
@@ -61,9 +52,8 @@ pub fn parse_wall_clock(s: &str) -> Option<NaiveDateTime> {
 ///
 /// `None` when the string does not parse or the zone is unknown.
 ///
-/// At a DST boundary BOTH cases take the POST-transition offset, because that
-/// is what the TypeScript's `Intl` round-trip produces and re-timing existing
-/// rows is not the port's to do:
+/// At a DST boundary both cases take the post-transition offset, which keeps
+/// existing rows' instants stable:
 ///
 ///   * ambiguous (fall back) → the LATER instant. `2026-10-25 01:30` in London
 ///     is 01:30 UTC (GMT), not 00:30 UTC (BST).
@@ -76,12 +66,12 @@ pub fn parse_wall_clock(s: &str) -> Option<NaiveDateTime> {
 /// disagrees with what is in the database. Running `wallClockToUtcString` over
 /// the two 2026 London transitions is what settled it.
 ///
-/// ⚠ THE GAP IS NOT MONOTONIC, in TypeScript or here: `01:00` maps to `00:00`
-/// UTC while the preceding `00:45` maps to `00:45`. That is a real property of
-/// the post-transition reading and it is not repaired, because it cannot arise
-/// from a device: the watch's own clock jumps too, so no Fitbit sample ever
-/// carries a wall clock inside the gap. A row that did would be corrupt on
-/// arrival, and inventing a monotonic answer for it would hide that.
+/// ⚠ The gap is not monotonic: `01:00` maps to `00:00` UTC while the preceding
+/// `00:45` maps to `00:45`. That is a real property of the post-transition
+/// reading and it is not repaired, because it cannot arise from a device: the
+/// watch's own clock jumps too, so no Fitbit sample ever carries a wall clock
+/// inside the gap. A row that did would be corrupt on arrival, and inventing a
+/// monotonic answer for it would hide that.
 pub fn wall_clock_to_unix(s: &str, tz: &str) -> Option<i64> {
     let naive = parse_wall_clock(s)?;
     let zone: Tz = tz.parse().ok()?;
@@ -126,11 +116,10 @@ pub struct DayBounds {
 /// governments did, not a rule a proof constrains. Same split as the Fitbit tz
 /// decision already uses.
 ///
-/// # ⚠ A TRANSLITERATION, REPRODUCING TWO DEFECTS ON PURPOSE
+/// # ⚠ Two known defects, kept until a deliberate re-bless
 ///
-/// Unlike [`wall_clock_to_unix`] above — which asks `chrono-tz` directly and
-/// merely MATCHES the TypeScript's observed answers — this copies the
-/// TypeScript's method, because its method is where its answers come from:
+/// Unlike [`wall_clock_to_unix`] above, which asks `chrono-tz` directly, this
+/// reads the offset the way the original bounds did:
 ///
 ///   * **The day is always 86400 seconds.** `end_utc` is `start_utc + 86400`,
 ///     not the next local midnight, so a spring-forward day runs an hour past
@@ -139,12 +128,10 @@ pub struct DayBounds {
 ///     truncates: Asia/Kolkata (+05:30) is applied as +05:00 and
 ///     America/St_Johns (−03:30) as −04:00.
 ///
-/// Both are wrong and both are kept, because the 35-day golden corpus is the
-/// only oracle for the pipeline this feeds and a port that deliberately differs
-/// cannot be checked against it. Every corpus day is Europe/London, where the
-/// offset is a whole number of hours and the truncation cannot be seen — so
-/// "correct" and "faithful" agree there, and the divergence would only appear
-/// for a user this backend has never had. Fixing it is a deliberate change that
+/// Both are wrong. The golden corpus is the oracle for the pipeline this feeds,
+/// and every corpus day is Europe/London, where the offset is a whole number of
+/// hours, so the truncation cannot be seen; the 86400-second day is wrong on
+/// London's two DST days a year. Fixing either is a deliberate change that
 /// re-blesses the corpus, not a tidy-up.
 pub fn date_bounds_utc(date: &str, tz: Option<&str>) -> Result<DayBounds> {
     let day = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
@@ -166,10 +153,9 @@ pub fn date_bounds_utc(date: &str, tz: Option<&str>) -> Result<DayBounds> {
         .with_context(|| format!("{tz} is not a known timezone"))?;
     let local = midnight.with_timezone(&zone);
 
-    // ⚠ `hour()` and `day()` ONLY. This is the truncation, and it is the
-    // TypeScript's `formatToParts` reading exactly these two fields. Replacing
-    // it with `local.offset()` changes the answer for zones the corpus cannot
-    // see, which is a re-blessing rather than a refactor.
+    // ⚠ `hour()` and `day()` only: this is the truncation described above.
+    // Replacing it with `local.offset()` changes the answer for zones the corpus
+    // cannot see, which is a re-blessing rather than a refactor.
     let local_hour = i64::from(local.hour());
     let local_day = i64::from(local.day());
     let date_day = i64::from(day.day());
@@ -193,10 +179,7 @@ pub fn date_bounds_utc(date: &str, tz: Option<&str>) -> Result<DayBounds> {
 
 /// The local hour of an instant in a zone, `0..=23`.
 ///
-/// Port of `localHourOf` in `venue-prior.ts`. ⚠ The TypeScript maps an
-/// hour of 24 to 0 because some `Intl` locales render midnight that way; that
-/// cannot arise from `chrono`, so there is no branch for it here and the result
-/// is the same.
+/// `localHourOf`: the venue-local hour of an instant.
 pub fn local_hour_of(ts_unix: i64, tz: &str) -> Result<u32> {
     let zone: Tz = tz
         .parse()
@@ -208,16 +191,15 @@ pub fn local_hour_of(ts_unix: i64, tz: &str) -> Result<u32> {
 
 /// The civil date at an instant, in a zone — `YYYY-MM-DD`.
 ///
-/// The tzdata half of `isLiveDay` (`velocity-cache.ts`), which the
-/// TypeScript gets from `Intl.DateTimeFormat("en-CA", { timeZone })`. The
-/// DECISION that follows — is this the day in progress, and how long may its
-/// result be reused — is `Verified.VelocityCache`; this only answers what day it
-/// is where the viewer is.
+/// The tzdata half of `isLiveDay`. The decision that follows (is this the day
+/// in progress, and how long may its result be reused) is
+/// `Verified.VelocityCache`; this only answers what day it is where the viewer
+/// is.
 ///
-/// ⚠ An absent zone is UTC, mirroring the API's own fallback. That is the
-/// TypeScript's `tz ?? "UTC"` and not a safe default: at 23:30 in London the UTC
-/// date has already rolled over, so a caller that loses the viewer's zone
-/// freezes their evening an hour early rather than failing.
+/// ⚠ An absent zone is UTC, mirroring the API's own fallback, and not a safe
+/// default: at 23:30 in London the UTC date has already rolled over, so a
+/// caller that loses the viewer's zone freezes their evening an hour early
+/// rather than failing.
 pub fn local_date_at(ts_unix: i64, tz: Option<&str>) -> Result<String> {
     let zone: Tz = tz
         .unwrap_or("UTC")
@@ -270,21 +252,19 @@ pub const MINUTES_PER_DAY: u32 = 1440;
 /// every minute of `[start, end)`, or the single instant at `start` for a
 /// zero-length window.
 ///
-/// Port of `localStaySamples` in `opening-hours.ts`, which exists for
-/// exactly the reason this does: `Verified.Geo.OpeningHours` decides
-/// open-versus-closed, but instant → local `(weekday, minute)` is tzdata, so
-/// the shell resolves the pairs and puts them on the wire.
+/// `localStaySamples`: `Verified.Geo.OpeningHours` decides open versus closed,
+/// but instant → local `(weekday, minute)` is tzdata, so the shell resolves the
+/// pairs and puts them on the wire.
 ///
-/// ⚠ `dayIdx` is MONDAY-BASED (`Mon = 0 … Sun = 6`), matching the
-/// TypeScript's `WEEKDAY_IDX`. `chrono`'s `num_days_from_sunday` is not it, and
-/// getting this wrong shifts every opening-hours judgement by one day without
-/// changing the shape of anything.
+/// ⚠ `dayIdx` is Monday-based (`Mon = 0 … Sun = 6`). `chrono`'s
+/// `num_days_from_sunday` is not it, and getting this wrong shifts every
+/// opening-hours judgement by one day without changing the shape of anything.
 ///
-/// ⚠ ONE ENTRY PER MINUTE. An eight-hour stay is 480 pairs, and a day's worth
-/// of stays is why this table dominates the request. The TypeScript steps by 60
-/// seconds from `start` rather than snapping to minute boundaries, so a stay
-/// beginning at 09:00:30 samples :30 of each minute — kept, because the pairs
-/// it produces are what the scorer was measured against.
+/// ⚠ One entry per minute. An eight-hour stay is 480 pairs, and a day's worth
+/// of stays is why this table dominates the request. It steps by 60 seconds
+/// from `start` rather than snapping to minute boundaries, so a stay beginning
+/// at 09:00:30 samples :30 of each minute, which is what the scorer was
+/// measured against.
 pub fn local_stay_samples(start_unix: i64, end_unix: i64, tz: &str) -> Result<Vec<(u32, u32)>> {
     let zone: Tz = tz
         .parse()

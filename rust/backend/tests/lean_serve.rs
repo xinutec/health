@@ -49,10 +49,9 @@ fn the_mode_table_answers_over_the_pipe() {
         );
     }
 
-    // ⚠ The battery chart, which the velocity pipeline computes BESIDE the day
-    // fold rather than inside it — so a host porting that pipeline needs it
-    // callable. It was ported to Lean and `#guard`ed, then reachable from no
-    // entry point at all (#1003's shape) until this mode existed.
+    // ⚠ The battery chart, which the velocity pipeline computes beside the day
+    // fold rather than inside it, so a host needs it callable; a pinned Lean
+    // function reachable from no entry point is dead weight.
     //
     // The tail case is the one worth pinning: the last in-day reading is
     // (200, 60), the tail is (300, 40) and the day ends at 250, so the level
@@ -71,13 +70,11 @@ fn the_mode_table_answers_over_the_pipe() {
     .expect("battery must answer");
     assert_eq!(stale, r#"{"series":[[100,80],[200,60]]}"#);
 
-    // ⚠ The walk referee (#1048 Group B) is WIRED. Its arithmetic is witnessed
-    // in `Verified.Eval.WalkMetrics` against doubles the deleted TypeScript
-    // printed; what those witnesses cannot see is whether `dispatch` still
-    // routes to it. An empty corpus is the cheapest question that distinguishes
-    // "reached the handler" from "fell through" — a missing arm answers
-    // `unknown mode walkgate` here, which is exactly how the OTHER gates were
-    // found to be dead only after three days.
+    // ⚠ The walk referee is wired. Its arithmetic is witnessed in
+    // `Verified.Eval.WalkMetrics`; what those witnesses cannot see is whether
+    // `dispatch` still routes to it. An empty corpus is the cheapest question
+    // that distinguishes "reached the handler" from "fell through": a missing
+    // arm answers `unknown mode walkgate` here.
     let walkgate = lean::serve(r#"{"mode":"walkgate"}"#).expect("walkgate must answer");
     assert_eq!(
         walkgate,

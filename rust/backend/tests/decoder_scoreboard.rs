@@ -8,13 +8,12 @@
 //!
 //! # What this does and does not prove
 //!
-//! The `expected` block of each `decoded_days` fixture is the TypeScript
-//! decoder's FROZEN output — this harness does not decode. Agreement therefore
-//! proves the SCORING pipeline (`decoderJourneys`,
-//! `scoreStations`, `countPhantomRides`, the journey counters) reproduces the
-//! blessed counts from the same decoded segments; it says nothing about the
-//! decoder itself. The decode half needs the pre/post-boundary shell chain and
-//! is the other item on #1048.
+//! The `expected` block of each `decoded_days` fixture is a frozen decoder
+//! output; this harness does not decode. Agreement therefore proves the
+//! scoring pipeline (`decoderJourneys`, `scoreStations`, `countPhantomRides`,
+//! the journey counters) reproduces the blessed counts from the same decoded
+//! segments; it says nothing about the decoder itself, which
+//! `hsmm_decode_corpus.rs` replays.
 //!
 //! ⚠ The corpora are gitignored; this announces a skip rather than passing
 //! quietly when they are absent.

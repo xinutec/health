@@ -1,11 +1,8 @@
 //! Shared application state.
 //!
-//! Deliberately thin, and it should stay that way. The TypeScript server this
-//! replaced kept a velocity cache and the TS↔Lean A/B overrides in module-level
-//! mutables. The overrides went with the TS arm and are not
-//! carried. The velocity cache DID need a home, and this is it: it is
-//! process-local on purpose — a deploy restarts the pod and that is the
-//! invalidation, which is why there is no version tag and no clear hook.
+//! Deliberately thin, and it should stay that way. The velocity cache lives
+//! here, and it is process-local on purpose: a deploy restarts the pod and that
+//! is the invalidation, which is why there is no version tag and no clear hook.
 //! `crate::velocity_cache` says what would have to come back if anything ever
 //! changed an answer without a restart.
 

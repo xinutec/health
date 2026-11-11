@@ -111,13 +111,12 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
     // `sleep/stages` resolves its main-sleep log first, exactly as the endpoint
     // does — including the absent `ORDER BY`.
     //
-    // ⚠ NO `ensure!` GUARDS THE STAGE QUERY, and that is stronger rather than
-    // weaker: it is the ROUTE'S OWN macro, so there is one literal and drift is
+    // ⚠ No `ensure!` guards the stage query, and that is stronger rather than
+    // weaker: it is the route's own macro, so there is one literal and drift is
     // not possible to write. The arrays above still compare against consts
-    // because they hold their own copies — and the copy DID drift here, for a
-    // day, when `#1532`'s repair landed in the route and not in the mirror. A
-    // runtime equality check is the second-best fix for duplication; not
-    // duplicating is the first.
+    // because they hold their own copies, and a copy can drift. A runtime
+    // equality check is the second-best fix for duplication; not duplicating is
+    // the first.
     let log = sqlx::query(
         "SELECT log_id FROM sleep WHERE user_id = ? AND date = ? AND is_main_sleep = 1 LIMIT 1",
     )

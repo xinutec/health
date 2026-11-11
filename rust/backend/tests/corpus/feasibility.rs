@@ -5,7 +5,7 @@
 //!   fixture.osmTrace.stationsOnLine ──┴→ feasibility → ceilinggate
 //! ```
 //!
-//! The user's standing requirement, 2026-09-01: *"Correct or at least viable
+//! The user's standing requirement: *"Correct or at least viable
 //! trajectory is important. It shouldn't show definitely-wrong interpretations
 //! that can't be right given the data."* A model-independent assertion on the
 //! OUTPUT: a real worldline is one continuous path through space-time, so some
@@ -16,14 +16,12 @@
 //! stays at different places too far apart for the time between),
 //! `rail-discontinuity` and `degenerate-train-leg`.
 //!
-//! ⚠ **IT WAS A SEPARATE TEST WITH ITS OWN FOLD, AND THAT IS WHY IT FOUND
-//! REGRESSIONS LAST.** `suite::feasibility_corpus` re-folded all 45 days on
-//! its own, so it was too slow for the commit table and ran only in
-//! `deploy.sh`'s full gate — and never in the `CORPUS_DAYS=` replays a change is
-//! developed against. On 2026-09-27 a rail-anchor change passed every replay
-//! it was checked with and failed the deploy tree on 07-16's ceiling, 0 → 1,
-//! an hour later. Behind the shared replay it costs one Lean question
-//! per day already folded, so it is judged on every day anyone replays.
+//! ⚠ **It rides the shared replay.** As a separate test with its own fold it
+//! was too slow for the commit table, ran only in the deploy gate, and never in
+//! the `CORPUS_DAYS=` replays a change is developed against, so a regression
+//! passed every replay and failed the deploy an hour later. Behind the shared
+//! replay it costs one Lean question per day already folded, so it is judged on
+//! every day anyone replays.
 //!
 //! # A CEILING, not a floor, and the ratchet is the other way
 //!

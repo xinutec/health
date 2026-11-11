@@ -1,4 +1,4 @@
-//! The JOURNEY floor over the golden corpus — no Node, no database.
+//! The journey floor over the golden corpus, with no database.
 //!
 //! ```text
 //!   fixture.inputs → head::capture → fold → states ─┐
@@ -6,9 +6,8 @@
 //! ```
 //!
 //! The story-correctness of the drawn timeline: does the day read as the right
-//! SEQUENCE OF TRIPS? `tests/golden/journey-baseline.json` records the
-//! ground-truth journeys the pipeline reconstructs, and had no reader from #975
-//! until #1048 — the third of seven baselines to get one back.
+//! sequence of trips? `tests/golden/journey-baseline.json` records the
+//! ground-truth journeys the pipeline reconstructs.
 //!
 //! ⚠ MOST JOURNEYS DO NOT MATCH, AND THAT IS THE DESIGN. The floor is the
 //! current non-zero set of working ones, so the standing failures are a floor
@@ -18,13 +17,12 @@
 //!
 //! # A match is SHAPE and COVERAGE, and the second conjunct is the quiet one
 //!
-//! Measured 2026-08-11: five of the corpus's fifteen unmatched journeys
-//! reconstruct their EXACT expected mode shape and fail on coverage instead,
-//! one of them an enforced regression nobody could attribute. So this
-//! prints `uncovered … of … (slack …)` and the match's ENDS beside every
-//! failure, and lists every pipeline journey touching the window — because
-//! `bestOverlap` grades ONE journey, and a trip the pipeline split in two is
-//! scored on its larger half with the rest counted as uncovered.
+//! A third of the corpus's unmatched journeys reconstruct their exact expected
+//! mode shape and fail on coverage instead. So this prints
+//! `uncovered … of … (slack …)` and the match's ends beside every failure, and
+//! lists every pipeline journey touching the window, because `bestOverlap`
+//! grades one journey, and a trip the pipeline split in two is scored on its
+//! larger half with the rest counted as uncovered.
 //!
 //! # The port's evidence
 //!
@@ -36,9 +34,9 @@
 //! three that do not are silent for reasons measured off this corpus and
 //! written down in `Verified/Eval/JourneyShape.lean`.
 //!
-//! ⚠ AND THE FLOOR IS THE SECOND, INDEPENDENT ORACLE: 80 of 92 reconstructed,
-//! against a committed floor of exactly 80 blessed from the TypeScript, with
-//! nothing regressed, nothing newly held and nothing dropped.
+//! ⚠ And the floor is the second, independent oracle: a committed count of
+//! reconstructed journeys, with nothing regressed, nothing newly held and
+//! nothing dropped.
 //!
 //! # The split
 //!
@@ -159,10 +157,10 @@ impl Journey {
             failures: Vec::new(),
             total: 0,
             matched_n: 0,
-            // A one-shot dump for checking this port against the recovered
-            // TypeScript: the same `(gt, states)` pairs both sides see. Off by
-            // default; it carries no places, but it is a corpus artefact and
-            // belongs outside the tree.
+            // A one-shot dump of the `(gt, states)` pairs, for checking the
+            // journey rules against another implementation. Off by default; it
+            // carries no places, but it is a corpus artefact and belongs
+            // outside the tree.
             dump: std::env::var("JOURNEY_DUMP").ok(),
             dumped: Vec::new(),
         })

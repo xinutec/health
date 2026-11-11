@@ -226,10 +226,9 @@ fn the_config_layer_refuses_rather_than_defaults() {
     }
     backend::config::DbConfig::from_env()
         .expect("the focus cron's env must satisfy the config it actually uses");
-    // ⚠ NC_BASE_URL is UNSET in production. The focus cron must still
-    // reach the real Nextcloud, because its TypeScript defaults rather than
-    // nullifying. A `None` here would mean fetching nothing and reporting
-    // success.
+    // ⚠ NC_BASE_URL is unset in production. The focus cron must still reach
+    // the real Nextcloud, so it defaults rather than nullifying; a `None` here
+    // would mean fetching nothing and reporting success.
     assert_eq!(
         backend::config::focus_nc_base_url(),
         backend::config::FOCUS_DEFAULT_NC_BASE_URL,

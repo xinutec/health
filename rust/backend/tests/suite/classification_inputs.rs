@@ -17,7 +17,7 @@ fn an_absent_hour_profile_is_null_not_empty() {
     // time-of-day signal"; an empty array is a profile asserting every hour is
     // equally unlikely.
     assert_eq!(parse_hour_profile(None), Value::Null);
-    // The TS guard is `if (!s) return null`, and "" is falsy there.
+    // An empty string is no profile.
     assert_eq!(parse_hour_profile(Some("")), Value::Null);
 }
 
@@ -40,9 +40,9 @@ fn a_real_hour_profile_is_comma_separated_per_mille_integers() {
 
 #[test]
 fn a_profile_of_the_wrong_length_is_rejected_whole() {
-    // 23 buckets is not a profile missing an hour — it is a value written by
-    // something that is not `serializeHourProfile`. The TS rejects on length
-    // before looking at any bucket, and so does this.
+    // 23 buckets is not a profile missing an hour: it is a value written by
+    // something that is not `serializeHourProfile`. The length is checked
+    // before any bucket is looked at.
     assert_eq!(parse_hour_profile(Some("1,2,3")), Value::Null);
     let twenty_five = (0..25).map(|_| "1").collect::<Vec<_>>().join(",");
     assert_eq!(parse_hour_profile(Some(&twenty_five)), Value::Null);
@@ -89,9 +89,8 @@ fn a_route_with_fewer_than_two_stops_is_no_answer() {
 
 #[test]
 fn a_corrupt_stops_blob_drops_the_route_rather_than_the_day() {
-    // Bus and rail-stop naming are ADDITIVE evidence: the cost of a bad row is
+    // Bus and rail-stop naming are additive evidence: the cost of a bad row is
     // an unnamed leg, and the cost of throwing is a timeline nobody can see.
-    // The TypeScript makes the same call in `parseBusRouteRow`.
     assert_eq!(parse_stops("{not json"), None);
     // An OBJECT is not a stop list. Without the array check this hands a map to
     // a consumer that walks it by index.
@@ -143,11 +142,10 @@ fn a_date_that_is_not_a_date_is_an_error_not_a_guess() {
 
 #[test]
 fn an_integral_double_renders_without_a_fraction() {
-    // ⚠ THE POINT IS THE BYTE STRING, not the value. Every one of these columns
-    // reaches the TypeScript through `Number(...)`, and JS has one number type:
-    // `JSON.stringify(25)` is `25`. serde_json keeps the f64-ness and writes
-    // `25.0`, so a 25 m radius rendered differently in the two arms while being
-    // the same number.
+    // ⚠ The point is the byte string, not the value. JavaScript has one number
+    // type, so `JSON.stringify(25)` is `25`; serde_json keeps the f64-ness and
+    // writes `25.0`, so a 25 m radius would render differently to a client while
+    // being the same number.
     assert_eq!(js_num(25.0).to_string(), "25");
     assert_eq!(js_num(0.0).to_string(), "0");
     assert_eq!(js_num(998.0).to_string(), "998");
@@ -172,6 +170,6 @@ fn a_value_outside_i64_is_left_alone_rather_than_saturated() {
     // `as i64` SATURATES, so an out-of-range integral double would otherwise
     // become i64::MAX — a wrong number that looks like a right one.
     assert!(js_num(f64::NAN).is_null() || js_num(f64::NAN) == "null");
-    // serde and V8 agree on the exponent form here — both write `1e+30`.
+    // serde and JavaScript agree on the exponent form here: both write `1e+30`.
     assert_eq!(js_num(1e30).to_string(), "1e+30");
 }

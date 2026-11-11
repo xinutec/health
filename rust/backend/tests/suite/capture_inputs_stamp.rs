@@ -1,11 +1,10 @@
 //! A fixture carries what it was captured under, and a moved constant REFUSES.
 //!
-//! ⚠ WHY THIS TEST AND NOT JUST THE CODE: the thing being guarded against is a
+//! ⚠ Why this test and not just the code: the thing being guarded against is a
 //! change that leaves every gate green. `ROAD_CORRIDOR_MARGIN_M` is applied
-//! inside `query_ways`, AFTER the trace key is formed, so moving it changes what
-//! production fetches and changes nothing any fixture answers. A guard
-//! against that failure mode is itself invisible unless something makes it fire
-//! — which is the whole lesson of #1418 and of this ticket's own morning.
+//! inside `query_ways`, after the trace key is formed, so moving it changes what
+//! production fetches and changes nothing any fixture answers. A guard against
+//! that failure mode is itself invisible unless something makes it fire.
 
 use serde_json::json;
 
@@ -32,9 +31,9 @@ fn the_stamp_this_build_writes_is_accepted() {
 
 #[test]
 fn a_moved_constant_refuses_and_says_which() {
-    // The margin as it was on 2026-09-18. If this build legitimately moves it,
-    // this test is the reminder that the 42 fixtures need re-capturing — not a
-    // number to update in place.
+    // The margin the fixtures were captured under. If this build legitimately
+    // moves it, this test is the reminder that the fixtures need re-capturing,
+    // not a number to update in place.
     let meta = json!({
         "captureInputs": { "roadCorridorMarginM": 100.0, "candidateLimit": 20_000 }
     });

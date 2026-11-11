@@ -5,27 +5,26 @@
 //!                               ├→ truth    (confirmed rows, a ratchet)
 //!                               ├→ journeys (the story, a floor)
 //!                               ├→ walks    (the walk referee's four axes)
-//!                               └→ feasibility (impossible legs, a ceiling — #1654)
+//!                               └→ feasibility (impossible legs, a ceiling)
 //! ```
 //!
-//! ⚠ **THE REPLAY IS PAID ONCE, NOT ONCE PER HARNESS.** With the walk matcher
-//! on, four replays cost `user` 2934 s against 718 s wall (measured 2026-09-08,
-//! one gate row), the matcher's ~305 s charged to `walk_gate` alone. What was
-//! unaffordable was paying for it four times, not the matcher.
+//! ⚠ **The replay is paid once, not once per harness.** With the walk matcher
+//! on, four replays cost `user` 2934 s against 718 s wall on one gate row, the
+//! matcher's ~305 s charged to `walk_gate` alone. What was unaffordable was
+//! paying for it four times, not the matcher.
 //!
-//! ⚠ **SO #1418 IS NOT A FLAG HERE, IT IS THE STRUCTURE.** `load_trace` runs
-//! before the replay every day that captured one, exactly as production does,
-//! and every grader sees the matched geometry because they all read the same
-//! fold output. The old `CORPUS_TRACE` switch is gone: it existed only to make
-//! a per-harness cost optional, and there is no per-harness cost left.
+//! ⚠ **So the trace is not a flag here, it is the structure.** `load_trace`
+//! runs before the replay every day that captured one, exactly as production
+//! does, and every grader sees the matched geometry because they all read the
+//! same fold output.
 //!
-//! ⚠ **TWO ARMS, NOT ONE, WHEN `VENUE_PRIORS_FILE` IS SET.** `day` and `truth`
-//! grade #343's injected-priors arm; `journeys` and `walks` never inject. With
-//! the variable unset — the gate's configuration — those are the same fixture
-//! and one replay serves all four. With it set they are different inputs and
-//! must not be shared: feeding `journeys` priors it did not ask for, or
-//! quietly grading `day` against the fixture's own blob, both produce
-//! PLAUSIBLE numbers and neither fails.
+//! ⚠ **Two arms, not one, when `VENUE_PRIORS_FILE` is set.** `day` and `truth`
+//! grade the injected-priors arm; `journeys` and `walks` never inject. With the
+//! variable unset (the gate's configuration) those are the same fixture and one
+//! replay serves all four. With it set they are different inputs and must not
+//! be shared: feeding `journeys` priors it did not ask for, or quietly grading
+//! `day` against the fixture's own blob, both produce plausible numbers and
+//! neither fails.
 //!
 //! # Sharding
 //!
@@ -103,7 +102,7 @@ fn every_golden_day_grades_shard_f() {
 
 /// ⚠ TWO SHARDS IN ONE PROCESS USED TO REGRADE THE CORPUS SILENTLY.
 ///
-/// Measured 2026-09-12, same commit and same archives, one variable at a time:
+/// Measured on one commit and the same archives, one variable at a time:
 ///
 /// ```text
 /// nextest    + dev       0 of 118 walks moved   day 21/21
@@ -125,12 +124,11 @@ fn every_golden_day_grades_shard_f() {
 /// The trace is a value the replay is handed now, so `cargo test` is sound and
 /// the refusal that stood here is gone.
 ///
-/// ⚠ `deploy.sh` WAS THE ONLY CALLER THAT RAN THEM THIS WAY, and it produced
-/// FALSE FAILURES for an unknown length of time — it reproduced at `7f5b412`
-/// with identical numbers. Nothing caught it: `gate.dhall`'s rows are nextest
-/// (its header says the #1003 mode trace RELIES on test-per-process) and CI
-/// cannot run these gates at all, because the fixtures are gitignored. So the
-/// breakage was invisible until somebody tried to ship.
+/// ⚠ `deploy.sh` was the only caller that ran them this way, and it produced
+/// false failures for an unknown length of time. Nothing caught it:
+/// `gate.dhall`'s rows are nextest (the mode trace relies on test-per-process)
+/// and CI cannot run these gates at all, because the fixtures are gitignored.
+/// So the breakage was invisible until somebody tried to ship.
 fn run(shard: usize, of: usize) {
     if !Path::new(GOLDEN).is_dir() {
         eprintln!("SKIPPED: no golden corpus at {GOLDEN}; see this file's header.");
@@ -160,9 +158,9 @@ fn run(shard: usize, of: usize) {
         corpus::shard_of(&all, shard, of)
     };
 
-    // #343's A/B. Unset in the gate, so the two arms coincide and one replay
-    // serves every grader — see the header on why they must not be merged when
-    // it IS set.
+    // The injected-priors arm. Unset in the gate, so the two arms coincide and
+    // one replay serves every grader; see the header on why they must not be
+    // merged when it is set.
     let injected: Option<corpus::Injection> = corpus::Injection::from_env();
 
     // ⚠ AN ABLATION ARM STANDS THE OTHER GRADERS DOWN. `WALK_TRACE` withholds

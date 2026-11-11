@@ -9,9 +9,8 @@
 //! Fitbit sends a local time with no offset and the column stores it verbatim.
 //! Which instants a civil day covers therefore depends on the zone, and the
 //! comparison the `WHERE` can make is between wall clocks. So the query
-//! PRE-FILTERS with a generous margin and the exact `[startUtc, endUtc)` window
-//! is applied after the conversion, in Lean — the same split the TypeScript
-//! makes, for the same reason.
+//! pre-filters with a generous margin and the exact `[startUtc, endUtc)` window
+//! is applied after the conversion, in Lean.
 //!
 //! # ⚠ NO `ORDER BY`, and that is deliberate
 //!
@@ -28,7 +27,6 @@ use crate::lean;
 use crate::timezone::wall_clock_to_unix;
 
 /// Any zone offset is under 14 h, so ±1 day cannot miss an in-window reading.
-/// The TypeScript's own margin.
 const QUERY_MARGIN_S: i64 = 86_400;
 
 /// `YYYY-MM-DD HH:MM:SS` in UTC, for comparing against a `DATETIME`.

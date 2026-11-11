@@ -7,9 +7,8 @@
 //! `array expected`. There was a test for the date window and none for the
 //! request, so nothing could catch it.
 //!
-//! ⚠ THE TENSOR MUST NOT CROSS THE WIRE. Lean builds it from the day's fixes and
-//! two small lookup tables; shipping the 1440 rows instead is the 33-40 MiB per
-//! day #411 measures.
+//! ⚠ The tensor must not cross the wire. Lean builds it from the day's fixes and
+//! two small lookup tables; shipping the 1440 rows instead is tens of MiB a day.
 
 use crate::with_record;
 use backend::lean;
@@ -125,13 +124,11 @@ fn the_day_tenant_obs_object_is_refused() {
     );
 }
 
-/// ⚠ `maxD` IS THE MODEL'S, NOT THE CALLER'S. It is the depth of the
-/// `O(T·S·maxD)` trellis every arm has to agree on, so an absent one takes
+/// ⚠ `maxD` is the model's, not the caller's. It is the depth of the
+/// `O(T·S·maxD)` trellis, so an absent one takes
 /// `Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION` rather than a number the shell
-/// spelled — the shell has no basis for an opinion about it, and a second copy in
-/// Rust is a second thing to drift. This pins the default against the TypeScript
-/// twin, `DEFAULT_MAX_DURATION` in `src/hmm/hsmm-viterbi.ts`, while that twin
-/// still exists to compare with.
+/// spelled: the shell has no basis for an opinion about it, and a second copy
+/// in Rust is a second thing to drift. This pins the default.
 #[test]
 fn an_absent_max_d_is_the_models_own_240() {
     setup();
@@ -178,17 +175,15 @@ fn an_unreadable_proximity_distance_is_refused_by_name() {
     );
 }
 
-/// ⚠ THE STATION CHAIN RUNS INSIDE `assemblesegments`, and the alternative was
-/// not "a second call" but "a second call carrying the 1440-row tensor" — the
-/// `stationchain` mode takes `obs`, so wiring it from the shell would put back
-/// on the wire exactly the payload #411 exists to delete.
+/// ⚠ The station chain runs inside `assemblesegments`, because the
+/// `stationchain` mode takes `obs`: wiring it from the shell would put the
+/// 1440-row tensor back on the wire.
 ///
-/// ⚠ AND THE FIELDS ARE ABSENT, NOT NULL, WHERE THE RESOLVER DID NOT REACH.
-/// The TypeScript ASSIGNS `boardStation`/`alightStation` only at the indices
-/// `resolveStationsServed` returned, and `JSON.stringify` omits an `undefined`.
-/// `segments_json` is compared as TEXT — a `jq` diff parses both sides and calls
-/// them equal — so a null where node writes nothing is a real divergence that
-/// the obvious comparison cannot see.
+/// ⚠ And the fields are absent, not null, where the resolver did not reach.
+/// `boardStation`/`alightStation` are set only at the indices the resolver
+/// returned. `segments_json` is compared as text (a `jq` diff parses both sides
+/// and calls them equal), so a null where nothing should be written is a real
+/// divergence that the obvious comparison cannot see.
 #[test]
 fn an_unresolved_segment_carries_no_station_keys_at_all() {
     setup();
@@ -241,10 +236,9 @@ fn the_two_empty_relation_forms_are_both_accepted() {
         .expect("a viable path");
 }
 
-/// The five-station synthetic line the Lean guards use
-/// (`lean/experiments/station-chain-refs.mts`), renamed onto a line the state
-/// space actually has — `Test Line` is not in `KNOWN_LINES`, so a decode could
-/// never emit it.
+/// The five-station synthetic line the Lean guards use, renamed onto a line
+/// the state space actually has: `Test Line` is not in `KNOWN_LINES`, so a
+/// decode could never emit it.
 mod line {
     pub const LONS: [f64; 5] = [
         0.0,

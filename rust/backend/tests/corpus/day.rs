@@ -1,4 +1,4 @@
-//! A WHOLE DAY with no Node and no database, against the last blessed timeline.
+//! A whole day with no database, against the last blessed timeline.
 //!
 //! ```text
 //!   fixture.inputs → head::capture → build_day_request → fold → states
@@ -18,12 +18,12 @@
 //! PhoneTrack window and biometrics join inside it are upstream of the fixture
 //! and are not reached by this file or any other in the corpus.
 //!
-//! That boundary is invisible from the pass line, and it has already misled
-//! once: a change to `classification_inputs::load` on 2026-08-30 was reported
-//! green by 339 tests that never executed it. A change to what the fold
-//! is FED must land on the replay path above, or be covered by something else
-//! that is named — a loader is the most dangerous place for this, because it
-//! moves the answer while every assertion here still holds.
+//! That boundary is invisible from the pass line: a change to
+//! `classification_inputs::load` can be reported green by hundreds of tests
+//! that never executed it. A change to what the fold is fed must land on the
+//! replay path above, or be covered by something else that is named; a loader
+//! is the most dangerous place for this, because it moves the answer while
+//! every assertion here still holds.
 //!
 //! # ⚠ WHAT THE ORACLE IS, AND WHAT IT THEREFORE CANNOT TELL YOU
 //!
@@ -60,23 +60,20 @@ use super::Replay;
 /// instead of one red day hiding them all; re-capturing a day to make a miss
 /// go away is forbidden.
 ///
-/// RETIRED 2026-09-03: the oracle stopped being the TS's output (see the
-/// header), so the 08-09 bless wrote Morr into `statesOut` and the entry
-/// would have tripped the stale-entry check below. The adjudication lives in
-/// #1054; the list stays for the next genuinely divergent day.
+/// Empty: the list stays for the next genuinely divergent day.
 const KNOWN_DIVERGENT: [&str; 0] = [];
 
 /// The tables an unanswered key may belong to. Anything else is a new gap.
 ///
-/// `nearbyWays` joined 2026-09-30 with the first day that leaves the mirror's
-/// ground: the Eurostar crosses Kent, the Channel and France, where the mirror
-/// holds no ways and DECLINES the ask — at capture and on the pod alike, so the
-/// blessed timeline was built from the same absence. It counts against the
-/// per-day ceiling like the others; every other day's ceiling is unchanged, so
-/// a `nearbyWays` miss anywhere else still fails.
+/// `nearbyWays` counts for the days that leave the mirror's ground: the
+/// Eurostar crosses Kent, the Channel and France, where the mirror holds no ways
+/// and declines the ask, at capture and on the pod alike, so the blessed
+/// timeline was built from the same absence. It counts against the per-day
+/// ceiling like the others; every other day's ceiling is unchanged, so a
+/// `nearbyWays` miss anywhere else still fails.
 ///
-/// `nearbyStations` and `linesAtPoint` joined 2026-10-01 for the same reason:
-/// Paris to San Sebastián, where the mirror holds no stations or lines either.
+/// `nearbyStations` and `linesAtPoint` count for the same reason: Paris to San
+/// Sebastián, where the mirror holds no stations or lines either.
 const UNANSWERED_KINDS: [&str; 6] = [
     "reverseGeocode",
     "nearbyLandmarks",
@@ -90,9 +87,8 @@ const UNANSWERED_KINDS: [&str; 6] = [
 /// `bestPlace` asked before `tzAt` resolves.
 ///
 /// Each means the fold reached a lookup the recorded trace has no answer for,
-/// so the row set is not that lookup's source.
-/// Per #1054 the miss IS the finding, so this is a CEILING that must fall, not
-/// a budget.
+/// so the row set is not that lookup's source. The miss is the finding, so this
+/// is a ceiling that must fall, not a budget.
 ///
 /// What it holds is the two tables declined ON PURPOSE: `reverseGeocode` is a
 /// Nominatim call whose keys are coordinates the pipeline DERIVES, and
@@ -171,11 +167,10 @@ fn ceiling_for(date: &str) -> usize {
 /// `null` and absent are the SAME state here, and comparing without this would
 /// report every state as differing.
 ///
-/// The seam is TypeScript's `undefined` against Lean's `null`: `JSON.stringify`
-/// drops an undefined field, and Lean has no undefined so it writes `null`.
-/// Dropping nulls on BOTH sides equates exactly those two and nothing else — a
-/// field the fold nulls and the TypeScript fills still differs, because one
-/// side then has a key the other does not.
+/// The seam is an absent field against Lean's `null`: an older fixture drops an
+/// absent field, and Lean writes `null`. Dropping nulls on both sides equates
+/// exactly those two and nothing else: a field the fold nulls and the fixture
+/// fills still differs, because one side then has a key the other does not.
 fn drop_nulls(v: &Value) -> Value {
     match v {
         Value::Object(o) => Value::Object(
@@ -243,24 +238,23 @@ impl Day {
         };
         self.asks = self.asks.max(rep.asks.len());
 
-        // ⚠ THE ONLY ACCEPTED RESIDUE. The fold asks `bestPlace` once before
+        // ⚠ The only accepted residue. The fold asks `bestPlace` once before
         // `tzAt` has resolved the stay's zone and again after; the blank-zone
         // spelling is a question asked too early, not a stay with no zone, and
-        // the answerer declines it rather than pick one. Measured on 2026-04-29:
-        // 8 spans, each asked twice, every one recorded by the TypeScript at
-        // Europe/Amsterdam. ANYTHING ELSE unanswered means the timeline below
-        // was built from a default for a question the day really asked, and
+        // the answerer declines it rather than pick one (04-29: 8 spans, each
+        // asked twice). Anything else unanswered means the timeline below was
+        // built from a default for a question the day really asked, and
         // matching `statesOut` anyway would be luck rather than agreement.
         let mut n = 0usize;
         for m in &rep.declined() {
             if m.what == "bestPlace" && m.key.ends_with('|') {
                 continue;
             }
-            // The three matcher reads are asks too since #1709, and a trace
-            // that lacks one key declines it — which the WALK gate counts and
-            // bounds (`missed * 4 < asked`). Here it is not a default the
-            // timeline was built from: the leg draws raw, which is what the
-            // blessed timeline was built from as well.
+            // The three matcher reads are asks too, and a trace that lacks one
+            // key declines it, which the walk gate counts and bounds
+            // (`missed * 4 < asked`). Here it is not a default the timeline was
+            // built from: the leg draws raw, which is what the blessed timeline
+            // was built from as well.
             if backend::fold::OSM_READS.contains(&m.what.as_str()) {
                 continue;
             }
@@ -285,9 +279,8 @@ impl Day {
 
         let got = rep.out.get("states").cloned().unwrap_or(Value::Null);
 
-        // #343: every stay's place, POSITIONALLY — the truth referee learned the
-        // hard way that a ts-keyed diff lies, because 06-22 carries two rows with
-        // the same `startTs`.
+        // Every stay's place, positionally: a ts-keyed diff lies, because 06-22
+        // carries two rows with the same `startTs`.
         if self.report_only || std::env::var("VENUE_PLACES_OUT").is_ok() {
             let rows: Vec<Value> = got
                 .as_array()
@@ -430,8 +423,7 @@ fn metres(p: (f64, f64), q: (f64, f64)) -> f64 {
 /// The first state that differs, and which of its fields.
 ///
 /// Printing the timelines whole buries the one state that moved; printing only
-/// the index does not say which field, which is the mistake
-/// `compare-head.mts` records making.
+/// the index does not say which field.
 fn first_state_difference(got: &Value, want: &Value) -> String {
     let empty = Vec::new();
     let g = got.as_array().unwrap_or(&empty);

@@ -241,10 +241,10 @@ async fn no_session_at_this_layer_is_a_mounting_bug_not_an_anonymous_user() {
 
 /// The rule behind `nest("/api", …)`, the way `routes::mod` mounts it.
 ///
-/// ⚠ A nested router sees its URI with the prefix STRIPPED, so the middleware
-/// must judge the original path. Judging the stripped one refused every share
-/// viewer's `POST /api/telemetry` in production (measured 2026-10-05), and
-/// would let a link with location off read `/api/velocity`.
+/// ⚠ A nested router sees its URI with the prefix stripped, so the middleware
+/// must judge the original path. Judging the stripped one refuses every share
+/// viewer's `POST /api/telemetry`, and would let a link with location off read
+/// `/api/velocity`.
 fn nested_app(session: UserSession) -> Router {
     Router::new().nest(
         "/api",

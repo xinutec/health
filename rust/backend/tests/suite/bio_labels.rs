@@ -2,13 +2,11 @@
 //!
 //! # Why this is not the probe it resembles
 //!
-//! `tests/lean_serve.rs` also sends `{"mode":"biolabels"}`, and #1003's check
-//! deliberately does NOT count it: that test asserts the arm answers in its own
-//! words and is indifferent to the answer, which is the whole of hop 1. This
-//! one asserts what the pass DECIDES. That difference is the point — a
-//! `#guard`-pinned port can be correct and never run, and a guard cannot fail
-//! for a parameter that does not exist yet, which is how `pickWinningAmenity`
-//! drifted for nine days.
+//! `tests/lean_serve.rs` also sends `{"mode":"biolabels"}`, and the reachability
+//! check deliberately does not count it: that test asserts the arm answers in
+//! its own words and is indifferent to the answer. This one asserts what the
+//! pass decides. A `#guard`-pinned function can be correct and never run, and a
+//! guard cannot fail for a parameter that does not exist yet.
 //!
 //! # Every rule is bracketed
 //!

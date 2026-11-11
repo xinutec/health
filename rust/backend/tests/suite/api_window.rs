@@ -7,10 +7,10 @@
 //!
 //! # ⚠ THESE TESTS ARE ONLY AS CURRENT AS THE LAST SUCCESSFUL `:static` BUILD
 //!
-//! Reversing that comparison in `Verified/ApiWindow.lean` was ablated on
-//! 2026-08-22. Four `#guard`s failed to compile, which is the real guard — and
-//! THIS FILE STILL PASSED, because a failed `lake build` leaves the previous
-//! `.a` in place and the host went on calling yesterday's Lean.
+//! Reversing that comparison in `Verified/ApiWindow.lean` fails four `#guard`s
+//! to compile, which is the real guard, and this file still passes, because a
+//! failed `lake build` leaves the previous `.a` in place and the host goes on
+//! calling yesterday's Lean.
 //!
 //! So a green run here is evidence about the WIRE, not about the rule. The
 //! rules are pinned by the `#guard`s, which cannot be stale because a wrong one

@@ -25,14 +25,14 @@
 //! # The alternative, for when it is worth more than this
 //!
 //! A deploy changes the code version and empties the memo, and the first fold
-//! after it draws every walk again — `routes::velocity::warm_recent` does that
+//! after it draws every walk again; `routes::velocity::warm_recent` does that
 //! fold in the background so a person does not. The other way to the same
 //! speed is a drawing fast enough to need no memory at all: the walks of a day
 //! are independent and could be drawn in parallel, a day then costing its
-//! longest walk rather than their sum (roughly 2–3× on 2026-10-04); and the
-//! drawing itself has room left (#1921: the matcher's two graph builds, the
-//! corrector's whole-network walk graph). If that lands, this module and its
-//! table can go — nothing else depends on them.
+//! longest walk rather than their sum (roughly 2–3×); and the drawing itself
+//! has room left (the matcher's two graph builds, the corrector's
+//! whole-network walk graph). If that lands, this module and its table can go;
+//! nothing else depends on them.
 //!
 //! ⚠ ONLY THE SERVING PROCESS KEEPS ANYTHING. [`init`] is called where the
 //! server starts; everywhere else (gates, captures, the CLI) the store is unset,

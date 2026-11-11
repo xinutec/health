@@ -1,8 +1,7 @@
 //! Everything the browser needs that is not the API.
 //!
 //! The built Angular app, the two unauthenticated status endpoints, and the
-//! SPA fallback. No decisions here — it is entirely plumbing, and it is the
-//! part of the old TypeScript server that had nothing to port but itself.
+//! SPA fallback. No decisions here: it is entirely plumbing.
 
 use axum::Json;
 use axum::extract::State;
@@ -95,12 +94,12 @@ pub async fn version() -> Response {
 /// ⚠ HTML MUST REVALIDATE, and shipping without saying so cost a deploy nobody
 /// could see.
 ///
-/// With no `Cache-Control` at all a client falls back to HEURISTIC caching from
-/// `Last-Modified` and may keep the document indefinitely without asking again.
-/// Measured on the `messages` viewer 2026-08-14: an Android WebView fetched the
-/// whole API and never once requested `main-*.js`, so the phone ran a build
-/// several deploys old for hours. The symptom is "the change did not deploy",
-/// which sends you to CI, the image and the rollout — all of them correct.
+/// With no `Cache-Control` at all a client falls back to heuristic caching from
+/// `Last-Modified` and may keep the document indefinitely without asking again:
+/// an Android WebView once fetched the whole API and never requested
+/// `main-*.js`, running a build several deploys old for hours. The symptom is
+/// "the change did not deploy", which sends you to CI, the image and the
+/// rollout, all of them correct.
 ///
 /// `no-cache` means "ask first", not "never keep": the ETag still turns the
 /// usual case into a 304 with no body.
@@ -179,13 +178,11 @@ fn is_content_hashed(name: &str) -> bool {
 /// the pod is in rather than showing a blank page, which is the difference
 /// between "the deploy is wrong" and "the app is broken".
 ///
-/// ⚠ **EVERY OTHER PATH IS A 404, and answering 200 here was a silent
-/// production bug.** `ServeDir`'s fallback is reached for any file it
-/// cannot find, so `GET /media/nope.woff2` answered **200 text/html** — the
-/// explanation page, handed to a browser that asked for a font. It renders
-/// broken icons and reports nothing, on both sides: a 200 is not an error to
-/// the client and not a log line on the server. Measured 2026-09-08 across
-/// every host in `nixos-config/frontdoor.json`.
+/// ⚠ **Every other path is a 404.** `ServeDir`'s fallback is reached for any
+/// file it cannot find, so without this `GET /media/nope.woff2` answers **200
+/// text/html**, the explanation page, handed to a browser that asked for a
+/// font. It renders broken icons and reports nothing, on both sides: a 200 is
+/// not an error to the client and not a log line on the server.
 ///
 /// `routes/mod.rs` already lists the SPA's routes by hand for exactly this
 /// reason — *"a typo'd .css or .js must still 404"* — and that decision was
