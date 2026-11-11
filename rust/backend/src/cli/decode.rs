@@ -309,10 +309,12 @@ pub(crate) async fn decode_one(
         "tz": tz,
     });
     // The fitted decoder (`backend::decoder_params`): its numbers and form, from
-    // the Secret the pod mounts. Unset, the shipped model.
-    if let Some(p) = backend::decoder_params::from_env(date)? {
-        backend::decoder_params::apply(&mut req, &p);
-    }
+    // the Secret the pod mounts. Without it a decode would be the unfitted model
+    // and stored as if it were the served one, so none is an error.
+    let params = backend::decoder_params::from_env(date)?.context(
+        "no decoder record: set DECODER_PARAMS_JSON (the pod's Secret) or DECODER_PARAMS",
+    )?;
+    backend::decoder_params::apply(&mut req, &params)?;
     // What these inputs were complete through, taken as they were loaded.
     let inputs_through = backend::decode_freshness::horizon(
         bounds.end_utc,

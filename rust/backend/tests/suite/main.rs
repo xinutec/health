@@ -133,7 +133,7 @@ mod watch_battery;
 /// it on a real one: the decoder refuses a request without its record.
 fn with_record(mut r: serde_json::Value) -> serde_json::Value {
     if let Some(p) = backend::decoder_params::from_env("2026-01-01").expect("the record reads") {
-        backend::decoder_params::apply(&mut r, &p);
+        backend::decoder_params::apply(&mut r, &p).expect("the record is whole");
     }
     r
 }

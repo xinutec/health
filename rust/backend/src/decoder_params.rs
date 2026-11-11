@@ -6,7 +6,8 @@
 //! It holds his physiology, so it never lives in this repository: the serving
 //! pod reads it from a Secret into `DECODER_PARAMS_JSON` (the record itself, a
 //! few kilobytes); the harness names a file or a per-day directory in
-//! `DECODER_PARAMS`. Neither set, a decode is the shipped model's, unchanged.
+//! `DECODER_PARAMS`. Neither set, a replay reads the golden record and the
+//! decode worker refuses: it would store the unfitted model's day.
 //!
 //! ⚠ THE SECRET HOLDS ONE LINE. `scripts/prod-db.sh` mirrors the pod's
 //! environment as `NAME=VALUE` lines, so a pretty-printed record reaches a Mac
@@ -70,16 +71,22 @@ fn golden_record() -> Result<Option<Value>> {
     }
 }
 
-/// Lay the record on a decode request: each flag and `maxD` it carries, where
-/// the request leaves them unset — a harness arm's own setting wins.
-pub fn apply(req: &mut Value, params: &Value) {
+/// Lay the record on a decode request: each flag and `maxD`, where the request
+/// leaves them unset — a harness arm's own setting wins.
+///
+/// A record missing any of them is an error: a missing key would decode with
+/// that part of the fit silently off.
+pub fn apply(req: &mut Value, params: &Value) -> Result<()> {
+    for k in FLAGS.iter().chain(&["maxD"]) {
+        anyhow::ensure!(!params[k].is_null(), "the decoder record has no {k}");
+    }
     for k in FLAGS {
-        let v = &params[k];
-        if !v.is_null() && req["flags"][k].is_null() {
-            req["flags"][k] = v.clone();
+        if req["flags"][k].is_null() {
+            req["flags"][k] = params[k].clone();
         }
     }
-    if !params["maxD"].is_null() && req["maxD"].is_null() {
+    if req["maxD"].is_null() {
         req["maxD"] = params["maxD"].clone();
     }
+    Ok(())
 }

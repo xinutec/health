@@ -268,7 +268,7 @@ pub fn request(fx: &Value) -> Result<Value> {
         attach_spread(&mut req["places"])?;
         req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS", date)?;
         if let Some(p) = crate::decoder_params::from_env(date)? {
-            crate::decoder_params::apply(&mut req, &p);
+            crate::decoder_params::apply(&mut req, &p)?;
         }
         return Ok(req);
     }
@@ -428,7 +428,7 @@ pub fn request(fx: &Value) -> Result<Value> {
     attach_spread(&mut req["places"])?;
     req["flags"]["entryCounts"] = json_file("HSMM_ENTRY_COUNTS", date)?;
     if let Some(p) = crate::decoder_params::from_env(date)? {
-        crate::decoder_params::apply(&mut req, &p);
+        crate::decoder_params::apply(&mut req, &p)?;
     }
     Ok(req)
 }
