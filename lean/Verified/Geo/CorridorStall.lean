@@ -101,9 +101,8 @@ def maxCorridorStall (fixes path : Array Pt) (tolM : Float := 15) : Float := Id.
       let byM := (b.lat - a.lat) * 111320.0
       let px := (v.lon - a.lon) * 111320.0 * cosLat
       let py := (v.lat - a.lat) * 111320.0
-      -- ⚠ `|| 1e-9` in the TS, which fires on a ZERO-length segment (two
-      -- identical fixes). Not the `=== 0 ? 0` used elsewhere in this file —
-      -- the two idioms differ and both are preserved as written.
+      -- A zero-length segment (two identical fixes) divides by 1e-9 here, not
+      -- the `0` used elsewhere in this file; the baseline was blessed with both.
       let l2raw := bx * bx + byM * byM
       let l2 := if l2raw == 0 || l2raw.isNaN then 1e-9 else l2raw
       let t := clamp01 ((px * bx + py * byM) / l2)
@@ -119,7 +118,7 @@ def maxCorridorStall (fixes path : Array Pt) (tolM : Float := 15) : Float := Id.
   for i in [0:S] do prevCost := prevCost.set! i (dist[i]?.getD 0)
   for k in [1:V] do
     let prevBase := (k - 1) * S
-    -- Stable ascending by predecessor arc, matching V8's sort.
+    -- Stable ascending by predecessor arc.
     let order := (((List.range S).mergeSort
       (fun x y => arc[prevBase + x]?.getD 0 ≤ arc[prevBase + y]?.getD 0))).toArray
     let mut prefixMinCost : Array Float := Array.replicate S 0

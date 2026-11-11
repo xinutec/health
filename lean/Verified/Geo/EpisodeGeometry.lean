@@ -46,18 +46,17 @@ thresholds were tuned against this one.
 
 ## Exactness
 
-Everything is comparison, filtering and array sequencing ⇒ EXACT, except
+Everything is comparison, filtering and array sequencing ⇒ exact, except
 {@link equirectMeters}'s `cos`/`sqrt` and the float mean in
 {@link centroidOf}, which are ≤1 ULP and only ever compared against metre
-thresholds (100 m stitch bar, 2 km connector cap). UNPROVEN; pinned against
-Node/V8 (`lean/experiments/episode-geometry-refs.mts`).
+thresholds (100 m stitch bar, 2 km connector cap). UNPROVEN; pinned by the
+`#guard`s.
 
 ## Shape notes
 
-* `undefined` and `[]` are the same thing for every drawn-path field, because
-  the TS tests `(s.path?.length ?? 0) >= 2` — so they are plain `Array` here.
-  `rawFixes` is NOT one of those: the TS tests `if (rawFixes)`, and an empty
-  array is truthy in JS, so it stays an `Option`.
+* An absent drawn path and an empty one are the same thing (the test is
+  "at least two vertices"), so they are plain `Array` here. `rawFixes` is not
+  one of those: an empty `rawFixes` is present, so it stays an `Option`.
 * Fix timestamps are `Int` — the capture path records whole UTC seconds. Drawn
   DERIVED vertices are not: the over-route trim and the walk corrector
   interpolate `ts` along a chord without rounding, so {@link SPt} and the `ts`
@@ -87,10 +86,9 @@ the map's point-inspector can show *when* a drawn vertex was. -/
 structure LatLon where
   lat : Float
   lon : Float
-  /-- `Float`, not `Int`: the TS field is a JS `number`, and the derived-path
-  vertices that feed it carry fractional timestamps (see {@link SPt}). Rounding
-  on the way out made this module emit a different value from the TS for 4226 of
-  23525 drawn vertices across the corpus. -/
+  /-- `Float`, not `Int`: the derived-path vertices that feed it carry
+  fractional timestamps (see {@link SPt}). Rounding on the way out would change
+  the emitted value for about a sixth of the corpus's drawn vertices. -/
   ts : Option Float := none
   deriving Inhabited, BEq, Repr
 
@@ -105,9 +103,8 @@ fraction. Measured across the 33-day corpus: 4226 of 23525 drawn vertices carry
 a fractional `ts`.
 
 The window filter in `clipPath` compares it against the state's integral
-bounds. That comparison is where a rounded model could keep or drop a vertex the
-TS does not — measured at ZERO occurrences in those 23525, so the divergence
-this type closes is the EMITTED VALUE, not the clip. -/
+bounds; a rounded model could keep or drop a vertex differently there, though
+the corpus has no such case. -/
 structure SPt where
   lat : Float
   lon : Float
@@ -117,14 +114,14 @@ structure SPt where
 /-- The `FilteredPoint` fields this module reads — the Kalman-smoothed track. -/
 abbrev Fix := Verified.SpeedFix
 
-/-- A raw GPS fix as captured (pre-Kalman). `accuracy` is carried by the TS
-type but never read here — the physics of the mode is the constraint, not the
-phone's self-reported number — so it is absent. -/
+/-- A raw GPS fix as captured (pre-Kalman). `accuracy` is never read here (the
+physics of the mode is the constraint, not the phone's self-reported number),
+so it is absent. -/
 abbrev RawFix := Verified.GeoFix
 
-/-- The `EnrichedSegment` fields `resolveEpisode` reads. A different projection
-of the same TS record than `Verified.Geo.DayState.Seg`, which reads the
-labelling fields instead. -/
+/-- The `EnrichedSegment` fields `resolveEpisode` reads; a different projection
+of the same record than `Verified.Geo.DayState.Seg`, which reads the labelling
+fields instead. -/
 structure Seg where
   startTs : Int
   endTs : Int
@@ -198,7 +195,7 @@ def equirectMeters (aLat aLon bLat bLon : Float) : Float :=
   Float.sqrt (dLat * dLat + dLon * dLon)
 
 /-- The mean of a set of points, or `none` when there are none. Sums in array
-order, as the TS loop does. -/
+order. -/
 def centroidOf (pts : Array LatLon) : Option LatLon :=
   if pts.isEmpty then none
   else Id.run do
@@ -214,7 +211,7 @@ def centroidOf (pts : Array LatLon) : Option LatLon :=
 
 `Verified.Geo.Prefilter` (namespace `Verified.Geo`) owns the two recursions and their invariants
 (`holdSpeed_chain`, `rejectSpikes_sublist`); here they are only instantiated
-with the float predicates the TS uses. -/
+with the float predicates. -/
 
 /-- `rejectSpikes`'s predicate: a point juts out and back when the detour
 through it is both several times longer than going straight past it AND a large
@@ -232,18 +229,17 @@ def despike (pts : Array LatLon) : Array LatLon :=
   (rejectSpikes spikeAt (fun i => pts.getD i default) pts.size).toArray
 
 /-- `holdImplausibleSpeed`'s predicate: keep a fix only if its implied speed
-from the last KEPT fix is within `capKmh`. A non-positive `dt` fails, matching
-the TS `continue`. -/
+from the last kept fix is within `capKmh`. A non-positive `dt` fails. -/
 def speedOk (capKmh : Float) (last cur : RawFix) : Bool :=
   let dt := Float.ofInt (cur.ts - last.ts)
   if dt ≤ 0 then false
   else equirectMeters last.lat last.lon cur.lat cur.lon / dt * 3.6 ≤ capKmh
 
-/-- The kinematic hold. A run of fixes that each require impossible speed — an
-underground/indoor GPS teleport, which reports GOOD self-reported accuracy — is
+/-- The kinematic hold. A run of fixes that each require impossible speed (an
+underground/indoor GPS teleport, which reports good self-reported accuracy) is
 held at the last plausible position, so the leg collapses toward stationary
-instead of drawing an impossible sprint. `none` for the cap is the TS
-`Number.isFinite` bypass: no ceiling for this mode, so nothing is dropped. -/
+instead of drawing an impossible sprint. `none` for the cap means no ceiling
+for this mode, so nothing is dropped. -/
 def holdImplausibleSpeed (fixes : Array RawFix) (capKmh : Option Float) : Array RawFix :=
   match capKmh with
   | none => fixes
@@ -258,9 +254,8 @@ def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 convention across the pipeline). -/
 def inWindow (ts start finish : Int) : Bool := ts ≥ start && ts ≤ finish
 
-/-- The same window test for a derived-path vertex, whose `ts` is fractional.
-The TS compares JS numbers throughout, so the fraction takes part in the
-comparison rather than being rounded away first. -/
+/-- The same window test for a derived-path vertex, whose `ts` is fractional:
+the fraction takes part in the comparison rather than being rounded away first. -/
 def inWindowF (ts : Float) (start finish : Int) : Bool :=
   ts ≥ Float.ofInt start && ts ≤ Float.ofInt finish
 
@@ -425,7 +420,7 @@ def resolveEpisode (st : State) (index : Nat) (states : Array State) (segments :
 
   if mode == "stationary" || mode == "sleeping" then
     let anchor := stayAnchor covering (windowFixes.map toLatLon)
-    -- An empty place string is falsy in the TS spread, so it is dropped here too.
+    -- An empty place string is dropped.
     let pl := match st.place with
       | some p => if p == "" then none else some p
       | none => none
@@ -457,14 +452,13 @@ def buildEpisodes (states : Array State) (segments : Array Seg) (points : Array 
 
 /-! ## Smoke tests
 
-References: `lean/experiments/episode-geometry-refs.mts`, which drives these
-same scenarios through the production `buildEpisodes`.
+The reference values are the original `buildEpisodes`' answers for these
+scenarios.
 
 Scenario coordinates are built from the frame arithmetic rather than pasted as
-decimals, so the Lean and V8 sides compute the same doubles instead of both
-parsing a rounded literal. The frame itself is tied to V8's printed values by
-the first block of guards — that is what makes the constructed expectations
-below sound. -/
+decimals, so both sides compute the same doubles instead of parsing a rounded
+literal. The frame itself is tied to the reference values by the first block
+of guards, which is what makes the constructed expectations below sound. -/
 
 private def lat0 : Float := 51.52
 private def lon0 : Float := -0.13
@@ -655,8 +649,7 @@ private def cafe : Array State := #[stt 1000 1200 "stationary" (some "Cafe")]
         #[{ lat := ((pt 0 0).1 + (pt 0 100).1) / 2.0, lon := ((pt 0 0).2 + (pt 0 100).2) / 2.0 }])]
 
 -- Neither → an anchor episode with no points (a synthesized pre-fix sleep).
--- The place is still carried; an EMPTY place string is falsy in the TS spread
--- and is dropped here too.
+-- The place is still carried; an empty place string is dropped.
 #guard render (buildEpisodes #[stt 1000 1200 "sleeping" (some "Home")] #[] #[])
   == #[("sleeping", "anchor", some "Home", #[])]
 #guard render (buildEpisodes #[stt 1000 1200 "sleeping"] #[] #[])

@@ -19,13 +19,11 @@ Greedy bipartite matching, which handles split and merge implicitly:
 Greedy is enough at the 5-30 clusters/user scale; the interface would survive a
 swap to Hungarian.
 
-The sort is STABLE in both languages (V8's `Array#sort` is TimSort, Lean's
-`List.mergeSort` merges left-biased), so pairs equal on BOTH keys keep their
-generation order — old-index outer, new-index inner.
+The sort is stable (`List.mergeSort` merges left-biased), so pairs equal on
+both keys keep their generation order: old-index outer, new-index inner.
 
 Exactness: every decision is exact; `haversineMeters` (atan2) puts the radius
-test at ≤ 1 ULP. UNPROVEN; pinned against Node/V8
-(`lean/experiments/small-leaves-refs.mts`).
+test at ≤ 1 ULP. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.FocusIdentity
@@ -62,8 +60,8 @@ structure ClusterMatch where
   deriving Inhabited, BEq, Repr
 
 structure MatchResult where
-  /-- One entry per input new cluster, in input order. (`matches` is a
-      RESERVED token in Lean, hence the rename from the TS field name.) -/
+  /-- One entry per input new cluster, in input order. (`matches` is a reserved
+      token in Lean, hence the name.) -/
   assignments : Array ClusterMatch
   /-- Existing ids that matched nothing — rows to DELETE. -/
   deletedOldIds : Array Int
@@ -101,7 +99,7 @@ def matchClusters (oldClusters : Array ExistingPlace) (newClusters : Array NewCl
     deletedOldIds := (oldClusters.mapIdx fun i o => (i, o)).filterMap fun (i, o) =>
       if assignedOld.contains i then none else some o.id }
 
-/-! ## Guards (V8 reference values) -/
+/-! ## Guards -/
 
 private def OLD : Array ExistingPlace :=
   #[⟨10, 51.52, -0.13, 1000⟩, ⟨11, 51.53, -0.13, 2000⟩, ⟨12, 51.7, 0.4, 500⟩]

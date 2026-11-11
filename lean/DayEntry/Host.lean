@@ -43,8 +43,7 @@ namespace DayEntry.Host
 Wall-clock spans, summed by name, read out once per day by `takeTimings`. The
 logic stays pure: `timed` is `f ()` to every proof and guard, and only the
 compiled binary reads the clock around it. The route ships the result as
-`lean.<name>` in its `timing` (2026-10-04: a 5.9 s fold of which the mirror's
-database was 0.31 s and nothing said where the rest went). -/
+`lean.<name>` in its `timing`. -/
 
 initialize spansRef : IO.Ref (Array (String × Nat)) ← IO.mkRef #[]
 
@@ -73,9 +72,9 @@ def timed {α : Type} (name : String) (f : Unit → α) : α := f ()
 unsafe def takeTimingsImpl (dep : Nat) : Json :=
   unsafeBaseIO do
     let a ← spansRef.modifyGet fun a => (a, #[])
-    -- ⚠ `dep` MUST REACH THE RESULT. A body that never mentions the argument is
-    -- a closed term, and the compiler lifts it out and runs it ONCE: every later
-    -- fold in the same worker reported the first fold's timings (2026-10-04).
+    -- ⚠ `dep` must reach the result. A body that never mentions the argument is
+    -- a closed term, and the compiler lifts it out and runs it once: every later
+    -- fold in the same worker would report the first fold's timings.
     let tail := if dep == 0x7fffffffffff then [("dep", Lean.toJson dep)] else []
     pure (Json.mkObj ((a.toList.map fun (n, ns) => (n, Lean.toJson (ns / 1000000))) ++ tail))
 

@@ -9,8 +9,8 @@ regardless of how the cascade produced them. This checks the impossibilities the
 pipeline has actually emitted, on the final drawn legs, with no dependency on
 the model that built them.
 
-The user's requirement, 2026-09-01, is exactly this module's subject: *"Correct
-or at least viable trajectory is important. It shouldn't show definitely-wrong
+The user's requirement is exactly this module's subject: *"Correct or at least
+viable trajectory is important. It shouldn't show definitely-wrong
 interpretations that can't be right given the data."*
 
 ## The five invariants
@@ -451,10 +451,8 @@ def checkWorldlineFeasibility (legs : Array Leg) (points : Array Fix)
 ⚠ SYNTHETIC ONLY: coordinates are a bare degree grid and station names
 are Greek letters, so nothing here carries a real place.
 
-Checked differentially against the recovered TypeScript over the real corpus by
-`rust/backend/tests/corpus/feasibility.rs` (then a test of its own): 42 days, perturbed into 295 cases so
-every invariant fires — **924 violations, 3,696 field comparisons, 0
-disagreements**. Seven ablations, all seven moving that count.
+`rust/backend/tests/corpus/feasibility.rs` runs it over the real corpus,
+perturbed so every invariant fires.
 -/
 
 section Witnesses

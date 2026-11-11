@@ -23,10 +23,9 @@ namespace Verified.ArrayLoop
 termination_by n - i
 
 /-- `Array.ofFn f`, built by `ofFnGo` from an array with the right capacity.
-    `@[inline]` is load-bearing: the specialiser only sees a KNOWN `f` if this
+    `@[inline]` is load-bearing: the specialiser only sees a known `f` if this
     call opens at the site where the lambda is written; as a plain definition
-    the closure was handed through unchanged and every cell still paid a call
-    (measured 2026-09-23: no gain at all). -/
+    the closure is handed through unchanged and every cell still pays a call. -/
 @[inline] def ofFnLoop {α : Type u} {n : Nat} (f : Fin n → α) : Array α :=
   ofFnGo n f 0 (Array.emptyWithCapacity n)
 

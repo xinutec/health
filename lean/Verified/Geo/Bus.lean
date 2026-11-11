@@ -26,13 +26,12 @@ the two `annotate*` passes that spread `vehicleKind`/`wayName` onto pipeline
 records stay with the orchestrator — this module is the decision math they
 call, over inputs already resolved.
 
-Exactness: `scoreBusEvidence`, the dwell/wait *detection* (`Int` timestamps,
-discrete run-finding), and every ordering decision are EXACT. Distances enter
-through `haversineMeters` (atan2) and `pointToSegmentMeters` (`Math.hypot`),
-and the speed weight through `Float.exp`, so metre values and scores are
-guarded to ≤1 ULP; the *verdicts* they drive are pinned exactly, including
-both sides of the speed logistic's decision boundary. UNPROVEN; pinned by the
-`#guard`s against Node/V8 (`lean/experiments/bus-refs.mts`).
+Exactness: `scoreBusEvidence`, the dwell/wait detection (`Int` timestamps,
+discrete run-finding), and every ordering decision are exact. Distances enter
+through `haversineMeters` (atan2) and `pointToSegmentMeters` (hypot), and the
+speed weight through `Float.exp`, so metre values and scores are guarded to ≤1
+ULP; the verdicts they drive are pinned exactly, including both sides of the
+speed logistic's decision boundary. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.Bus
@@ -91,17 +90,17 @@ structure BusRouteMatch where
   stopSpan : Int
   deriving Inhabited
 
-/-! ## Calibration (verbatim from the TS) -/
+/-! ## Calibration -/
 
 /-- A board/alight coord must fall within this of a stop to anchor to it. -/
 def BUS_STOP_ANCHOR_M : Float := 120
-/-- How far the STAY after a ride may lie from a stop of the route for that
+/-- How far the stay after a ride may lie from a stop of the route for that
     stop to be read as the alight when the fixes cannot show one: about four
     minutes' walk, the stretch from the stop to the door that a sparse trace
-    loses into the ride. 06-09 (2026): the last precise fix is mid-ride, the
-    next 13 minutes carry three fixes at 160–640 m, and the clinic sits 170 m
-    from Wilton Street. The user, 2026-09-28: the app may name the stop from
-    the route and the stay that follows. -/
+    loses into the ride (06-09: the last precise fix is mid-ride, the next 13
+    minutes carry three fixes at 160–640 m, and the clinic sits 170 m from the
+    stop). The user's call: the app may name the stop from the route and the
+    stay that follows. -/
 def BUS_STAY_ALIGHT_M : Float := 300
 /-- An intermediate stop counts as passed within this of the trace polyline. -/
 def BUS_STOP_PASS_M : Float := 120
@@ -144,7 +143,7 @@ def pointToSegmentMeters (p a b : LatLon) : Float :=
   Float.sqrt ((px - cx) * (px - cx) + (py - cy) * (py - cy))
 
 /-- Nearest approach of the trace polyline to `stop`, short-circuiting as soon
-    as it is within `passM` (mirrors the TS `break`). -/
+    as it is within `passM`. -/
 private def nearestOnTrace (trace : Array LatLon) (stop : LatLon) (passM : Float) : Float := Id.run do
   let mut nearest := INF
   for hm_i : i in [0 : trace.size - 1] do
@@ -288,8 +287,8 @@ structure VehicleDwell where
   lon : Float
   deriving Inhabited, BEq
 
-/-- Arithmetic mean of a run's coords, summed left-to-right as the TS reduce
-    does (float addition is not associative, so the order is load-bearing). -/
+/-- Arithmetic mean of a run's coords, summed left to right (float addition is
+    not associative, so the order is load-bearing). -/
 private def centroid (run : Array Fix) : Float × Float :=
   let n := Float.ofNat run.size
   (run.foldl (fun s p => s + p.lat) 0 / n, run.foldl (fun s p => s + p.lon) 0 / n)
@@ -463,7 +462,7 @@ def scoreBusEvidence (ev : BusEvidence) : BusEvidenceScore := Id.run do
     if ev.dwells.length ≥ MANY_DWELLS_MIN && stopDwells == 0 then MANY_DWELLS_NO_STOP_NATS else 0
   return ⟨boarding + dwellCredit + noStopPenalty, boarding, dwellCredit, noStopPenalty⟩
 
-/-! ## Parity with Node/V8 (`lean/experiments/bus-refs.mts`)
+/-! ## Guards
 
 Distances/scores are `atan2`/`hypot`/`exp`-derived ⇒ guarded to ≤1 ULP;
 verdicts, orderings, spans and the nats sum are pinned exactly.
@@ -586,9 +585,8 @@ private def leg (trace : List LatLon) (speedKmh : Option Float := none) : Vehicl
 -- An unnamed stop falls back to the bare ref.
 #guard busRouteLabel ⟨"38", none, 1, ⟨none, 0, 0, 0⟩, S "X" 0 0 1, 0, 0, 2⟩ == "38"
 
--- The speed logistic itself. `busSpeedPlausibility` is private in the TS, so
--- these references were bisected back out of the shipping `matchBusRoute`
--- (see the harness) rather than recomputed independently.
+-- The speed logistic itself, pinned through `matchBusRoute`, which is where its
+-- reference values come from.
 #guard busSpeedPlausibility none == 1
 #guard approx (busSpeedPlausibility (some 14)) 0.98201379003790845
 #guard approx (busSpeedPlausibility (some 35.5)) 0.60268533797849166
@@ -697,9 +695,9 @@ private def E (waitS : Option Int) (stopM : Option Float) (dwells : List DwellSt
 
 /-! ## `annotateBusEvidence` — the orchestration over the scorer
 
-The pass that turns the evidence into a label. `async` in the TS only because
-`nearbyTransitStops` is injected; modelled here as an ordinary function of
-`(lat, lon, radiusM)`, which is what lets the whole pass be reference-tested.
+The pass that turns the evidence into a label. `nearbyTransitStops` is a
+function of `(lat, lon, radiusM)` the caller supplies, which is what lets the
+whole pass be reference-tested.
 
 The one piece of real logic outside the leaves is the per-dwell resolution:
 ask for everything within `TRANSIT_QUERY_RADIUS_M`, keep the requested SUBTYPE,
@@ -767,13 +765,13 @@ def annotateBusEvidence (segments : Array BusSeg) (fixes : List Fix)
         { seg with vehicleKind := some "bus" }
       else seg
 
-/-! ### Parity with Node/V8 (`lean/experiments/annotate-bus-evidence-refs.mts`) -/
+/-! ### Guards for the evidence pass -/
 
 section AnnotateGuards
 
 /-- A standstill, then a ride at ~40 km/h with two dwells in it. The latitude
-ACCUMULATES by repeated `+ 0.003`, exactly as the TS fixture does, so the dwell
-centroids land on the same bits. -/
+accumulates by repeated `+ 0.003`, so the dwell centroids land on the reference
+values' bits. -/
 private def busFixes : List Fix := Id.run do
   let mut out : Array Fix := #[]
   for i in [0:10] do
@@ -789,7 +787,7 @@ private def busFixes : List Fix := Id.run do
 private def LEG_START : Int := 300
 private def LEG_END : Int := 1200
 
--- The leaves see exactly what the TS harness printed for the same fixture.
+-- The leaves see exactly the reference answers for the same fixture.
 #guard detectBoardingWait busFixes LEG_START == some (270, 51.5, -0.19999999999999998)
 #guard (detectVehicleDwells busFixes LEG_START LEG_END).map (·.durationS) == [90, 90]
 
@@ -894,28 +892,19 @@ filter reads the EFFECTIVE mode, the fix window is inclusive at BOTH ends, the
 board and alight are the window's first and last fix while the trace is all of
 them, and the speed handed to the matcher is the segment's `avgSpeed`.
 
-Two things the TS does that this cannot express, both harmless:
-
-* `routes.length === 0` returns early. With no routes `matchBusRoute` returns
-  `none` for every leg, so the early return is an optimisation with no
-  observable consequence — kept to mirror the TS, and UNPINNABLE for that
-  reason rather than for want of a case.
-* The TS returns `segments.slice()`, and an unmatched segment is the SAME
-  object while a matched one is a fresh `{ ...seg }`. Arrays and structures
-  are values here, so the distinction does not exist; the TS never mutates a
-  segment either way.
+With no routes `matchBusRoute` returns `none` for every leg, so the early
+return on `routes.length === 0` is an optimisation with no observable
+consequence, and unpinnable for that reason.
 
 Exact: no arithmetic of its own — the window test is on `Int` timestamps and
 everything else is the matcher's, whose ULP story is above. -/
 
 /-- The segment fields this pass reads and the two it writes.
 
-`avgSpeed` is soft speed evidence. The TS structural interface
-`BusRouteAnnotatable` declares it optional, but the only caller hands this pass
-an `EnrichedSegment`, where `avgSpeed` is a required `number` — so an ABSENT
-speed is not an input the pipeline can produce, and it is not modelled here.
-The neutral arm `busSpeedPlausibility` keeps for it stays reachable through
-`matchBusRoute`, which does take an optional speed, and is pinned there. -/
+`avgSpeed` is soft speed evidence and always present on an enriched segment, so
+an absent speed is not modelled here. The neutral arm `busSpeedPlausibility`
+keeps for one stays reachable through `matchBusRoute`, which takes an optional
+speed, and is pinned there. -/
 abbrev BusRouteSeg := Verified.Geo.SegmentMerge.Seg
 
 /-- Name the bus route each road-vehicle leg rode. Purely additive: a leg that
@@ -946,13 +935,13 @@ def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes
       else
         let first := legFixes.head!
         let alight := legFixes.getLast!
-        -- Board where he WAITED, not where the leg's first fix landed. A
+        -- Board where the user waited, not where the leg's first fix landed. A
         -- segment's first fix is the pull-away, and on real rides it sits
-        -- 150–250 m past the stop (2026-06-12: 163 m, 06-09: 237 m) against an
-        -- anchor of 120 m — the same journey as 06-16 read `driving` for that
-        -- alone. The wait is the standstill `detectBoardingWait` already finds
-        -- for the evidence pass; it leads the trace so the pull-away stretch
-        -- can corroborate stops too. With no wait the first fix stands.
+        -- 150–250 m past the stop against an anchor of 120 m, enough to read
+        -- a bus journey as `driving`. The wait is the standstill
+        -- `detectBoardingWait` already finds for the evidence pass; it leads the
+        -- trace so the pull-away stretch can corroborate stops too. With no
+        -- wait the first fix stands.
         let (board, trace) : LatLon × List LatLon :=
           match boardingWaitAt points seg.startTs slackS with
           | some (_, la, lo) => (⟨la, lo⟩, ⟨la, lo⟩ :: legFixes.map fun p => ⟨p.lat, p.lon⟩)
@@ -985,7 +974,7 @@ def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes
             | none => seg
             | some m => labelled m
 
-/-! ### Parity with Node/V8 (`lean/experiments/annotate-bus-routes-refs.mts`) -/
+/-! ### Guards for the route pass -/
 
 section RouteAnnotateGuards
 

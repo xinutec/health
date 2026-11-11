@@ -411,8 +411,7 @@ private def parseDwellPlace (j : Json) :
     ← (← nth a 5).getInt?⟩
 
 /-- `nearbyLandmarks`' radius, fixed by `bestPlace`'s only call to it. A literal
-rather than a parameter for the same reason the TS writes it inline: the ring is
-the picker's, not the caller's. -/
+rather than a parameter: the ring is the picker's, not the caller's. -/
 private def LANDMARK_RADIUS_M : Float := 100
 
 /-- The tables the venue naming reads, bound once and shared by the fold's
@@ -525,8 +524,8 @@ private def parseChain (j : Json) (segs : Array Seg)
     -- said all along.
     bracketPlace := (j.getObjValAs? String "bracketPlace").toOption
     -- `bestPlace(preferResidential: true)` composed with `placeLabel`, computed
-    -- rather than injected as of #430. No stay window: the sleep attribution
-    -- asks about a centroid, not about a visit.
+    -- here. No stay window: the sleep attribution asks about a centroid, not
+    -- about a visit.
     sleepPlace := fun lat lon => (namer.name lat lon none true).map (·.label)
   }
 
@@ -618,8 +617,7 @@ private def parseEnv (j : Json) : Except String Env := do
     nearbyWays := waysAt
     -- `reenrichSplitWalks` re-derives one carve remainder's enrichment from its
     -- OWN geometry. `samplesInWindow` is inclusive at both ends, and an empty
-    -- window is `none` — which the pass reads as "leave the leg as it stands",
-    -- the same answer the TS's `if (segPoints.length === 0) return` gives.
+    -- window is `none`, which the pass reads as "leave the leg as it stands".
     reenrich := fun seg =>
       Verified.Geo.Enrich.enrichMovingSegment waysAt geocodeAt seg
         ((pts.filter fun p => p.ts ≥ seg.startTs && p.ts ≤ seg.endTs).map fun p =>
@@ -648,22 +646,17 @@ private def parseEnv (j : Json) : Except String Env := do
       -- speaks exactly the type its `Env` field declares (`SmoothedPoint` is
       -- `TPt` is `PathPt`), so this is a wiring, not a port.
       --
-      -- MEASURED 2026-08-16, and the reason they are wired together: on
-      -- 2026-05-14 both arms agreed on all four legs' display-gate decisions
-      -- (use=true/false and rawOff/matchedOff/stray to 3 decimals), yet TS drew
-      -- 53 vertices on a leg Lean left bare and Lean drew 97 on a leg TS wrote
-      -- to `walkSmoothedPath`. Both were THESE stubs: the corrector attaching a
-      -- changed raw line, and the reconstruction swap claiming a leg. Neither
-      -- was the matcher and neither was the orchestrator.
+      -- They are wired together because two arms once agreed on every
+      -- display-gate decision of a day and still drew different legs: the
+      -- corrector attaching a changed raw line, and the reconstruction swap
+      -- claiming a leg. Neither was the matcher nor the orchestrator.
       reconstruct := fun fixes ways buildings ev => DayEntry.Host.timed "walk.reconstruct" fun _ =>
         Verified.Geo.WalkSmooth.reconstructWalk fixes ways buildings {} ev
       refineMatched := fun fixes base => DayEntry.Host.timed "walk.refine" fun _ =>
         Verified.Geo.WalkSmooth.refineMatchedPath fixes base
-      -- The diagnostics arm of `correctWalkPathIn` is `WALK_CORRECT_DIAG=1` on the
-      -- TS side — a debug side channel that decides nothing, which is why the
-      -- `Env` field never modelled it and why dropping `.2` here is not a loss.
-      -- `stepBudgetM := none` is the TS's `correctOpts = undefined`: the same
-      -- defaults with the budget invariant switched off, not a budget of zero.
+      -- `correctWalkPathIn`'s diagnostics decide nothing, so `Env` does not
+      -- model them and dropping `.2` here loses nothing. `stepBudgetM := none`
+      -- is the defaults with the budget invariant off, not a budget of zero.
       correct := fun drawn ctx budget => DayEntry.Host.timed "walk.correct" fun _ =>
         (Verified.Geo.WalkEscape.correctWalkPathIn ctx drawn { stepBudgetM := budget }).1
       -- A walk's remembered result. Only the serving host keeps
@@ -673,7 +666,7 @@ private def parseEnv (j : Json) : Except String Env := do
         DayEntry.Host.tell "memo.walkPut" (key ++ "|" ++ (walkPatchJson patch).compress) patch
       snapPassages := fun drawn ctx => DayEntry.Host.timed "walk.snapPassages" fun _ =>
         Verified.Geo.WalkEscape.snapPassagesIn ctx drawn }
-    -- Computed, not injected, as of #430 — see `Verified.Geo.BestPlace`.
+    -- Computed, not injected; see `Verified.Geo.BestPlace`.
     bestPlace := fun lat lon s e m => namer.name lat lon (some (s, e, m)) false
     -- The host answers from a polygon set; where it declines (open sea, a
     -- pole) the home zone is the fallback, as `Env.tzAt`'s doc asks of whoever
@@ -700,9 +693,9 @@ private def parseEnv (j : Json) : Except String Env := do
     -- line against. ABSENT MEANS MATCH: every other caller — the gates, the
     -- CLIs, `decode-day` — omits the field and must keep the production draw.
     --
-    -- ⚠ It reaches the fold only because the host puts it here. Until #1619 the
-    -- query parameter was spent entirely on the cache key, so the two arms
-    -- computed the same day and the A/B compared a value with itself.
+    -- ⚠ It reaches the fold only because the host puts it here. Spent only on
+    -- the cache key, the two arms would compute the same day and the A/B would
+    -- compare a value with itself.
     walkFlags := { matchDisable := !(← optBool j "walkMatch" true) }
   }
 
@@ -794,10 +787,8 @@ private def legJson (l : Verified.Eval.Journeys.Leg) : Json :=
 
 /-- A run of travelling states the timeline collapses into one row.
 
-⚠ ASSEMBLED HERE rather than in the client, which is the point of #229: the
-frontend still folds its own (`coalesceJourneys`) and #230 deletes that once
-this is read. While both exist, a disagreement between them is a FINDING —
-do not reconcile it by tuning the client. -/
+Assembled here rather than in the client, so the timeline has one list of
+journeys. -/
 private def journeyJson (j : Verified.Eval.Journeys.Journey) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson j.startTs), ("endTs", Lean.toJson j.endTs),

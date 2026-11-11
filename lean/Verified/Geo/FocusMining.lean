@@ -5,16 +5,14 @@ import Verified.Geo.VenuePrior
 /-!
 # The focus cron's amenity vote
 
-`refresh-focus-places` decides ONE thing per cluster that the rest of the cron
-does not: the `amenity_label` — which mapped venue, if any, this place IS. That
-decision is this module (#982 Tier 2).
+`refresh-focus-places` decides one thing per cluster that the rest of the cron
+does not: the `amenity_label`, which mapped venue, if any, this place is. That
+decision is this module.
 
 The geometry half of the cron (stay detection, clustering, splitting, hour
-profiles, identity) already lives in {@link Verified.Geo.FocusPlaces} and
-{@link Verified.Geo.FocusIdentity} and is reachable through `ServeEntry`'s
-`focus` mode. The vote was the half with no entry point, and so the half that
-drifted: `pickWinningAmenity` lost the near-field exemption for nine days and
-`isLabelWorthyVenue` was never ported at all (both fixed 2026-08-24).
+profiles, identity) lives in {@link Verified.Geo.FocusPlaces} and
+{@link Verified.Geo.FocusIdentity}, reachable through `ServeEntry`'s `focus`
+mode.
 
 ## Why one function and not three
 
@@ -54,8 +52,8 @@ structure MinedStay where
   deriving Inhabited
 
 /-- Which gate refused a label, when one was refused. A null `amenity_label`
-looks identical whichever gate wrote it, and #789 turned on knowing which —
-so the reason is returned rather than reconstructed from the absence. -/
+looks identical whichever gate wrote it, so the reason is returned rather than
+reconstructed from the absence. -/
 inductive Refusal where
   /-- Not enough total voting dwell, and the leader was not near-field. -/
   | weight
@@ -84,10 +82,9 @@ structure Mined where
   refusal : Option Refusal
   deriving Inhabited
 
-/-- Insertion-ordered accumulate. ⚠ NOT a `HashMap` and NOT sorted: the
-TypeScript tallies into a JS `Map` and `pickWinningAmenity` takes the argmax
-with a strict `>`, so an exact tie keeps the FIRST name seen. Any reordering
-here silently re-picks those ties. -/
+/-- Insertion-ordered accumulate. ⚠ Not a `HashMap` and not sorted:
+`pickWinningAmenity` takes the argmax with a strict `>`, so an exact tie keeps
+the first name seen. Any reordering here silently re-picks those ties. -/
 private def bump (f : Float → Float → Float) (xs : List (String × Float))
     (k : String) (v : Float) : List (String × Float) :=
   if xs.any (fun p => p.1 == k) then xs.map (fun p => if p.1 == k then (p.1, f p.2 v) else p)

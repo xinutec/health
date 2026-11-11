@@ -12,25 +12,17 @@ forward-look velocity seed on reset.
 Pure over the track. Arithmetic is exact (IEEE `+`/`-`/`*`/`÷`/`sqrt`); the only
 transcendentals are `cos` (metre↔degree scaling) and `atan2` (bearing), so lat/lon
 and the reset-path speed/bearing are ≤1-ULP close. Normal-path speed/bearing are
-`Math.round`-quantised (`round(speed·10)/10`, `round(bearing)`), which absorbs the
-ULP wobble except at a round boundary — the accepted near-tie class. The
-reset path emits speed/bearing UNROUNDED (a TS quirk, mirrored here). UNPROVEN;
-pinned by the `#guard`s against Node/V8.
+quantised (`round(speed·10)/10`, `round(bearing)`), which absorbs the ULP wobble
+except at a round boundary, the accepted near-tie class. The reset path emits
+speed/bearing unrounded. UNPROVEN; pinned by the `#guard`s.
 
-That "≤1-ULP close" was MEASURED rather than predicted (`compare-kalman`,
-2026-07-29, all 32 golden days). ⚠ THAT COMMAND NO LONGER RUNS — its TypeScript
-arm went at 06346bd and the script was deleted 2026-09-01, so the
-figures below are a RECORD and cannot be re-derived without restoring the arm. Row counts agree everywhere — the two arms keep
-the same fixes. `lat` is bit-identical everywhere; `lon` differs on ~0.5% of rows
-by ≤1 ULP (worst day 19, where the recursion compounds a run of them); the few
-speed/bearing differences are all reset rows. Root cause, measured over inputs
-carried across as exact bit patterns: this runtime's `Float.cos` and V8's
-`Math.cos` disagree by 1 ULP on 65 of 860 (7.6%) of one real day's latitudes.
-`metersToDegreesLon` calls `cos` and `metersToDegreesLat` does not — which is
-why `lat` is the clean control, and makes that a controlled comparison rather
-than an inference. Two libms cannot be made to agree; the way to make this
-filter *provable* rather than merely pinned is to take the metre↔degree scaling
-off `Float` entirely.
+Against the original over the golden days: row counts agree everywhere, `lat`
+is bit-identical, and `lon` differs on ~0.5% of rows by ≤1 ULP; the few
+speed/bearing differences are reset rows. The cause is the two libms' `cos`,
+which disagree by 1 ULP on a few percent of real latitudes; `metersToDegreesLon`
+calls `cos` and `metersToDegreesLat` does not, which is why `lat` is the clean
+control. Two libms cannot be made to agree; making this filter provable rather
+than pinned means taking the metre↔degree scaling off `Float`.
 -/
 
 namespace Verified.Geo.Kalman
@@ -190,8 +182,8 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint :=
           -- A coordinate bit-identical to the last one is the phone restating
           -- its previous answer, not reporting that it has stopped. Held back
           -- rather than advanced, so the next genuine fix is measured across the
-          -- full elapsed span (the 2026-05-10 Eurostar alternated fresh fix and
-          -- stale repeat the whole way across France).
+          -- full elapsed span (a Eurostar can alternate fresh fix and stale
+          -- repeat the whole way across France).
           let obsDtI := p.ts - lastAccepted.ts
           let restated := p.lat == lastAccepted.lat && p.lon == lastAccepted.lon
           if decide (obsDtI > 0) && !restated then
@@ -217,21 +209,19 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint :=
           let vLonMs := stateLon.v * R_EARTH * Float.cos (stateLat.x * (pi / 180)) * (pi / 180)
           let speedKmh := Float.sqrt (vLatMs ^ 2 + vLonMs ^ 2) * 3.6
           let emittedKmh := roundHalfUp (speedKmh * 10) / 10
-          -- #394: a row published as stopped publishes no fabricated heading —
-          -- matches the init/reset path. At a standstill `atan2` over ~0/~0
-          -- velocities returned covariance noise, and `headingChangeRate` fed
-          -- it one-sidedly into the WALKING score (9.17x on the jitter
-          -- fixture), ending stays ~5 min early at Wagamama (05-11) and UCH
-          -- (07-17). Shipped 2026-09-03 with the oracle re-bless.
+          -- A row published as stopped publishes no fabricated heading, as on
+          -- the init/reset path. At a standstill `atan2` over ~0/~0 velocities
+          -- returns covariance noise, and `headingChangeRate` would feed it
+          -- one-sidedly into the walking score, ending stays minutes early.
           let bearing := if emittedKmh == 0 then 0.0
             else mod360 (Float.atan2 vLonMs vLatMs * 180 / pi + 360)
           result := result.push ⟨p.ts, stateLat.x, stateLon.x,
             emittedKmh, roundHalfUp bearing⟩
   return result
 
--- Parity with the real `filterGpsTrack` (values from Node/V8): a track exercising
--- init, normal filtering, adaptive noise, innovation-gate rejection (a teleport
--- spike, dropped from output), and reset + forward-look seed after a long gap.
+-- A track exercising init, normal filtering, adaptive noise, innovation-gate
+-- rejection (a teleport spike, dropped from output), and reset + forward-look
+-- seed after a long gap.
 private def gp (ts : Int) (lat lon : Float) : GpsPoint := ⟨ts, lat, lon, some 20⟩
 private def track : Array GpsPoint := #[
   gp 0 51.5000 (-38.1000), gp 10 51.5001 (-38.1000), gp 20 51.5002 (-38.1000),
@@ -252,12 +242,12 @@ private def rowOk (f : FilteredPoint) (ts : Int) (lat lon spd brg : Float) : Boo
 #guard rowOk out[6]! 4000 51.6 (-38.2) 4.717694629017221 328.1536087263755  -- reset: UNROUNDED
 #guard rowOk out[7]! 4010 51.6001 (-38.2001) 4.7 328
 
--- The velocity-observability bound, which `track` above never reaches. Shape of
--- the 2026-08-05 Baker Street interchange: one stale coordinate repeated while
+-- The velocity-observability bound, which `track` above never reaches. The
+-- shape of a Baker Street interchange: one stale coordinate repeated while
 -- underground, then the far end of the tunnel run (859 m in 22 s → 141 km/h),
 -- then fixes showing the phone stopped. Row 4 is the witness: the bound holds
 -- the posterior at the 5 km/h floor where the unclamped filter carried ~70 and
--- coasted the estimate ~300 m past every observation. Values from Node/V8.
+-- coasted the estimate ~300 m past every observation.
 private def gpa (ts : Int) (lon acc : Float) : GpsPoint := ⟨ts, 50, lon, some acc⟩
 private def clampTrack : Array GpsPoint := #[
   gpa 0 5.0 26, gpa 13 5.0 45, gpa 26 5.0 63,
@@ -272,10 +262,10 @@ private def clampOut : Array FilteredPoint := filterGpsTrack clampTrack
 #guard rowOk clampOut[6]! 89 50 4.9879331921647987 1.1 90
 -- The `restated` exclusion, which `clampTrack` above does not pin (its repeats
 -- sit where the velocity is already zero, so dropping the rule changes nothing
--- there). The 2026-05-10 Eurostar: a real fix, then the identical coordinate
--- restated, then a real fix ~3.9 km on — the whole way across France. Treating
--- a restatement as an observation of zero displacement pins a 250 km/h train to
--- the 5 km/h floor and drags the track kilometres behind it. Values from V8.
+-- there). A real fix, then the identical coordinate restated, then a real fix
+-- ~3.9 km on, as a Eurostar does across France. Treating a restatement as an
+-- observation of zero displacement pins a 250 km/h train to the 5 km/h floor
+-- and drags the track kilometres behind it.
 private def gpe (ts : Int) (lat acc : Float) : GpsPoint := ⟨ts, lat, 3.0, some acc⟩
 private def restatedTrack : Array GpsPoint := #[
   gpe 0 50.0 30,

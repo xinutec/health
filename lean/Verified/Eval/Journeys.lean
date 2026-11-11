@@ -11,10 +11,8 @@ and the decoder side. This is the ground-truth side, and it is what
 ## ⚠ THE ROWS ARRIVE RESOLVED
 
 `Verified.Eval.GroundTruth` stops at civil time, because resolving a wall clock
-in a named zone needs the tz database. So this takes `JRow` — a row whose
-`startTs`/`endTs` are already unix seconds — and the shell does the conversion
-between the two. Measured 2026-08-31: the repo's resolver and the deleted
-TypeScript's agree on all 790 instants of this corpus.
+in a named zone needs the tz database. So this takes `JRow`, a row whose
+`startTs`/`endTs` are already unix seconds, and the shell does the conversion.
 
 ## The rules, and every one of them is load-bearing
 
@@ -120,10 +118,9 @@ private def closeRun (current : Array Leg) : Option Journey :=
    wait does not split a journey — the narrator writes it as a stationary row,
    placeless or named after the station (05-18's one minute "@ Baker Street"
    between two trains), and the signal has waits of four to fourteen minutes.
-   No place name is read: a visit is what the day leaves on foot. (Until
-   2026-10-20 the test was a five-minute length, the TypeScript's guess; a
-   name-based rule was tried the same day and merged the decoder's unnamed
-   visits where the narrator's were split.)
+   No place name is read: a visit is what the day leaves on foot. (A fixed
+   five-minute length, and a name-based rule, both failed: the latter merged
+   the decoder's unnamed visits where the narrator's were split.)
 4. **Stations come only from DEFINITE rows** (`correct`/`wrong`). A `partial`
    cell's `From → To` is approximate by declaration.
 5. **Rows naming the same mode, line and station pair within 60 s EXTEND the
@@ -204,10 +201,9 @@ def groundTruthJourneys (rows : Array JRow) : Array Journey := Id.run do
 
 /-! ## Witnesses
 
-Synthetic, because the real narratives are gitignored. The SHAPES are
-not: the recovered TypeScript was run over the corpus first and produced 92
-journeys and 228 legs, and the Lean port reproduces both exactly, every leg
-field included. These pin the six rules individually so a failure names one.
+Synthetic, because the real narratives are gitignored; the shapes match the
+corpus, where the rules yield 92 journeys and 228 legs. These pin the six rules
+individually so a failure names one.
 -/
 
 section Witnesses

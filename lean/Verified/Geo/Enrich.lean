@@ -10,13 +10,13 @@ tag the city.
 
 ## Why this is in the fold at all
 
-The enrichment STAGE runs once per moving segment, ~30 passes before the cascade.
-That stage is not the fold's business. But `vehicleSplit` carves a hidden ride out
-of a walk long after it, leaving two on-foot remainders whose inherited
-enrichment was derived from a window that spanned the ride — the 2026-07-12 walk
-down Upper Street labelled "Euston Road" because its parent had begun at King's
-Cross, on the far side of a tube. `reenrichSplitWalks` sends those remainders back
-through this function, so the fold needs it.
+The enrichment stage runs once per moving segment, ~30 passes before the
+cascade, and is not the fold's business. But `vehicleSplit` carves a hidden
+ride out of a walk long after it, leaving two on-foot remainders whose
+inherited enrichment was derived from a window that spanned the ride (07-12's
+walk down Upper Street was labelled "Euston Road" because its parent had begun
+at King's Cross, across a tube ride). `reenrichSplitWalks` sends those
+remainders back through this function, so the fold needs it.
 
 It reads `mode`, `avgSpeed` and `maxSpeed`, so a remainder's kinematics must be
 recomputed BEFORE it is re-enriched — otherwise the cascade is handed the ride's
@@ -52,10 +52,10 @@ record would drift against it — the fix series get projected per consumer
 because they are pure input, but this one has a canonical shape upstream and
 keeping that shape is what makes the wire encoding auditable.
 
-Nominatim omits a field it has no value for, and can also return it EMPTY. The
-two are not the same to the TS: `hasSpecificVenue` tests truthiness (an empty
-string is absent) while `nominatimVenueName` uses `??` (an empty string is
-present, and wins). Both are modelled as they are written. -/
+Nominatim omits a field it has no value for, and can also return it empty.
+`hasSpecificVenue` tests truthiness (an empty string is absent) while
+`nominatimVenueName` takes the first present field (an empty string is present,
+and wins). Both are modelled as they are written. -/
 structure Address where
   amenity : Option String := none
   tourism : Option String := none
@@ -137,13 +137,13 @@ def ROAD_SAMPLES_MAX : Nat := 240
 abbrev Pt := Verified.GeoFix
 
 /-- A railway names a train leg only when it lies near at least half the leg's
-    sampled points. The pick is the nearest railway merged
-    across the samples, so on a long ride that leaves the mapped network one
-    sample's railway named the whole leg: the Eurostar on 2026-09-30, 2 h 19 m
-    from St Pancras, read "Circle, Hammersmith & City and Metropolitan Lines" —
-    the tube under King's Cross, near its first sample only. A tube ride's
-    samples all sit on its line and keep their name; the unsupported name is
-    dropped, not replaced, and the leg stays a train. Any other pick passes. -/
+    sampled points. The pick is the nearest railway merged across the samples,
+    so on a long ride that leaves the mapped network one sample's railway could
+    name the whole leg: a Eurostar from St Pancras read "Circle, Hammersmith &
+    City and Metropolitan Lines", the tube under King's Cross, near its first
+    sample only. A tube ride's samples all sit on its line and keep their name;
+    the unsupported name is dropped, not replaced, and the leg stays a train.
+    Any other pick passes. -/
 def railNameSupported (r : Verified.Geo.RefineMode.ModeRefinement) (wayResults : Array (Array NearbyWay)) :
     Option String :=
   match r.wayName with
@@ -168,15 +168,13 @@ private def trainPick : Verified.Geo.RefineMode.ModeRefinement :=
 
 /-- Enrich one moving segment from its OWN geometry.
 
-`none` when the leg has no points. The TS's caller guards that case before
-calling and leaves such a leg alone, so the two agree: nothing is written.
+`none` when the leg has no points; the caller leaves such a leg alone.
 
 Note what is unconditional and what is not. `refinedMode`, `refinedReason` and
-`wayName` are always written — including `wayName := none`, which is the pass
-CLEARING an inherited label it can no longer justify. `city` and
-`roadCorridorFraction` are written only when the new answer is present, matching
-the TS's conditional spread; a leg that fails to resolve a city keeps whatever it
-had rather than being blanked. -/
+`wayName` are always written, including `wayName := none`, which is the pass
+clearing an inherited label it can no longer justify. `city` and
+`roadCorridorFraction` are written only when the new answer is present; a leg
+that fails to resolve a city keeps whatever it had rather than being blanked. -/
 def enrichMovingSegment
     (waysLookup : Float → Float → Array NearbyWay)
     (geocode : Float → Float → Int → Option Address)
@@ -184,8 +182,8 @@ def enrichMovingSegment
   if h0 : segPoints.size = 0 then none else
   let n := segPoints.size
   let sampleCount := min N_SAMPLES n
-  -- Asked ONCE per sample, read twice below. The TS's `wayResults`. Every
-  -- sample index is below `n` by construction; one that is not asks nothing.
+  -- Asked once per sample, read twice below. Every sample index is below `n`
+  -- by construction; one that is not asks nothing.
   let wayResults := (sampleIdxs n sampleCount).filterMap fun i =>
     (segPoints[i]?).map fun p => waysLookup p.lat p.lon
   let aggregated := dedupNearestWays wayResults
@@ -214,19 +212,19 @@ def enrichMovingSegment
     refinedMode := some plausible.mode
     refinedReason := some (plausible.reason.getD refined.reason)
     wayName := plausible.wayName
-    -- TRUTHINESS, not presence: the TS spreads `movingCity ? {city} : {}`, so an
-    -- empty name leaves the existing one standing.
+    -- Truthiness, not presence: an empty city name leaves the existing one
+    -- standing.
     city := match movingCity with | some c => if c == "" then seg.city else some c
                                   | none => seg.city
     roadCorridorFraction := roadCorridorFraction.orElse fun _ => seg.roadCorridorFraction }
 
 
-/-- A leg's roads by TIME: at every k-th fix the nearest named highway, each
+/-- A leg's roads by time: at every k-th fix the nearest named highway, each
 weighted by the seconds to the next sampled fix (the last by the seconds to
-`endTs`), summed per name — `composeWayName`'s input, the label the matcher
-writes. The five-sample pick names whichever one road its samples fell on, so
-the same walk is labelled by its fix set: 2026-09-14 08:44, "Euston Underpass"
-over the split stage's 42 fixes and "Euston Road" over the decoder's 35. -/
+`endTs`), summed per name: `composeWayName`'s input, the label the matcher
+writes. A five-sample pick names whichever road its samples fell on, so the
+same walk would be labelled by its fix set ("Euston Underpass" over one stage's
+42 fixes, "Euston Road" over the decoder's 35). -/
 def roadsByTime (waysLookup : Float → Float → Array NearbyWay) (pts : Array Pt) (endTs : Int) :
     Array (String × Float) :=
   let n := pts.size
@@ -254,7 +252,7 @@ where
       | none => some way
       | some b => if way.distanceM.getD FAR_M < b.distanceM.getD FAR_M then some way else best
 
-/-! ## Parity with Node/V8 (values from `lean/experiments/enrich-refs.mts`) -/
+/-! ## Guards -/
 
 section EnrichGuards
 
@@ -291,8 +289,8 @@ private def arnhem : Option Address := some (addr N (some "Arnhem") N N N)
 #guard cityGrid (-0.1235) == -0.123
 #guard cityGrid (-0.1236) == -0.124
 
--- Evenly spaced sampling, including the degenerate runs the TS guards with
--- `Math.max(1, sampleCount - 1)`.
+-- Evenly spaced sampling, including the degenerate runs
+-- `max(1, sampleCount - 1)` guards.
 #guard sampleIdxs 9 5 == #[0, 2, 4, 6, 8]
 #guard sampleIdxs 10 5 == #[0, 2, 4, 6, 9]
 #guard sampleIdxs 3 3 == #[0, 1, 2]

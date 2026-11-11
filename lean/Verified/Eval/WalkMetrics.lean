@@ -46,11 +46,11 @@ gate on a healthy tree.
 
 ⚠ Two known divergences, both argued to be below the gate's resolution:
 
-* `Math.hypot` is not `sqrt(x²+y²)` — V8's is overflow-careful — so a metre
-  value can differ in the last ULP. The gate's epsilons are 0.1 (a fraction)
-  and 5–30 m, so a ULP cannot move a verdict.
-* `String.toLower` is ASCII-only where JS `toLowerCase` is Unicode-aware, so a
-  non-ASCII street name could normalise differently. Same caveat as
+* `Math.hypot`-style overflow care is not `sqrt(x²+y²)`, so a metre value can
+  differ in the last ULP. The gate's epsilons are 0.1 (a fraction) and 5–30 m,
+  so a ULP cannot move a verdict.
+* `String.toLower` is ASCII-only, so a non-ASCII street name could normalise
+  differently from a Unicode-aware lowering. Same caveat as
   `Verified.Hsmm.ServedStations`.
 
 Neither is assumed. The port is checked against the blessed baseline over the
@@ -283,8 +283,8 @@ def scoreWalk (drawn : Array LatLon) (startTs endTs : Float)
       -- case; see `WalkEntry.p90M`). The mean above is per-VERTEX, ~23 calls,
       -- and stays.
       --
-      -- Defaults to TRUE so every existing caller and every V8-pinned guard
-      -- below is unaffected; only the gating harness turns it off.
+      -- Defaults to true so every existing caller and every pinned guard below
+      -- is unaffected; only the gating harness turns it off.
       offWalkableP90M := if wantP90 then offWalkableQuantile drawn w 0.9 else none
   | none => pure ()
   return { tortuosity, drawnLengthM, pedometerM := ped, stepDistanceError,
@@ -364,7 +364,7 @@ def maxCorridorStall (fixes path : Array LatLon) (tolM : Float := 15) : Float :=
   for i in [0:S] do prevCost := prevCost.set! i (dist[i]?.getD 0)
   for k in [1:V] do
     let prevBase := (k - 1) * S
-    -- Stable ascending by predecessor arc, matching V8's sort.
+    -- Stable ascending by predecessor arc.
     let order := (((List.range S).mergeSort
       (fun x y => arc[prevBase + x]?.getD 0 ≤ arc[prevBase + y]?.getD 0))).toArray
     let mut prefixMinCost : Array Float := Array.replicate S 0

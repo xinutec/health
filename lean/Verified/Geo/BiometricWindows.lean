@@ -20,18 +20,15 @@ pinned by `#guard`s:
   bridge's gap window is STRICTLY inside — a sample sitting exactly on a gap
   boundary belongs to the bracketing stay, not the gap.
 
-`bridgeStaysWithBiometrics` in the TS both decides the merges and rebuilds the
-segment records. Only the decision is ported: {@link bridgeStayRuns} returns
-the merge PLAN as `[start, end)` index ranges over the input, and the shell
-applies it (a merged segment is the first segment's fields with the last's
-`endTs` and the summed `pointCount` — fully reconstructible from the range).
-Same split as everywhere else in this port: decisions in Lean, record
-sequencing in the shell.
+Only the merge decision is here: {@link bridgeStayRuns} returns the merge plan
+as `[start, end)` index ranges over the input, and the shell applies it (a
+merged segment is the first segment's fields with the last's `endTs` and the
+summed `pointCount`, fully reconstructible from the range). Decisions in Lean,
+record sequencing in the shell.
 
-Exactness: everything is arithmetic, comparison and counting ⇒ EXACT, except
+Exactness: everything is arithmetic, comparison and counting ⇒ exact, except
 `haversineMeters` (atan2) behind the co-location test, which is ≤1 ULP but
-only ever compared against a 150 m threshold. UNPROVEN; pinned against Node/V8
-(`lean/experiments/biometrics-window-refs.mts`).
+only ever compared against a 150 m threshold. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.BiometricWindows
@@ -70,8 +67,8 @@ abbrev BiometricEnrichment := Verified.Geo.SegmentMerge.BiometricEnrichment
 /-- `Math.round(x * 10) / 10`. -/
 private def round1 (x : Float) : Float := Float.floor (x * 10 + 0.5) / 10
 
-/-- Whether the step series carries any row for this window's day at all. The
-    TS tests `|sp.ts − startTs| < 86400`, i.e. within a day either side. -/
+/-- Whether the step series carries any row for this window's day at all:
+    `|sp.ts − startTs| < 86400`, within a day either side. -/
 private def hasDayCoverage (stepPoints : List StepPoint) (startTs : Int) : Bool :=
   stepPoints.any (fun sp => decide ((sp.ts - startTs).natAbs < 86400))
 
@@ -141,13 +138,12 @@ def STEP_MINUTE_S : Int := 60
 
 /-- Does a step row's whole minute lie inside the window?
 
-⚠ **CONTAINMENT, NOT MEMBERSHIP OF THE START INSTANT**, and the difference is a
-real defect. A segment ending at 18:54:12 shares twelve seconds with the
-minute beginning 18:54; testing `sp.ts ≤ seg.endTs` charges it that whole
-minute's steps. On 2026-06-24 that is what destroyed a five-minute shop stay:
-the 82 steps belonged to the walk to the NEXT shop, they cleared
-`STATIONARY_WALK_PEAK_CADENCE`, and `applyStationaryWalkThrough` relabelled the
-stay as walking on the strength of a minute it barely touched.
+⚠ **Containment, not membership of the start instant.** A segment ending at
+18:54:12 shares twelve seconds with the minute beginning 18:54; testing
+`sp.ts ≤ seg.endTs` charges it that whole minute's steps. That destroys a
+five-minute shop stay on 06-24: the 82 steps belong to the walk to the next
+shop, they clear `STATIONARY_WALK_PEAK_CADENCE`, and the stay is relabelled
+walking on the strength of a minute it barely touched.
 
 Symmetric at the near end on purpose — a partial first minute is somebody
 else's minute for the same reason a partial last one is. -/
@@ -164,7 +160,7 @@ def peakCadenceForSegment (seg : Seg) (stepPoints : List StepPoint) : Float :=
     if stepMinuteInside sp seg && decide (sp.steps > peak)
     then sp.steps else peak) 0
 
-/-! ## Parity with Node/V8 (`lean/experiments/biometrics-window-refs.mts`) -/
+/-! ## Guards -/
 
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 private def approxO : Option Float → Option Float → Bool

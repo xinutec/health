@@ -15,9 +15,9 @@ no `Json` anywhere in it: the folds are pure and their `#guard` specs build
 inputs as literals, so a parser there would be weight the proofs carry for one
 caller's benefit. This module sits above `Verified` and below both entry points.
 
-`fBits` / `jBits` are the float-exactness pair — a Float crosses as the decimal
+`fBits` / `jBits` are the float-exactness pair: a Float crosses as the decimal
 of its IEEE-754 bit pattern, so `1e-7` and `-0.0` round-trip by construction
-rather than by rounding. The TS twin is `src/lean/float-bits.ts`.
+rather than by rounding.
 -/
 open Lean (Json)
 

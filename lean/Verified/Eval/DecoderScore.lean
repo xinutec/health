@@ -4,25 +4,22 @@ import Verified.Eval.Journeys
 /-!
 # Decoder scoreboard — the ten per-day journey-structure counts
 
-Port of the scoring half of `src/eval/journey-score.ts` (`decoderJourneys`,
-`scoreJourneys`'s counters) and the whole of
-`src/eval/decoder-scoreboard.ts` (`scoreStations`, `countPhantomRides`),
-recovered from `06346bd^`. The oracle is `tests/golden/decoder-scoreboard.json`
-— dates and counts a human blessed from the TypeScript before it went.
+The scoring half of the journey scorer (`decoderJourneys`, `scoreJourneys`'s
+counters) and the decoder scoreboard (`scoreStations`, `countPhantomRides`).
+The oracle is `tests/golden/decoder-scoreboard.json`: dates and counts a human
+blessed.
 
 The GT journey builder and its leg/journey types are `Verified.Eval.Journeys`;
 this module adds the DECODER side and the counters that compare the two.
 
-⚠ `modeShape` and `bestOverlap` exist in `Verified.Eval.JourneyShape` over ITS
+⚠ `modeShape` and `bestOverlap` exist in `Verified.Eval.JourneyShape` over its
 journey type (the pipeline referee's). The pair below operates on
-`Verified.Eval.Journeys.Journey` and mirrors the TS `journey-score.ts` pair the
-scoreboard was blessed from. Two small copies beat one shared abstraction that
-would let one gate's semantics drift the other's.
+`Verified.Eval.Journeys.Journey`, the type the scoreboard was blessed against.
+Two small copies beat one shared abstraction that would let one gate's
+semantics drift the other's.
 
-⚠ Station equality is ASCII-case-insensitive (`String.toLower`); the TS used
-Unicode `toLowerCase`. Every station name in the corpus is ASCII, and a
-non-ASCII one arriving would fail the parity harness loudly rather than
-silently scoring differently.
+⚠ Station equality is ASCII-case-insensitive (`String.toLower`). Every station
+name in the corpus is ASCII; a non-ASCII one would compare case-sensitively.
 -/
 
 namespace Verified.Eval.DecoderScore
@@ -81,11 +78,11 @@ def segmentsToMinutes (segs : Array Seg) : Array DecoderMinute := Id.run do
 
 /-- Decoder minutes to journeys, the mirror of `groundTruthJourneys`'s rules:
 movement minutes collapse into legs (same canonical mode + same line,
-contiguous-or-overlapping); a stay — or unobserved time — the day boards a
-ride from is its wait, a pause however long; a stay the day walks or drives
-away from ends the journey; a sleep ends it. A merged leg boards where its first minute boards and alights
-where its LAST minute alights — the TS overwrote `alight` unconditionally on
-every merged minute, including to null. -/
+contiguous-or-overlapping); a stay, or unobserved time, the day boards a ride
+from is its wait, a pause however long; a stay the day walks or drives away from
+ends the journey; a sleep ends it. A merged leg boards where its first minute
+boards and alights where its last minute alights, overwriting `alight` on every
+merged minute, including to null. -/
 def decoderJourneys (minutes : Array DecoderMinute) : Array Journey := Id.run do
   let sorted := minutes.qsort (fun a b => a.ts < b.ts)
   let mut journeys : Array Journey := #[]
@@ -132,8 +129,8 @@ def decoderJourneys (minutes : Array DecoderMinute) : Array Journey := Id.run do
                                 board := m.board, alight := m.alight }
   return close current journeys
 
-/-- Insertion-ordered tally bump — mirrors JS `Map` iteration order, which is
-what breaks `argmax` ties in the TS. -/
+/-- Insertion-ordered tally bump: insertion order is what breaks `argmax`
+ties. -/
 private def bump (tally : Array (String × Nat)) (k : String) : Array (String × Nat) :=
   match tally.findFinIdx? (·.1 == k) with
   | some i => tally.set i (k, tally[i].2 + 1)
@@ -191,7 +188,7 @@ def modeShape (j : Journey) : Array String := Id.run do
   return shape
 
 /-- The decoder journey with the most temporal overlap, or none. Strict `>`
-keeps the FIRST on a tie, like the TS. -/
+keeps the first on a tie. -/
 def bestOverlap (gt : Journey) (dec : Array Journey) : Option Journey := Id.run do
   let mut best : Option Journey := none
   let mut bestOv : Int := 0

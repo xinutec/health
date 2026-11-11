@@ -15,7 +15,7 @@ def pi : Float := 3.141592653589793
 every comparison. -/
 def posInf : Float := 1.0 / 0.0
 
-/-- IEEE −∞, matching TS `Number.NEGATIVE_INFINITY`. -/
+/-- IEEE −∞. -/
 def negInf : Float := (-1.0) / 0.0
 
 /-- `n` copies of `x`, filled in place. `FloatArray.mk (Array.replicate n x)`

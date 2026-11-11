@@ -8,47 +8,37 @@ narrative side; this builds the PIPELINE side from the drawn state legs and
 compares the two.
 
 Together with `Verified.Eval.FloorGate` this is everything the journey floor
-(`tests/golden/journey-baseline.json`) needs — that file has had no reader since
-#975.
+(`tests/golden/journey-baseline.json`) needs.
 
 ## ⚠ A MATCH IS SHAPE **AND** COVERAGE, and the second conjunct is the quiet one
 
-Echoing the deduped mode shape is not enough. When a journey fragments — a
-dark-tube ride drawn as walk + stay + walk + short train — the FIRST fragment
+Echoing the deduped mode shape is not enough. When a journey fragments (a
+dark-tube ride drawn as walk + stay + walk + short train) the first fragment
 can carry the identical shape `[walking, train, walking]` while spanning a third
-of the trip. Measured 2026-08-11: five of the corpus's fifteen unmatched
-journeys reconstruct their exact expected shape and fail on coverage instead,
-one of them an enforced regression nobody could attribute. So
-`uncoveredS` and `slackS` come back beside the verdict rather than being
-recomputed by whoever reads it.
+of the trip; in the corpus, a third of the unmatched journeys reconstruct their
+exact expected shape and fail on coverage instead. So `uncoveredS` and `slackS`
+come back beside the verdict rather than being recomputed by whoever reads it.
 
 ## ⚠ THE END-CLIP IS ONE MINUTE, AND ONLY AT THE ENDS
 
-A leg crossing the audited boundary used to be kept whole however little of it
-fell inside, which is how 2026-06-24 failed: the walk out of the station
-contributes THIRTY-SIX SECONDS to a 21-minute window and still added a third
-element to the shape, against a ground truth with no row for it at all. One
-corpus case clips to two seconds.
+A leg crossing the audited boundary, kept whole however little of it falls
+inside, can add an element to the shape: 06-24's walk out of the station puts
+thirty-six seconds into a 21-minute window, against a ground truth with no row
+for it at all.
 
-Trimming only at the ENDS is load-bearing, not caution. Dropping an INTERIOR leg
-MERGES its neighbours, because `modeShape` dedupes consecutive modes — measured
-on 2026-06-22, where a sub-minute train between two walks was the difference
-between `[walking, train, walking]` and a collapsed `[walking]`, turning a
-matching journey into a regression. Trimming an end can never join two legs.
+Trimming only at the ends is load-bearing. Dropping an interior leg merges its
+neighbours, because `modeShape` dedupes consecutive modes: on 06-22 a sub-minute
+train between two walks is the difference between `[walking, train, walking]`
+and a collapsed `[walking]`. Trimming an end can never join two legs.
 
 And the bound stays at one minute rather than a fraction of the window or the
-coverage slack: either would also swallow 2026-04-29's 146 s walk, where the
-pipeline genuinely ends the train a quarter of the way into the audited span —
-a real disagreement that must keep failing.
+coverage slack: either would also swallow 04-29's 146 s walk, where the pipeline
+genuinely ends the train a quarter of the way into the audited span, a real
+disagreement that must keep failing.
 
 ## The evidence, and the three rules the CORPUS cannot check
 
-Checked differentially against the recovered TypeScript over the real corpus by
-`rust/backend/tests/journey_corpus.rs`: 28 days, 92 ground-truth journeys, every
-field of every result plus the pipeline journeys themselves — **920 comparisons,
-0 disagreements.** Eight ablations of this file; five move that count
-(interchange smoothing 13, the end clip 8, coverage-as-a-conjunct 4, clipping
-interiors 3, the 240 s floor 46).
+`rust/backend/tests/journey_corpus.rs` runs it over the real corpus.
 
 ⚠ **THREE ARE SILENT ON THE CORPUS, and each is silent for a MEASURED reason
 rather than an assumed one** — a silent ablation is a question, not a pass
@@ -78,11 +68,11 @@ open Verified.Eval.Journeys
 `Journeys.canonicalMode` and `isMovementMode` take a `Mode`, because the
 narrative side comes from a parser that already decided which of eight words a
 cell used. The pipeline side did not: `statesToJourneys` receives whatever the
-serving path emitted, and the TypeScript compared canonical STRINGS
-(`m === "sleeping" ? "stationary" : m`). Parsing to `Option Mode` here would
-DROP an unrecognised mode where the original kept it and simply failed to match
-— which changes journey boundaries, not just a comparison. So these two work on
-strings, and the `Mode` versions stay for the narrative side. -/
+serving path emitted and compares canonical strings (`sleeping` reads as
+`stationary`). Parsing to `Option Mode` here would drop an unrecognised mode
+rather than fail to match it, which changes journey boundaries, not just a
+comparison. So these two work on strings, and the `Mode` versions stay for the
+narrative side. -/
 
 /-- `sleeping` folds to `stationary`; every other string keeps its name,
 recognised or not. -/
@@ -295,9 +285,8 @@ def journeyShapeResults (gtJourneys pipelineJourneys : Array Journey) : Array Re
 words, so nothing here carries a real day. The SHAPES come from the corpus
 incidents named in the module header.
 
-The port is checked differentially against the recovered TypeScript over the
-real corpus by `rust/backend/tests/journey_corpus.rs`; these pin the branches by
-hand so a failure names the rule rather than a day.
+`rust/backend/tests/journey_corpus.rs` runs these over the real corpus; the
+guards below pin the branches by hand so a failure names the rule, not a day.
 -/
 
 section Witnesses
@@ -403,8 +392,8 @@ private def walkTrainWalk : Journey :=
 #guard !(one walkTrainWalk []).matched
 #guard (one walkTrainWalk []).uncoveredS == 1800
 #guard (one walkTrainWalk []).matchStartTs == none
--- ⚠ SHAPE ALONE IS NOT A MATCH. This fragment has the IDENTICAL shape and
--- covers a third of the trip — the #752 case, which shape-only scoring passes.
+-- ⚠ Shape alone is not a match. This fragment has the identical shape and
+-- covers a third of the trip, which shape-only scoring passes.
 private def fragment : Journey :=
   jr 0 600 [leg 0 100 "walking", leg 100 500 "train", leg 500 600 "walking"]
 #guard (one walkTrainWalk [fragment]).actualShape == some #["walking", "train", "walking"]
@@ -417,8 +406,8 @@ private def slightlyShort : Journey :=
   jr 0 1500 [leg 0 300 "walking", leg 300 1200 "train", leg 1200 1500 "walking"]
 #guard (one walkTrainWalk [slightlyShort]).uncoveredS == 300
 #guard (one walkTrainWalk [slightlyShort]).matched
--- ⚠ THE END CLIP. A leg reaching under a minute into the span is trimmed at an
--- END — the #810 case, where 36 s of a walk added a third element to the shape.
+-- ⚠ The end clip. A leg reaching under a minute into the span is trimmed at an
+-- end, so 36 s of a walk adds no third element to the shape.
 private def spillingWalk : Journey :=
   jr 0 1830 [leg 0 300 "walking", leg 300 1500 "train", leg 1500 1770 "walking",
              leg 1770 1830 "driving"]
@@ -432,9 +421,9 @@ private def spillingLonger : Journey :=
 #guard (one walkTrainWalk [spillingLonger]).actualShape
     == some #["walking", "train", "walking", "driving"]
 #guard !(one walkTrainWalk [spillingLonger]).matched
--- ⚠ AND ONLY AT THE ENDS. A sub-minute INTERIOR leg is kept, because dropping it
--- would MERGE its neighbours through the dedupe — the 2026-06-22 case, where
--- that turned [walking,train,walking] into a collapsed [walking].
+-- ⚠ And only at the ends. A sub-minute interior leg is kept, because dropping
+-- it would merge its neighbours through the dedupe, collapsing
+-- [walking,train,walking] into [walking].
 private def shortInterior : Journey :=
   jr 0 1800 [leg 0 890 "walking", leg 890 920 "train", leg 920 1800 "walking"]
 #guard (one (jr 0 1800 [leg 0 900 "walking", leg 900 1800 "walking"]) [shortInterior]).actualShape

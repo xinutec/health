@@ -9,12 +9,10 @@ does next — attribute the sleep windows, cut the segment list into a state
 timeline, continue a trailing dwell, and draw the episodes — is six more stages,
 and this composes them.
 
-Every body was already ported. `segmentsToDayStates`, `derivePlaceForSleepAt` and
-`detectKnownPlaceStays` are `Geo.DayState`; `applyDwellContinuation` is
-`Geo.DwellContinuation`; `buildEpisodes` is `Geo.EpisodeGeometry`. What did not
-exist was anything that ran them in order against the same day, which is why the
-first two were among the fourteen modules #426 measured as having no comparator
-at all.
+`segmentsToDayStates`, `derivePlaceForSleepAt` and `detectKnownPlaceStays` are
+`Geo.DayState`; `applyDwellContinuation` is `Geo.DwellContinuation`;
+`buildEpisodes` is `Geo.EpisodeGeometry`. This runs them in order against the
+same day.
 
 ## The order, and what each stage reads
 
@@ -87,7 +85,7 @@ structure Env where
   /-- The day's end instant. `applyDwellContinuation` continues no further. -/
   dayEndTs : Int
   /-- SHELL: re-resolve a stay centroid to a lodging name. `none` keeps the label
-  the focus-place match gave it, which is the TS's own fallback. -/
+  the focus-place match gave it. -/
   sleepPlace : Float → Float → Option String := fun _ _ => none
   /-- The day's start instant. Only the EMPTY-DAY arm reads it — a day with
   observations takes its bounds from the observations. -/
@@ -214,20 +212,20 @@ CONSTRAINED. `inferredEmptyDay` already reasons this way for a fully-empty day:
 "bracketed by the same place on both sides ... constrained rather than
 unevidenced". A sleep window is the same shape at smaller scale.
 
-⚠ Measured 2026-09-14: 7 m from Home before a day-long silence, 46 m from Home
-after it, served as eight hours at Work 11.3 km away. Neither edge clears the
-25 m dwell radius alone; together they are the strongest evidence the night has.
+⚠ A real night: 7 m from Home before a day-long silence, 46 m from Home after
+it, served as eight hours at Work 11.3 km away. Neither edge clears the 25 m
+dwell radius alone; together they are the strongest evidence the night has.
 
 ⚠ **DISAGREEMENT MEANS SILENCE, NOT A GUESS.** If the two sides name different
 places — he went somewhere — this yields `none` and the ordinary rule decides. -/
 def bracketPlaceForSleep (winStart winEnd : Int) (fixes : List Verified.Geo.DayState.StayFix)
     (places : List Verified.Geo.DayState.StayKnownPlace) : Option (String × (Float × Float)) :=
-  -- ⚠ A GENERIC LABEL IS NOT A NAME. `sleepCandidates` re-resolves
+  -- ⚠ A generic label is not a name. `sleepCandidates` re-resolves
   -- `GENERIC_STAY_LABEL` through `Env.sleepPlace` into a real lodging name, and
-  -- this path does not — so admitting one would serve the placeholder where the
-  -- ordinary rule serves "Guest House Vertoef". The corpus caught exactly that
-  -- on 2026-04-30. Excluding it here leaves those nights to the path that can
-  -- name them properly, which is the conservative half of the trade.
+  -- this path does not, so admitting one would serve the placeholder where the
+  -- ordinary rule serves the guest house's name. Excluding it leaves those
+  -- nights to the path that can name them properly, the conservative half of
+  -- the trade.
   let named := places.filter fun p =>
     p.displayName.isSome && p.displayName != some GENERIC_STAY_LABEL
   let sorted := fixes.toArray.qsort (fun a b => a.ts < b.ts) |>.toList
@@ -261,9 +259,8 @@ def distinctSleepWindows (raw : List RawSleepWindow) : List RawSleepWindow :=
     [{ startTs := 50, endTs := 120, tz := none, minutesAsleep := 60 },
      { startTs := 0, endTs := 100, tz := none, minutesAsleep := 60 }]).map (·.startTs) == [0]
 
-/-- `enrichSleepWindows` — the raw windows, each given the place its onset side
-points at. A one-line map in the TS, and the decision it wraps is
-`derivePlaceForSleepAt`.
+/-- `enrichSleepWindows`: the raw windows, each given the place its onset side
+points at; the decision it wraps is `derivePlaceForSleepAt`.
 
 ⚠ The BRACKET is consulted first. Where both sides of the window agree it is
 strictly better evidence than the side-and-gap ranking, which cannot see across
@@ -298,7 +295,7 @@ def BRIDGE_MIN_S : Int := 1800
 
 /-- Fill each hole of `BRIDGE_MIN_S` or more that has NO fix in it and lies
 between two stationary/sleeping states at the same named place with an
-INFERRED stay there: the phone was quiet and the person never left (2026-05-11:
+INFERRED stay there: the phone was quiet and the person never left (05-11:
 asleep at Home to 07:56, the first fix at Home at 11:38, and nothing served in
 between). A hole with a fix in it is not silence — what it says is the
 segments' business — and a hole between two different places stays a hole.
@@ -415,11 +412,10 @@ def dayChain (e : Env) :
       (e.prevEveningFixes ++ e.points.toList.map (fun p => { ts := p.ts, lat := p.lat, lon := p.lon })
         ++ e.morningFixes) e.stayPlaces)
   let states := (segmentsToDayStates (e.segments.map stateSeg).toList windows).toArray
-  -- ⚠ THE EMPTY-DAY ARM, and it is tested on `states` rather than on
-  -- `e.segments`: a day with no segments can still have SLEEP windows, and that
-  -- day is observed. The TS this ports asked the same question in the same place
-  -- and in the same order — after the states are built, before the dwell
-  -- continuation, which has nothing to continue here anyway.
+  -- ⚠ The empty-day arm, tested on `states` rather than on `e.segments`: a day
+  -- with no segments can still have sleep windows, and that day is observed.
+  -- It is asked after the states are built and before the dwell continuation,
+  -- which has nothing to continue here anyway.
   if states.isEmpty && e.points.isEmpty then
     match inferredEmptyDay e with
     | some st => (#[st], #[])
@@ -439,7 +435,7 @@ def dayChain (e : Env) :
   (final, Verified.Geo.EpisodeGeometry.buildEpisodes (final.map episodeState)
     (e.segments.map episodeSeg) e.points (some e.displayFixes))
 
-/-! ## The empty-day arm (health #1055)
+/-! ## The empty-day arm
 
 ⚠ These exist because NO GOLDEN DAY CAN REACH THIS. 0 of the 42 fixtures has
 zero fixes, so the corpus and the day gate both pass whether this arm works or

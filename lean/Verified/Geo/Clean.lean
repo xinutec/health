@@ -9,23 +9,20 @@ The remaining small display passes of `map-match-core.ts`, ported in the
 same metric-parametric style as the rest of the layer (`Simplify.lean`
 et al.): the pass logic is combinatorial, the primitives are parameters.
 
-- `dedupe` (TS `dedupeConsecutive`): drop points `near` the last *kept*
-  point (the TS `< 0.5 m` test — note *strict* `<`, unlike the trim
-  rebuild's `≤`; the instantiations mirror each separately).
-- `removeSpurs`: drop dead-end out-and-back excursions — an anchor from
-  which the path departs and, within `maxSpan` steps *of the current
-  (already-spliced) array*, returns to within `retM`; the farthest
-  qualifying return wins (the TS scans `j` downward), and the
-  near-duplicate return vertex is dropped with the excursion. The
-  recursion here processes the same mutated-suffix view as the TS
-  splice loop.
-- `despike` (TS `despikeUnsupportedApexes`): drop matched vertices whose
-  apex juts off the chord between their *original* neighbours further
-  than any raw fix in the same time window did, while nearly doubling
-  back. The three tests (apex height, turn angle, raw-fix excess)
-  arrive as the parametric `perp`/`turnOk` primitives plus the raw-fix
-  window fold; each vertex's verdict depends only on its original
-  neighbours, so this is a pure indexed filter.
+- `dedupe`: drop points `near` the last *kept* point (`< 0.5 m`, *strict*,
+  unlike the trim rebuild's `≤`; the instantiations differ accordingly).
+- `removeSpurs`: drop dead-end out-and-back excursions: an anchor from which
+  the path departs and, within `maxSpan` steps *of the current (already-spliced)
+  array*, returns to within `retM`; the farthest qualifying return wins (the
+  scan runs downward), and the near-duplicate return vertex is dropped with the
+  excursion. The recursion processes the mutated-suffix view a splice loop
+  would.
+- `despike`: drop matched vertices whose apex juts off the chord between their
+  *original* neighbours further than any raw fix in the same time window did,
+  while nearly doubling back. The three tests (apex height, turn angle, raw-fix
+  excess) arrive as the parametric `perp`/`turnOk` primitives plus the raw-fix
+  window fold; each vertex's verdict depends only on its original neighbours,
+  so this is a pure indexed filter.
 
 Theorems: every pass is drop-only (`Sublist` of its input); `dedupe`
 additionally guarantees no adjacent output pair is `near` (the same
@@ -45,7 +42,7 @@ def dedupeGo (near : π → π → Bool) (pts : Nat → π) (n i : Nat) (prev : 
   else acc
 termination_by n - i
 
-/-- The TS `dedupeConsecutive` over `n` points. -/
+/-- `dedupeConsecutive` over `n` points. -/
 def dedupe (near : π → π → Bool) (pts : Nat → π) (n : Nat) : List π :=
   if n = 0 then [] else dedupeGo near pts n 1 (pts 0) [pts 0]
 
@@ -122,8 +119,7 @@ theorem dedupe_sublist (near : π → π → Bool) (pts : Nat → π) (n : Nat) 
     exact List.Sublist.refl _
 
 /-- Downward spur scan: the largest `k ∈ [1, k₀]` with
-`pd x rest[k] ≤ retM` (the TS inner `j--` loop; `k₀` is already clamped
-to the array by the caller). -/
+`pd x rest[k] ≤ retM` (`k₀` is already clamped to the array by the caller). -/
 def spurScan (pd : π → π → Nat) (retM : Nat) (x : π) (rest : List π) :
     Nat → Option Nat
   | 0 => none
@@ -144,9 +140,9 @@ theorem spurScan_le (pd : π → π → Nat) (retM : Nat) (x : π) (rest : List 
       have := spurScan_le pd retM x rest k h
       omega
 
-/-- The TS `removeSpurs` splice loop, as recursion over the current
-(post-splice) list. An anchor with fewer than two successors ends the
-pass (`i < out.length - 2`). -/
+/-- The `removeSpurs` splice loop, as recursion over the current (post-splice)
+list. An anchor with fewer than two successors ends the pass
+(`i < out.length - 2`). -/
 def spurGo (pd : π → π → Nat) (retM maxSpan : Nat) : List π → List π
   | [] => []
   | x :: rest =>
@@ -200,7 +196,7 @@ def apexDrop (perp : π → π → π → Nat) (turnOk : π → π → π → Bo
     if win.isEmpty then false
     else decide (win.foldl (fun m f => max m (perp f a b)) 0 + excess ≤ h)
 
-/-- The TS `despikeUnsupportedApexes` over `n` matched vertices. -/
+/-- `despikeUnsupportedApexes` over `n` matched vertices. -/
 def despike (perp : π → π → π → Nat) (turnOk : π → π → π → Bool)
     (ts : π → Int) (minApex excess : Nat) (raw : List π)
     (path : Nat → π) (n : Nat) : List π :=

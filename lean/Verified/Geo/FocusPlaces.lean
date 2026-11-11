@@ -15,24 +15,21 @@ frequent / one-off / other), `assignDisplayNames` (at most one Home and one
 Work, then a "Stay" tier), the hour-of-day dwell profiles that
 `Verified.Geo.PlacePrior` scores against, and `pickWinningAmenity`.
 
-The TS file is wholly pure — time-of-day comes from LONGITUDE (rough solar
-time), not a tz library, precisely so this layer needs no `Intl`. So the whole
-module ports, with two deliberate exceptions:
+Time of day comes from longitude (rough solar time), not a tz library, so this
+layer needs no `Intl` and is pure, with two deliberate exceptions:
 
-* **`classifyCluster.reason`** — a human-readable string built with
-  `toFixed(0)`. Only the LABEL drives behaviour, so `classifyClusterLabel`
-  returns the decision and the display string stays shell. (Same split as
-  `refinedReason` in `Verified.Geo.Segments`.)
-* **`ymdLocal`** — the TS formats a `YYYY-MM-DD` string purely so a `Set` can
-  count distinct days. {@link localDayIndex} returns the day NUMBER instead.
-  Calendar date and day index are in bijection, so the distinct COUNT — the
-  only thing `uniqueDayCount` exposes — is identical, without a civil-date
-  conversion.
+* **`classifyCluster.reason`**: a human-readable string. Only the label drives
+  behaviour, so `classifyClusterLabel` returns the decision and the display
+  string stays shell.
+* **The day of a timestamp**: {@link localDayIndex} returns a day number rather
+  than a `YYYY-MM-DD` string. Calendar date and day index are in bijection, so
+  the distinct count, the only thing `uniqueDayCount` exposes, is identical
+  without a civil-date conversion.
 
 Exactness: stay/cluster geometry and every gate, ordering and label decision
-are EXACT; `haversineMeters` (atan2) and the `cos`/`sin` circular embedding in
+are exact; `haversineMeters` (atan2) and the `cos`/`sin` circular embedding in
 `splitCluster` put those distances at ≤1 ULP. UNPROVEN; pinned by the
-`#guard`s against Node/V8 (`lean/experiments/focus-places-refs.mts`).
+`#guard`s.
 -/
 
 namespace Verified.Geo.FocusPlaces
@@ -40,7 +37,7 @@ namespace Verified.Geo.FocusPlaces
 open Verified.Hsmm.FloatScore (haversineMeters)
 open Verified.Geo.Velocity (localSolarHour)
 
-/-! ## Calibration (verbatim from the TS) -/
+/-! ## Calibration -/
 
 def STAY_RADIUS_M : Float := 100
 /-- How long a dwell must last to be MINED as a visit. Short enough to catch
@@ -105,9 +102,9 @@ def localSolarDayOfWeek (ts : Int) (lon : Float) : Nat :=
   let utcDay := ((Int.fdiv localTs 86400) + 4).emod 7
   ((utcDay + 6).emod 7).toNat
 
-/-- The local-solar day a timestamp falls in, as a day NUMBER. Replaces the
-    TS `ymdLocal` string: dates and day indices are in bijection, so distinct
-    counts agree, and no civil-date conversion is needed. -/
+/-- The local-solar day a timestamp falls in, as a day number: dates and day
+    indices are in bijection, so distinct counts agree, and no civil-date
+    conversion is needed. -/
 def localDayIndex (ts : Int) (lon : Float) : Int :=
   let offsetSec := Float.floor ((lon / 15) * 3600 + 0.5)
   Int.fdiv (ts + offsetSec.toInt64.toInt) 86400
@@ -116,7 +113,7 @@ private def hourIdx (ts : Int) (lon : Float) : Nat := (localSolarHour ts lon).to
 
 /-! ## Stay detection -/
 
-/-- Upper median: the TS sorts ascending and indexes `⌊n/2⌋`. -/
+/-- Upper median: sorted ascending, indexed at `⌊n/2⌋`. -/
 private def median (xs : List Float) : Float :=
   let sorted := xs.mergeSort (fun a b => decide (a ≤ b))
   sorted.getD (xs.length / 2) 0
@@ -187,8 +184,8 @@ private def mergeCluster (into other : Cluster) : Cluster :=
     totalDwellSec := totalAfter,
     stays := into.stays ++ other.stays }
 
-/-- The first `(i, j)` pair of clusters within `CLUSTER_RADIUS_M`, scanning in
-    the TS's order (the `break outer` restarts the whole scan after a merge). -/
+/-- The first `(i, j)` pair of clusters within `CLUSTER_RADIUS_M`, in scan
+    order (a merge restarts the whole scan). -/
 private def firstMergeablePair (cs : Array Cluster) : Option (Nat × Nat) := Id.run do
   for hm_i : i in [0 : cs.size] do
     for hm_j : j in [i + 1 : cs.size] do
@@ -271,9 +268,9 @@ def serializeHourProfile (profile : List Float) : String :=
   String.intercalate "," (profile.map (fun x => toString (Float.floor (x * 1000 + 0.5)).toInt64.toInt))
 
 /-- JS `Number(s)` restricted to what `serializeHourProfile` can emit plus the
-    degenerate inputs the TS tolerates: surrounding whitespace is ignored, the
-    EMPTY string is 0 (a real JS quirk this relies on), and anything else is
-    `none` = `NaN` ⇒ the whole profile is rejected. -/
+    degenerate inputs it tolerates: surrounding whitespace is ignored, the
+    empty string is 0, and anything else is `none` = `NaN` ⇒ the whole profile
+    is rejected. -/
 private def jsNumber (s : List Char) : Option Float := Id.run do
   let t := (s.dropWhile (fun c => c == ' ')).reverse.dropWhile (fun c => c == ' ') |>.reverse
   if t.isEmpty then return some 0
@@ -401,8 +398,8 @@ private def oneVisitAt (lat : Float) : Cluster :=
 /--
 `home | work | hotel | frequent | one-off | other`.
 
-Only the label drives behaviour; the TS also builds a human-readable `reason`
-with `toFixed`, which stays shell (see the module header).
+Only the label drives behaviour; the human-readable `reason` stays shell (see
+the module header).
 -/
 def classifyClusterLabel (c : Cluster) : String :=
   let sorted := c.stays.mergeSort (fun a b => decide (a.startTs ≤ b.startTs))
@@ -475,11 +472,9 @@ in here" as well as ten would, so a short first visit is not a reason to
 withhold the label. The MAJORITY floor still applies — being inside a venue
 says nothing about which of two contested names is right.
 
-⚠ Absent here from the port on 2026-07-24 until 2026-08-24 while the
-TypeScript grew it on 2026-08-15 (`c506a7b`). Nothing caught it: this is the
-one focus-mining export no live comparison reaches (`ServeEntry.lean`), so its
-only check was the guards below — and a guard cannot fail for a parameter that
-does not exist yet.
+⚠ This is the one focus-mining export no live comparison reaches
+(`ServeEntry.lean`), so its only check is the guards below, and a guard cannot
+fail for a parameter that does not exist: a rule missing here goes unnoticed.
 -/
 def pickWinningAmenity (votes : List (String × Float)) (minWeight minFraction : Float)
     (weightExempt : List String := []) : Option String := Id.run do
@@ -637,7 +632,7 @@ def splitCluster (cluster : Cluster) : List Cluster := Id.run do
   return [a, b]
 
 /-- Filter low-accuracy fixes, detect stays, cluster, split, then re-id and
-    sort by dwell. Ids are assigned BEFORE the sort, as in the TS. -/
+    sort by dwell. Ids are assigned before the sort. -/
 def detectFocusPlaces (points : List RawPoint) : List Stay × List Cluster :=
   let filtered := points.filter (fun p =>
     match p.accuracy with | none => true | some a => decide (a ≤ ACCURACY_FILTER_M))
@@ -646,11 +641,11 @@ def detectFocusPlaces (points : List RawPoint) : List Stay × List Cluster :=
   let reIded := split.zipIdx.map (fun (c, i) => { c with id := Int.ofNat i + 1 })
   (stays, reIded.mergeSort (fun a b => decide (b.totalDwellSec ≤ a.totalDwellSec)))
 
-/-! ## Parity with Node/V8 (`lean/experiments/focus-places-refs.mts`) -/
+/-! ## Guards -/
 
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 
-/-- 2026-05-11 00:00:00 UTC — a Monday. -/
+/-- Midnight UTC on a Monday. -/
 private def DAY0 : Int := 1778457600
 private def HOME_LAT : Float := 51.5205
 private def HOME_LON : Float := -0.1275

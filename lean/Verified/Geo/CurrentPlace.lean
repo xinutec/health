@@ -19,8 +19,7 @@ winner, never which place wins. A "Stay" with a mined venue beats a "Home" that
 is further away.
 
 Exactness: every decision is exact; `haversineMeters` (atan2) puts `distanceM`
-at ≤ 1 ULP before `Math.round`. UNPROVEN; pinned against Node/V8
-(`lean/experiments/small-leaves-refs.mts`).
+at ≤ 1 ULP before rounding. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.CurrentPlace
@@ -71,8 +70,7 @@ def isNamedPlace (displayName amenityLabel : Option String) : Bool :=
   (displayName.any (· != STAY_DISPLAY_NAME)) || amenityLabel.isSome
 
 /-- The nearest focus place whose centroid is within `PRESENCE_RADIUS_M` of the
-fix, or `none`. Ties keep the EARLIER place: the scan improves on strict `<`,
-mirroring the TS `d < best.d`. -/
+fix, or `none`. Ties keep the earlier place: the scan improves on strict `<`. -/
 def pickCurrentPlace (lat lon : Float) (places : Array FocusPlaceForPresence) : Option CurrentPlace :=
   let best := places.foldl (init := none) fun best p =>
     let d := haversineMeters lat lon p.centroidLat p.centroidLon
@@ -89,7 +87,7 @@ def pickCurrentPlace (lat lon : Float) (places : Array FocusPlaceForPresence) : 
       centroidLon := p.centroidLon
       distanceM := jsRound d }
 
-/-! ## Guards (V8 reference values) -/
+/-! ## Guards -/
 
 -- A specific auto-name wins outright.
 #guard placeLabel (some "Home") (some "Gym") == "Home"
@@ -105,9 +103,9 @@ def pickCurrentPlace (lat lon : Float) (places : Array FocusPlaceForPresence) : 
 #guard isNamedPlace none (some "Sainsbury's") == true
 #guard placeLabel none none == "Place"
 #guard isNamedPlace none none == false
--- `""` is not the sentinel, so it wins as a displayName — an empty label, and
--- `isNamedPlace` still says yes. (The TS compares against the sentinel, not
--- truthiness; this is the one place the two would differ.)
+-- `""` is not the sentinel, so it wins as a displayName: an empty label, and
+-- `isNamedPlace` still says yes. The comparison is against the sentinel, not
+-- truthiness.
 #guard placeLabel (some "") none == ""
 #guard isNamedPlace (some "") none == true
 

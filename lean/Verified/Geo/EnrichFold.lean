@@ -48,14 +48,14 @@ def nameStay (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
   let n := Float.ofNat segPoints.size
   let cLat := (segPoints.foldl (fun acc p => acc + p.lat) 0) / n
   let cLon := (segPoints.foldl (fun acc p => acc + p.lon) 0) / n
-  -- How precisely the day's fixes locate him, which the naming coordinate
+  -- How precisely the day's fixes locate the user, which the naming coordinate
   -- weighs against the elected place's own σ: the RMS scatter of the fixes
   -- about their mean, inflated by how little of the stay they observed. A
-  -- six-hour stay indoors with three fixes (2026-06-02 at the clinic) is
-  -- three moments GPS got through, near a window or a door, not where he sat;
-  -- their scatter (34 m) says nothing about the other 368 minutes. Dividing
-  -- by √(observed fraction) leaves a stay with a fix a minute at its scatter
-  -- and sends a sparse one back to the place.
+  -- six-hour stay indoors with three fixes is three moments GPS got through,
+  -- near a window or a door, not where the user sat; their scatter says
+  -- nothing about the other six hours. Dividing by √(observed fraction) leaves
+  -- a stay with a fix a minute at its scatter and sends a sparse one back to
+  -- the place.
   let scatterM := Float.sqrt ((segPoints.foldl (fun acc p =>
     let d := haversineMeters cLat cLon p.lat p.lon
     acc + d * d) 0) / n)

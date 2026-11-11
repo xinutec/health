@@ -14,18 +14,17 @@ Port of the Tier-5 day-assembly cluster:
   in raw fixes snapped to mined focus places.
 * `src/geo/inferred-stay.ts` — `buildInferredStayState`.
 
-All of these are already pure in the TS: no DB, no `Intl`, no async. So they
-port whole, including the output records — unlike the record-*sequencing*
-orchestration elsewhere in this port, the `DayState[]` here IS the decision.
-What stays shell is only what it always was: the DB reads behind the sleep
-windows and the empty-day bracket (`loadDaySleepWindows`, `loadEmptyDayBracket`),
-the tz/civil-date work (`dateBoundsUtc`, `nextDateString`), and the OSM
-resolution in `inferEmptyDayStatesFromBracket`.
+All of these are pure: no DB, no `Intl`, no async, so they live here whole,
+including the output records; the `DayState[]` is the decision. What stays
+shell is the DB reads behind the sleep windows and the empty-day bracket
+(`loadDaySleepWindows`, `loadEmptyDayBracket`), the tz/civil-date work
+(`dateBoundsUtc`, `nextDateString`), and the OSM resolution in
+`inferEmptyDayStatesFromBracket`.
 
 Exactness: everything here is comparison, counting and string handling ⇒
-EXACT, except `haversineMeters` (atan2) behind the cluster/snap tests, which is
-≤1 ULP and only ever compared against metre thresholds. UNPROVEN; pinned
-against Node/V8 (`lean/experiments/day-state-refs.mts`).
+exact, except `haversineMeters` (atan2) behind the cluster/snap tests, which is
+≤1 ULP and only ever compared against metre thresholds. UNPROVEN; pinned by the
+`#guard`s.
 -/
 
 namespace Verified.Geo.DayState
@@ -40,9 +39,9 @@ open Verified.Hsmm.FloatScore (haversineMeters)
     `Verified.Geo.Segments` does. -/
 abbrev Mode := String
 
-/-- One non-overlapping stretch of the day. Optional fields are omitted in the
-    TS via `undefined`; `none` here means the same thing, and the distinction
-    is load-bearing — `sameState` compares them for merge eligibility. -/
+/-- One non-overlapping stretch of the day. `none` is an absent optional field,
+    and the distinction is load-bearing: `sameState` compares them for merge
+    eligibility. -/
 structure DayState where
   startTs : Int
   endTs : Int
@@ -119,9 +118,9 @@ private def CONTIGUITY_MAX_GAP_S : Int := 120
 
 /-- A gap no segment covers is a SEAM, not unobserved time, when it is
     contiguous and touches a moving segment: nobody sleeps between getting up
-    and the walk out. Sleep is not synthesised there, which left two
-    half-minute "sleeping" rows either side of the walk to breakfast on
-    2026-10-01, where Fitbit's sleep ran half an hour past the getting up. -/
+    and the walk out. Sleep is not synthesised there, or a Fitbit sleep running
+    half an hour past the getting up leaves half-minute "sleeping" rows either
+    side of the walk to breakfast. -/
 def awakeSeam (segments : List Seg) (start finish : Int) : Bool :=
   let moving (g : Seg) : Bool :=
     let m := if g.vehicleKind == some "bus" then "bus" else g.refinedMode.getD g.mode
@@ -131,8 +130,7 @@ def awakeSeam (segments : List Seg) (start finish : Int) : Bool :=
       moving g && ((g.endTs ≤ start && start - g.endTs ≤ CONTIGUITY_MAX_GAP_S)
         || (g.startTs ≥ finish && g.startTs - finish ≤ CONTIGUITY_MAX_GAP_S))
 
-/-- Distinct boundary timestamps from segments and sleep windows, ascending.
-    Mirrors the TS `Set` + numeric sort. -/
+/-- Distinct boundary timestamps from segments and sleep windows, ascending. -/
 def collectBoundaries (segments : List Seg) (sleeps : List SleepWindow) : List Int :=
   let raw := segments.flatMap (fun s => [s.startTs, s.endTs])
              ++ sleeps.flatMap (fun w => [w.startTs, w.endTs])
@@ -281,9 +279,9 @@ def segmentsToDayStates (segments : List Seg) (sleeps : List SleepWindow) : List
   if bs.length < 2 then [] else
   let pairs := bs.zip (bs.drop 1)
   let states := pairs.filterMap (fun (start, finish) =>
-    -- The TS probes at `start + (end - start) / 2` in FLOAT arithmetic. For
-    -- integer timestamps the midpoint of a non-empty interval always lies in
-    -- `[start, end)`, so integer floor division picks the same segment.
+    -- The midpoint of a non-empty integer interval always lies in
+    -- `[start, end)`, so integer floor division picks the same segment a
+    -- float midpoint would.
     let mid := start + (finish - start) / 2
     let seg := findCovering segments mid
     let sleep := if seg.isNone && awakeSeam segments start finish then none
@@ -350,7 +348,7 @@ def derivePlaceForSleepAt (winStart winEnd : Int) (segments : List Seg) :
           else (0, 0)
         if gap > PLACE_FALLBACK_MAX_GAP_SEC then none
         else some ((p, s.servedSource.bind (·.askedAt)), rank, gap))
-  -- Strict improvement only, so ties keep the FIRST candidate (as the TS does).
+  -- Strict improvement only, so ties keep the first candidate.
   let best := scored.foldl (fun acc (p, rank, gap) =>
     match acc with
     | none => some (p, rank, gap)
@@ -371,7 +369,7 @@ structure StayFix where
 structure StayKnownPlace where
   centroidLat : Float
   centroidLon : Float
-  /-- Match radius in metres; the TS defaults to 50. -/
+  /-- Match radius in metres; 50 by default. -/
   radiusM : Option Float := none
   displayName : Option String
   deriving Inhabited, BEq
@@ -388,8 +386,7 @@ private def MIN_DWELL_SEC : Int := 10 * 60
 private def CLUSTER_RADIUS_M : Float := 100
 private def DEFAULT_PLACE_RADIUS_M : Float := 50
 
-/-- Mean of a list in the TS's left-to-right `reduce` order, so the floating
-    accumulation matches bit-for-bit. -/
+/-- Mean of a list, summed left to right; the order fixes the float result. -/
 private def meanBy (f : StayFix → Float) (xs : List StayFix) : Float :=
   (xs.foldl (fun acc x => acc + f x) 0) / Float.ofNat xs.length
 
@@ -429,7 +426,7 @@ def snapClusterToPlace (cLat cLon : Float) (places : List StayKnownPlace) :
   let inRange := places.filterMap (fun p =>
     let d := haversineMeters cLat cLon p.centroidLat p.centroidLon
     if decide (d > p.radiusM.getD DEFAULT_PLACE_RADIUS_M) then none else some (p, d))
-  -- Strict `<`, so the FIRST of equally-distant places wins (as the TS does).
+  -- Strict `<`, so the first of equally distant places wins.
   (inRange.foldl (fun acc (p, d) =>
     match acc with
     | none => some (p, d)
@@ -467,7 +464,7 @@ def buildInferredStayState (place : String) (tz : Option String) (startTs endTs 
   { startTs := startTs, endTs := endTs, mode := "stationary",
     place := some place, placeSource := some "inferred", tz := tz, inferred := some true }
 
-/-! ## Parity with Node/V8 (`lean/experiments/day-state-refs.mts`) -/
+/-! ## Guards -/
 
 private def T0 : Int := 1778457600
 
@@ -536,7 +533,7 @@ private def sw (startTs endTs : Int) (place : Option String) (minutesAsleep : In
   [{ startTs := T0, endTs := T0+3600, mode := "train", wayName := some "Night train",
      asleep := some true }]
 -- A seam beside a walk inside the window is the getting up, not sleep: no
--- half-minute sleeping rows either side of the walk (2026-10-01).
+-- half-minute sleeping rows either side of the walk.
 private def upAndOut : List Seg :=
   [sg T0 (T0+1000) (place := some "Home"), sg (T0+1030) (T0+1600) "walking",
    sg (T0+1630) (T0+3600) (place := some "Cafe")]

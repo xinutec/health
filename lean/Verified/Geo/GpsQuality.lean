@@ -102,15 +102,15 @@ termination_by points.size - i
 
 /-! ### Frozen fixes — a position the phone kept while the person moved
 
-Underground, a phone with no sky re-reports its LAST position, identical to
-centimetres, while the accuracy it attaches to it swings. 2026-07-16 07:41: five
-fixes 270 m from Finchley Road, 20 → 122 m accuracy, entered from 1.5 km away a
+Underground, a phone with no sky re-reports its last position, identical to
+centimetres, while the accuracy it attaches swings. A real case: five fixes
+270 m from Finchley Road, 20 → 122 m accuracy, entered from 1.5 km away a
 hundred seconds earlier and left for Baker Street 3.2 km away a minute later;
 read as positions they surfaced a Jubilee ride at Finchley Road and invented an
-alight there. Accuracy cannot tell the run from a stay — an indoor sit reports
-the same shape — but the jumps can: nobody is still somewhere they reached and
-left at 60 km/h. Indoor frozen runs (measured across 45 days: the library, Work,
-the hospital) are entered and left by metres.
+alight there. Accuracy cannot tell the run from a stay (an indoor sit reports
+the same shape) but the jumps can: nobody is still somewhere they reached and
+left at 60 km/h. Indoor frozen runs (the library, Work, the hospital) are
+entered and left by metres.
 
 The run is dropped BEFORE the anchor walk, with the accuracy-disclaimed fixes:
 kept, it would anchor the walk itself. Identity of coordinates is the test here,
@@ -217,9 +217,8 @@ theorem mem_of_mem_qualityFilterGps {input : Array GpsPoint} {p : GpsPoint}
       exact (Array.mem_filter.1 (Array.mem_filter.1 (Array.getElem_mem _)).1).1
     · exact (Array.mem_filter.1 (Array.mem_filter.1 hpts).1).1
 
--- Parity with the real `qualityFilterGps` (kept-set ts from Node/V8): teleport
--- (t=20) and a poor-accuracy tube run (t=100) dropped; poor-accuracy jitter
--- (t=180, net < 800 m) kept.
+-- Teleport (t=20) and a poor-accuracy tube run (t=100) dropped; poor-accuracy
+-- jitter (t=180, net < 800 m) kept.
 private def gp (ts : Int) (lat lon : Float) (acc : Float) : GpsPoint := ⟨ts, lat, lon, some acc⟩
 private def track : Array GpsPoint := #[
   gp 0 51.50 (-38.10) 20, gp 10 51.501 (-38.10) 20,
@@ -260,15 +259,11 @@ private def frozenIndoors : Array GpsPoint := #[
 /-! ### Branch guards
 
 The two guards above pin the shape a real day takes. They do not reach a null
-accuracy, a duplicate timestamp, or a bridge scan that runs past its horizon —
-and 32 days of real London track do not reach those either, so a port could get
-any of them wrong and still measure 32/32 exact against TS.
+accuracy, a duplicate timestamp, or a bridge scan that runs past its horizon,
+and real days rarely do either, so the guards below pin those edges.
 
-Every expectation below is what `src/geo/gps-quality.ts` actually returned under
-Node v24.18.0, not a value reasoned about here; regenerate with
-`npx tsx lean/experiments/gpsquality-refs.mts` after any change to the filter.
-A disagreement means the port and the original have diverged, which is the only
-question these guards exist to answer. -/
+Every expectation below is the original filter's answer, not a value reasoned
+about here; a disagreement means the filter's behaviour changed. -/
 
 private def gpn (ts : Int) (lat lon : Float) : GpsPoint := ⟨ts, lat, lon, none⟩
 
@@ -280,12 +275,10 @@ private def nullAccuracy : Array GpsPoint := #[
   gpn 0 51.5 (-38.1), gpn 10 51.501 (-38.1), gpn 20 51.6 (-38.1), gpn 30 51.502 (-38.1), gpn 40 51.503 (-38.1)]
 #guard (qualityFilterGps nullAccuracy).map (·.ts) == #[0, 10, 30, 40]
 
--- `impliedSpeedKmh` → `dt ≤ 0 ⇒ 0`. Note what the expectation says: EVERY fix
--- survives, teleports included. A fix sharing or preceding its anchor's
--- timestamp has no defined speed, and the filter's documented choice is to
--- treat it as reachable rather than infinite — so it is invisible here. That is
--- the TS behaviour and the port must reproduce it; a port dividing by `dt`
--- would get `inf`, read it as unreachable, and drop fixes TS keeps.
+-- `impliedSpeedKmh` → `dt ≤ 0 ⇒ 0`. Every fix survives, teleports included: a
+-- fix sharing or preceding its anchor's timestamp has no defined speed, and the
+-- filter treats it as reachable rather than infinite. Dividing by `dt` would
+-- give `inf`, read as unreachable, and drop those fixes.
 private def duplicateTs : Array GpsPoint := #[
   gp 0 51.5 (-38.1) 20, gp 0 51.6 (-38.1) 20, gp 10 51.501 (-38.1) 20, gp 5 51.7 (-38.1) 20, gp 20 51.502 (-38.1) 20]
 #guard (qualityFilterGps duplicateTs).map (·.ts) == #[0, 0, 10, 5, 20]
@@ -325,13 +318,13 @@ private def accuracyOverCeiling : Array GpsPoint := #[
   gp 0 51.5 (-38.1) 20, gp 10 51.501 (-38.1) 20, gp 100 51.52 (-38.1) 80.001, gp 160 51.53 (-38.1) 20, gp 170 51.531 (-38.1) 20]
 #guard (qualityFilterGps accuracyOverCeiling).map (·.ts) == #[0, 10, 160, 170]
 
--- ACCURACY_UNINFORMATIVE_M — the pre-filter, which the anchor walk cannot
+-- ACCURACY_UNINFORMATIVE_M: the pre-filter, which the anchor walk cannot
 -- reach. Same geometry as the poor-accuracy jitter kept in `track` above (a run
--- bracketed by good fixes at one spot, going nowhere); the only difference is
--- the stated accuracy, and it decides. The 2026-05-11 evening train: the phone
--- stops solving, repeats one coordinate, and inflates its error bar 835 →
--- 37,880 m. Kept, the Kalman gives a ±37 km measurement no weight, coasts on
--- its last real velocity, and draws 29 km of travel that never happened.
+-- bracketed by good fixes at one spot, going nowhere); only the stated accuracy
+-- differs, and it decides. On an evening train the phone stops solving,
+-- repeats one coordinate, and inflates its error bar 835 → 37,880 m. Kept, the
+-- Kalman gives a ±37 km measurement no weight, coasts on its last real
+-- velocity, and draws 29 km of travel that never happened.
 private def gpf (ts : Int) (acc : Float) : GpsPoint := ⟨ts, 50, 5, some acc⟩
 private def disclaimed : Array GpsPoint := #[
   gpf 1000 10, gpf 1015 10, gpf 1030 10, gpf 1045 10,

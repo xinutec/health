@@ -1,5 +1,5 @@
 /-!
-# Walk-geometry ratchet (port of `src/eval/walk-gate.ts`, #1048 Group B)
+# Walk-geometry ratchet
 
 The gate asks one question: **did any drawn walk get WORSE than its blessed
 floor?** The floor is `tests/golden/walk-baseline.json` — gitignored, beside the
@@ -14,11 +14,8 @@ can only shrink. Improvements are surfaced for re-bless rather than failing.
 
 ## ⚠ THIS IS GROUP B: THE ORACLE IS A FILE, SO PORTING LOSES NOTHING
 
-`#1048` splits the five dead replay gates by what the TypeScript *was*. For
-`day-gate`/`focus-gate` the TS was the ORACLE, and porting the harness would
-leave Lean compared against itself — a check that can only pass. Here the oracle
-is `walk-baseline.json`, a frozen file, so replacing the code under it keeps the
-question intact.
+The oracle is `walk-baseline.json`, a frozen file, so the code under it can
+change and the question stays intact.
 
 The metric PRODUCER (the referee that measures a drawn line) is not here; this
 module is only the verdict, which is pure and total. The producer is Rust glue
@@ -26,10 +23,10 @@ over the fixture replay, per the standing Lean-logic/Rust-IO split.
 
 ## Exactness
 
-Every decision in this file is EXACT. `startTs` pairing is `Int` arithmetic;
-the metric comparisons are `Float` subtractions against literal epsilons, and
-they are the SAME subtractions V8 performed, so a value that sat on an epsilon
-boundary in the TS sits on it here. No transcendental function is reached.
+Every decision in this file is exact. `startTs` pairing is `Int` arithmetic;
+the metric comparisons are `Float` subtractions against literal epsilons, the
+same subtractions the baseline was blessed with, so a value on an epsilon
+boundary stays on it. No transcendental function is reached.
 
 ⚠ Ordering matches JS in the two places it is observable: `mergeSort` is stable
 and left-biased on `≤`, as `Array.prototype.sort` has been since ES2019, and the
@@ -106,11 +103,11 @@ structure WalkEntry where
   /-- **A DIAGNOSTIC COLUMN, NOT AN AXIS.** The matcher's identity
   report for this leg: named ways and their metres, longest first.
 
-  ⚠ **IT IS NOT IN `Metric` AND MUST NOT BE.** Every other field here is scored
+  ⚠ **It is not in `Metric` and must not be.** Every other field here is scored
   against a blessed floor; this one is carried so `WALK_GATE_DUMP` can print
   where the route ran beside the numbers. Gating it would bless a route shape
-  nobody has adjudicated, and #445 measured that route-dominant naming BREAKS
-  more truth rows than it fixes.
+  nobody has adjudicated, and route-dominant naming breaks more truth rows than
+  it fixes.
 
   ⚠ Defaulted, because the blessed floor file predates it — `parseEntry` reads
   a baseline that has no such column, and an absent one means "not recorded",
@@ -120,13 +117,12 @@ structure WalkEntry where
   track, the farthest a raw fix falls from the drawn line, and the gaps between
   the two tracks' ends.
 
-  ⚠ **NOT IN `Metric`, and not yet a bar anywhere.** They exist so the question
-  #1501 is stuck on — *does the matched line still get from where the fixes
-  started to where they ended?* — can be ASKED of the corpus at all. Four
-  candidate discriminators were refuted there because no band separated the
-  disputed walk from blessed ones; a fifth cannot even be tried while the
-  referee records no quantity about where the fixes went. Place a bar only from
-  a distribution over the blessed set, never from the one walk that prompted it.
+  ⚠ **Not in `Metric`, and not yet a bar anywhere.** They exist so the question
+  *does the matched line still get from where the fixes started to where they
+  ended?* can be asked of the corpus at all; four candidate discriminators
+  found no band separating a disputed walk from blessed ones. Place a bar only
+  from a distribution over the blessed set, never from the one walk that
+  prompted it.
 
   ⚠ Defaulted for `wayUm`'s reason: the blessed floor predates them, and an
   absent column means "not recorded". -/
@@ -191,7 +187,7 @@ the traversal order is the sorted date order and nothing depends on hash
 iteration. -/
 abbrev WalkBaseline := Array (String × Array WalkEntry)
 
-/-- Walks for one date, or `#[]` when the date is absent — the TS `?? []`. -/
+/-- Walks for one date, or `#[]` when the date is absent. -/
 def lookupDate (b : WalkBaseline) (date : String) : Array WalkEntry :=
   match b.find? (fun p => p.1 == date) with
   | some p => p.2
@@ -220,8 +216,7 @@ def pairWalks (base cur : Array WalkEntry) : Pairing := Id.run do
       let d := (base[b].startTs - cur[c].startTs).natAbs
       if d ≤ START_TS_TOLERANCE_S then
         candidates := candidates.push (b, c, d)
-  -- Stable ascending by distance: ties keep generation order (base-major),
-  -- which is what V8's stable sort gave the TS.
+  -- Stable ascending by distance: ties keep generation order (base-major).
   let sorted := (candidates.toList.mergeSort (fun a b => a.2.2 ≤ b.2.2)).toArray
   let mut usedB : Array Bool := Array.replicate base.size false
   let mut usedC : Array Bool := Array.replicate cur.size false

@@ -27,12 +27,10 @@ currently matches it.
 ## ⚠ THE LIVE MODE STAYS A STRING
 
 `Truth.mode` is a `Mode`, but the pipeline's mode is whatever the serving path
-emitted. The TypeScript cast it blindly (`state.mode as ParsedTruth["mode"]`)
-and then compared canonical STRINGS, so an unrecognised mode compared unequal to
-everything rather than being dropped. Parsing it to `Option Mode` here would
-turn that into "no live state", which is a DIFFERENT verdict for a `wrong` row:
-no-match makes it `known-error` either way, but the distinction matters if the
-mode table ever grows on one side only. So `Live.mode` is a `String`.
+emitted, compared as a canonical string, so an unrecognised mode compares
+unequal to everything rather than being dropped. Parsing it to `Option Mode`
+would turn that into "no live state", a different verdict for a `wrong` row if
+the mode table ever grows on one side only. So `Live.mode` is a `String`.
 
 ## ⚠ NO REGEX, and one deliberate divergence
 
@@ -194,15 +192,15 @@ to three road names joined by ", " for one merged moving leg, duration-weighted,
 each covering at least 15% of it, capped at 30 characters so the timeline stays
 one line. A walk crossing two roads is labelled "Example Rise, <second road>".
 
-⚠ String EQUALITY against that label contradicts this module's own rule — extra
-attribution on the live side is not a contradiction — and it cost a real row:
-2026-07-16 @07:13Z, confirmed "walking on Example Rise", failed for eleven days
-against a live leg with IDENTICAL BOUNDS whose label was "Example Rise" plus one
-more road — the confirmed road was right there in it, as the first component.
+⚠ String equality against that label contradicts this module's own rule (extra
+attribution on the live side is not a contradiction), and it fails a real row:
+a confirmed "walking on Example Rise" against a live leg with identical bounds
+labelled "Example Rise" plus one more road, the confirmed road right there as
+its first component.
 
 So ask membership, not equality. Still a real test in the direction that
-matters: a truth naming a road the leg never touched finds no component, which
-is what 2026-05-25's confirmed footpath against a live road label is. -/
+matters: a truth naming a road the leg never touched finds no component, as a
+confirmed footpath against a live road label does. -/
 def wayNameCovers (truthWay : String) (liveWay : Option String) : Bool :=
   match liveWay with
   | none => false
@@ -289,9 +287,9 @@ structure TRow where
 /-- The state covering a row's window, sampled at the window MIDPOINT.
 
 ⚠ The midpoint, not the overlap: a row is a claim about what was happening then,
-and a leg that merely clips the window's edge did not answer it. This is exactly
-why 2026-06-16's row 1 fails by 9 seconds — `vehicleSplit` ends the walk at its
-last fix rather than its last trustworthy one, and the midpoint lands past it. -/
+and a leg that merely clips the window's edge did not answer it. That is why
+06-16's row 1 fails by 9 seconds: `vehicleSplit` ends the walk at its last fix
+rather than its last trustworthy one, and the midpoint lands past it. -/
 def stateIdxAt (states : Array StateWindow) (startTs endTs : Int) : Option Nat :=
   -- `(startTs + endTs) / 2` in JS is a FLOAT midpoint; an odd sum lands on .5.
   -- Doubling the bounds instead keeps it exact and orders identically.
@@ -344,10 +342,8 @@ def classifyDay (rows : Array TRow) (states : Array StateWindow) : DayResult :=
 rows over 32 narratives, whose truth cells occupy exactly 12 shapes — but the
 names are invented, because this file is tracked and the repo is public.
 
-The port was checked against the TypeScript differentially: 55,246 cases built
-from every real cell crossed with live labels rendered from those cells, 0
-disagreements, and 12 ablations of this file that each moved the count. Two
-branches CANNOT be reached that way and live only here:
+The corpus exercises the comparator thoroughly; two branches cannot be reached
+that way and live only here:
 
 * `splitTransitRoute`'s empty-`from` guard — no narrative cell yields an empty
   board station, and with one the verdict comes out the same either way;

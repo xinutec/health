@@ -34,8 +34,8 @@ with `k ≤ fuel`) is discharged in `LazyFuel.lean` for any fuel ≥ `E + 1`
 (`lsettle_stops`/`all_settles_stop`), so no assumption about the lazy
 search remains unproved; the `#guard`s below stay as smoke tests.
 
-Weights are `Nat` (the quantised substrate, as in `Verified/Rail`); the
-TS radius check `cur.p > maxRadiusM` is ported strictly.
+Weights are `Nat` (the quantised substrate, as in `Verified/Rail`); the radius
+check `cur.p > maxRadiusM` is strict.
 -/
 
 namespace Verified.Geo
@@ -53,7 +53,7 @@ structure LState where
   exhausted : Bool
 deriving BEq, Repr
 
-/-- One relaxation — the TS inner-loop body, adjacency order. -/
+/-- One relaxation: the inner-loop body, in adjacency order. -/
 def relaxStep (u p : Nat) (s : LState) (tw : Nat × Nat) : LState :=
   match s.dist.getD tw.1 none with
   | none =>
@@ -113,8 +113,8 @@ def relaxL (u p : Nat) (edges : Array (Nat × Nat)) (s : LState) : LState :=
   edges.foldl (relaxStep u p) s
 
 /-- One pop-iteration of the settle loop: skip stale entries, settle the
-vertex, exhaust past the radius (marked done, never relaxed — the TS
-semantics), otherwise relax. Deterministic and target-free. -/
+vertex, exhaust past the radius (marked done, never relaxed), otherwise relax.
+Deterministic and target-free. -/
 def lstep (g : Graph) (maxR : Nat) (s : LState) : LState :=
   if s.exhausted then s
   else
@@ -164,12 +164,12 @@ def iter (g : Graph) (maxR : Nat) : Nat → LState → LState
   | 0, s => s
   | k + 1, s => iter g maxR k (lstep g maxR s)
 
-/-- The TS `settle(target)`: entry check, then iterate until the stop. -/
+/-- `settle(target)`: entry check, then iterate until the stop. -/
 def lsettle (g : Graph) (maxR t : Nat) : Nat → LState → LState
   | 0, s => s
   | fuel + 1, s => if stopAt t s then s else lsettle g maxR t fuel (lstep g maxR s)
 
-/-- Per-source initial state — the TS constructor. -/
+/-- Per-source initial state. -/
 def linit (n src : Nat) : LState :=
   { dist := (Array.replicate n none).setIfInBounds src (some 0)
     prev := Array.replicate n n

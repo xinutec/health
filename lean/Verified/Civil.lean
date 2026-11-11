@@ -92,10 +92,9 @@ def formatDate (y : Int) (m : Int) (d : Int) : String :=
 /-- Parse `YYYY-MM-DD` strictly: exactly three all-digit components of the right
 widths, a real month, and a day within that month's length.
 
-⚠ STRICTER THAN `new Date(s)`, deliberately. JavaScript accepts `2026-02-30` and
-silently yields March 2nd, and accepts `2026-2-3`. Both have reached this
-codebase as user input through a query parameter. A parser that rejects is the
-point of doing this here. -/
+⚠ Stricter than `new Date(s)`, deliberately: JavaScript reads 30 February as
+2 March, and accepts an unpadded month and day. Both arrive as user input through a query
+parameter; a parser that rejects is the point. -/
 def parseDate (s : String) : Option (Int × Int × Int) :=
   match s.splitOn "-" with
   | [ys, ms, ds] =>

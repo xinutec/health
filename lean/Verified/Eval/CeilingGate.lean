@@ -24,10 +24,10 @@ defect hides best: it cannot regress a ceiling it is no longer measured against.
 
 ## ⚠ BLESSING TAKES THE MINIMUM, NOT THE CURRENT COUNTS
 
-Until 2026-07-27 the bless wrote current counts WHOLESALE, so a run that fixed
-four days and left one red silently RAISED that day's ceiling and the standing
-failure vanished from the gate. A run may fix some days without fixing all of
-them; blessing the wins must not also bless the losses.
+A bless that wrote current counts wholesale would let a run that fixed four
+days and left one red silently raise that day's ceiling, and the standing
+failure would vanish from the gate. A run may fix some days without fixing all
+of them; blessing the wins must not also bless the losses.
 -/
 
 namespace Verified.Eval.CeilingGate

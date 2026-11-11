@@ -2,23 +2,20 @@
 # Whether an account is linked (port of `src/nextcloud/credentials.ts` and
 `src/fitbit/token-manager.ts`)
 
-`/api/me` reports two connection statuses, and both are computed the same way
-from one nullable column. The two TypeScript functions are byte-for-byte the
-same logic over different tables, which is why there is one rule here rather
-than two.
+`/api/me` reports two connection statuses, both computed the same way from one
+nullable column, so there is one rule here rather than two.
 
-⚠ THE FALL-THROUGH IS TO `active`, not to an error. Only the exact string
-`needs_reauth` is treated as broken; every other value a row might carry —
-including one a future migration adds, and including an empty string — reads as
-a working connection. That is the TypeScript's behaviour and it is preserved,
-but it means this answer is only as good as the writer's discipline: a status
+⚠ The fall-through is to `active`, not to an error. Only the exact string
+`needs_reauth` is treated as broken; every other value a row might carry,
+including one a future migration adds and an empty string, reads as a working
+connection. So the answer is only as good as the writer's discipline: a status
 nobody taught it about is reported to the user as fine.
 
 The one thing it does refuse is ABSENCE: no row is `not_linked`, which is what
 the frontend turns into its "connect your account" prompt.
 
-Pure and total. UNPROVEN; every `#guard` is what `src/routes/api.ts` produced
-under Node — see `lean/experiments/connection-refs.mts`.
+Pure and total. UNPROVEN; the `#guard`s pin the original implementation's
+answers.
 -/
 namespace Verified.Connection
 

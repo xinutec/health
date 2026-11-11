@@ -19,10 +19,8 @@ correcting a line label all leave the window alone. It is not a perfect identity
 
 That is the trap this module documents rather than solves: to a floor gate, "I
 could not measure this day" and "this day lost everything" are the same silence.
-A caller that cannot replay a day must drop it from BOTH sides. #408 is what
-happens otherwise — 26 confirmed rows reported as lost, two lines above a
-message naming those same days as unmeasured, one re-bless away from being
-destroyed for real.
+A caller that cannot replay a day must drop it from both sides, or confirmed
+rows read as lost, one re-bless away from being destroyed for real.
 
 ## ⚠ WHY BLESSING CANNOT LAUNDER A REGRESSION
 
@@ -125,7 +123,7 @@ private def f (xs : List (String × List Int)) : Floor :=
 #guard (gateFloor (f [("d1", [10])]) (f [("d1", [10])])).regressed == #[]
 #guard (gateFloor (f [("d1", [10])]) (f [("d1", [10])])).improved == #[]
 -- ⚠ An absent date satisfies nothing: every one of its keys regresses. This is
--- the #408 shape, and the reason a caller must exclude an unmeasured day itself.
+-- the unmeasured-day shape, and the reason a caller must exclude an unmeasured day itself.
 #guard (gateFloor (f [("d1", [10, 20])]) (f [])).regressed
     == #[{ date := "d1", startTs := 10 }, { date := "d1", startTs := 20 }]
 -- An empty floor never fails; everything is an improvement.

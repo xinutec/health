@@ -11,7 +11,7 @@ import Verified.Fix
 Ports the second half of `src/geo/biometrics.ts` — the four passes that use the
 step counter to overrule what GPS alone decided about a segment's mode:
 
-| TS                              | velocity pass          | direction                |
+| decision                        | velocity pass          | direction                |
 | ------------------------------- | ---------------------- | ------------------------ |
 | `correctModeFromCadence`        | `cadenceCorrect`       | walking → driving        |
 | `revertIsolatedCadenceDrives`   | `revertIsolatedCadence`| undoes the above         |
@@ -29,9 +29,8 @@ Each pass returns a {@link Decision} per input segment, and the sequence pass
 additionally returns a merge PLAN as `[start, end)` ranges. Nothing here
 constructs a segment, so the port cannot drift on fields it does not model.
 
-A {@link Decision.flip} carries the reason FRAGMENT, not the final string: the
-TS appends it to any existing `refinedReason` with `"; "`, which is pure string
-concatenation the shell already does elsewhere.
+A {@link Decision.flip} carries the reason fragment, not the final string: the
+shell appends it to any existing `refinedReason` with `"; "`.
 
 ## Exactness
 
@@ -66,8 +65,7 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 
 /-! ## Thresholds
 
-Every one of these is a verbatim copy of a `const` in `src/geo/biometrics.ts`;
-the rationale for each value lives on the TS declaration and is not restated. -/
+The calibration constants. -/
 
 /-- Below this many steps per minute a "walking" segment is a passenger, not a
     walker. Deliberately low — a false positive corrupts the timeline more
@@ -80,11 +78,11 @@ def CADENCE_REVERT_PEDESTRIAN_AVG_KMH : Float := 7
 def STATIONARY_JITTER_MAX_PEAK_CADENCE : Float := 20
 def STATIONARY_JITTER_MAX_LINEARITY : Float := 0.35
 def STATIONARY_WALK_PEAK_CADENCE : Float := 80
-/-- …but a walk that keeps STOPPING never produces that one unmistakable
-minute. Its evidence is spread ACROSS minutes rather than concentrated in one,
+/-- …but a walk that keeps stopping never produces that one unmistakable
+minute. Its evidence is spread across minutes rather than concentrated in one,
 so no value of a peak floor can see it. Count walking minutes as a second,
 independent route in: several at pedestrian cadence, separated by pauses, is a
-walk with pauses in it. See the TS header for the day that showed it. -/
+walk with pauses in it. -/
 def STATIONARY_WALK_MIN_BURST_MINUTES : Nat := 3
 def STATIONARY_WALK_MIN_AVG_SPEED_KMH : Float := 1.0
 def STATIONARY_WALK_STAY_MIN_DURATION_S : Int := 10 * 60
@@ -128,9 +126,8 @@ Where `peakCadenceForSegment` asks "was there one unmistakable walking minute",
 this asks "how much of this window was spent walking" — the question an
 interrupted walk can actually answer.
 
-⚠ WHOLE minutes, as the sentence above always claimed: the window test is
-`stepMinuteInside`, which is containment rather than the TS's membership of the
-start instant. See that function for the stay it cost. -/
+⚠ Whole minutes: the window test is `stepMinuteInside`, containment rather than
+membership of the start instant. See that function for why. -/
 def walkingMinutesInSegment (seg : Seg) (stepPoints : List StepPoint) : Nat :=
   stepPoints.foldl (fun n sp =>
     if Verified.Geo.BiometricWindows.stepMinuteInside sp seg
@@ -140,11 +137,10 @@ def walkingMinutesInSegment (seg : Seg) (stepPoints : List StepPoint) : Nat :=
 /--
 `toFixed` for a reason string.
 
-The one unported `toFixed` arm (a finite `|x| ≥ 10^21`) cannot arise here —
-cadence is steps per minute and linearity is a ratio in `[0,1]` — so a `none`
-means the input was already nonsense. Rather than invent a spelling JS would
-not print, this yields a marker that cannot equal any TS output, so such a call
-DIVERGES loudly in the shadow ledger instead of quietly agreeing.
+The one unported `toFixed` arm (a finite `|x| ≥ 10^21`) cannot arise here:
+cadence is steps per minute and linearity is a ratio in `[0,1]`, so a `none`
+means the input was already nonsense. Rather than invent a spelling, this yields
+a marker that cannot equal any real reason, so such a call shows loudly.
 -/
 private def fx (x : Float) (f : Nat) : String := (Verified.JsNum.toFixed x f).getD "?"
 
@@ -378,9 +374,7 @@ has a case here, because a corpus shadow only exercises the branches the corpus
 happens to reach, and the branch that never fires in London is exactly the one
 that will fire on a travel day.
 
-Reference values come from Node v24.18.0 via
-`lean/experiments/biometric-labels-refs.mts`, which imports the real
-`src/geo/biometrics.ts` rather than a restatement of it. -/
+The reference values are the original implementation's answers. -/
 
 private def T0 : Int := 1778457600
 
@@ -415,7 +409,7 @@ private def steady (perMin : Float) (mins : Int := 5) : List StepPoint :=
 #guard walkingRuns ["stationary", "stationary"] == [(0, 1), (1, 2)]
 #guard walkingRuns ["walking", "stationary", "walking"] == [(0, 1), (1, 2), (2, 3)]
 #guard walkingRuns ["walking", "walking", "train", "walking"] == [(0, 2), (2, 3), (3, 4)]
--- Two train legs at an interchange must NOT collapse — the 2026-05-22 golden.
+-- Two train legs at an interchange must not collapse (the 05-22 golden).
 #guard walkingRuns ["train", "train"] == [(0, 1), (1, 2)]
 
 /-! ### `correctModeFromCadence` — one case per early return -/
@@ -502,8 +496,8 @@ private def burst : List StepPoint := sp (T0 + 120) 95 :: steady 0
   == .flip "walking" "walking burst (95/min) with GPS movement" none
 
 -- The extent veto. Twelve minutes inside ~50 m of the centroid is a stay, no
--- matter how the step burst and a jitter-inflated avgSpeed read (the
--- 2026-06-17 Bloomsbury Surgery dwell).
+-- matter how the step burst and a jitter-inflated avgSpeed read (06-17's
+-- surgery dwell).
 private def dwell : LabelSeg := { stroll with endTs := T0 + 12 * 60 }
 private def tight : List Fix :=
   [⟨T0, 51.5200, -38.1300⟩, ⟨T0 + 300, 51.5202, -38.1301⟩, ⟨T0 + 700, 51.5201, -38.1299⟩]
@@ -521,11 +515,10 @@ private def burst12 : List StepPoint := sp (T0 + 120) 95 :: steady 0 12
 
 /-! ### `applyStationaryWalkThrough` — the sequence guard and the merge
 
-A sequence pass needs a real timeline, so these fixtures are three CONSECUTIVE
-five-minute windows rather than three segments sharing one. With a shared
-window the merge plan is unrecoverable from the TS output — a merged run and an
-unmerged one end at the same instant — so the referee could not have checked
-it, and the guard would have been self-referential. -/
+A sequence pass needs a real timeline, so these fixtures are three consecutive
+five-minute windows rather than three segments sharing one: with a shared
+window a merged run and an unmerged one end at the same instant, and the merge
+plan could not be checked. -/
 
 private def W : Int := 300
 /-- The stroll under test: the middle window, translating, GPS-read as a stop. -/
@@ -541,8 +534,8 @@ private def burstSeq : List StepPoint :=
   (List.range 16).map fun k => sp (T0 + Int.ofNat k * 60) (if k == 7 then 95 else 0)
 private def flipWalk : Decision := .flip "walking" "walking burst (95/min) with GPS movement" none
 
--- Bracketed by the same place: intra-place pacing, kept. This is what stopped
--- the 2026-05-12 "stationary @ Work" afternoon fragmenting.
+-- Bracketed by the same place: intra-place pacing, kept. This is what keeps a
+-- "stationary @ Work" afternoon from fragmenting.
 #guard (applyStationaryWalkThrough [stayAt (some "Work") 0, strollB, stayAt (some "Work") 2] burstSeq).decisions
   == [.keep, .keep, .keep]
 -- Transitioning between two DIFFERENT places is a genuine walk-through.

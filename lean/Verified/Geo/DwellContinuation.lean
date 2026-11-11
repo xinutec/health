@@ -20,17 +20,13 @@ visits; continue the stay while P ≥ a floor. The whole module ports:
 
 UNPROVEN; pinned by the `#guard`s below.
 
-⚠ THOSE GUARDS ARE NOW THE ONLY RECORD. They were captured from Node/V8 via
-`lean/experiments/dwell-refs.mts` and `apply-dwell-refs.mts`, and NEITHER FILE
-EXISTS any more — nothing re-derives them, so a guard here cannot be re-checked
-against the original, only read. Treat a change to one as a change to the
-specification rather than as a correction to a transcription.
+⚠ Those guards are the only record of the original answers, and nothing
+re-derives them. Treat a change to one as a change to the specification rather
+than as a correction to a transcription.
 
-⚠ AND ONE OF THEM IS A DELIBERATE DIVERGENCE from the TS as of #1271: a
-continuation shorter than `MIN_CONTINUATION_S` is no longer spliced, so the
-`applyDwellContinuation` guards no longer all agree with what Node printed. The
-guard that used to pin a ONE-SECOND inferred stay now pins its refusal, and
-says so where it sits.
+⚠ A continuation shorter than `MIN_CONTINUATION_S` is not spliced, so the guard
+that would pin a one-second inferred stay pins its refusal, and says so where it
+sits.
 -/
 
 namespace Verified.Geo.DwellContinuation
@@ -48,8 +44,7 @@ def meanDwellSec (p : DwellPlace) : Option Float :=
   if decide (p.visitCount ≤ 0) || decide (p.totalDwellSec ≤ 0) then none
   else some (p.totalDwellSec / Float.ofInt p.visitCount)
 
--- `dwellSurvival` was here. Deleted 2026-08-17 with its TS twin: nothing called
--- either, and `dwellContinuation` below answers the question the pipeline asks
+-- `dwellContinuation` below answers the question the pipeline asks directly,
 -- without going through a survival probability.
 
 /-- How far to continue a stay forward: to where P hits `floor`, clamped to the
@@ -67,7 +62,7 @@ def dwellContinuation (place : DwellPlace) (lastEndTs dayEndTs : Int) (floor : F
       let endTs := min dayEndTs (lastEndTs + roundH)
       if decide (endTs ≤ lastEndTs) then none else some (endTs, tau)
 
-/-! ## Parity with Node/V8 (`lean/experiments/dwell-refs.mts`) -/
+/-! ## Guards -/
 
 private def approxD (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 
@@ -101,8 +96,8 @@ not:
   comparison is strict, so a tie keeps the EARLIER state.
 * **The stay centroid is the LAST segment carrying one**, found by reversing —
   not the last segment, which may have none.
-* **An EMPTY `place` or `tz` string is falsy in the TS object spread**, so it is
-  DROPPED rather than inherited as `""`. Same rule `EpisodeGeometry` records.
+* **An empty `place` or `tz` string is dropped** rather than inherited as `""`.
+  Same rule `EpisodeGeometry` records.
 -/
 
 open Verified.Hsmm.FloatScore (haversineMeters)
@@ -192,8 +187,8 @@ BLANK — an honest gap beats a fabricated stay.
 Composes after sleep-bridging and empty-day inference: where those already
 carried the stay to the day end there is no trailing room, so this is a no-op.
 
-Two of the TS's guards are PROVABLY unpinnable, and are kept as it has them so
-nobody "simplifies" them away — both probed at zero:
+Two of these guards are provably unpinnable, and are kept so nobody
+"simplifies" them away; both probed at zero:
 
 * `states.isEmpty` is a short-circuit only. On an empty array `anchorIndex`
   returns `none`, which returns the array unchanged by the same path.
@@ -220,12 +215,12 @@ def applyDwellContinuation
           match dwellContinuation place anchor.endTs dayEndTs with
           | none => states
           | some (endTs, _) =>
-            -- ⚠ THE BAR IS HERE, NOT IN `dwellContinuation`. That function is a
-            -- port pinned bit-for-bit against Node/V8 and answers a different
-            -- question — how far the prior CARRIES — which the clamp can cut to
-            -- seconds. Whether a span that short is worth SPLICING AS A STATE is
-            -- this orchestration's call, so the ported maths stays untouched and
-            -- its `#guard`s keep meaning what they say.
+            -- ⚠ The bar is here, not in `dwellContinuation`. That function is
+            -- pinned bit for bit and answers a different question, how far the
+            -- prior carries, which the clamp can cut to seconds. Whether a span
+            -- that short is worth splicing as a state is this orchestration's
+            -- call, so the maths stays untouched and its `#guard`s keep meaning
+            -- what they say.
             if decide (endTs - anchor.endTs < MIN_CONTINUATION_S) then states
             else
             let continuation : DayState :=
@@ -238,7 +233,7 @@ def applyDwellContinuation
             -- Insert directly after the anchor, preserving relative order.
             states.extract 0 (ai + 1) ++ #[continuation] ++ states.extract (ai + 1) states.size
 
-/-! ### Parity with Node/V8 (`lean/experiments/apply-dwell-refs.mts`) -/
+/-! ### Guards for the splice -/
 
 section ApplyGuards
 
@@ -287,7 +282,7 @@ private def second : DayState := { startTs := 910000, endTs := 950000, mode := "
   == #[{ stay with mode := "sleeping" }, cont 950000 974953 (some "Home") (some "Europe/London")]
 #guard run #[{ stay with endTs := DAY_END }] == #[{ stay with endTs := DAY_END }]
 
--- An EMPTY string is falsy in the TS spread, so it is DROPPED, not inherited.
+-- An empty string is dropped, not inherited.
 private def blank : DayState := { stay with place := some "", tz := some "" }
 #guard run #[blank] == #[blank, cont 950000 974953 none none]
 private def bare : DayState := { startTs := 900000, endTs := 950000, mode := "stationary" }

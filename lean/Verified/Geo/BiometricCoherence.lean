@@ -6,7 +6,7 @@ The per-segment "is the user actually sitting here vs moving through" signal
 step density and HR-elevation: near 1 for clearly-sitting, near 0 for
 clearly-moving. Missing biometrics ⇒ 1 (degrade to "no information"). The only
 transcendental is `exp` in the logistic (≤1 ULP). UNPROVEN; pinned by the
-`#guard`s against Node/V8.
+`#guard`s.
 -/
 
 namespace Verified.Geo.BiometricCoherence
@@ -42,7 +42,7 @@ def biometricCoherence (startTs endTs : Int) (hr : List HrPoint) (steps : List S
   let hrElevation := max 0 (hrMean - REST_HR_BASELINE)
   logistic (BETA_0 - BETA_STEPS * stepsPerMin - BETA_HR * hrElevation)
 
-/-! ## Parity with Node/V8 (`lean/experiments/biocoherence-refs.mts`) -/
+/-! ## Guards -/
 
 private def approxB (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 

@@ -1,11 +1,11 @@
 /-!
 # One GPS fix, once
 
-The TypeScript gave every pass module its own `Fix` interface and the port
-kept them: twelve records with the same three fields (and three with a speed
-too), converted field by field at the cascade's `Env`. They are one type now;
-each module's `Fix` is an `abbrev` of these (named `GeoFix`, not `Fix`, so a bare `Fix` inside a `Verified.*` namespace still means the module's own), so its name, its
-constructor and its field access read exactly as before.
+One fix type for every pass module, rather than a record per module with the
+same three fields (some with a speed); each module's `Fix` is an `abbrev` of
+these (named `GeoFix`, not `Fix`, so a bare `Fix` inside a `Verified.*`
+namespace still means the module's own), so its name, constructor and field
+access read as before.
 -/
 
 namespace Verified

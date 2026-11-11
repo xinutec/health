@@ -24,24 +24,21 @@ So a large institution whose FOOTPRINT CONTAINS the stay outranks nearer points.
 ⚠ The point-only radius fallback is restricted to a HOSPITAL mapped as a POINT,
 and the restriction is the whole design:
 
-* a long sedentary stay by a hospital node IS the hospital (2026-04-29);
-* a university or college has campus eateries you visit AS DESTINATIONS — a
-  Greek restaurant next to LSHTM is the restaurant, not the university
-  (2026-05-14);
+* a long sedentary stay by a hospital node IS the hospital (04-29);
+* a university or college has campus eateries you visit AS DESTINATIONS: a
+  Greek restaurant next to LSHTM is the restaurant, not the university (05-14);
 * a polygon already carries the precise `encloses` signal, so the loose radius
   must not widen it.
 
-A railway station's BUILDING is the other enclosing institution (2026-10-03):
-an hour inside Gare Montparnasse read "Maison du Chocolat", "McDonald's" and
-"Artisanal", the shops of its gallery, and no rule about the train could reach
-them — the walk from the last of them to the platform was twelve minutes of
-milling about on the forecourt, longer than a journey to a station can be told
-from. The outline settles it: inside the station building is at the station.
-Outline ONLY, and a station mapped as a point gets no radius: the nodes of a
-large station (entrances, platforms) spread hundreds of metres, and dinner at
-Pizza Union is within 150 m of a King's Cross entrance (2026-05-22).
+A railway station's building is the other enclosing institution: an hour inside
+Gare Montparnasse read "Maison du Chocolat", "McDonald's" and "Artisanal", the
+shops of its gallery, and no rule about the train could reach them. The outline
+settles it: inside the station building is at the station. Outline only, and a
+station mapped as a point gets no radius: the nodes of a large station
+(entrances, platforms) spread hundreds of metres, and dinner at Pizza Union is
+within 150 m of a King's Cross entrance (05-22).
 
-Pure and total. UNPROVEN; the thresholds and the tag order are the TypeScript's.
+Pure and total. UNPROVEN; the guards pin the thresholds and the tag order.
 -/
 namespace Verified.Geo.Landmarks
 
@@ -51,13 +48,13 @@ def LARGE_INSTITUTION_SUBTYPES : List String := ["hospital"]
 /-- A railway station's building, as `VENUE_TAGS` files it: `(type, subtype)`. -/
 def STATION_BUILDING : String × String := ("railway", "train_station")
 
-/-- Open spaces where being INSIDE the outline names a stay NOTHING ELSE names:
+/-- Open spaces where being inside the outline names a stay nothing else names:
 from the middle of a park every venue is far and every edge is out of range
-(2026-10-03, lying on the grass in Cristina Enea, 130 m from its outline: the
-stop had no name). A FALLBACK, not an enclosing institution: as one it beat the
-lodging rule and renamed 04-29's confirmed hotel stay after the palace garden
-beside it. Outline only — a park mapped as a point says nothing about where it
-ends. `encloses` is the true inside test for a closed way. -/
+(lying on the grass in Cristina Enea, 130 m from its outline, the stop had no
+name). A fallback, not an enclosing institution: as one it beat the lodging rule
+and renamed 04-29's confirmed hotel stay after the palace garden beside it.
+Outline only: a park mapped as a point says nothing about where it ends.
+`encloses` is the true inside test for a closed way. -/
 def ENCLOSING_OPEN_SPACES : List (String × String) :=
   [("leisure", "park"), ("leisure", "garden"), ("natural", "beach")]
 
@@ -78,11 +75,11 @@ def LANDMARK_TAG_KEYS : List String := ["amenity", "tourism", "leisure", "shop",
 (`venuetags`) and files the features as landmarks; without it they arrived, or
 were never fetched, and no stay could be named after them.
 
-* `building=hotel` — a hotel mapped as the building alone (2026-10-01, San
-  Sebastián: the stay was named after the pizzeria next door). Read as the
-  `tourism=hotel` it stands for, so the lodging rule sees it.
-* `natural=beach` — La Concha (2026-10-03): an afternoon on the beach came out
-  as a stop with no name, the nearest named thing a car park. -/
+* `building=hotel`: a hotel mapped as the building alone (a San Sebastián stay
+  was named after the pizzeria next door). Read as the `tourism=hotel` it
+  stands for, so the lodging rule sees it.
+* `natural=beach`: La Concha, where an afternoon on the beach came out as a
+  stop with no name, the nearest named thing a car park. -/
 def VENUE_TAGS : List (String × List String × String) :=
   [("building", ["hotel"], "tourism"), ("natural", ["beach"], "natural"),
    ("building", ["train_station"], "railway")]
@@ -241,8 +238,8 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
 -- ⚠ A hospital mapped as a WAY does NOT get the radius fallback — a polygon
 -- already carries `encloses`, so the loose radius must not widen it.
 #guard isEnclosingInstitution "amenity" "hospital" 50 false false == false
--- ⚠ A university is NOT a large institution here: its campus eateries are
--- destinations in their own right (2026-05-14).
+-- ⚠ A university is not a large institution here: its campus eateries are
+-- destinations in their own right (05-14).
 #guard isEnclosingInstitution "amenity" "university" 10 true false == false
 -- Only `amenity` at all…
 #guard isEnclosingInstitution "shop" "hospital" 10 true false == false

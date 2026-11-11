@@ -25,14 +25,12 @@ to the raw fixes:
 
 All of it is pure geometry, so all of it ports. Two notes:
 
-* The TS grid dedupes chords within one query through a generation-stamped
-  `Uint32Array`. That is a perf device with no effect on the answer — `best`
-  is a running `min` and re-probing a chord yields the same distance — but the
-  set is reproduced here anyway, so the port needs no such argument.
-* `segmentDistM` is the TS's allocation-free copy of
-  `projectPointToSegment(…).distM`; its comment claims identical arithmetic.
-  It is written out here in the same shape rather than routed through
-  `projectPointToSegment`, so the claim stays checkable side by side.
+* The grid dedupes chords within one query through a generation stamp. That has
+  no effect on the answer (`best` is a running `min`, and re-probing a chord
+  yields the same distance), but the set is kept so no such argument is needed.
+* `segmentDistM` is `projectPointToSegment(…).distM` without the allocation,
+  written out in the same shape rather than routed through it, so the
+  identical arithmetic stays checkable side by side.
 -/
 
 namespace Verified.Geo.DisplayGate
@@ -53,8 +51,7 @@ abbrev Ways := Array (Array Pt)
 abbrev MPt := Verified.Geo.PathPt
 
 /-- `projectPointToSegment`'s distance only. Identical arithmetic to
-    `Verified.Geo.WalkableRoute.projectPointToSegment`, kept separate because
-    the TS keeps it separate. -/
+    `Verified.Geo.WalkableRoute.projectPointToSegment`. -/
 def segmentDistM (p a b : Pt) : Float :=
   let cosLat := Float.cos (((a.lat + b.lat) / 2) * pi / 180)
   let bx := (b.lon - a.lon) * 111320.0 * cosLat
@@ -344,22 +341,19 @@ def matchImprovesDisplay (fixes matchedPath : Array Pt) (ways : Ways)
   let matchedOffRoadM := maxPolylineOffRoad matchedPath ways 15 index
   let strayM := quantilePointDistToPolyline fixes matchedPath strayQuantile
   let stallM := Verified.Geo.CorridorStall.maxCorridorStall fixes stallPath
-  -- ⚠ STALL IS MEASURED ON `stallPath`, WHICH IS THE LINE THAT GETS DRAWN, and
-  -- the other three clauses stay on `matchedPath` (the coarse route) for #369
-  -- decision parity. They are different questions. Parity exists so the gate,
-  -- the salvage and the refinement AGREE about the route; stall is about the
-  -- geometry a person ends up looking at, and the two diverge — measured
-  -- 2026-09-10, the coarse route of 07-12 @1783863056 stalls under 200 m while
-  -- the drawn line stalls 690.6 m. Reading the coarse route made the veto
-  -- silent on the exact walk it was built for.
-  -- ⚠ THE CONJUNCTION IS THE POINT, and each half alone is WRONG. Measured over
-  -- the 235 blessed walks carrying both figures:
+  -- ⚠ Stall is measured on `stallPath`, the line that gets drawn, while the
+  -- other three clauses stay on `matchedPath` (the coarse route) so the gate,
+  -- the salvage and the refinement agree about the route. Stall is about the
+  -- geometry a person looks at, and the two diverge: a coarse route can stall
+  -- under 200 m while its drawn line stalls 690 m.
+  -- ⚠ The conjunction is the point, and each half alone is wrong. Over the
+  -- blessed walks carrying both figures:
   --   over `overBudgetRatio` alone      15 walks
   --   stall over `maxStallM` alone       3 walks
-  --   BOTH                               2 walks — exactly #1497's two
+  --   both                               2 walks, the two real detours
   -- The budget half alone rejects a 59 m walk whose budget is 3 m because
   -- almost no steps were recorded; the stall half alone rejects 04-29's 384.7 m
-  -- stall, which is INSIDE its budget (866 m drawn against 1147 m justified)
+  -- stall, which is inside its budget (866 m drawn against 1147 m justified)
   -- and is not a detour.
   --
   -- ⚠ NO STEP DATA MEANS NO VETO. `none` fails OPEN: the claim being made is
@@ -370,12 +364,12 @@ def matchImprovesDisplay (fixes matchedPath : Array Pt) (ways : Ways)
     | some b => b > 0 && polylineLength stallPath > b * overBudgetRatio
     | none => false
   let detour := stallM > maxStallM && overBudget
-  -- ⚠ **TWO GROUNDS, AND THE SECOND IS NOT A LOOSENED FIRST.** The
-  -- off-road ground asks whether the match moves the line back onto the
-  -- network. A line can already be on the network and still cut a building
-  -- corner, and that line's off-road figure has nothing left to improve — so
-  -- the only ground it could ever meet is one about WALLS. Measured on
-  -- 2026-06-15 @1781531224: `offPath 25.8 -> 0.0` with `rawOffRoadM` unmoved.
+  -- ⚠ Two grounds, and the second is not a loosened first. The off-road
+  -- ground asks whether the match moves the line back onto the network. A line
+  -- can already be on the network and still cut a building corner, and its
+  -- off-road figure has nothing left to improve, so the only ground it could
+  -- meet is one about walls (as on 06-15: `offPath 25.8 -> 0.0` with
+  -- `rawOffRoadM` unmoved).
   let offRoadGround := rawOffRoadM > needsMatchM && matchedOffRoadM < rawOffRoadM
   -- ⚠ `≤`, not `<`. The building ground's claim is that the match stops going
   -- through walls; requiring it to ALSO improve the off-road figure would be
@@ -428,8 +422,7 @@ private def projectToPolylineArc (p : Pt) (path : Array MPt) (cum : Array Float)
 
 /-- The vertex at arc position `s`, interpolated within its segment (position
     and `ts` both). The final `path.back` is unreachable for a path of two or
-    more vertices — the loop's last iteration always returns — and is kept only
-    because the TS keeps it. -/
+    more vertices, since the loop's last iteration always returns. -/
 private def sliceAt (path : Array MPt) (cum : Array Float) (s : Float) : MPt := Id.run do
   for hm_i : i in [1:path.size] do
     have hb_i : i < path.size := hm_i.upper
@@ -537,9 +530,9 @@ def spliceMatchedWithDivergentRuns (fixes matchedPath : Array MPt) (maxStrayM : 
 
 /-! ## Guards
 
-Reference values from `lean/experiments/display-gate-refs.mts`, run under the
-same V8 the backend runs on. Comparison is to within 1e-9 because the metric
-uses `Math.hypot` where Lean uses `sqrt` of the sum of squares. -/
+Reference values are the original implementation's, compared to within 1e-9
+because it measured with an overflow-careful hypot where Lean uses `sqrt` of
+the sum of squares. -/
 
 section Guards
 
@@ -573,7 +566,7 @@ private def noWays : Ways := #[]
 #guard approx (projectPointToSegment (P 10 300) (P 0 0) (P 0 100)).distM 200.24964694415362
 #guard approx (projectPointToSegment (P 10 50) (P 0 50) (P 0 50)).t 0
 #guard approx (projectPointToSegment (P 10 50) (P 0 50) (P 0 50)).distM 10.000000000019043
--- `segmentDistM` is the TS's allocation-free copy — same arithmetic, same float.
+-- `segmentDistM` is the allocation-free copy: same arithmetic, same float.
 #guard segmentDistM (P 10 50) (P 0 0) (P 0 100)
   == (projectPointToSegment (P 10 50) (P 0 0) (P 0 100)).distM
 
@@ -677,18 +670,17 @@ private def dNoWays := matchImprovesDisplay cutting routed noWays 10 25 routed n
 
 private def dNoFixes := matchImprovesDisplay #[] routed geoWays 10 25 routed none 200 1.5
 
--- #1497: THE DETOUR VETO. `cutting`→`routed` is the accepted match above
--- (`dRoutes.use == true`) — it routes around a block the raw line cut through,
--- which is what the gate is FOR. It is the right subject precisely because it
--- is legitimate: the veto must not fire on it by accident.
+-- The detour veto. `cutting`→`routed` is the accepted match above
+-- (`dRoutes.use == true`): it routes around a block the raw line cut through,
+-- which is what the gate is for, so the veto must not fire on it by accident.
 --
 -- ⚠ EACH HALF ALONE MUST NOT REJECT. A budget it exceeds, but a stall bar it
 -- clears:
 #guard (matchImprovesDisplay cutting routed geoWays 10 200 routed (some 1) 200 1.5).use == true
 -- …and a stall bar it trips, with no budget to contradict it:
 #guard (matchImprovesDisplay cutting routed geoWays 10 200 routed none 0 1.5).use == true
--- ⚠ BOTH TOGETHER, and only then, refuse it.
--- #1497: THE DETOUR VETO.
+-- ⚠ Both together, and only then, refuse it.
+-- The detour veto.
 --
 -- ⚠ A LEGITIMATE REROUTE HAS NO STALL, which is why the veto can be sharp.
 -- `routed` goes round the block the raw line cut through — the case the gate
@@ -696,10 +688,9 @@ private def dNoFixes := matchImprovesDisplay #[] routed geoWays 10 25 routed non
 #guard approx dRoutes.stallM 0
 #guard dRoutes.detour == false
 --
--- `routedLoop` runs the same route and then goes round AGAIN: every vertex is
+-- `routedLoop` runs the same route and then goes round again: every vertex is
 -- on a mapped way (`matchedOffRoadM` 0) and every fix sits near it, so the
--- three original clauses ALL PASS. Only the path→fixes direction can see it,
--- which is the whole of #1497.
+-- three original clauses all pass. Only the path→fixes direction can see it.
 private def routedLoop : Array Pt :=
   #[P 0 0, P 0 200, P 100 200, P 100 0, P 0 0, P 0 200, P 100 200]
 -- ⚠ BOUNDED, NOT PINNED TO THE BIT. The other figures in this file are exact
