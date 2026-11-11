@@ -674,10 +674,7 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
     let (mut days_attempted, mut days_failed) = (0u32, 0u32);
 
     for user_id in &users {
-        let tz = backend::sync_state::get(&pool, user_id, "home_tz")
-            .await
-            .context("reading home_tz")?
-            .unwrap_or_else(|| "Europe/London".into());
+        let tz = backend::sync_state::home_tz(&pool, user_id).await?;
         eprintln!("[{user_id}] scanning {window_days}-day window (tz={tz})");
 
         for offset in 0..=window_days {
@@ -1076,18 +1073,8 @@ pub(crate) async fn refresh_presence_log(
             .context("decoded_days.segments_json")?;
 
         if !tz_by_user.contains_key(&user_id) {
-            let tz: Option<String> = sqlx::query_scalar(
-                "SELECT value FROM sync_state WHERE user_id = ? AND key_name = 'home_tz'",
-            )
-            .bind(&user_id)
-            .fetch_optional(pool)
-            .await
-            .context("reading home_tz")?
-            .flatten();
-            tz_by_user.insert(
-                user_id.clone(),
-                tz.unwrap_or_else(|| "Europe/London".into()),
-            );
+            let tz = backend::sync_state::home_tz(pool, &user_id).await?;
+            tz_by_user.insert(user_id.clone(), tz);
         }
         let tz = &tz_by_user[&user_id];
 

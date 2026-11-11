@@ -71,9 +71,7 @@ pub(crate) async fn decode_day(
 
     let (mut attempted, mut failed, mut written) = (0u32, 0u32, 0u32);
     for user_id in &users {
-        let tz = backend::sync_state::get(&pool, user_id, "home_tz")
-            .await?
-            .unwrap_or_else(|| "Europe/London".into());
+        let tz = backend::sync_state::home_tz(&pool, user_id).await?;
         let targets: Vec<String> = if dates.is_empty() {
             backend::classification_inputs::decode_window(
                 chrono::Utc::now(),
@@ -1102,9 +1100,7 @@ impl Drop for TodayWorker {
 
 /// Whether `date` is the user's today in their home timezone.
 async fn is_today(pool: &sqlx::MySqlPool, user_id: &str, date: &str) -> Result<bool> {
-    let tz = backend::sync_state::get(pool, user_id, "home_tz")
-        .await?
-        .unwrap_or_else(|| "Europe/London".into());
+    let tz = backend::sync_state::home_tz(pool, user_id).await?;
     Ok(backend::timezone::local_date_at(chrono::Utc::now().timestamp(), Some(&tz))? == date)
 }
 
@@ -1186,9 +1182,7 @@ async fn next_stale_day(
         .await
         .context("listing users")?;
     for user_id in users {
-        let tz = backend::sync_state::get(pool, &user_id, "home_tz")
-            .await?
-            .unwrap_or_else(|| "Europe/London".into());
+        let tz = backend::sync_state::home_tz(pool, &user_id).await?;
         let today = backend::timezone::local_date_at(now.timestamp(), Some(&tz))?;
         let cutoff = (chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d")?
             - chrono::Duration::days(window_days))

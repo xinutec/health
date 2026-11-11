@@ -50,9 +50,7 @@ async fn main() -> Result<()> {
     let pool = backend::db::connect(&cfg.db.url())
         .await
         .context("connecting")?;
-    let home_tz = backend::sync_state::get(&pool, user, "home_tz")
-        .await?
-        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let home_tz = backend::sync_state::home_tz(&pool, user).await?;
     let bounds = backend::timezone::date_bounds_utc(date, Some(&home_tz))
         .with_context(|| format!("bounding {date}"))?;
     let base_url = cfg

@@ -446,9 +446,7 @@ async fn check() -> Result<()> {
     //
     // ⚠ Asserts levels are not all zero: a failed decode defaulted to 0 draws a
     // watch empty at every sync, a well-formed chart a row count passes.
-    let home_tz = sync_state::get(&pool, &user, "home_tz")
-        .await?
-        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let home_tz = sync_state::home_tz(&pool, &user).await?;
     let latest: Option<(Option<chrono::NaiveDateTime>,)> =
         sqlx::query_as("SELECT MAX(last_sync_time) FROM device_battery_log WHERE user_id = ?")
             .bind(&user)
@@ -593,9 +591,7 @@ async fn check() -> Result<()> {
 
     // The last SQL loader. `biometrics` computes (six queries, three of them a
     // wall-clock fallback), so an empty stream is how most failures look.
-    let home_tz = sync_state::get(&pool, &user, "home_tz")
-        .await?
-        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let home_tz = sync_state::home_tz(&pool, &user).await?;
     let bounds = backend::timezone::date_bounds_utc(&check_date, Some(&home_tz))
         .with_context(|| format!("bounding {check_date} in {home_tz}"))?;
     let bio = classification_inputs::biometrics(

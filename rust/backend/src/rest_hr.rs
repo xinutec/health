@@ -143,10 +143,3 @@ pub async fn days(
     }
     Ok(out)
 }
-
-/// The zone a user's days are bounded in: their home zone.
-pub async fn home_tz(pool: &MySqlPool, user: &str) -> Result<String> {
-    Ok(crate::sync_state::get(pool, user, "home_tz")
-        .await?
-        .unwrap_or_else(|| "Europe/London".into()))
-}

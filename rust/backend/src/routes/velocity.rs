@@ -260,9 +260,7 @@ pub async fn compute_with(
     tz: Option<&str>,
     walk_match: bool,
 ) -> Result<Value> {
-    let home_tz = crate::sync_state::get(&st.pool, user_id, "home_tz")
-        .await?
-        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let home_tz = crate::sync_state::home_tz(&st.pool, user_id).await?;
     let display_tz = tz.unwrap_or(&home_tz);
     let bounds = timezone::date_bounds_utc(date, Some(display_tz))
         .with_context(|| format!("bounding {date} in {display_tz}"))?;

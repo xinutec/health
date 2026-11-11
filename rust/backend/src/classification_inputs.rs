@@ -1063,7 +1063,11 @@ pub async fn load_timed(
     // fix places.
     m.insert(
         "homeTz".into(),
-        Value::String(home_tz.unwrap_or("Europe/Amsterdam").to_string()),
+        Value::String(
+            home_tz
+                .unwrap_or(crate::sync_state::DEFAULT_HOME_TZ)
+                .to_string(),
+        ),
     );
     m.insert(
         "sleepWindows".into(),

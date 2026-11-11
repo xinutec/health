@@ -673,7 +673,7 @@ pub(crate) async fn rest_hr(
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
-    let tz = backend::rest_hr::home_tz(&pool, user).await?;
+    let tz = backend::sync_state::home_tz(&pool, user).await?;
     let first = chrono::NaiveDate::parse_from_str(since, "%Y-%m-%d")?;
     let last = match until {
         Some(u) => chrono::NaiveDate::parse_from_str(u, "%Y-%m-%d")?,

@@ -13,6 +13,18 @@
 use anyhow::{Context, Result};
 use sqlx::{MySqlPool, Row};
 
+/// The zone a user's days are bounded in when they have not set one.
+pub const DEFAULT_HOME_TZ: &str = "Europe/London";
+
+/// The zone a user's days are bounded in: their `home_tz`, else
+/// [`DEFAULT_HOME_TZ`]. One default, so a served day and a decoded day of a
+/// user with no zone have the same bounds.
+pub async fn home_tz(pool: &MySqlPool, user_id: &str) -> Result<String> {
+    Ok(get(pool, user_id, "home_tz")
+        .await?
+        .unwrap_or_else(|| DEFAULT_HOME_TZ.into()))
+}
+
 /// Read one key. `None` when the row is absent.
 ///
 /// ⚠ Absent and empty are different and both are preserved. A cursor stored as

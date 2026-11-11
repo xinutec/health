@@ -28,9 +28,7 @@ pub(crate) async fn inputs(user: &str, date: &str, display_tz: Option<&str>) -> 
         .context("connecting to the database")?;
     // The day's UTC bounds, for the window `motion_log` is read over, in the
     // user's stored home zone.
-    let home_tz = sync_state::get(&pool, user, "home_tz")
-        .await?
-        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let home_tz = sync_state::home_tz(&pool, user).await?;
     // Defaults to `home_tz` when not given, which is what a day at home means.
     let display_tz = display_tz.unwrap_or(&home_tz);
     let bounds = backend::timezone::date_bounds_utc(date, Some(display_tz))
@@ -469,9 +467,7 @@ pub(crate) async fn day_live(
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
-    let home_tz = sync_state::get(&pool, user, "home_tz")
-        .await?
-        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let home_tz = sync_state::home_tz(&pool, user).await?;
     let display_tz = display_tz.unwrap_or(&home_tz);
     let bounds = backend::timezone::date_bounds_utc(date, Some(display_tz))
         .with_context(|| format!("bounding {date} in {display_tz}"))?;
@@ -623,9 +619,7 @@ pub(crate) async fn capture_day(
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
-    let home_tz = sync_state::get(&pool, user, "home_tz")
-        .await?
-        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let home_tz = sync_state::home_tz(&pool, user).await?;
     let display_tz = display_tz.unwrap_or(&home_tz).to_string();
     let bounds = backend::timezone::date_bounds_utc(date, Some(&display_tz))
         .with_context(|| format!("bounding {date} in {display_tz}"))?;

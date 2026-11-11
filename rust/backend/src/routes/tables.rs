@@ -377,7 +377,7 @@ pub async fn heartrate_rest(
         let today = chrono::Utc::now().date_naive();
         let first = chrono::NaiveDate::parse_from_str(&since, "%Y-%m-%d")?
             .max(today - chrono::Duration::days(89));
-        let tz = crate::rest_hr::home_tz(&st.pool, &session.user_id).await?;
+        let tz = crate::sync_state::home_tz(&st.pool, &session.user_id).await?;
         let rows = crate::rest_hr::days(&st.pool, &session.user_id, first, today, &tz).await?;
         Ok::<_, anyhow::Error>(Json(rows).into_response())
     };
