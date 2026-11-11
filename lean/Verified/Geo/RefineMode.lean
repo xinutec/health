@@ -15,9 +15,6 @@ The `osm` enrichment STAGE that calls `refineMode` for every moving segment runs
 before the 38-pass cascade and is not the fold's business — but it calls the same
 function this ports, and `reenrichSplitWalks` is that stage re-run on one leg.
 
-`ModeRefinement.factorBreakdown` is not modelled: the TS populates it only on the
-factor-scorer arm, and this is the other one.
-
 UNPROVEN.
 -/
 
@@ -59,23 +56,21 @@ def WALK_NAME_BORROW_MAX_KMH : Float := 10
 
 open Verified.FloatConst (posInf)
 
-/-- `w.distanceM ?? Infinity` — an absent distance loses every comparison, which
-is the TS's own reading of a missing measurement. -/
+/-- `w.distanceM`, or infinity: an absent distance loses every comparison. -/
 private def dist (w : NearbyWay) : Float := w.distanceM.getD posInf
 
-/-- A non-empty name. The TS tests `w.name` for TRUTHINESS, so `""` is no name. -/
+/-- A non-empty name: `""` is no name. -/
 private def named (w : NearbyWay) : Bool :=
   match w.name with | some n => n ≠ "" | none => false
 
 /-- The highway that best represents what the user is on: at driving speed the
 first driveable one, otherwise the first outright.
 
-⚠ THE ORDER IS LOAD-BEARING AND IT IS NOT "CLOSEST-FIRST", which both this
-docstring and the TS comment claimed for a long time. It is the INSERTION order
-of `dedupNearestWays`, i.e. roughly "nearest at the FIRST sample". #445 measured
-the alternatives against golden and this accident beats both: insertion order
-leaves 5 standing regressed truth rows over 3 days, global-nearest 14 over 11,
-coverage-ranked 17 over 15. Do not "fix" it to sort by distance.
+⚠ The order is load-bearing and it is not "closest first": it is the insertion
+order of `dedupNearestWays`, roughly "nearest at the first sample". Against the
+golden corpus it beats the alternatives: insertion order leaves 5 standing
+regressed truth rows over 3 days, global-nearest 14 over 11, coverage-ranked 17
+over 15. Do not "fix" it to sort by distance.
 
 ⚠ NOR BY LETTING THE BORROW WIN, which is the narrower arm and is also refuted.
 Leaving `hw` alone — so the mode branch, the reason and every driving-speed
@@ -85,23 +80,21 @@ becomes 303, and 3 standing regressed rows over 2 days become 13 over 13. So
 global-nearest's damage was never the reordering; it was the NAME half all
 along.
 
-The measured case is 2026-06-16 @11:13Z, where `Queen's Walk` sits in the
-deduped set as a named footway at 1.22 m and loses to `Park Place`, a
-residential at 9.60 m that merely came from sample 0. It is a real defect; this
-is not the fix for it, and neither is re-deriving arc length by nearest-way over
-`walkMatchedPath` — that line is SNAPPED onto the network, so the distances it
+The measured case is 06-16 @11:13Z, where `Queen's Walk` sits in the deduped
+set as a named footway at 1.22 m and loses to `Park Place`, a residential at
+9.60 m that merely came from sample 0. It is a real defect; this is not the fix
+for it, and neither is re-deriving arc length by nearest-way over
+`walkMatchedPath`: that line is snapped onto the network, so the distances it
 would be judged by are ~0 for every way near it.
 
-⚠ AND THE MATCHER'S OWN IDENTITY REPORT IS REFUTED TOO (2026-09-04). The arm
-this docstring used to point at was built — `QMatchResult.wayUm`, the route's
-arc length per way name — and measured over the 45 enforceable named-walk
-truth windows: naming by route-dominance broke 12 fixing 2 (13/1 with the
-per-edge pavement borrow), and even a pure absence-veto over this cascade's
-pick broke 3 fixing 1, because the route can MISS the true way (the Euston
-Underpass legs match onto the surface streets, so "zero metres on the route"
-cannot separate a phantom pick from a blind route). What survived is in
-`WalkAnnotate.drawMatcher`: the report names a leg only when THIS cascade
-named it nothing. The full ledger is on #445. -/
+⚠ The matcher's own identity report (`QMatchResult.wayUm`, the route's arc
+length per way name) is refuted too: over the enforceable named-walk truth
+windows, naming by route dominance broke 12 and fixed 2, and even a pure
+absence veto over this cascade's pick broke 3 and fixed 1, because the route
+can miss the true way (the Euston Underpass legs match onto the surface
+streets, so "zero metres on the route" cannot separate a phantom pick from a
+blind route). What survived is in `WalkAnnotate.drawMatcher`: the report names
+a leg only when this cascade named it nothing. -/
 private def pickBestHighway (highways : Array NearbyWay) (speedKmh : Float)
     (h : highways.size > 0) : NearbyWay :=
   if speedKmh > 30 then
@@ -242,9 +235,8 @@ the MINIMUM distance — a way brushed past at one sample cannot outweigh one
 hugged at four others, and the distance is what the rail-versus-road tie-break
 reads. First-SAMPLE order, per `upsert`.
 
-Takes the ANSWERS rather than the lookup: the TS asks each sample once and reads
-the result twice (here, and for the road-corridor fraction), so a lookup taken
-twice would be this function's shape rather than the pipeline's. -/
+Takes the answers rather than the lookup: each sample is asked once and the
+result read twice (here, and for the road-corridor fraction). -/
 def dedupNearestWays (wayResults : Array (Array NearbyWay)) : Array NearbyWay :=
   (wayResults.foldl (init := (#[] : Array (String × NearbyWay))) fun acc ways =>
     ways.foldl (init := acc) fun acc w =>
@@ -272,11 +264,10 @@ under the road rather than on the road. Generous: surface GPS over a station
 typically sits 20-50 m from the line's mapped geometry. -/
 def SUBWAY_PARALLEL_DISTANCE_M : Float := 100
 
-/-- What the override decides. NOT a `ModeRefinement`, and the difference is
-load-bearing: the TS hands this function `{mode, wayName}` only, so on every
-non-override path its `reason` is ABSENT and the caller's `plausible.reason ??
-refined.reason` falls back to the cascade's. A `ModeRefinement` here would carry
-a reason on that path and silently win the `??`. -/
+/-- What the override decides. Not a `ModeRefinement`, and the difference is
+load-bearing: on every non-override path the override's `reason` is absent, so
+the caller's `plausible.reason ?? refined.reason` falls back to the cascade's. A
+`ModeRefinement` here would carry a reason on that path and silently win. -/
 structure Plausible where
   mode : String
   wayName : Option String
@@ -304,7 +295,7 @@ def rejectImplausibleDriving (refined : Plausible) (maxSpeedKmh : Float)
         reason := some
           s!"{kmh.toInt64.toInt} km/h max exceeds urban non-motorway limit; subway in range" }
 
-/-! ## Parity with Node/V8 (values from `lean/experiments/enrich-refs.mts`) -/
+/-! ## Guards -/
 
 section RefineGuards
 

@@ -36,8 +36,8 @@ every call site. Three kinds of field live in it:
 
 * **Observations** — the Kalman track, the pre-Kalman coarse fixes, the step
   rows.
-* **Mirror reads** — station / line / way lookups against the local OSM mirror.
-  Functions of a coordinate, which is what the TS passes them as.
+* **Mirror reads**: station / line / way lookups against the local OSM mirror,
+  as functions of a coordinate.
 * **Shell callbacks** — the two things Lean cannot do and does not pretend to:
   venue re-resolution (`bestPlace`) and the IANA zone at a coordinate (`tzAt`).
 
@@ -101,7 +101,7 @@ structure Env where
   /-- `osm.nearbyWays(lat, lon)`. -/
   nearbyWays : Float → Float → Array Verified.Geo.RefineMode.NearbyWay
   /-- SHELL: re-resolve a merged stay's venue from its combined centre. An OSM
-  call in the TS, injected here so the pass around it ports whole. -/
+  call, supplied by the caller so the pass around it lives here whole. -/
   bestPlace : Float → Float → Int → Int → String → Option Verified.Geo.SegmentMerge.ResolvedPlace
   /-- Name a stay the way the enrichment stage names every stay — election of
   a mined place included — from the fixes in its window
@@ -110,11 +110,11 @@ structure Env where
   nameStay : Seg → Seg := id
   /-- SHELL: the IANA zone at a coordinate. tzdata, not arithmetic.
 
-  The TS wraps this in a `try`/`catch` and falls back to `homeTz`. Total here,
-  so the fallback belongs to whoever supplies the function. -/
+  Total here, so a fallback to `homeTz` when the lookup fails belongs to
+  whoever supplies the function. -/
   tzAt : Float → Float → String
   /-- The user's home zone: what `displayTz` writes for a segment no fix
-  covers, and the TS's fallback when `tzLookup` throws. -/
+  covers, and the fallback when the zone lookup fails. -/
   homeTz : String := "Europe/London"
   /-- `osm.stationsOnLine(line)` — every station the line serves, with the
   coordinate of its canonical node. The RICHEST of the three shapes the passes
@@ -127,8 +127,8 @@ structure Env where
   busRouteCache : List Verified.Geo.Bus.BusRoute := []
   /-- `osm.nearbyTransitStops(lat, lon, radiusM)`. -/
   transitStops : Float → Float → Float → Array Verified.Geo.Bus.TransitStop := fun _ _ _ => #[]
-  /-- The HSMM's decode for this day, or empty when the cron has not run. The
-  TS tests the decode for null; empty carries the same meaning here. -/
+  /-- The HSMM's decode for this day, or empty when none has run; empty means
+  "no decode". -/
   hmmDecode : Array Verified.Geo.PlaceOverride.HmmSeg := #[]
   /-- How far a leg's start may sit from its pull-away, for the bus passes'
   boarding wait (`Bus.detectBoardingWait`): 0 for the cascade's legs, a
@@ -149,10 +149,10 @@ structure Env where
   /-- Sleep-stage windows. -/
   sleep : List Verified.Geo.BiometricWindows.SleepStage := []
   /-- SHELL: re-derive one split walk's enrichment from its own geometry.
-  `none` is a failed re-enrichment, and the TS's answer to that is to leave the
-  leg honestly unnamed rather than confidently wrong — so the caller keeps the
+  `none` is a failed re-enrichment, and the answer to that is to leave the leg
+  honestly unnamed rather than confidently wrong, so the caller keeps the
   segment as it stands. The only genuinely async pass in the cascade; what is
-  ASYNC is the OSM naming, and what is sequencing stays here. -/
+  async is the OSM naming, and what is sequencing stays here. -/
   reenrich : Seg → Option Seg := fun _ => none
   /-- The road matcher's shell: the street-network read and the solver.
 
@@ -189,8 +189,7 @@ structure Env where
 /-! ## Fix projections
 
 Every pass declares a fix as `Verified.GeoFix` (time and position) or
-`Verified.SpeedFix` (the env's own `PointF`, speed included) since #1937 — the
-nine per-pass projections that copied the same fields are this one, and the
+`Verified.SpeedFix` (the env's own `PointF`, speed included), so the
 speed-carrying passes read `e.points` itself. Nothing is invented. -/
 
 def Env.geoFixes (e : Env) : Array Verified.GeoFix :=
@@ -208,9 +207,8 @@ def Env.biomSteps (e : Env) : List Verified.Geo.BiometricWindows.StepPoint :=
 
 /-! ## Radii the cascade chooses
 
-The mirror lookups take a radius, and it is the CALLER that picks one — the same
-lookup reaches for a different distance depending on which pass is asking. Each
-of these is a verbatim copy of the TS constant named beside it.
+The mirror lookups take a radius, and it is the caller that picks one: the same
+lookup reaches for a different distance depending on which pass is asking.
 
 UNPINNED, and that is a gap rather than a decision: nothing here brackets them,
 because the fold has no scenario guards yet. The pass each one feeds does pin
@@ -245,8 +243,8 @@ reads as it was lived — morning at parents in CEST, evening home in BST.
 
 Stationary takes the centroid, moving the midpoint of the path: a ride's
 average position is somewhere it never was, and on a leg that crosses a border
-that is the wrong side. Note `mode` and not `effectiveMode`, as the TS has it —
-a leg refined to walking keeps the stationary branch. -/
+that is the wrong side. Note `mode` and not `effectiveMode`: a leg refined to
+walking keeps the stationary branch. -/
 def displayTz (e : Env) (segs : Array Seg) : Array Seg :=
   segs.map fun s =>
     let pts := inWindow e s
@@ -266,11 +264,11 @@ Runs LAST because the train adjacency is only final once the rail passes and
 the early place enrichment that named the stay had no transit context at all.
 
 The centroid is recomputed here rather than read off `centroidLat`, which is not
-reliably attached by this point — the TS does the same, for the same reason.
+reliably attached by this point.
 
-The scan reads the array it is REWRITING, so a stay renamed at `i` is what index
-`i + 1` sees when it looks for its bracketing trains. That is the TS's `out[i] =`
-in place, and it is load-bearing for a run of two changes. -/
+The scan reads the array it is rewriting, so a stay renamed at `i` is what index
+`i + 1` sees when it looks for its bracketing trains; that is load-bearing for a
+run of two changes. -/
 private def isStationStay (s : Seg) : Bool :=
   Verified.Geo.SegmentMerge.effectiveMode s == "stationary" && s.placeSource.any (·.rule == "station")
 
@@ -386,18 +384,19 @@ def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
 /-- A held position must last this long after a ride to say the rider stayed
 underground: out on a street the phone fixes again within a minute or two. -/
 def ALIGHT_HOLD_MIN_S : Int := 180
-/-- A re-reported cell position wanders by metres (2026-10-01: 544–549 m from
-Montparnasse-Bienvenüe over five minutes); within this it is the same reading. -/
+/-- A re-reported cell position wanders by metres (544–549 m from a station over
+five minutes); within this it is the same reading. -/
 def ALIGHT_HOLD_RADIUS_M : Float := 10
 /-- The first fresh fix after the hold must lie this near the station it names. -/
 def ALIGHT_FRESH_MAX_M : Float := 400
 
-/-- A ride whose last fix the phone then HELD (the same position repeated, the
+/-- A ride whose last fix the phone then held (the same position repeated, the
 accuracy growing) alights at the line's station nearest the first fix after the
 hold, when that is nearer than the labelled one. A held fix is one cell
-reading, not a place: 2026-10-01's Métro 4 ended on a fix 19 m from Vavin, held
-10:16–10:21 London with no street fix, and the first fresh one sat 217 m from
-Montparnasse-Bienvenüe, where he got off and walked the corridors to the Gare. -/
+reading, not a place: a Métro 4 ride ended on a fix 19 m from Vavin, held five
+minutes with no street fix, and the first fresh one sat 217 m from
+Montparnasse-Bienvenüe, where the user got off and walked the corridors to the
+Gare. -/
 def alightAfterHold (e : Env) (segs : Array Seg) : Array Seg := Id.run do
   let mut out := segs
   for i in [0 : out.size] do
@@ -474,8 +473,8 @@ def alightAtLastFix (e : Env) (segs : Array Seg) : Array Seg := Id.run do
 
 /-! ## The passes
 
-Order is execution order. Do not reorder without reading the rationale on the
-TS entry — several of these exist only because they run after another. -/
+Order is execution order. Several passes exist only because they run after
+another; read an entry's own rationale before moving it. -/
 
 /-- One entry of the cascade: the name the phase timer and the pass trace use,
 and the rewrite. Named because a divergence is reported against a pass, and an
@@ -486,10 +485,10 @@ abbrev Pass := String × (Array Seg → Array Seg)
 def passes (e : Env) : Array Pass := #[
   ("stayArrivalClaim", fun segs => FootArrival.claimStayArrivalFromWalk segs e.points),
 
-  -- A stop of a few minutes inside a walk — a shop, a queue — is its own stay.
-  -- After every rail and vehicle carver, so a platform wait is never
-  -- taken for one. The remainders keep the walk's name, so the re-enrichment
-  -- that follows leaves them alone. Lean-only: the TS had no pass here.
+  -- A stop of a few minutes inside a walk (a shop, a queue) is its own stay.
+  -- After every rail and vehicle carver, so a platform wait is never taken for
+  -- one. The remainders keep the walk's name, so the re-enrichment that
+  -- follows leaves them alone.
   ("walkDwell", fun segs =>
     Dwell.splitWalksOnDwell segs e.points e.feasSteps e.nameStay),
 
@@ -545,8 +544,8 @@ def passes (e : Env) : Array Pass := #[
       { s with biometrics := some bio }),
 
   -- The HSMM's place picks override the pipeline's attribution on stays. Falls
-  -- back to the pipeline's label when no decode exists — an EMPTY decode is
-  -- that "no decode", matching the TS's null test.
+  -- back to the pipeline's label when no decode exists; an empty decode is
+  -- "no decode".
   ("hsmmOverride", fun segs =>
     if e.hmmDecode.isEmpty then segs
     else Verified.Geo.PlaceOverride.applyHsmmPlaceOverride segs e.hmmDecode e.hsmmPlaces),
@@ -600,13 +599,13 @@ private def mlat : Float := 1 / 111320
 
 /-! ## Every wired pass, demonstrably doing something
 
-The guards above pin WHICH passes run and in WHAT ORDER, and mutation testing
-says they do that well: moving a pass out of its TS slot fails, deleting one
-fails. It also says what they do NOT cover. Of eleven wiring mutations put to
-them, NINE were silent — `fun segs => segs` in any of the tranche's entries
+The guards above pin which passes run and in what order, and mutation testing
+says they do that well: moving a pass out of its slot fails, deleting one
+fails. It also says what they do not cover. Of eleven wiring mutations put to
+them, nine were silent: `fun segs => segs` in any of the tranche's entries
 passed every guard, as did feeding a pass an empty fix array, and as did a
-fabricated radius. An order guard cannot see whether an entry is CONNECTED:
-wrong function, wrong argument, and no function at all all read the same to it.
+fabricated radius. An order guard cannot see whether an entry is connected:
+wrong function, wrong argument, and no function at all read the same to it.
 
 So each pass gets a day it demonstrably rewrites. This is a REACHABILITY check,
 not a parity check — what a pass decides is pinned in the module that decides

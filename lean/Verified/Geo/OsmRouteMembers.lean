@@ -2,12 +2,10 @@
 # Reading a route relation's stop sequence
 
 The common half of the two Overpass mirrors: both `refresh-rail-stops` and
-`refresh-bus-routes` walk a decoded Overpass response the same way — index the
-member nodes by id, then read each relation's stops from its members IN ORDER,
+`refresh-bus-routes` walk a decoded Overpass response the same way: index the
+member nodes by id, then read each relation's stops from its members in order,
 preferring PT-v2 `stop_position` roles and falling back to platforms when a
-route is mapped without them (#982 Tier 2).
-
-Port of `src/geo/osm-route-members.ts`.
+route is mapped without them.
 
 ## ⚠ MEMBER ORDER IS THE ROUTE DIRECTION
 

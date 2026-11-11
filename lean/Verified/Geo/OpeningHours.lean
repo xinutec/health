@@ -9,10 +9,9 @@ parses to `none`, which downstream means **no evidence**, NOT "closed". That
 asymmetry is the contract: a wrong "closed" verdict would poison the scorer,
 so every unsupported shape must fail closed to silence rather than to a guess.
 
-The TS parser is regex-driven. Lean has no regex, so the three patterns are
-hand-rolled here, and their behaviour on MALFORMED input is reproduced exactly
-— including two quirks that look like bugs but are load-bearing (the `#guard`s
-pin both against V8):
+Lean has no regex, so the three patterns are hand-rolled here, and their
+behaviour on malformed input is fixed, including two quirks that look like bugs
+but are load-bearing (the `#guard`s pin both):
 
 * A bare `"off"` parses to `none`, because the leading-day-spec pattern
   `[A-Za-z]{2}` happily consumes `"of"` as a day token, leaving `"f"`; `"of"`
@@ -27,9 +26,8 @@ to a (weekday, minute-of-day) pair through `Intl`, which is exactly the kind of
 tz work that does not belong in Lean. {@link openFractionOver} takes those
 already-resolved samples, so the arithmetic is here and the calendar is not.
 
-Everything in this module is EXACT (string/`Nat` work); the only `Float` is the
-open-fraction division. UNPROVEN; pinned by the `#guard`s against Node/V8
-(`lean/experiments/opening-hours-refs.mts`).
+Everything in this module is exact (string/`Nat` work); the only `Float` is the
+open-fraction division. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.OpeningHours
@@ -81,13 +79,12 @@ private def dayIndex (a b : Char) : Option Nat :=
 
 /-! ## `parseDaySpec`
 
-Mirrors the TS: split on `,`, each token matched against
-`^([a-z]{2})(?:-([a-z]{2}))?$`. `PH`/`SH` tokens are dropped (holidays are
-unknowable here). `none` on any unrecognised token; `some []` when the spec
-consisted ONLY of holiday tokens, which the caller skips. -/
+Split on `,`, each token matched against `^([a-z]{2})(?:-([a-z]{2}))?$`.
+`PH`/`SH` tokens are dropped (holidays are unknowable here). `none` on any
+unrecognised token; `some []` when the spec consisted only of holiday tokens,
+which the caller skips. -/
 
-/-- Append preserving insertion order and dropping duplicates — the TS uses a
-    `Set` and spreads it, which yields insertion order. -/
+/-- Append preserving insertion order and dropping duplicates. -/
 private def addDay (ds : List Nat) (d : Nat) : List Nat :=
   if ds.contains d then ds else ds ++ [d]
 
@@ -262,13 +259,13 @@ is `Intl` work and stays outside Lean.
 
 The caller samples every 60 s across `[startUnix, endUnix)`, or the single
 instant at `startUnix` for a zero-length window, so `samples` is never empty in
-practice; an empty list divides 0/0 exactly as the TS would.
+practice; an empty list divides 0/0.
 -/
 def openFractionOver (spec : WeekSpec) (samples : List (Nat × Nat)) : Float :=
   let open_ := samples.foldl (fun acc (d, m) => if isOpenAt spec d m then acc + 1 else acc) 0
   Float.ofNat open_ / Float.ofNat samples.length
 
-/-! ## Parity with Node/V8 (`lean/experiments/opening-hours-refs.mts`)
+/-! ## Guards
 
 Every case below is exact — this module does string and `Nat` work only. -/
 

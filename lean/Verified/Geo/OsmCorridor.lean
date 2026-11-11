@@ -21,13 +21,13 @@ fixture replay must reproduce:
 
 ## Termination of the resampler is derived, not budgeted
 
-`resamplePolyline`'s inner walk is a TS `while (nextAt <= acc + segLen)` that
-advances `nextAt` by `step`. Its Lean counterpart recurses on a `Nat`, and that
-`Nat` is the function's own declared cap: `step = max stepM (total / (maxSamples
-- 1))` forces `total / step ≤ maxSamples - 1`, and the walk stops once `nextAt`
-passes `total`, so it cannot take more than `maxSamples - 1` steps. The
-parameter records that argument for the termination checker — it is a bound
-derived from the step choice, not a net thrown over unanalysed control flow.
+`resamplePolyline`'s inner walk advances `nextAt` by `step` while
+`nextAt <= acc + segLen`. Here it recurses on a `Nat`, and that `Nat` is the
+function's own declared cap: `step = max stepM (total / (maxSamples - 1))`
+forces `total / step ≤ maxSamples - 1`, and the walk stops once `nextAt` passes
+`total`, so it cannot take more than `maxSamples - 1` steps. The parameter
+records that argument for the termination checker: a bound derived from the
+step choice, not a net thrown over unanalysed control flow.
 
 Reaching zero with the loop condition still true would mean the float walk
 outran its real-arithmetic bound. That cannot be ruled out by this argument
@@ -35,14 +35,14 @@ outran its real-arithmetic bound. That cannot be ruled out by this argument
 `step × j`), and the guards pin the sample COUNT on a track long enough to take
 many steps, which is where such a drift would first show.
 
-Exactness: `metersBetween` is `WalkableRoute`'s — the TS `Math.hypot` against
-Lean's `sqrt` of the sum of squares, ≤1 ULP at these magnitudes — and every
-sample position is a lerp whose parameter divides by it, so positions inherit
-that wobble. The arm choice, the union order and the sample count are EXACT
-unless the wobble crosses a comparison; at 600 m against a ≤1 ULP perturbation
-it does not.
+Exactness: `metersBetween` is `WalkableRoute`'s, `sqrt` of the sum of squares,
+≤1 ULP from an overflow-careful hypot at these magnitudes, and every sample
+position is a lerp whose parameter divides by it, so positions inherit that
+wobble. The arm choice, the union order and the sample count are exact unless
+the wobble crosses a comparison; at 600 m against a ≤1 ULP perturbation it does
+not.
 
-UNPROVEN; pinned against Node/V8 (`lean/experiments/road-match-annotate-refs.mts`).
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.OsmCorridor
@@ -108,8 +108,8 @@ Resample a polyline at ~`stepM` arc-length spacing. Always includes the first
 vertex, and the last one unless a sample already landed within a metre of it, so
 the corridor reaches both ends of the leg.
 
-A zero-length track segment is SKIPPED ENTIRELY — the TS `continue` jumps the
-`acc += segLen` too, which is harmless only because the length it skips is zero.
+A zero-length track segment is skipped entirely, its `acc += segLen` too, which
+is harmless only because the length it skips is zero.
 -/
 def resamplePolyline (track : Array Pt) (stepM : Float) (maxSamples : Nat := MAX_SAMPLES) :
     Array Pt :=
@@ -146,8 +146,7 @@ def resamplePolyline (track : Array Pt) (stepM : Float) (maxSamples : Nat := MAX
 
 /-! ## The corridor fetch -/
 
-/-- Union `ways` into `acc` by `osmId`, FIRST WINS — the TS `Map.set` guarded by
-`!byId.has(...)`, whose iteration order is insertion order. -/
+/-- Union `ways` into `acc` by `osmId`, first wins, in insertion order. -/
 def unionById (acc : Array Way) (ways : Array Way) : Array Way :=
   ways.foldl (init := acc) fun seen w =>
     if seen.any (·.osmId == w.osmId) then seen else seen.push w
@@ -158,8 +157,8 @@ long ones read a `radiusM` disc at every `stepM` sample down the track and union
 the results. `query` is `osm.drivableRoads` (roads) or `osm.walkableRoads`
 (walks).
 
-The `Float` radius is the TS's: the single-disc arm rounds its own radius to a
-whole metre, the corridor arm passes `radiusM` through untouched.
+The `Float` radius: the single-disc arm rounds its own radius to a whole metre,
+the corridor arm passes `radiusM` through untouched.
 
 ⚠ **`query` MAY DECLINE**, and a corridor of declines is not an empty corridor.
 `none` here means every read the corridor made went unanswered — the
@@ -203,10 +202,10 @@ def corridorWays (query : Float → Float → Float → Option (Array Way))
       acc := unionById acc ws
   return if answered then some acc else none
 
-/-! ## Guards (V8 reference values)
+/-! ## Guards
 
-Every number below is `lean/experiments/road-match-annotate-refs.mts`'s output
-on the same fixture, transcribed at V8's own precision.
+Every number below is the original implementation's answer on the same
+fixture, at full double precision.
 
 The `metersBetween` wobble is MEASURED, not assumed: across every distance
 this file's fixtures compute, `Math.hypot` and `sqrt(dx² + dy²)` agreed on
@@ -299,9 +298,9 @@ private structure RoadsEntry where
   radiusM : Float
   ways : Array Way
 
-/-- Every `(lat, lon, radius)` the V8 arm was asked about, with its answer.
-A query this table does not hold is a query the reference arm never made —
-it comes back EMPTY, which shows up as a leg that bails. -/
+/-- Every `(lat, lon, radius)` the reference run asked about, with its answer.
+A query this table does not hold is one the reference never made: it comes
+back empty, which shows up as a leg that bails. -/
 private def ROADS : Array RoadsEntry := #[
   { lat := 51.501317523056656, lon := (-0.1363322829128949), radiusM := 443.0,
     ways := #[

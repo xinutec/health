@@ -16,7 +16,7 @@ the settled set, and stop at the first vertex that left it — which by the floo
 already costs `≥ D`. The rail proof reuses `feasibleCut` over the shared bare
 `done`/`dist` arrays, but the lazy machine breaks that predicate: a
 radius-*exhausted* vertex is settled with its edges deliberately **not** relaxed
-(`dist > maxR`, the TS cutoff), so `feasibleCut` over the whole graph is false.
+(`dist > maxR`, the radius cutoff), so `feasibleCut` over the whole graph is false.
 
 `cut_walk` handles the radius honestly. It threads the bound `du ≤ prefix-cost`
 and branches on `du ≤ maxR`: within the radius `UInv` supplies the no-shortcut

@@ -14,34 +14,27 @@ its true intermediate-stop count falls between them, and a line is named only
 when exactly one candidate survives — so a dark ride excludes nobody and missing
 data yields silence rather than a confident guess.
 
-## What this module carries that the TS spreads over four files
+## What this module carries
 
-`intermediateStopCount` reaches through `railRelationsForLine`
-(`rail-stops-cache.ts`) into `lineBaseToken` (`line-stations.ts`) and
-`normalizeStationName` (`served-stations.ts`). All three are pure and none had a
-Lean twin, so they are ported here rather than stubbed. The DB-backed halves of
-those modules (`loadAllRailStopRelations`, the station cache) stay shell — they
-are I/O, and the relation array arrives as an argument exactly as it does in the
-TS.
+`intermediateStopCount` reaches through `railRelationsForLine` into
+`lineBaseToken` and `normalizeStationName`. All three are pure, so they are
+here rather than stubbed. The DB-backed halves (`loadAllRailStopRelations`, the
+station cache) stay shell: they are I/O, and the relation array arrives as an
+argument.
 
-## Deviations from the TS, all deliberate
+## Deliberate choices
 
-* `stopBounds` reads `p.speed_kmh ?? 0`. `FilteredPoint.speed_kmh` is declared
-  non-optional, so the `?? 0` is unreachable under the declared type and the
-  Lean reads the field directly. The port is faithful to the TYPE, not to the
-  defensive coalesce.
+* `stopBounds` reads `p.speed_kmh` directly: `FilteredPoint.speed_kmh` is
+  non-optional, so a defensive default would be unreachable.
 * `lineBaseToken`'s `/\s+lines?\b.*$/i` and `normalizeStationName`'s
-  `/[^a-z0-9]/g` are matched on ASCII only. JS `\s` also covers ` `,
-  `﻿` and the Unicode `Zs` class, and JS `toLowerCase` case-folds
-  non-ASCII before the strip. Station and line names in the OSM mirror are
-  ASCII; a non-ASCII space or a Turkish dotted capital would diverge.
-* `Math.floor` stays in `Float`. TS never converts these counts to integers —
-  `atMost` is `atLeast + hidden` with both sides JS numbers — so neither does
-  this, and `intermediateStopCount` returns `Option Float` for the same reason.
+  `/[^a-z0-9]/g` are matched on ASCII only. Station and line names in the OSM
+  mirror are ASCII; a non-ASCII space or a Turkish dotted capital would not be
+  folded.
+* `floor` stays in `Float`: `atMost` is `atLeast + hidden` over floats, and
+  `intermediateStopCount` returns `Option Float` for the same reason.
 
 Exactness: every arithmetic decision is exact (one multiply, one divide, one
-add, one `floor` per gap). UNPROVEN; pinned against Node/V8
-(`lean/experiments/line-stopping-refs.mts`).
+add, one `floor` per gap). UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.LineStoppingPattern
@@ -252,7 +245,7 @@ def stopBounds (points : Array FilteredPoint) (boardTs alightTs : Int) : Option 
   match ride.findFinIdx? (fun p => p.speedKmh >= RUNNING_KMH) with
   | none => none
   | some first =>
-    -- The `while` in the TS cannot run past `first`, which qualifies by construction.
+    -- The scan cannot run past `first`, which qualifies by construction.
     let last := ((List.finRange ride.size).reverse.find? fun i =>
       ride[i].speedKmh >= RUNNING_KMH).getD first
     if last == first then none  -- one running fix is a glimpse, not a ride
@@ -383,8 +376,8 @@ private def rels : Array RailStopRelation := #[metRel, jubRel, metReverse]
 
 /-! ### `stopBounds`
 
-The observed 2026-06-23 shape: a platform wait, an unbroken run with one 64 s
-gap, then arrival.
+The observed 06-23 shape: a platform wait, an unbroken run with one 64 s gap,
+then arrival.
 -/
 
 private def fix (ts : Int) (kmh : Float) : FilteredPoint := { ts := ts, speedKmh := kmh }

@@ -5,17 +5,13 @@ When the public Overpass mirrors start rate-limiting, every subsequent fetch
 hangs until its own timeout. A velocity request can have 25+ `ensureCovered`
 calls queued; at a concurrency of 2 and 20 s each, that is four to eight minutes
 of waiting on calls that were never going to succeed. The breaker turns that
-into a fail-fast (#982 Tier 2).
-
-Port of `src/geo/osm-overpass-breaker.ts`.
+into a fail-fast.
 
 ## ⚠ THE CLOCK IS A PARAMETER, NOT A CALL
 
-Every function here takes `now` and returns the new state. The TypeScript reads
-`Date.now()` from module-level mutable state, which is what makes its behaviour
-untestable without a fake timer — and the reason the two "already open" early
-returns below have never had a test. Threading the clock is the whole reason
-this can carry guards at all.
+Every function here takes `now` and returns the new state, so the clock is a
+parameter rather than mutable module state, which is what lets the two "already
+open" early returns below carry guards.
 -/
 
 namespace Verified.Geo.OverpassBreaker

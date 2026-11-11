@@ -4,11 +4,11 @@ import Verified.Rail.LoopInv
 /-!
 # LazyDijkstra fuel sufficiency — the model's last hypothesis, discharged
 
-`LazyDijkstra.lean` models the TS `while (this.heap.size > 0)` settle
-loop with a fuel parameter; its refinement theorems assume a stop is
-fuel-reachable (`k ≤ fuel` with `stopAt … = true`). This file proves
-that assumption for the fuel the model is actually run with: the rail
-potential argument, ported to the lazy state.
+`LazyDijkstra.lean` models the unfueled `while (heap nonempty)` settle loop
+with a fuel parameter; its refinement theorems assume a stop is fuel-reachable
+(`k ≤ fuel` with `stopAt … = true`). This file proves that assumption for the
+fuel the model is actually run with: the rail potential argument, ported to the
+lazy state.
 
 `potentialL = heap.a.size + Σ undone out-degrees` strictly decreases at
 every live step (`lstep_potential`): a pop always shrinks the heap by
@@ -25,8 +25,8 @@ via `lsettle_spec`). `all_settles_stop` is the headline.
 
 Combined with `lsettle_eq_iter`/`lsettle_comm` (refinement) and
 `settled_final` (`LazyInv.lean`), no hypothesis about the lazy search
-remains unproved: the TS loop always terminates within the modelled
-fuel, pausing order is irrelevant, and settled reads are final.
+remains unproved: the loop always terminates within the modelled fuel, pausing
+order is irrelevant, and settled reads are final.
 -/
 
 namespace Verified.Geo
@@ -336,8 +336,7 @@ theorem settles_eq_iter {g : Graph} {maxR : Nat} (s₀ : LState) :
 
 /-- **Every settle stops.** Through any interleaving of memoised settle
 calls (arbitrary targets and fuels), the next settle with fuel ≥ `E + 1`
-lands stopped — the TS unfueled `while (heap.size)` loop always
-terminates, at every resume. -/
+lands stopped: the unfueled loop always terminates, at every resume. -/
 theorem all_settles_stop {g : Graph} {maxR t src fuel : Nat}
     (calls : List (Nat × Nat)) (hfuel : totalOut g + 1 ≤ fuel) :
     stopAt t (lsettle g maxR t fuel

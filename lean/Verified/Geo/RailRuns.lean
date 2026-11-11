@@ -24,15 +24,14 @@ similar job and the two are NOT interchangeable:
 * that one strips a directional by matching a fixed list of `" Eastbound"`-style
   suffixes; this one uses `\s+(?:East|West|North|South)bound$/i`, so it also
   strips `"Line EASTBOUND"` and `"Line   Westbound"`;
-* a combined name that splits into only ONE part returns the BASE here
-  (`"Solo Lines"` → `["Solo Lines"]`, not `["Solo Line"]`) — the TS guards on
-  `parts.length > 1`.
+* a combined name that splits into only one part returns the base here
+  (`"Solo Lines"` → `["Solo Lines"]`, not `["Solo Line"]`): splitting needs
+  more than one part.
 
 All three differences are guarded below.
 
 Exactness: every decision is exact; `haversineMeters` (atan2) puts the platform
-cluster's spread test at ≤ 1 ULP. UNPROVEN; pinned against Node/V8
-(`lean/experiments/rail-runs-refs.mts`).
+cluster's spread test at ≤ 1 ULP. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.RailRuns
@@ -207,9 +206,9 @@ departure both read as heading home. A scan therefore walks straight through the
 interchange and names a station from the OTHER direction of travel. The split
 pass decided this boundary from the whole leg's geometry; take it.
 
-`[...points].sort((a,b) => |a.ts - t| - |b.ts - t|)[0]` in the TS. The index is
-carried in the key rather than relying on `List.mergeSort` being left-biased, so
-the order is total and matching V8's stable sort is a fact about the comparator. -/
+The fix nearest `t` in time, first on a tie. The index is carried in the key
+rather than relying on `List.mergeSort` being left-biased, so the order is
+total. -/
 def nearestByTs (points : Array Fix) (t : Int) : Option Fix :=
   let keyed := points.mapIdx fun i p => (p, i)
   ((keyed.toList.mergeSort fun a b =>
@@ -249,11 +248,10 @@ sequence, the early part of a multi-station ride lands in the preceding
 then any fix at or before it. -/
 def findRunBoardingFix (points : Array Fix) (startTs : Int)
     (startsAtTurnaround : Bool := false) : Option Fix :=
-  -- The mirror of the alight case: a run cut at a turnaround BOARDS there, and
+  -- The mirror of the alight case: a run cut at a turnaround boards there, and
   -- the platform walkback would otherwise stride back across the cut into the
-  -- OUTBOUND journey and name a station the rider merely passed through on the
-  -- way out — on 2026-07-07 it reached Baker Street, fifteen minutes and one
-  -- whole direction of travel earlier.
+  -- outbound journey and name a station the rider merely passed through on the
+  -- way out, fifteen minutes and one whole direction of travel earlier.
   if startsAtTurnaround then nearestByTs points startTs else
   let lastWhere (pred : Fix → Bool) : Option Fix :=
     (points.filter pred).back?
@@ -261,7 +259,7 @@ def findRunBoardingFix (points : Array Fix) (startTs : Int)
     (lastWhere fun p => p.ts ≤ startTs && p.speedKmh < POST_TRANSIT_SPEED_KMH).orElse fun _ =>
       lastWhere fun p => p.ts ≤ startTs
 
-/-! ## Guards (V8 reference values) -/
+/-! ## Guards -/
 
 open Verified.FloatConst (pi)
 private def lat0 : Float := 51.52

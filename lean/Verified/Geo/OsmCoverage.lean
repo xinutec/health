@@ -9,8 +9,7 @@ nothing while looking exactly like an area with no roads in it.
 
 That distinction is the whole point of the module. A host that reads the mirror
 without asking this first cannot tell "no ways here" from "not fetched here",
-and the first is a claim — the shape health #976 is open about, and the trap
-#982 records for the Rust answerer.
+and the first is a claim.
 
 Five rules, each small and each easy to get silently wrong:
 
@@ -30,16 +29,14 @@ network when the answer is already local" — and it is what stops a trip to an
 unfetched city looping on Overpass timeouts when an earlier visit already
 brought the roads back as overflow.
 
-Two things the host does before a row reaches this gate (2026-10-03): a
-landmark box is read only under the venue-tag vocabulary it was fetched with
+Two things the host does before a row reaches this gate: a landmark box is read
+only under the venue-tag vocabulary it was fetched with
 (`osm_mirror::coverage_rows`), and `hasLocalData` is not asked for the landmark
 bucket at all, where it could only bypass a box's date or vocabulary
 (`mirror_source`).
 
 Pure and total. The only transcendental is `cos` in `metersPerDegLon`, which
-reaches a box edge and never a coordinate. UNPROVEN; pinned by the `#guard`s,
-every one of which is what `src/geo/osm-local.ts` actually did under Node —
-see `lean/experiments/osmcoverage-refs.mts`.
+reaches a box edge and never a coordinate. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.OsmCoverage
@@ -100,10 +97,8 @@ def decideCoverage
 
 /-! ## Guards
 
-Every expectation below is what `src/geo/osm-local.ts` produced under Node, not
-a value reasoned to. Regenerate with `npx tsx lean/experiments/osmcoverage-refs.mts`
-after any change to the TypeScript; a guard that stops matching means the port
-and the original have diverged, which is the whole question. -/
+Every expectation below is the original implementation's answer, not a value
+reasoned to; a guard that stops matching means the behaviour changed. -/
 
 private def NOW : Int := 1700000000000
 private def day : Int := 86400000

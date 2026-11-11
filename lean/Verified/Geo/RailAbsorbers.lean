@@ -7,12 +7,11 @@ passes and the feasibility check.
 
 ## `parseRailWayName` is deliberately NOT reused from `Verified.Geo.Worldline`
 
-`Board → Alight · Line` is parsed by THREE different functions in the TS and
-they disagree. `Worldline.parseRailWayName` mirrors **rail-snap's**: strip the
-` · Line` suffix FIRST, then find the arrow, trimming both endpoints and
-rejecting either when empty. The one here is **rail-reconcile.ts**'s and does
-none of that — it finds the ARROW first and looks for the line separator only
-in what follows, without trimming and without rejecting empties:
+`Board → Alight · Line` is parsed two ways, and they disagree.
+`Worldline.parseRailWayName` strips the ` · Line` suffix first, then finds the
+arrow, trimming both endpoints and rejecting either when empty. The one here
+does none of that: it finds the arrow first and looks for the line separator
+only in what follows, without trimming and without rejecting empties:
 
 | input         | rail-snap / `Worldline`    | rail-reconcile (here)          |
 |---------------|----------------------------|--------------------------------|
@@ -24,8 +23,8 @@ in what follows, without trimming and without rejecting empties:
 A comparison of `prevRail.alight == nextRail.board` sees the difference, and
 two of the guards below are exactly that discriminator.
 
-Wholly EXACT — no Float arithmetic in the parser. UNPROVEN; pinned against
-Node/V8 (`lean/experiments/rail-absorbers-refs.mts`).
+Wholly exact: no Float arithmetic in the parser. UNPROVEN; pinned by the
+`#guard`s.
 -/
 
 namespace Verified.Geo.RailAbsorbers
@@ -40,9 +39,8 @@ def RAIL_LINE_SEP : String := " · "
 
 /-- `board`, `alight`, and the line when a ` · ` suffix is present.
 
-`line` is an `Option` because the TS field is optional — but note it is
-`some ""` for a label ending in a bare separator (`"A → B · "`), which is
-PRESENT-but-falsy in JS; the guards pin it. -/
+`line` is an `Option`, but note it is `some ""` for a label ending in a bare
+separator (`"A → B · "`), present but empty; the guards pin it. -/
 structure RailTriple where
   board : String
   alight : String
@@ -70,7 +68,7 @@ def parseRailWayName (wayName : Option String) : Option RailTriple :=
       | none => some { board, alight := rest }
       | some (alight, line) => some { board, alight, line := some line }
 
-/-! ## Guards (V8 reference values) -/
+/-! ## Guards -/
 
 private def T (b a : String) (l : Option String := none) : Option RailTriple := some ⟨b, a, l⟩
 

@@ -17,8 +17,8 @@ rows already decoded to a coordinate list, and a row the shell could not decode
 is simply absent. The `length ≥ 2` rejection is a real decision and stays here.
 
 Exactness: every decision is exact, and `interpolateTimes` (reused from
-`Verified.Geo.RailSnap`) carries its own ≤ 1 ULP metric. UNPROVEN; pinned
-against Node/V8 (`lean/experiments/rail-reconcile-refs.mts`).
+`Verified.Geo.RailSnap`) carries its own ≤ 1 ULP metric. UNPROVEN; pinned by
+the `#guard`s.
 -/
 
 namespace Verified.Geo.RailReconcile
@@ -115,7 +115,7 @@ def reattachSnappedPaths (segments : Array Seg) (railRouteCache : Array RouteRow
               (Float.ofInt seg.startTs) (Float.ofInt seg.endTs)) }
         | none => { seg with snappedPath := none }
 
-/-! ## Guards (V8 reference values) -/
+/-! ## Guards -/
 
 private def blank : Seg := { startTs := 0, endTs := 0, mode := "" }
 private def tr (a b : Int) (wayName : Option String) (pointCount : Int := 10)

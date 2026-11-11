@@ -30,7 +30,7 @@ circle's extent on both axes and the box strictly contains the radius circle.
 The pre-filter therefore cannot remove a row the distance test would keep: it
 exists to make the spatial index usable, and is an accelerator, not a predicate.
 
-UNPROVEN; pinned against Node/V8 (`lean/experiments/osm-spatial-refs.mts`).
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.OsmSpatial
@@ -87,8 +87,8 @@ def queryPoints (rows : Array PointRow) (lat lon radiusM : Float)
   let wanted :=
     if subtypes.isEmpty then inRadius
     else inRadius.filter fun s => subtypes.contains s.row.subtype
-  -- V8's `sort` is stable, and `mergeSort` with `≤` matches it: equal
-  -- distances keep the order the rows arrived in.
+  -- A stable sort (`mergeSort` with `≤`): equal distances keep the order the
+  -- rows arrived in.
   let ordered := (wanted.toList.mergeSort fun a b => a.distanceM ≤ b.distanceM).toArray
   ordered.extract 0 (min 50 ordered.size)
 
@@ -106,7 +106,7 @@ def deriveStationSubtype (r : PointRow) : String :=
   -- A `railway=stop` is a platform position, not the station: `stationTier`
   -- ranks it below every station node. Read as "rail" it was a mainline
   -- station, and at King's Cross a platform 19 m off outranked the tube
-  -- station 119 m off (2026-08-13, "Victoria → London King's Cross").
+  -- station 119 m off.
   else if r.subtype == "stop" then "stop_position"
   else if tag r "station" == some "subway" then "subway"
   else if tag r "station" == some "light_rail" then "light_rail"
@@ -145,10 +145,10 @@ def dedupeStationsByName (scored : Array ScoredPoint) : Array NearbyStation := I
       let cand : NearbyStation :=
         { name := nm, subtype := deriveStationSubtype s.row, distanceM := s.distanceM
           lat := s.row.lat, lon := s.row.lon }
-      -- Same name AND same kind collapse. Two station records of different
-      -- subtypes are two stations at one site — King's Cross St Pancras is a
-      -- tube node and a mainline node — and keeping only the nearer lost the
-      -- tube one, so a tube ride could not prefer it (2026-08-13).
+      -- Same name and same kind collapse. Two station records of different
+      -- subtypes are two stations at one site (King's Cross St Pancras is a
+      -- tube node and a mainline node), and keeping only the nearer would lose
+      -- the tube one, so a tube ride could not prefer it.
       let entrance := fun (x : NearbyStation) => x.subtype == "subway_entrance"
       match best.findFinIdx? (fun b => b.name == nm &&
           (b.subtype == cand.subtype || entrance b || entrance cand)) with
@@ -293,7 +293,7 @@ over segments clamped at the endpoints, confirmed against the live server". The
 confirmation was run on a TWO-VERTEX fixture, which cannot tell that behaviour
 apart from "distance to the nearest vertex". It is the second.
 
-Measured on MariaDB 12.3.2 (2026-07-26), same point, same coordinates:
+Measured on MariaDB 12.3, same point, same coordinates:
 
     full 12-vertex line   0.002419365488074187  = the distance to VERTEX 2
     its segment 1 alone   0.002405760590290686  = the true perpendicular
@@ -309,13 +309,10 @@ about it a theorem about the defect.
 
 ### How big is it, really
 
-An earlier note here put the consequences at "4 of 3840 ways, worst 0.94 m,
-zero bar crossings". Those numbers were real but the SAMPLE was not
-representative: it drew only from `highway`/`railway` rows near captured query
-points. Roads are densely vertexed along their curves, so the gap between the
-perpendicular foot and the nearest vertex stays small. Replaying all 2521
-captured kernel queries against the pushed row-set
-(`lean/experiments/osm-rowset-parity.mts`, 2026-07-26) gives the real scale:
+A sample drawn only from `highway`/`railway` rows near captured query points
+understates the gap: roads are densely vertexed along their curves, so the gap
+between the perpendicular foot and the nearest vertex stays small. Replaying
+every captured kernel query against the pushed row-set gives the real scale:
 
 - `nearbyLandmarks` — worst **17.67 m**. Landmark rows include closed ways:
   parks, buildings, car parks. A polygon's long wall carries vertices only at
@@ -430,17 +427,17 @@ def queryLines (rows : Array LineRow) (lat lon radiusM : Float)
     (subtypes : Array String := #[]) : Array ScoredLine :=
   let mpd := mPerDegAt lat
   let dDeg := radiusM / mpd
-  -- A CLOSED way encloses by the true inside test; its bounding box also covers
-  -- the streets around it (#325: a hospital "enclosed" a stay 34 m outside it).
+  -- A closed way encloses by the true inside test; its bounding box also covers
+  -- the streets around it (a hospital "enclosed" a stay 34 m outside it).
   -- An open way has no inside, so it keeps the box.
   let closed (c : Array (Float × Float)) := c.size ≥ 4 && c[0]? == c[c.size - 1]?
   let scored := rows.map fun r =>
     (r, lineDistDeg r.coords lat lon,
       if closed r.coords then ringContains r.coords lat lon else mbrContainsPoint r.coords lat lon)
-  -- In range, or STANDING INSIDE it: from the middle of a large outline every
-  -- edge is out of range, and a stay deep inside Cristina Enea park (2026-10-03,
-  -- 130 m from its outline) had no candidate at all. The reported distance stays
-  -- the edge's, so a venue inside the park still ranks against it as before.
+  -- In range, or standing inside it: from the middle of a large outline every
+  -- edge is out of range, and a stay deep inside a park, 130 m from its
+  -- outline, had no candidate at all. The reported distance stays the edge's,
+  -- so a venue inside the park still ranks against it as before.
   let inRadius := scored.filter fun s => s.2.1 < dDeg || ringContains s.1.coords lat lon
   let wanted :=
     if subtypes.isEmpty then inRadius

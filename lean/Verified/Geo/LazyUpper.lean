@@ -17,7 +17,7 @@ relaxation* its whole adjacency has been relaxed, so every out-neighbour's
 `dist` was pushed at or below `dist[u] + w`, and `dist` only ever decreases
 afterwards. The `dist[u] ≤ maxR` gate is what excludes the single
 radius-exhausted vertex (settled at price `> maxR` with its edges deliberately
-*not* relaxed — the TS cutoff); that vertex is never any vertex's `prev`, so the
+*not* relaxed, the radius cutoff); that vertex is never any vertex's `prev`, so the
 gate costs the route reconstruction nothing. `iter_uinv` carries it from
 `linit`; the companion lower bound (`LazyWeight`'s `WInv`, the recorded-edge
 provenance) closes the gap to the exact equality

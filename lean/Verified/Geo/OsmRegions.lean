@@ -2,10 +2,10 @@
 # Where to mirror: regions, the home metro, and its tiles
 
 The two Overpass mirrors (`refresh-rail-stops`, `refresh-bus-routes`) both begin
-by answering the same question — *which patch of the planet is this user's life
-in?* — and both answer it the same way: cluster the recent focus places into
+by answering the same question, *which patch of the planet is this user's life
+in?*, and both answer it the same way: cluster the recent focus places into
 metropolitan regions, take the largest, bound it, and cut that box into tiles
-small enough that one Overpass call stays light (#982 Tier 2).
+small enough that one Overpass call stays light.
 
 Port of the pure half of `src/geo/route-graph-loader.ts`.
 
@@ -25,8 +25,8 @@ index order. The mirrors pick the largest region with a `reduce` that keeps the
 FIRST on a tie, so two regions of equal size resolve by this ordering — a
 different-but-valid union-find would mirror a different city.
 
-So the union is reproduced exactly as the TypeScript writes it: `parent[find i] =
-find j` for `i < j`, path-halving in `find`, and no union by rank.
+So the union is fixed exactly: `parent[find i] = find j` for `i < j`,
+path-halving in `find`, and no union by rank.
 -/
 
 namespace Verified.Geo.OsmRegions
@@ -46,7 +46,7 @@ structure Pt where
   lon : Float
   deriving Repr, Inhabited
 
-/-- Metres per degree of latitude, the constant the TypeScript uses. -/
+/-- Metres per degree of latitude. -/
 def M_PER_DEG : Float := 111320.0
 
 /-- Earth radius in km, as used by the clustering haversine. -/
@@ -133,9 +133,9 @@ def clusterIntoRegionIndices (pts : Array Pt) (maxGapKm : Float) : Array (Array 
       if decide (haversineKm (pts[i]'hi.upper) (pts[j]'hj.upper) ≤ maxGapKm) then
         let (ri, p1) := findRoot parent i
         let (rj, p2) := findRoot p1 j
-        -- ⚠ i's root points at j's root, never the other way. The TypeScript
-        -- writes `parent[find(i)] = find(j)`; flipping it changes which index
-        -- ends up as the root and therefore the order groups come back in.
+        -- ⚠ i's root points at j's root, never the other way: flipping it
+        -- changes which index ends up as the root and therefore the order
+        -- groups come back in.
         parent := p2.set! ri rj
   -- Groups in order of each root's FIRST appearance, members ascending.
   let mut groups : Array (Nat × Array (Fin pts.size)) := #[]

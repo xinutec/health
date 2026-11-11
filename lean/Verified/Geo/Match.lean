@@ -1062,14 +1062,11 @@ private def graphEq (a b : QGraph) : Bool :=
 
 /-! ## Candidates -/
 
-/-- The tie tolerance at the candidate cut, in µm — `CANDIDATE_TIE_M`
-(`map-match-core.ts`) and `CANDIDATE_TIE_UM` (`match-twin.ts`) in this arm's
-units, and derived there: it is the largest amount by which quantising to 1e-7°
-can move a point-to-segment distance (1.97 cm at London's latitude), and three
-times the 0.649 cm actually measured over the golden corpus. Below it, which of
-two candidates is "nearer" is an artifact of which arm computed it. A wider
-band is not safer — 5 cm was tried and introduced a new 16 m float↔quant
-divergence on 2026-06-12; `map-match-core.ts` carries that measurement. -/
+/-- The tie tolerance at the candidate cut, in µm: the largest amount by which
+quantising to 1e-7° can move a point-to-segment distance (1.97 cm at London's
+latitude), three times the 0.649 cm measured over the golden corpus. Below it,
+which of two candidates is "nearer" is an artifact of the arithmetic. A wider
+band is not safer: 5 cm introduced a new 16 m float↔quant divergence. -/
 def candidateTieUm : Nat := 20000
 
 /-- Ceiling on the tie-inclusive extension, as a multiple of the cut — keeps
@@ -1713,15 +1710,15 @@ structure QMatchProfile where
   simplifyTolUm : Nat
   buildingCrossFactor : Nat
   buildingSupportUm : Nat
-  /-- #445: when attributing the chosen route's arc length per way name
-  (`QMatchResult.wayUm`), an edge on an UNNAMED way is charged to the nearest
-  NAMED way within this distance — 0 disables. OSM models a street's pavement
+  /-- When attributing the chosen route's arc length per way name
+  (`QMatchResult.wayUm`), an edge on an unnamed way is charged to the nearest
+  named way within this distance; 0 disables. OSM models a street's pavement
   and its carriageway as separate ways and the pavement is almost always
   unnamed, so without this the street a walk rides loses its own metres to
-  the `none` bucket and any named square on the route outweighs it. Measured
-  2026-09-04: raw argmax broke 12 of 45 enforceable named-walk truths
-  exactly that way. Same rationale and bar as `RefineMode`'s
-  `WALK_NAME_BORROW_MAX_M` (30 m), applied per EDGE rather than per leg. -/
+  the `none` bucket and any named square on the route outweighs it (raw
+  argmax broke a quarter of the enforceable named-walk truths that way). Same
+  rationale and bar as `RefineMode`'s `WALK_NAME_BORROW_MAX_M` (30 m), applied
+  per edge rather than per leg. -/
   nameBorrowUm : Nat := 0
 
 def WALK_QPROFILE : QMatchProfile :=
@@ -1871,15 +1868,15 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
         rrow := rrow.push route
       rmat := rmat.push rrow
     routeAcc := routeAcc.push rmat
-    -- Drop every cached search whose source is not an endpoint of THIS layer's
-    -- candidates — the only sources the next layer can ask for. Each `LState`
+    -- Drop every cached search whose source is not an endpoint of this layer's
+    -- candidates, the only sources the next layer can ask for. Each `LState`
     -- carries three arrays of `n` (`linit`), so an unbounded cache is
-    -- O(sources × n): 985 candidates over a 20,631-vertex corridor on
-    -- 2026-05-25 was ~500 MiB, the whole of #1071. Value-preserving by
-    -- `qRouteBetween_route_pure`: the route result is independent of which
-    -- valid cache is threaded, and a cache with entries removed is still
-    -- `OnTrajCache`. What is lost is re-use when a source recurs two or more
-    -- layers later; a source shared by consecutive layers is kept.
+    -- O(sources × n): 985 candidates over a 20,631-vertex corridor is ~500 MiB.
+    -- Value-preserving by `qRouteBetween_route_pure`: the route result is
+    -- independent of which valid cache is threaded, and a cache with entries
+    -- removed is still `OnTrajCache`. What is lost is re-use when a source
+    -- recurs two or more layers later; a source shared by consecutive layers is
+    -- kept.
     let keep : Array Nat := cur.cands.foldl (init := #[]) fun acc c =>
       let s := graph.segments.getD c.si default
       (acc.push s.u).push s.v
@@ -2057,8 +2054,8 @@ coarse line. These specialise the already-proved pass theorems
   `coarsePath` vertex or a timestamp-clamped route vertex lying within the
   splice `dropM` (`simplifyTolUm`, 5 m) of the coarse chord it was inserted
   against (`qSplice_sound`: an excision window past `dropM` inserts nothing;
-  the `1.5 m` `tol` is the splice's internal simplify floor, #369's lower
-  band).
+  the `1.5 m` `tol` is the splice's internal simplify floor, the decision
+  layer's lower band).
 
 Both are corollary-grade — the flagship is the Viterbi argmax below. The
 `qMatchWalkSegment_eq` bridge isolates the one `Id.run do` reduction so the
@@ -2234,9 +2231,8 @@ private def co : QCorridor := mkQCorridor #[] 25000000 80000000 40
 
 /-! ### `ROAD_QPROFILE` and `qMatchRoadSegment`
 
-References: `lean/experiments/road-profile-refs.mts`, which derives the
-quantised fields from the float `ROAD_PROFILE` and runs the scenario below
-through the BigInt twin. -/
+The reference values derive the quantised fields from the float `ROAD_PROFILE`
+and run the scenario below through the integer arithmetic. -/
 
 -- Every field, against the harness's derivation from `ROAD_PROFILE`.
 #guard ROAD_QPROFILE.minFixes == 3

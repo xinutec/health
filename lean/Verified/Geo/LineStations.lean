@@ -50,7 +50,7 @@ well, since `\s+` cannot match before position 0.
 finds no boundary between 'e' and 's' in "lines", backtracks to "lines", and
 then needs a boundary after the final 's'.
 
-## Deviations from the TS, both deliberate
+## Deliberate choices
 
 * The DB reads (`loadRailwayLineNames`, `loadAllRailwayStations`) and the
   in-process cache are shell. What arrives here is the pushed data.
@@ -59,8 +59,7 @@ then needs a boundary after the final 's'.
   which neither trims nor folds.
 
 Exactness: `cos` and `hypot` enter, so distances are `approx` (≤1 ULP). The
-name functions and the kept-set are EXACT. UNPROVEN; pinned against Node/V8
-(`lean/experiments/line-stations-refs.mts`).
+name functions and the kept-set are exact. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.LineStations
@@ -226,9 +225,8 @@ private def parseWay (w : WayGeometry) : Option ParsedWay :=
 Keep the station candidates within `MAX_DIST_M` of any of the ways. Dedupes by
 NAME and preserves input order.
 
-Ports the TS `filterStationsByLineProximityParsed` — the geometry decision alone.
-Its sibling `filterStationsByLineProximity` is the WKT wrapper, which parses and
-then calls this; parsing is boundary work, not part of the rule.
+`filterStationsByLineProximityParsed`: the geometry decision alone. Parsing the
+WKT is boundary work, not part of the rule.
 
 Order is part of the answer, not incidental: downstream journey resolution reads
 positional relationships out of this list, so a set-equal-but-reordered result is
@@ -266,9 +264,8 @@ def filterStationsByLineProximity
 
 /-! ## Guards
 
-`maxAbsLat` is computed over ALL ways including the sub-two-vertex ones that
-`parseWay` drops — a quirk of the TS's two loops, reproduced here rather than
-tidied, since a dropped way can still widen the longitude pad.
+`maxAbsLat` is computed over all ways, including the sub-two-vertex ones that
+`parseWay` drops, since a dropped way can still widen the longitude pad.
 -/
 
 -- lineBaseToken: the qualifier strip.

@@ -4,8 +4,7 @@ import Verified.Geo.OsmRouteMembers
 # Which bus relations are worth mirroring, and when it is safe to write them
 
 `refresh-bus-routes` mirrors OSM `route=bus` relations with their ordered stop
-lists into `bus_route_cache` — the ingestion half of C-bus, whose matcher is
-`bus-route-match.ts` (#982 Tier 2).
+lists into `bus_route_cache`: the ingestion half of the bus matcher.
 
 Port of `src/geo/osm-bus-routes.ts` and the pure decision in
 `src/geo/bus-route-cache.ts`.
@@ -68,10 +67,9 @@ def buildBusRouteOverpassQuery (minLat minLon maxLat maxLon : String) : String :
 
 /-- Keep the routes that can be both named and anchored.
 
-⚠ AN EMPTY `ref` IS NO REF. The TypeScript writes `if (!routeRef) continue`,
-which rejects `""` along with the absent tag — and OSM does carry empty `ref`
-tags. Testing `isNone` alone would admit a route whose rider-facing number is the
-empty string. -/
+⚠ An empty `ref` is no ref: OSM does carry empty `ref` tags, and testing
+`isNone` alone would admit a route whose rider-facing number is the empty
+string. -/
 def extractBusRoutes (rels : Array RawRelation) (nodes : Array (Nat × ResolvedNode))
     : Array BusRoute := Id.run do
   let mut out : Array BusRoute := #[]

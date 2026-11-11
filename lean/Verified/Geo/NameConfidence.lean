@@ -1,15 +1,15 @@
 /-!
 # How often each naming rule has been right
 
-The user's call, 2026-09-15: a stay's name is a guess, and the guess is shown
-with "the certainty percentage from our own calculation". The calculation that carries
-one is WHICH RULE named the stay (`Seg.placeSource`). Measured on the confirmed
-stays of the golden corpus, the ranking's own softmax posterior does not: at
-leave-one-out it scores the same Brier as a constant (0.175 against 0.175),
-because the rules that decide most names — inside a building, the nearest
-venue — sit outside the totals it is computed from. The rule does separate
-(0.139): a name from inside a building is almost always right, one from the
-summed evidence far less often — `COUNTS` has the figures.
+The user's call: a stay's name is a guess, and the guess is shown with "the
+certainty percentage from our own calculation". The calculation that carries one
+is which rule named the stay (`Seg.placeSource`). On the golden corpus's
+confirmed stays the ranking's own softmax posterior does not: at leave-one-out
+it scores the same Brier as a constant (0.175 against 0.175), because the rules
+that decide most names (inside a building, the nearest venue) sit outside the
+totals it is computed from. The rule does separate (0.139): a name from inside a
+building is almost always right, one from the summed evidence far less often;
+`COUNTS` has the figures.
 
 So the number shown is the rule's hit rate on his confirmed days, estimated by
 the rule of succession, `(right + 1) / (graded + 2)` — a small sample never

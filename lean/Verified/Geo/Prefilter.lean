@@ -7,22 +7,21 @@ import Verified.Geo.Simplify
 small" stratum of the V4 port. Parametric over the point type and the
 per-hop predicates, like the rest of the pass layer:
 
-- `holdSpeed` (TS `holdImplausibleSpeed`): keep the longest
-  plausible-speed run over all start fixes; `ok last cur` is the TS
-  "`dt > 0` and implied speed within `capKmh`" test. Earliest longest
-  run wins (the TS strict `>`), so a leading or trailing straggler is
-  excluded rather than anchoring the hold. The TS bypass for a
-  non-finite `capKmh` (return the input unfiltered) is the caller's
-  branch, outside this function.
-- `rejectSpikes`: drop lone geometric detours; `spike prev cur next` is
-  the TS "through > 3 × direct and through − direct > 500 m" test
-  against the last *kept* point.
+- `holdSpeed` (`holdImplausibleSpeed`): keep the longest plausible-speed run
+  over all start fixes; `ok last cur` is the "`dt > 0` and implied speed within
+  `capKmh`" test. The earliest longest run wins (strict `>`), so a leading or
+  trailing straggler is excluded rather than anchoring the hold. The bypass for
+  a non-finite `capKmh` (return the input unfiltered) is the caller's branch,
+  outside this function.
+- `rejectSpikes`: drop lone geometric detours; `spike prev cur next` is the
+  "through > 3 × direct and through − direct > 500 m" test against the last
+  *kept* point.
 
 Theorems:
 - `holdSpeed_chain` — **the kinematic honesty invariant**: every
   consecutive pair of the output satisfies `ok`. The whole point of the
-  pass (#265 Phase 1: never draw an impossible sprint) holds by
-  construction, for any instantiation of `ok`.
+  pass (never draw an impossible sprint) holds by construction, for any
+  instantiation of `ok`.
 - `holdSpeed_sublist` / `rejectSpikes_sublist`: outputs are
   subsequences of the input — the filters only drop, never invent or
   reorder fixes.
@@ -38,9 +37,8 @@ namespace Verified.Geo
 variable {π : Type}
 
 /-- One plausible-speed run: scan `i ∈ [i₀, n)`, keeping a fix only if
-`ok last (fixes i)` against the last *kept* fix — the TS `runFrom`
-inner loop. `acc` is the kept list so far (in order), `last` its final
-element. -/
+`ok last (fixes i)` against the last *kept* fix. `acc` is the kept list so far
+(in order), `last` its final element. -/
 def runGo (ok : π → π → Bool) (fixes : Nat → π) (n i : Nat) (last : π)
     (acc : List π) : List π :=
   if _h : i < n then
@@ -122,8 +120,8 @@ theorem runFrom_sublist (ok : π → π → Bool) (fixes : Nat → π) {n s : Na
   rw [List.range_succ, List.map_append]
   exact List.sublist_append_right _ _
 
-/-- The longest-run selection over start fixes (earliest longest wins —
-the TS strict `>`). -/
+/-- The longest-run selection over start fixes (earliest longest wins, strict
+`>`). -/
 def bestRun (ok : π → π → Bool) (fixes : Nat → π) (n s : Nat)
     (best : List π) : List π :=
   if _h : s < n then
@@ -167,15 +165,15 @@ theorem bestRun_sublist (ok : π → π → Bool) (fixes : Nat → π) (n : Nat)
   termination_by s _ _ => n - s
   decreasing_by omega
 
-/-- The TS `holdImplausibleSpeed` over `n` fixes (short inputs are
-returned unchanged; the non-finite-cap bypass is the caller's). -/
+/-- `holdImplausibleSpeed` over `n` fixes (short inputs are returned unchanged;
+the non-finite-cap bypass is the caller's). -/
 def holdSpeed (ok : π → π → Bool) (fixes : Nat → π) (n : Nat) : List π :=
   if n < 2 then (List.range n).map fixes
   else bestRun ok fixes n 0 []
 
-/-- **The kinematic honesty invariant** (#265 Phase 1): every
-consecutive pair of the held output satisfies the plausibility
-predicate — the drawn leg never contains an implausible hop. -/
+/-- **The kinematic honesty invariant**: every consecutive pair of the held
+output satisfies the plausibility predicate, so the drawn leg never contains an
+implausible hop. -/
 theorem holdSpeed_chain (ok : π → π → Bool) (fixes : Nat → π) (n : Nat) :
     ∀ p ∈ adjPairs (holdSpeed ok fixes n), ok p.1 p.2 = true := by
   intro p hp
@@ -199,8 +197,7 @@ theorem holdSpeed_sublist (ok : π → π → Bool) (fixes : Nat → π) (n : Na
   next => exact bestRun_sublist ok fixes n 0 [] (List.nil_sublist _)
 
 /-- The spike-rejection scan over interior points `i ∈ [i₀, n - 1)`,
-testing each against the last *kept* point `prev` and its successor —
-the TS `rejectSpikes` loop. -/
+testing each against the last *kept* point `prev` and its successor. -/
 def rejectGo (spike : π → π → π → Bool) (pts : Nat → π) (n i : Nat)
     (prev : π) (acc : List π) : List π :=
   if _h : i < n - 1 then
@@ -258,7 +255,7 @@ theorem rejectGo_sublist (spike : π → π → π → Bool) (pts : Nat → π) 
   termination_by i _ _ _ _ => n - 1 - i
   decreasing_by all_goals omega
 
-/-- The TS `rejectSpikes` over `n` points (short inputs unchanged). -/
+/-- `rejectSpikes` over `n` points (short inputs unchanged). -/
 def rejectSpikes (spike : π → π → π → Bool) (pts : Nat → π) (n : Nat) :
     List π :=
   if n < 3 then (List.range n).map pts
@@ -315,8 +312,8 @@ private def toyLead (i : Nat) : Int :=
   | 2 => 1
   | _ => 2
 
--- A leading straggler does not anchor the hold: the longest run over
--- all start fixes excludes it (the Baker-St case from the TS comment).
+-- A leading straggler does not anchor the hold: the longest run over all start
+-- fixes excludes it.
 #guard holdSpeed toyOk toyLead 4 == [0, 1, 2]
 
 private def toySpike (prev cur next : Int) : Bool :=

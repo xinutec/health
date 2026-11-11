@@ -22,11 +22,10 @@ two OSM corridor queries and a snapper — shell work, and it stays shell.
 * **legs sharing a key POOL their fixes.** The same route ridden twice in a day
   is one route.
 
-⚠ **The retained window is the FIRST leg's, not the union.** A second leg
-contributes its fixes and discards its own `[startTs, endTs]`. That is what the
-TypeScript does — `cur` is mutated for `fixes` alone — and it is not an oversight
-to tidy: the window is what the snapper reads as the leg to lay on the corridor,
-and a union spanning two separate rides would name a journey nobody took.
+⚠ **The retained window is the first leg's, not the union.** A second leg
+contributes its fixes and discards its own `[startTs, endTs]`, deliberately:
+the window is what the snapper reads as the leg to lay on the corridor, and a
+union spanning two separate rides would name a journey nobody took.
 
 ⚠ **Order is the order the day was walked**, not sorted by key or by time. The
 queue is drained in this order, so a change here reorders the fills.
@@ -36,15 +35,14 @@ cache key, and thin or absent corridor evidence is `computeRailRoute`'s problem 
 it refuses rather than guessing. Dropping such a leg here would silently
 withdraw the one thing that could still route it from the line fallback.
 
-Pure and total. UNPROVEN; every `#guard` is what `src/geo/rail-route-fill.ts`
-produced under Node — see `lean/experiments/railfill-refs.mts`.
+Pure and total. UNPROVEN; the `#guard`s pin the original implementation's
+answers.
 -/
 
 namespace Verified.Geo.RailRouteFill
 
-/-- The minimal segment shape the scan reads. The TypeScript declares its own
-`FillSegment` for exactly this reason: the scan does not need a whole segment,
-and taking one would tie this to every field that moves. -/
+/-- The minimal segment shape the scan reads: the scan does not need a whole
+segment, and taking one would tie this to every field that moves. -/
 structure FillSegment where
   mode : String
   refinedMode : Option String := none
@@ -107,8 +105,8 @@ def unsnappedTrainRoutes (segments : List FillSegment) (points : List Fix) : Lis
 
 /-! ## Guards
 
-Every expectation is what `unsnappedTrainRoutes` produced under Node on the same
-input. Regenerate with `npx tsx lean/experiments/railfill-refs.mts`. -/
+Every expectation is the original `unsnappedTrainRoutes`' answer on the same
+input. -/
 
 private def PTS : List Fix :=
   [ { ts := 100, lat := 51.5, lon := -0.1 }

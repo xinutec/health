@@ -30,17 +30,16 @@ within the magnet radius and never past 2× the base 3σ.
 pull a noisy fix onto a known centroid when it is in range, unambiguous, and
 the GPS accuracy is worse than how precisely the place is known.
 
-Both files are wholly pure — no shell split was needed. Arithmetic and every
-ordering/veto decision are EXACT; `log`/`exp` put the scores at ≤1 ULP.
-UNPROVEN; pinned by the `#guard`s against Node/V8
-(`lean/experiments/place-prior-refs.mts`).
+Both are wholly pure, so no shell split is needed. Arithmetic and every
+ordering/veto decision are exact; `log`/`exp` put the scores at ≤1 ULP.
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.PlacePrior
 
 open Verified.Hsmm.FloatScore (haversineMeters)
 
-/-! ## Calibration (verbatim from the TS) -/
+/-! ## Calibration -/
 
 /-- The σ floor a thoroughly-established place converges to. Day-of GPS
     clusters routinely sit 100–200 m from a known centroid (indoor multipath,
@@ -242,7 +241,7 @@ where
   snapTo (p : KnownPlace) (dist : Float) : SnapResult :=
     ⟨p.centroidLat, p.centroidLon, some (p.radiusM.getD 10), true, some p, some dist⟩
 
-/-! ## Parity with Node/V8 (`lean/experiments/place-prior-refs.mts`) -/
+/-! ## Guards -/
 
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 
@@ -275,9 +274,9 @@ private def oneOff : PlaceCandidate := C 2 LAT LON 25 1 (some EVENING)
 
 /-! ### `magnetRadiusM` — constant reach
 
-Nothing pinned the magnet radius before 2026-08-12, and nothing pinned the
-boost at all: `biometricCoherence` defaults to `none`, so every guard above
-runs with the magnet contributing exactly 0. The whole mechanism was dark. -/
+`biometricCoherence` defaults to `none`, so every guard above runs with the
+magnet contributing exactly 0; the guards below pin the magnet radius and the
+boost. -/
 
 -- Reach does not scale with visit history. Before the fix these read 110 and
 -- 230 — a 500-day place got a magnet twice as wide as a one-off's.

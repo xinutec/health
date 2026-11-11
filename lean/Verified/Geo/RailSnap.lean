@@ -27,11 +27,8 @@ the shell:
   with the tail rejoined) and `metersBetween` in `Verified.Geo.WalkableRoute`
   (identical constants and formula).
 
-`snapTrainSegment` calls `shortestPathViaLean`, which returns the TS path
-unchanged when `LEAN_RAIL` is unset (mode `off`) — the arm ported here, and the
-arm the references pin. `parseLineMemberships` lives in `route-graph.ts` but is
-ported here because `wayOnLine` is its only consumer in this cluster — which
-also lets `snapTrainSegmentOnLine` do its own line filtering.
+`parseLineMemberships` is here because `wayOnLine` is its only consumer in this
+cluster, which also lets `snapTrainSegmentOnLine` do its own line filtering.
 
 The private helpers `cloudPenalty`, `edgeWeight` and `bridgeGaps` are pinned
 through the adjacency `buildRailGraph` returns, which exposes every weight as an
@@ -73,9 +70,8 @@ def isRailSubtype (subtype : Option String) : Bool :=
 
 /-- A grid-hashed cloud of historic GPS fixes. The cell is `cloudFarM`, so the
     3×3 neighbourhood of any point contains every fix within `cloudFarM` of it.
-    The TS keys a cell with the string `` `${cy},${cx}` ``; an `Int × Int` key is
-    the same partition (the pairing is injective either way) and the bucket
-    contents, hence every distance, are identical. -/
+    The `Int × Int` key partitions exactly as a `"cy,cx"` string key would, so
+    the bucket contents, hence every distance, are fixed. -/
 structure FixCloud where
   cLat : Float
   cLon : Float
@@ -304,10 +300,9 @@ def buildRailGraph (lines : Array RailWay) (cloud : FixCloud) (bridgeM : Float :
 
 /-! ## Dijkstra
 
-The binary min-heap is reproduced element-for-element — the same shape as
-`Verified.Geo.WalkableRoute`'s, because the TS duplicates it too. Relaxation is
-on STRICT improvement, so among equal-cost routes the winner is decided by
-which vertex the heap pops first. -/
+The binary min-heap has the same shape as `Verified.Geo.WalkableRoute`'s.
+Relaxation is on strict improvement, so among equal-cost routes the winner is
+decided by which vertex the heap pops first. -/
 
 /-- Priority and vertex travel together, so one bound covers both reads —
 the two parallel arrays this used to hold shared a length only by discipline. -/
@@ -591,11 +586,11 @@ private def relW (a b : Float) : RailWay := ⟨none, some "rail", #[⟨a, 0.0⟩
 
 /-! ## Guards
 
-Reference values from `lean/experiments/rail-snap-refs.mts`. Comparison is to
-within 1e-9 because `metersBetween` uses `Math.hypot` where Lean uses `sqrt` of
-the sum of squares. The nets below are the shell-side fusion the harness emits:
-a line-restricted way set fuses a different set of ways and therefore numbers
-its vertices differently, so each scenario carries its own. -/
+Reference values are compared to within 1e-9 because they were measured with an
+overflow-careful hypot where `metersBetween` uses `sqrt` of the sum of squares.
+The nets below are the shell-side fusion: a line-restricted way set fuses a
+different set of ways and therefore numbers its vertices differently, so each
+scenario carries its own. -/
 
 section Guards
 
@@ -691,7 +686,7 @@ private def stations : Array OsmStation :=
 #guard approx (cMain.nearestDist (P 900 500).lat (P 900 500).lon) 500
 #guard approx (cEmpty.nearestDist (P 0 0).lat (P 0 0).lon) 500
 
--- buildRailGraph: adjacency rows, in the TS's per-vertex insertion order.
+-- buildRailGraph: adjacency rows, in per-vertex insertion order.
 private def adjOk (g : RailGraph) (i : Nat) (expect : Array (Nat × Float)) : Bool :=
   let row := (g.adj[i]?).getD #[]
   row.size == expect.size &&

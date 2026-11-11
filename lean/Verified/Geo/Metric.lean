@@ -27,12 +27,10 @@ zero keep-set flips on simplify-5 m / the 12 km/h speed hold / spike
 rejection, and one near-threshold tie in 173 legs on the display-only
 1.5 m detail tolerance.
 
-Division semantics are part of the contract with the TS BigInt twin:
-`Int.fdiv` (floor) mirrors BigInt `>>`, `Int.tdiv` (truncation toward
-zero) mirrors BigInt `/` — every division below is one of the two,
-chosen to match the twin expression by expression. The `#guard` vectors
-at the bottom were computed by the twin arithmetic in node and pin the
-two sides together until the `compare-geometry` harness lands.
+Division semantics are part of the contract: `Int.fdiv` (floor) is an
+arithmetic shift, `Int.tdiv` truncates toward zero, and every division below is
+one of the two, chosen expression by expression. The `#guard` vectors at the
+bottom pin the arithmetic.
 
 This file also instantiates the metric-parametric pass layer
 (`Simplify`/`Splice`/`Prefilter`) with the pinned metric, so the pass
@@ -288,9 +286,9 @@ def isqrtFast (n : Nat) : Nat :=
 ⚠ `@[noinline]`, and that is the point of the definitions: a `def` whose body
 is a bare literal is inlined back into every caller, and the C emitter spells
 a `Nat` or `UInt64` literal ≥ 2^32 as a GMP string parse (`lean_cstr_to_nat`)
-on EVERY evaluation. `cosQ` paid two per bridge pair (sampled 2026-10-06);
-`Hsmm.pOff` carries the attribute for the same reason. Oracle: grep
-`lean_cstr_to_nat(` in `.lake/build/ir/<Module>.c` outside `_init_`. -/
+on every evaluation; `cosQ` paid two per bridge pair. `Hsmm.pOff` carries the
+attribute for the same reason. Oracle: grep `lean_cstr_to_nat(` in
+`.lake/build/ir/<Module>.c` outside `_init_`. -/
 @[noinline] def COS_K : UInt64 := 19190098069
 @[noinline] def COS_D : UInt64 := 10485760000000
 @[noinline] def COS_K_N : Nat := 19190098069
@@ -614,11 +612,11 @@ def qPerp (p a b : QPt) : Nat :=
   if bx * bx + vy * vy = 0 then isqrt (px * px + py * py).toNat
   else (px * vy - py * bx).natAbs / isqrt (bx * bx + vy * vy).toNat
 
-/-- The TS ≥140° turn test (`acos(dot/(|u|·|v|)) ≥ 140`) as an exact
-squared comparison: `dot ≤ 0 ∧ dot²·10⁹ ≥ round(cos²140°·10⁹)·|u|²·|v|²`
-(`586824089 = round(cos²140° · 10⁹)`). Vectors in the TS frame — Δlon
-scaled by the apex-latitude cos (Q20), Δlat by `2^20` to match.
-Degenerate legs keep the vertex, like the TS `1e-12` guard. -/
+/-- The ≥140° turn test (`acos(dot/(|u|·|v|)) ≥ 140`) as an exact squared
+comparison: `dot ≤ 0 ∧ dot²·10⁹ ≥ round(cos²140°·10⁹)·|u|²·|v|²`
+(`586824089 = round(cos²140° · 10⁹)`). Vectors in the local frame: Δlon
+scaled by the apex-latitude cos (Q20), Δlat by `2^20` to match. Degenerate
+legs keep the vertex. -/
 def qTurnOk (a c b : QPt) : Bool :=
   let cl : Int := cosQ c.la
   let ux : Int := (c.lo - a.lo) * cl
@@ -653,14 +651,13 @@ def qArcPos (v a b : QPt) (arcA arcB : Int) : Int :=
 def qSimplify (pts : Nat → QPt) (n tol : Nat) : List Nat :=
   simplifyIdx qChordDist pts n tol
 
-/-- The TS `1e-9`-degree coordinate match is exact equality at 1e-7°
-resolution. -/
+/-- A `1e-9`-degree coordinate match is exact equality at 1e-7° resolution. -/
 def qSame (a b : QPt) : Bool := a.la == b.la && a.lo == b.lo
 
-/-- The TS `< 0.5 m` dedupe check: 500 000 µm. -/
+/-- The `< 0.5 m` dedupe check: 500 000 µm. -/
 def qNear (a b : QPt) : Bool := qDist a b < 500000
 
-/-- The TS timestamp clamp `min(max(ts, a.ts), b.ts)`. -/
+/-- The timestamp clamp `min(max(ts, a.ts), b.ts)`. -/
 def qClampTs (a b v : QPt) : QPt := { v with ts := min (max v.ts a.ts) b.ts }
 
 /-- `spliceRouteDetail` over the pinned metric (tolerances in µm). -/
@@ -670,7 +667,7 @@ def qSplice (route : Nat → QPt) (m : Nat) (tol dropUm : Nat)
 
 /-- Speed plausibility at `cap` km/h, as the exact cross-multiplied
 integer form of `(d/dt)·3.6 ≤ cap`: `dt > 0 ∧ 36·d_µm ≤ cap·dt·10⁷`
-(`qDistA`, because the TS predicate uses `equirectMeters`). -/
+(`qDistA`, because the predicate measures with `equirectMeters`). -/
 def qSpeedOk (cap : Nat) (a b : QPt) : Bool :=
   b.ts - a.ts > 0 && 36 * (qDistA a b : Int) ≤ (cap : Int) * (b.ts - a.ts) * 10000000
 
@@ -692,7 +689,7 @@ def qDespike (minApexUm excessUm : Nat) (raw : List QPt) (path : Nat → QPt)
     (n : Nat) : List QPt :=
   despike qPerp qTurnOk (·.ts) minApexUm excessUm raw path n
 
-/-- The TS `trimOverRouteExcursions` default thresholds, in µm. -/
+/-- `trimOverRouteExcursions`' default thresholds, in µm. -/
 def qTrimP : TrimP :=
   { offM := 30000000, detourNum := 1, detourDen := 2, minStall := 80000000
     returnNum := 7, returnDen := 20, stallNum := 3, stallDen := 20

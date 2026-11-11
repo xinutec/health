@@ -3,19 +3,18 @@ import Verified.Geo.OsmRouteMembers
 /-!
 # Which rail relations are worth mirroring
 
-`refresh-rail-stops` mirrors OSM rail route relations — subway, train,
-light_rail, tram — with their ordered stop lists into `rail_stops_cache`.
+`refresh-rail-stops` mirrors OSM rail route relations (subway, train,
+light_rail, tram) with their ordered stop lists into `rail_stops_cache`.
 This module is the cron's judgement: the Overpass query it asks, and which of
-the relations that come back are kept (#982 Tier 2).
+the relations that come back are kept.
 
 Port of `src/geo/osm-rail-stops.ts`.
 
 ## Why relations and not proximity
 
 "Does line L stop at station S" is ground truth only a relation's `stop` members
-carry. Proximity cannot express passing-without-stopping: Dollis Hill sits within
-300 m of the Metropolitan's fast tracks and the Met does not stop there. That
-ambiguity is the 2026-07-16 wrong-line case.
+carry. Proximity cannot express passing without stopping: Dollis Hill sits within
+300 m of the Metropolitan's fast tracks and the Met does not stop there.
 
 ## ⚠ TRAM IS IN, DELIBERATELY
 
@@ -67,12 +66,11 @@ tile, so a line the user rides is mirrored end to end even when only its middle
 crosses the box. That is why tiling small is safe here: a tile is a way of
 finding relations, not of clipping them.
 
-⚠ THE COORDINATES ARRIVE ALREADY RENDERED, as strings. The TypeScript
-interpolates JS numbers, and Lean has no shortest-round-trip float renderer to
-match that with — so the shell formats them. That is safe HERE and would not be
-elsewhere: Overpass parses this string, nothing compares it, and `51.5` against
-`51.500000` selects the same box. The same shortcut on `stops_json`, which IS
-compared row for row, would be a defect. -/
+⚠ The coordinates arrive already rendered, as strings: Lean has no
+shortest-round-trip float renderer, so the shell formats them. That is safe
+here and would not be elsewhere: Overpass parses this string, nothing compares
+it, and `51.5` against `51.500000` selects the same box. The same shortcut on
+`stops_json`, which is compared row for row, would be a defect. -/
 def buildRailStopsOverpassQuery (minLat minLon maxLat maxLon : String) : String :=
   let box := s!"{minLat},{minLon},{maxLat},{maxLon}"
   let routeRe := s!"^({String.intercalate "|" RAIL_ROUTE_TYPES})$"
