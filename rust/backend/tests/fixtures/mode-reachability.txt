@@ -43,8 +43,6 @@ ceilingbless	bless	feasibility_corpus:278 reaches it only under FEASIBILITY_BLES
 
 # ── spare: deliberately host-reachable, no caller expected. NOT a backlog ─────
 
-coverage	spare	No caller through dispatch. cliMain reaches it straight from argv. The backend's own `coverage` CLI subcommand (lib.rs:101) is an unrelated name.
-rail	spare	No caller through dispatch; cliMain reaches railMain from argv. The `rail` in main.rs:5972 is a mirror TABLE name, not this mode.
 
 # ── found by this check on its first run, 2026-09-05 ──────────────────────────
 # All three were traced ONLY by `lean_serve`, the hop-1 probe. Every check we

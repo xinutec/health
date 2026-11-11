@@ -269,17 +269,6 @@ private def parseModel (j : Json) : Except String PData := do
     hasOv := hasOv, durOv := durOv
   }
 
-private def parseRail (j : Json) : Except String (Verified.Rail.Graph × Nat × Nat) := do
-  let adj : Array (Array (Nat × Nat)) ← (← (← j.getObjVal? "adj").getArr?).mapM fun r => do
-    (← r.getArr?).mapM fun e => do
-      let a ← e.getArr?
-      let some tJ := a[0]? | throw "adj: bad edge"
-      let some wJ := a[1]? | throw "adj: bad edge"
-      return (← tJ.getNat?, ← wJ.getNat?)
-  let src ← (← j.getObjVal? "src").getNat?
-  let dst ← (← j.getObjVal? "dst").getNat?
-  return (⟨adj⟩, src, dst)
-
 /-- Points for the geo mode: `[[la, lo, ts], ...]` in 1e-7° units /
 epoch seconds. -/
 private def parsePts (j : Json) : Except String (Array Verified.Geo.QPt) := do
@@ -466,26 +455,6 @@ graph-box-rings={t3e - t3d}ms graph-no-fixes={t3f - t3e}ms"
     | some b => IO.println (stat "building-grid" b.grid)
     | none => pure ()
     return (0 : UInt32)
-
-/-- The certified rail shortest-path as a pure result: any returned path is
-theorem-backed (`dijkstraC_correct`); a certification failure degrades to
-`none`. Lean side of `compare-rail`, and a `serve`-mode handler. -/
-private def railResult (j : Json) : Json :=
-  match parseRail j with
-  | .error e => Json.mkObj [("error", Json.str e)]
-  | .ok (g, src, dst) =>
-    match Verified.Rail.dijkstraC g src dst with
-    | none => Json.mkObj [("none", Json.bool true)]
-    | some path =>
-      match Verified.Rail.dijkstraDist g src dst with
-      | none => Json.mkObj [("error", Json.str "path without dist")]
-      | some d =>
-        Json.mkObj [
-          ("path", Json.arr (path.toArray.map fun v => Lean.toJson v)),
-          ("dist", Lean.toJson d)]
-
-private def railMain (input : String) : IO UInt32 :=
-  runOne railResult input
 
 /-! ## Assembling the model
 
@@ -953,25 +922,6 @@ incident edge ids.
     "nodes": [{id, lat, lon, stationName|null, edgeIds:[...]}] }
 
 Output: { "coverage": [[ts, [lines]]] }. -/
-
-private def coverageResult (j : Json) : Json :=
-  let parsed : Except String (Std.HashMap Int (List String)) := do
-    let obs ← (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
-    let edges ← (← (← j.getObjVal? "edges").getArr?).mapM parseEdge
-    let nodes ← (← (← j.getObjVal? "nodes").getArr?).mapM parseStationNode
-    let edgeById : Std.HashMap String Verified.Hsmm.RouteModel.RouteEdge :=
-      edges.foldl (fun m e => m.insert e.id e) {}
-    let nodeById : Std.HashMap String Verified.Hsmm.TrainCandidates.StationNode :=
-      nodes.foldl (fun m n => m.insert n.id n) {}
-    let sg : Verified.Hsmm.TrainCandidates.StationGraph :=
-      { model := Verified.Hsmm.RouteModel.buildRouteGraphModel edges, nodeById, edgeById }
-    let cands := Verified.Hsmm.TrainCandidates.enumerateTrainCandidates sg obs Verified.Hsmm.Assemble.KNOWN_LINES
-    return Verified.Hsmm.TrainCandidates.buildCoverage cands obs
-  match parsed with
-  | .error e => Json.mkObj [("error", Json.str e)]
-  | .ok cov =>
-    Json.mkObj [("coverage", Json.arr (cov.toList.map
-      (fun (ts, lines) => Json.arr #[Lean.toJson ts, Json.arr (lines.map Json.str).toArray])).toArray)]
 
 /-- Encode a quantised score into the packed `Nat` (`enc`: -∞ ↦ 0, `v ↦ v + 2^61`),
     refusing values outside `bound` (the verified envelope). -/
@@ -3808,13 +3758,11 @@ private def restHrResult (j : Json) : Json :=
 request into NDJSON. -/
 def dispatch (j : Json) : Json :=
   match (j.getObjVal? "mode" >>= (·.getStr?)) with
-  | .ok "rail" => railResult j
   | .ok "assemblesegments" => assembleSegmentsResult j
   | .ok "proximityqueries" => proximityQueriesResult j
   | .ok "proximitytable" => proximityTableResult j
   | .ok "knownlines" => knownLinesResult j
   | .ok "placenearline" => placeNearLineResult j
-  | .ok "coverage" => coverageResult j
   | .ok "kalman" => kalmanResult j
   | .ok "rankvenues" => rankVenuesResult j
   | .ok "bestplace" => bestPlaceResult j
@@ -3898,11 +3846,9 @@ def cliMain (args : List String) : IO UInt32 := do
   let timing := args.contains "--timing"
   let t0 ← IO.monoMsNow
   let input ← (← IO.getStdin).readToEnd
-  if args.contains "rail" then return ← railMain input
   if args.contains "matchprof" then return ← matchProfMain input
   if args.contains "decodeprof" then return ← decodeProfMain input
   if args.contains "decodetrace" then return ← runOne decodeTraceResult input
-  if args.contains "coverage" then return ← runOne coverageResult input
   if args.contains "kalman" then return ← runOne kalmanResult input
   if args.contains "rankvenues" then return ← runOne rankVenuesResult input
   if args.contains "bestplace" then return ← runOne bestPlaceResult input

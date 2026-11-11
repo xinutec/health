@@ -1,5 +1,5 @@
 import Verified.Geo.Prefilter
-import Verified.Geo.ModeBiometrics
+import Verified.Geo.Segments
 import Verified.FloatConst
 import Verified.Fix
 /-!
@@ -328,7 +328,7 @@ def clipPath (path : Array SPt) (st : State) : Array LatLon :=
 
 /-- The per-mode speed ceiling, `none` where the mode has none. -/
 def capForMode (mode : Mode) : Option Float :=
-  (Verified.Geo.ModeBiometrics.MAX_SPEED_FOR_MODE.find? (fun p => p.1 == mode)).map (·.2)
+  (Verified.Geo.Segments.MAX_SPEED_FOR_MODE.find? (fun p => p.1 == mode)).map (·.2)
 
 /-- Resolve one state's display geometry. Sequence-aware: the train and
 `unknown` connectors read the PREVIOUS resolved episode and the NEXT state's

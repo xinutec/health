@@ -28,23 +28,16 @@ that, upstream in the same pass list.
 `nearbyWays` and `reverseGeocode` are lookups; the caller supplies them. Every
 decision taken on their answers is here.
 
-`computeRailRoadProximity` is NOT computed. The TS computed it and passed it to
-`refineMode`, which forwards it to the FACTOR arm only — and the corpus takes the
-legacy cascade (`USE_FACTOR_SCORER` is unset; see `RefineMode`). Computing a value
-no reachable branch reads would be modelling the TS's shape rather than its
-behaviour. If the flag ever goes on, this is one of the things that has to change,
-and it is named here so that is a lookup rather than a search.
+The cascade reads neither rail/road proximity nor biometrics, so neither is
+computed here.
 
-`biometricCtx` is not modelled for the same reason one level down: it is gated by
-`USE_BIOMETRIC_FACTOR`, which is gated UNDER `USE_FACTOR_SCORER`.
-
-UNPROVEN; pinned against Node/V8 (`lean/experiments/enrich-refs.mts`).
+UNPROVEN; the guards pin the original implementation's answers.
 -/
 
 namespace Verified.Geo.Enrich
 
 open Verified.Geo.SegmentMerge (Seg)
-open Verified.Geo.Factors (NearbyWay)
+open Verified.Geo.RefineMode (NearbyWay)
 open Verified.Geo.RefineMode (sampleIdxs dedupNearestWays refineModeLegacyCascade
   rejectImplausibleDriving Plausible)
 

@@ -2,7 +2,7 @@ import Verified.Geo.SegmentMerge
 import Verified.Geo.OsmCorridor
 import Verified.Geo.DisplayGate
 import Verified.Geo.EpisodeGeometry
-import Verified.Geo.ModeBiometrics
+import Verified.Geo.Segments
 
 /-!
 # The road-match pass (port of `annotateRoadMatches`, `src/geo/road-match-annotate.ts`)
@@ -25,7 +25,7 @@ would make these guards assert the ceiling instead of the orchestration. The
 
 Everything the pass DECIDES with is the real Lean leaf — the spike rejection
 (`Verified.Geo.rejectSpikes` under `EpisodeGeometry.spikeAt`), the speed cap
-(`ModeBiometrics.MAX_SPEED_FOR_MODE`), the corridor fetch
+(`Segments.MAX_SPEED_FOR_MODE`), the corridor fetch
 (`Verified.Geo.OsmCorridor`) and the display gate
 (`Verified.Geo.DisplayGate.matchImprovesDisplay`). Only the two shell values are
 stubs.
@@ -124,7 +124,7 @@ def samplesInWindow (points : Array Fix) (startTs endTs : Int) : Array Fix :=
 /-- `MAX_SPEED_FOR_MODE[mode]` — absent for `driving` and `bus`, which is why
 those legs keep every in-window fix. -/
 def speedCapFor (mode : Mode) : Option Float :=
-  (Verified.Geo.ModeBiometrics.MAX_SPEED_FOR_MODE.find? fun p => p.1 == mode).map (·.2)
+  (Verified.Geo.Segments.MAX_SPEED_FOR_MODE.find? fun p => p.1 == mode).map (·.2)
 
 /-- The generic `rejectSpikes` at this pass's fix type, under
 `EpisodeGeometry`'s spike predicate. The whole fix survives — the matcher needs

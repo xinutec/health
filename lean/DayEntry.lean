@@ -223,7 +223,7 @@ private def parseStation (j : Json) : Except String Verified.Geo.TubeHop.NearbyS
     lon := ← optBits j "lon"
   }
 
-private def parseWay (j : Json) : Except String Verified.Geo.Factors.NearbyWay := do
+private def parseWay (j : Json) : Except String Verified.Geo.RefineMode.NearbyWay := do
   return {
     type := ← (← j.getObjVal? "type").getStr?
     subtype := ← (← j.getObjVal? "subtype").getStr?

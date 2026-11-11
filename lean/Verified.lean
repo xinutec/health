@@ -74,7 +74,6 @@ import Verified.Geo.PlaceOverride
 import Verified.Geo.StaySplit
 import Verified.Geo.DwellContinuation
 import Verified.Geo.BiometricCoherence
-import Verified.Geo.ModeBiometrics
 import Verified.Geo.Bus
 import Verified.Geo.OpeningHours
 import Verified.Geo.VenuePrior
@@ -86,7 +85,6 @@ import Verified.Geo.ServedJourneys
 import Verified.Geo.DayChain
 import Verified.Geo.DayState
 import Verified.Geo.NameConfidence
-import Verified.Geo.Factors
 import Verified.Geo.WalkableRoute
 import Verified.Geo.WalkEscape
 import Verified.Geo.WalkSmooth

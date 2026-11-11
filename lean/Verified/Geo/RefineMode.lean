@@ -1,32 +1,9 @@
-import Verified.Geo.Factors
 import Verified.FloatConst
 /-!
-# The legacy refine-mode cascade (port of `refineModeLegacyCascade`,
-`src/geo/osm.ts`)
+# The refine-mode cascade
 
 Given a segment's original mode, its pace, and the OSM ways near it, decide what
 the segment actually is and what to call it.
-
-## Why the LEGACY arm and not the factor scorer
-
-`refineMode` dispatches on `useFactorScorer()`, which reads `USE_FACTOR_SCORER`
-from the environment. Nothing in this repo sets it — only tests, via
-`vi.stubEnv` — so the golden corpus, and therefore every parity measurement,
-takes this cascade. `Verified.Geo.Factors` ports the OTHER arm
-(`refineModeViaFactors`); the two are alternatives, not layers, and which one is
-live is an environment fact rather than a code fact.
-
-MEASURED 2026-09-17, so it no longer has to be assumed: production does not set
-it either. Read from the cluster API (`kubectl -n health get deploy,cronjob,job
--o json` — the spec, never a pod exec), all 46 workloads carry no
-`USE_FACTOR_SCORER` and no `USE_BIOMETRIC_FACTOR`. What they do carry, on the
-serving Deployment and the decode CronJob alike, is the four C4 flags at `1`.
-So production and the corpus take the SAME arm, and it is this one.
-
-The other arm was tried: `docs/proposals/decoder-roadmap.md` records
-`USE_FACTOR_SCORER=1` costing +15 truth regressions. That is why nothing sets
-it. Re-check this paragraph if the manifests move, not because the flag is
-unknowable — it is one read away (health #192).
 
 ## What reaches it inside the fold
 
@@ -46,7 +23,15 @@ UNPROVEN.
 
 namespace Verified.Geo.RefineMode
 
-open Verified.Geo.Factors (NearbyWay)
+/-- One nearby OSM way, as `nearbyWays` returns it. -/
+structure NearbyWay where
+  /-- `"highway"`, `"railway"`, `"waterway"`, `"aeroway"`. -/
+  type : String
+  /-- `"motorway"`, `"rail"`, `"subway"`, `"river"`, … -/
+  subtype : String
+  name : Option String := none
+  distanceM : Option Float := none
+  deriving Inhabited, Repr
 
 /-- What the cascade decides. -/
 structure ModeRefinement where

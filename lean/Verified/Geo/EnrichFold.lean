@@ -22,7 +22,7 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 /-- What the passes ask the world, each already answered in the fold's `Env`. -/
 structure Reads where
   /-- `osm.nearbyWays(lat, lon)`. -/
-  ways : Float → Float → Array Verified.Geo.Factors.NearbyWay
+  ways : Float → Float → Array Verified.Geo.RefineMode.NearbyWay
   /-- `osm.reverseGeocode(lat, lon, zoom)`, narrowed to the address. -/
   geocode : Float → Float → Int → Option Verified.Geo.Enrich.Address
   /-- `osm.nearbyStations(lat, lon, radiusM)`. -/

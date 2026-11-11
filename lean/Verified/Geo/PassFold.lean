@@ -6,7 +6,7 @@ import Verified.Geo.RailReconcile
 import Verified.Geo.StaySplit
 import Verified.Geo.SegmentPasses
 import Verified.Geo.TubeHop
-import Verified.Geo.Factors
+import Verified.Geo.RefineMode
 import Verified.Geo.Bus
 import Verified.Geo.PlaceOverride
 import Verified.Geo.TransitPlace
@@ -99,7 +99,7 @@ structure Env where
   /-- `osm.linesAtPoint(lat, lon, radiusM)`. -/
   linesAtPoint : Float → Float → Float → Array String
   /-- `osm.nearbyWays(lat, lon)`. -/
-  nearbyWays : Float → Float → Array Verified.Geo.Factors.NearbyWay
+  nearbyWays : Float → Float → Array Verified.Geo.RefineMode.NearbyWay
   /-- SHELL: re-resolve a merged stay's venue from its combined centre. An OSM
   call in the TS, injected here so the pass around it ports whole. -/
   bestPlace : Float → Float → Int → Int → String → Option Verified.Geo.SegmentMerge.ResolvedPlace

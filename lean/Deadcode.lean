@@ -26,6 +26,8 @@ Run from `lean/` after `lake build`:
   when there is any;
 * `--count`: the number of unreached commands;
 * `--why=<name>`: the chain that reaches `<name>`;
+* `--guard-only`: definitions only a check keeps, by module — a function its
+  own guards exercise and nothing else calls, or a public test helper;
 * `--control`: the same without `main` as a root; exits 1 unless most commands
   then come out unreached;
 * `--delete`: removes the unreached commands from the sources.
@@ -307,6 +309,22 @@ unsafe def main (args : List String) : IO UInt32 := do
   let roots := if control then externalRoots else `main :: externalRoots
   let live := grow env extra thms fix checks
     (close env extra (roots.foldl (·.insert · .anonymous) ∅) roots)
+  -- `--guard-only`: definitions that only a check keeps. A kept check makes
+  -- every name it mentions live, so a function exercised by nothing but its
+  -- own guards reads as reached; this lists them for a person to judge, since a
+  -- public test helper has the same shape.
+  if args.contains "--guard-only" then
+    let base := grow env extra thms fix #[]
+      (close env extra (roots.foldl (·.insert · .anonymous) ∅) roots)
+    let only := pkg.filter fun n =>
+      written env n && isDefinition env n && !fix.contains n && live.contains n && !base.contains n
+    let byMod := only.foldl (fun (m : NameMap (Array Name)) n =>
+      let mod := ((env.getModuleIdxFor? n).map (env.header.moduleNames[·]!)).getD .anonymous
+      m.insert mod (((m.get? mod).getD #[]).push n)) {}
+    for (mod, ns) in byMod.toList do
+      IO.println s!"{mod} ({ns.size}): {" ".intercalate (ns.toList.map toString)}"
+    IO.println s!"{only.size} definition(s) kept only by checks"
+    return 0
   if let some w := args.find? (·.startsWith "--why=") then
     let n := parseName (w.drop 6).toString
     let mut cur := n
