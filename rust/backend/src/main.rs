@@ -74,20 +74,16 @@ async fn main() -> Result<()> {
             pool.close().await;
             r
         }
-        // The weekly place miner. `--hard-out`/`--soft-out`/`--places-out`/`--dry` are
-        // measurement flags, single user only (the files are per-user).
+        // The weekly place miner. `--places-out`/`--dry` are measurement flags,
+        // single user only (the file is per-user).
         C::RefreshFocusPlaces {
             user,
             lookback_days,
-            hard_out,
-            soft_out,
             dry,
             places_out,
             as_of,
         } => {
             let sinks = MineSinks {
-                soft_out,
-                hard_out,
                 dry,
                 places_out,
                 // End of that civil day in UTC, so the day itself is inside the

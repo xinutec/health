@@ -16,9 +16,8 @@ log-evidence in nats — the same discipline as the mode factor scorer:
   but out-votable. A missing or unparseable tag is NO evidence, never
   "closed".
 
-Also ported: the hard attribution gate that decides which stays may train the
-prior, the SOFT responsibilities (a softmax over candidates plus an `other`
-component for "the true venue is not in this list"), and both miners.
+Also here: the attribution gate that decides which stays may train the prior,
+and the miner.
 
 ## Boundaries
 
@@ -34,7 +33,7 @@ Two inputs arrive pre-resolved from the shell, because both are `Intl`/tz work:
 ## Exactness
 
 Arithmetic, bucketing, the attribution gate and every ordering decision are
-EXACT. `shapeScore` and the softmax go through `log`/`exp`, so those are ≤1
+EXACT. `shapeScore` goes through `log`/`exp`, so those are ≤1
 ULP. One documented limit: the comparator's LAST-RESORT tie-break is
 `String.localeCompare`, i.e. full ICU collation. {@link collateAscii}
 reproduces it for ASCII (punctuation < digits < letters, case-folded primary,
@@ -77,8 +76,7 @@ structure StayShape where
   localHour : Int
   deriving Inhabited
 
-/-- Per-venue-type visit statistics mined from the user's stay history. Counts
-    are `Float` because soft attribution contributes fractional visits. -/
+/-- Per-venue-type visit statistics mined from the user's stay history. -/
 structure VenueTypeStats where
   visits : Float
   /-- Visit mass per dwell bucket (sums to `visits`). -/
@@ -148,9 +146,6 @@ def ATTRIBUTION_MARGIN_M : Float := 20
 /-- Honest-label floor: below this no nearby candidate is a plausible
     destination and the resolver falls through to the address chain. -/
 def VENUE_RANK_FLOOR_NATS : Float := -1.5
-/-- Log-odds of "the true venue is not in this list at all". PROVISIONAL in
-    the TS — borrowed from the rank floor, and knowingly uncalibrated. -/
-def OTHER_COMPONENT_NATS : Float := VENUE_RANK_FLOOR_NATS
 
 /-- Boundaries (minutes) between dwell buckets: errand <10, short 10–40,
     meal/appointment 40–150, long 150+. -/
@@ -448,44 +443,6 @@ def attributeStayVenue (landmarks : List Landmark) : Option Landmark :=
          | some next => if decide (next.distanceM < top.distanceM + ATTRIBUTION_MARGIN_M) then none else some top
          | none => some top
 
-/-! ## Soft attribution -/
-
-/-- How much of one stay each candidate venue may claim. -/
-structure StayResponsibilities where
-  candidates : List (Landmark × Float)
-  /-- Mass assigned to "none of these" — the true venue is unmapped or absent. -/
-  other : Float
-  deriving Inhabited
-
-/--
-Fractional attribution: given the evidence, the probability this stay happened
-at each candidate, summing to 1 across candidates PLUS `other`.
-
-Deliberately uses every term `rankVenues` knows EXCEPT the shape prior —
-feeding the shape prior into the weights that train the shape prior is a
-self-confirming loop. Near-field dominance is likewise NOT applied: it is a
-ranking shortcut, not a probability, and would hand a whole stay to whichever
-venue happens to be nearest.
--/
-def stayResponsibilities (landmarks : List Landmark) (stay : Option StayShape) : StayResponsibilities :=
-  let pool := landmarks.filter (fun l => isVenueType l && !isFurniture l && !l.reverseGeocoded)
-  let scores := pool.map (fun l =>
-    let distance := -0.5 * (l.distanceM / DISTANCE_SIGMA_M) ^ 2
-    let hours := if stay.isSome then (hoursScore l.openFraction).getD 0 else 0
-    (l, distance + VENUE_OVER_AREA_NATS + hours))
-  -- Softmax over the candidates plus `other`, in the numerically safe form.
-  let logits := scores.map (·.2) ++ [OTHER_COMPONENT_NATS]
-  let maxL := logits.foldl (fun a b => max a b) (logits.headD 0)
-  let exps := logits.map (fun s => Float.exp (s - maxL))
-  let z := exps.foldl (fun a b => a + b) 0
-  { candidates := (scores.zip exps).map (fun ((l, _), e) => (l, e / z)),
-    other := (exps.getLastD 0) / z }
-
-/-- Effective sample size of a soft-attributed training set: how many whole
-    visits' worth of evidence it carries, excluding the `other` mass. -/
-def effectiveSampleSize (stays : List StayResponsibilities) : Float :=
-  stays.foldl (fun n s => n + s.candidates.foldl (fun m c => m + c.2) 0) 0
-
 /-! ## Mining -/
 
 private def emptyStats : VenueTypeStats :=
@@ -533,37 +490,6 @@ def minePriors (stays : List AttributedStay) : VenuePriors := Id.run do
     byCategory := bumpStats byCategory (categoryOfSubtype stay.subtype) bucket hour 1
   return ⟨bySubtype, byCategory, Float.ofNat stays.length⟩
 
-/-- One stay, with the mass each candidate venue may claim of it. -/
-structure SoftAttributedStay where
-  responsibilities : StayResponsibilities
-  durationSec : Float
-  localHour : Int
-  /-- When the stay STARTED — see `AttributedStay.startUnix`. -/
-  startUnix : Int
-  deriving Inhabited
-
-/--
-Mine the visit-shape prior from FRACTIONAL counts. Identical in structure to
-{@link minePriors} — same buckets, same category pooling, same output shape —
-but each stay contributes `r` of a visit to each candidate instead of 1 to the
-argmax and 0 to everyone else. That is the whole point: the hard gate discards
-a stay unless one venue is 20 m clear of its neighbours, which never happens
-on a dense high street, which is where cafés are.
--/
-def minePriorsSoft (stays : List SoftAttributedStay) : VenuePriors := Id.run do
-  let mut bySubtype : List (String × VenueTypeStats) := []
-  let mut byCategory : List (String × VenueTypeStats) := []
-  let mut total : Float := 0
-  for stay in stays do
-    let bucket := dwellBucket stay.durationSec
-    let hour := (stay.localHour.emod 24).toNat
-    for (landmark, r) in stay.responsibilities.candidates do
-      if decide (r ≤ 0) then continue
-      bySubtype := bumpStats bySubtype landmark.subtype bucket hour r
-      byCategory := bumpStats byCategory (categoryOfSubtype landmark.subtype) bucket hour r
-      total := total + r
-  return ⟨bySubtype, byCategory, total⟩
-
 /-! ## As-of-the-day priors
 
 A day in May must be named from evidence that existed in May. The blob is one
@@ -587,8 +513,7 @@ unrelated reason. -/
 /-- One unit of mined prior evidence: which subtype, WHEN, where it falls on the
     two shape axes, and how much of a visit it is worth.
 
-    `weight` is what lets the hard and soft mining paths share this: the hard
-    path contributes 1 to the argmax, the soft path `r` to each candidate. -/
+    `weight` is how much of a visit it is: 1 for an attributed stay. -/
 structure PriorEvent where
   subtype : String
   startUnix : Int
@@ -603,20 +528,6 @@ def eventsOfAttributed (stays : List AttributedStay) : List PriorEvent :=
     { subtype := s.subtype, startUnix := s.startUnix,
       dwell := dwellBucket s.durationSec, hour := (s.localHour.emod 24).toNat,
       weight := 1 }
-
-/-- The events behind `minePriorsSoft`, in stay-then-candidate order.
-
-    ⚠ ORDER IS DATA. `bumpStats` appends an unseen key, and `shapeScore` reads
-    the resulting length, so preserving the traversal order is what makes the
-    aggregate below identical to the one `minePriorsSoft` produces. -/
-def eventsOfSoft (stays : List SoftAttributedStay) : List PriorEvent :=
-  stays.flatMap fun s =>
-    s.responsibilities.candidates.filterMap fun (landmark, r) =>
-      if decide (r ≤ 0) then none
-      else some
-        { subtype := landmark.subtype, startUnix := s.startUnix,
-          dwell := dwellBucket s.durationSec, hour := (s.localHour.emod 24).toNat,
-          weight := r }
 
 /-- Aggregate the events whose stay STARTED at or before `asOfUnix`.
 
@@ -908,63 +819,5 @@ nothing downstream may be switched over to the event path. -/
 #guard !isLabelWorthyVenue "amenity" 51
 -- The café 80 m off from the module note.
 #guard !isLabelWorthyVenue "amenity" 80
-
-/-! ### `stayResponsibilities` -/
-
-private def rs (lms : List Landmark) : StayResponsibilities := stayResponsibilities lms none
-
-#guard match rs [LM "A" "amenity" "cafe" 10, LM "B" "amenity" "restaurant" 15] with
-       | r => approx (r.candidates.getD 0 (default, 0)).2 0.49675665563383314
-              && approx (r.candidates.getD 1 (default, 0)).2 0.47772620700800006
-              && approx r.other 0.025517137358166731
-#guard approx (effectiveSampleSize [rs [LM "A" "amenity" "cafe" 10, LM "B" "amenity" "restaurant" 15]])
-       0.97448286264183315
--- A lone far venue only just out-argues "the truth is not in this list".
-#guard match rs [LM "A" "amenity" "cafe" 95] with
-       | r => approx (r.candidates.getD 0 (default, 0)).2 0.54480139569827812
-              && approx r.other 0.45519860430172188
--- No candidates ⇒ all mass to `other`, and the stay teaches nothing.
-#guard (rs []).other == 1
-#guard effectiveSampleSize [rs []] == 0
-#guard (rs [LM "Park" "leisure" "park" 5, LM "Box" "amenity" "post_box" 3]).other == 1
--- A dense high street spreads the mass — which is exactly the case the hard
--- gate throws away entirely.
-#guard match rs [LM "A" "amenity" "cafe" 8, LM "B" "amenity" "restaurant" 12,
-                 LM "C" "shop" "clothes" 16, LM "D" "amenity" "bar" 20] with
-       | r => approx (r.candidates.getD 0 (default, 0)).2 0.25851872171035656
-              && approx (r.candidates.getD 3 (default, 0)).2 0.23275074470348844
-              && approx r.other 0.013130898482800071
--- Closed hours discount a candidate without vetoing it.
-#guard match stayResponsibilities [LMH "Open" "amenity" "restaurant" 20 (some 1),
-                                   LMH "Closed" "amenity" "pharmacy" 20 (some 0)] (some stayEve) with
-       | r => approx (r.candidates.getD 0 (default, 0)).2 0.93564832586502644
-              && approx (r.candidates.getD 1 (default, 0)).2 0.038139087910927058
-              && approx r.other 0.026212586224046548
-
-/-! ### `minePriorsSoft` -/
-
-private def softStays : List SoftAttributedStay :=
-  [⟨rs [LM "A" "amenity" "cafe" 10, LM "B" "amenity" "restaurant" 15], 3600, 11, 1000⟩,
-   ⟨rs [LM "C" "amenity" "cafe" 20], 5400, 19, 2000⟩]
-private def soft : VenuePriors := minePriorsSoft softStays
-
-#guard approx soft.totalVisits 1.9210795328420089
-#guard match lookupStats soft.bySubtype "cafe" with
-       | some s => approx s.visits 1.4433533258340088 && approx (s.dwell.getD 2 0) 1.4433533258340088
-       | none => false
-#guard match lookupStats soft.bySubtype "restaurant" with
-       | some s => approx s.visits 0.47772620700800006
-       | none => false
-#guard match lookupStats soft.byCategory "food" with
-       | some s => approx s.visits 1.9210795328420089
-       | none => false
-
--- ⚠ The same parity the hard path is held to, and it is the stricter of the two
--- here: the soft path emits one event PER CANDIDATE, so this pins the
--- stay-then-candidate traversal order as well as the fractional weights.
-#guard priorsOfEvents (eventsOfSoft softStays) == soft
--- A cut between the two stays keeps the first stay's candidates and drops C.
-#guard (priorsAsOf (eventsOfSoft softStays) 1500).bySubtype.map (·.1) == ["cafe", "restaurant"]
-#guard lookupStats (priorsAsOf (eventsOfSoft softStays) 999).bySubtype "cafe" == none
 
 end Verified.Geo.VenuePrior

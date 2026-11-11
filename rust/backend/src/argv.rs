@@ -145,10 +145,6 @@ pub enum Command {
         #[arg(requires = "user", value_parser = clap::value_parser!(i64).range(1..))]
         lookback_days: Option<i64>,
         #[arg(long, requires = "user")]
-        hard_out: Option<String>,
-        #[arg(long, requires = "user")]
-        soft_out: Option<String>,
-        #[arg(long, requires = "user")]
         dry: bool,
         /// write the mined places (id, centroid, visits, spread) as JSON
         #[arg(long, requires = "user")]

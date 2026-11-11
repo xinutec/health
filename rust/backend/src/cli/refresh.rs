@@ -5,11 +5,10 @@ use super::mirror::*;
 use anyhow::{Context, Result};
 use backend::db;
 
-/// Extra outputs riding the production mining path, so a measured population
-/// is exactly what the cron mines rather than a separate harness's guess.
+/// How a run of the miner is measured rather than written: the outputs ride the
+/// production mining path, so what they show is what the cron mines.
 pub(crate) struct MineSinks {
-    pub(crate) soft_out: Option<String>,
-    pub(crate) hard_out: Option<String>,
+    /// Mine and report, writing nothing.
     pub(crate) dry: bool,
     /// The mined places as they would be written — the id each matched, the
     /// centroid, the visit count and spread — before the amenity vote; a dry
@@ -222,7 +221,7 @@ pub(crate) async fn refresh_focus_places_one(
         std::fs::write(path, serde_json::to_string_pretty(&rows)?)
             .with_context(|| format!("writing {path}"))?;
         eprintln!("[{user_id}] places -> {path} ({} cluster(s))", rows.len());
-        if sinks.dry && sinks.hard_out.is_none() && sinks.soft_out.is_none() {
+        if sinks.dry {
             return Ok(());
         }
     }
@@ -323,15 +322,11 @@ pub(crate) async fn refresh_focus_places_one(
     }
 
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let (voted, flat_stays, unanswered) =
+    let (voted, unanswered) =
         backend::mirror_source::with_mirror_answerer(pool.clone(), now_ms, move |ans| {
             let mut out: Vec<backend::lean::MinedCluster> = Vec::with_capacity(pending.len());
             // Per cluster: did the mirror fail to answer for any of its stays?
             let mut unanswered: Vec<bool> = Vec::with_capacity(pending.len());
-            // The soft-mining population is by construction the stays the hard
-            // miner sees: collected in the same loop, after the residence skip
-            // and the mirror-could-not-answer skip.
-            let mut flat: Vec<backend::lean::MineStay> = Vec::new();
             for c in pending {
                 let mut ms: Vec<backend::lean::MineStay> = Vec::with_capacity(c.stays.len());
                 let mut missed = false;
@@ -355,11 +350,10 @@ pub(crate) async fn refresh_focus_places_one(
                 let centroid = ans
                     .nearby_landmarks(c.lat, c.lon)?
                     .unwrap_or_else(|| serde_json::json!([]));
-                flat.extend(ms.iter().cloned());
                 out.push(backend::lean::mine_cluster(&ms, &centroid)?);
                 unanswered.push(missed);
             }
-            Ok((out, flat, unanswered))
+            Ok((out, unanswered))
         })
         .await?;
 
@@ -394,29 +388,6 @@ pub(crate) async fn refresh_focus_places_one(
     // ── 6. the priors blob — a full recompute, never incremental ────────────
     let priors = backend::lean::mine_priors(&attributed_all)?;
 
-    // ── the measurement sinks, before any write ─────────────────────────────
-    if let Some(path) = &sinks.hard_out {
-        std::fs::write(path, serde_json::to_string_pretty(&priors)?)
-            .with_context(|| format!("writing {path}"))?;
-        eprintln!(
-            "[{user_id}] hard priors -> {path} ({} attributed stay(s))",
-            attributed_all.len()
-        );
-    }
-    if let Some(path) = &sinks.soft_out {
-        let (blob, rep) = backend::lean::mine_priors_soft(&flat_stays)?;
-        eprintln!(
-            "[{user_id}] soft priors -> {path}: ess {:.1} vs hard {} · {}/{} stay(s) teaching · \
-             mean other {:.3}",
-            rep.ess,
-            attributed_all.len(),
-            rep.stays_teaching,
-            rep.stays_total,
-            rep.mean_other
-        );
-        std::fs::write(path, serde_json::to_string_pretty(&blob)?)
-            .with_context(|| format!("writing {path}"))?;
-    }
     if sinks.dry {
         eprintln!("[{user_id}] --dry: NOT writing venue_type_priors or focus_places");
         return Ok(());

@@ -1,8 +1,7 @@
 # Slow numeric conversions in compiled Lean, by module and function.
 # Written by `GMP_HOTPATHS_BLESS=1 cargo run --example lean_gmp_hotpaths`;
 # see that example for what each pattern costs and how to remove it.
-2	l_Float_ofScientific(	BackendEntry.c	lp_verified_BackendEntry_dispatch
-1	lean_float_of_nat(	BackendEntry.c	lp_verified_BackendEntry_dispatch
+1	l_Float_ofScientific(	BackendEntry.c	lp_verified_BackendEntry_dispatch
 6	l_Float_ofScientific(	DayEntry.c	lp_verified___private_DayEntry_0__Day_parseEnv___lam__N
 1	lean_cstr_to_nat(	DayEntry/Host.c	lp_verified_DayEntry_Host_takeTimingsImpl___lam__N
 1	l_Float_ofScientific(	Verified/Eval/Feasibility.c	lp_verified___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Verified_Eval_Feasibility_checkVehiclePedestrianRuns_spec__N___redArg
