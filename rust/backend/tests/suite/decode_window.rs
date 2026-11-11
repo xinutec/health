@@ -1,11 +1,10 @@
-//! The decode cron's date window (#982 Tier 2).
+//! The decode cron's date window.
 //!
-//! ⚠ THE WINDOW IS THE WHOLE POINT OF THIS FILE. The first Rust port looped
-//! `0..n`, which decoded TODAY and dropped the oldest day of the window.
-//! `src/cli/decode-day.ts` loops `d = 1; d <= days`. The failure is not loud:
-//! at the cron's 06:00 today is a six-hour stub, and `save_decode` stamps it
-//! with the current `CLASSIFIER_VERSION`, so it does not read as stale to a
-//! consumer — it reads as a decoded day that happens to be nearly empty.
+//! ⚠ The window is the whole point of this file: `d = 1 ..= days`, not `0..n`,
+//! which would decode today and drop the oldest day of the window. The failure
+//! is not loud: at the cron's 06:00 today is a six-hour stub, and `save_decode`
+//! stamps it with the current `CLASSIFIER_VERSION`, so it does not read as stale
+//! to a consumer; it reads as a decoded day that happens to be nearly empty.
 
 use backend::classification_inputs::decode_window;
 
@@ -68,8 +67,8 @@ fn dates_come_from_utc_not_the_local_day() {
         decode_window(at("2026-08-25T00:30:00Z"), 1),
         vec!["2026-08-24"]
     );
-    // 23:30 UTC on the 24th is already the 25th in London. UTC arithmetic still
-    // yields the 23rd, which is what the TypeScript yields.
+    // 23:30 UTC on the 24th is already the 25th in London; UTC arithmetic still
+    // yields the 23rd.
     assert_eq!(
         decode_window(at("2026-08-24T23:30:00Z"), 1),
         vec!["2026-08-23"]

@@ -2,10 +2,11 @@
 //!
 //! # Why this is not the probe it resembles
 //!
-//! `tests/lean_serve.rs` also sends `{"mode":"stationchain"}`, and #1003's check
-//! deliberately does not count it: that test asserts the arm answers in its own
-//! words and is indifferent to the answer. This one asserts what the resolver
-//! DECIDES, including the case where it decides to say nothing.
+//! `tests/lean_serve.rs` also sends `{"mode":"stationchain"}`, and the
+//! reachability check deliberately does not count it: that test asserts the arm
+//! answers in its own words and is indifferent to the answer. This one asserts
+//! what the resolver decides, including the case where it decides to say
+//! nothing.
 //!
 //! # The geography is INVENTED, and small on purpose
 //!

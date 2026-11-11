@@ -217,9 +217,8 @@ fn the_continuity_seed_needs_all_four_fields() {
     .expect("the four-field seed must be accepted");
 }
 
-/// ⚠ `priorPlaceCoord` IS A PAIR ON THE WIRE, even though the TypeScript's own
-/// `ContinuityContext` holds `{lat, lon}`. The object form is refused, and a
-/// null one is the documented un-gated case rather than an error.
+/// ⚠ `priorPlaceCoord` is a pair on the wire. The object form is refused, and a
+/// null one is the documented ungated case rather than an error.
 #[test]
 fn the_prior_place_coord_is_a_pair_and_may_be_null() {
     setup();
@@ -293,8 +292,8 @@ fn the_wire_graph_is_accepted_in_the_encoding_it_is_produced_in() {
         .expect("the decoder must accept the graph the graph builder produces");
 }
 
-/// And a plain number still works, because the TypeScript arms send those —
-/// `jFloat` accepts both encodings rather than swapping one for the other.
+/// And a plain number still works: `jFloat` accepts both encodings rather than
+/// swapping one for the other.
 #[test]
 fn a_plain_number_coordinate_still_parses() {
     setup();

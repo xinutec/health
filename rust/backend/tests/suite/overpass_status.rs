@@ -1,12 +1,9 @@
-//! `/api/status` parsing — the slot protocol Overpass publishes and this
-//! codebase ignored until #1153.
+//! `/api/status` parsing: the slot protocol Overpass publishes.
 //!
-//! ⚠ THE BODIES HERE ARE REAL. The first is what `overpass-api.de` returned to
-//! isis on 2026-09-13 at 10:21:15Z, pasted unedited apart from the client id.
-//! The exhausted shapes are the documented ones. A hand-invented status page
-//! would test the parser against this file's author rather than against the
-//! server — and the whole defect was a belief about the server that nobody had
-//! read back.
+//! ⚠ The bodies here are real. The first is what `overpass-api.de` returned to
+//! isis, pasted unedited apart from the client id. The exhausted shapes are the
+//! documented ones. A hand-invented status page would test the parser against
+//! this file's author rather than against the server.
 
 use backend::overpass::{Slots, parse_status};
 

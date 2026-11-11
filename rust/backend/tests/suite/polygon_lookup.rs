@@ -46,13 +46,11 @@ fn ordinary_coordinates_resolve() {
 
 /// ⚠ THE OCEANS ARE COVERED, so a corrupt-but-in-range fix does NOT fall back.
 ///
-/// This started as a test asserting that mid-Pacific yields `None`, and it
-/// failed: `tzf` answers `Etc/GMT+8` there. The polygons include the nautical
-/// zones, so a GPS glitch that drops the phone into an ocean produces a
-/// confident zone name that is written into `tz` and reads like any other
-/// answer. That is the behaviour, it matches the npm `tz-lookup` the TypeScript
-/// uses, and it is asserted here so nobody re-derives the wrong expectation
-/// from the `Option` in the signature.
+/// Mid-Pacific does not yield `None`: `tzf` answers `Etc/GMT+8` there. The
+/// polygons include the nautical zones, so a GPS glitch that drops the phone
+/// into an ocean produces a confident zone name that is written into `tz` and
+/// reads like any other answer. That is the behaviour, asserted here so nobody
+/// re-derives the wrong expectation from the `Option` in the signature.
 #[test]
 fn open_ocean_gets_a_nautical_zone_not_none() {
     let p = PolygonLookup::new();

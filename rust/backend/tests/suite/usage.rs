@@ -31,7 +31,7 @@ fn every_subcommand_says_what_it_does() {
 }
 
 /// Every argv the cluster runs (the CronJobs and `health-auth`, read from the
-/// live namespace on 2026-09-30), parsed to what it meant before clap.
+/// live namespace), parsed to what it meant before clap.
 #[test]
 fn every_production_argv_parses_as_it_did() {
     assert!(matches!(parse(&["serve"]), Ok(Command::Serve)));

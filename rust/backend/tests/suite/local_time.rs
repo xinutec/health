@@ -1,4 +1,4 @@
-//! `local_hour_of` / `local_stay_samples` against the TypeScript.
+//! `local_hour_of` / `local_stay_samples`.
 //!
 //! These two exist because `Verified.Geo.OpeningHours` decides open-versus-
 //! closed but instant → local `(weekday, minute)` is tzdata, so the shell

@@ -1,8 +1,7 @@
 //! Session and share-viewer rules through the linked Lean host.
 //!
-//! `Verified.Session`'s `#guard`s settle the rules; the framing cases among them
-//! are what `verifyValue` returned under Node. These re-ask them across the
-//! wire, because the crate links a PREBUILT static library and an op added to
+//! `Verified.Session`'s `#guard`s settle the rules. These re-ask them across the
+//! wire, because the crate links a prebuilt static library and an op added to
 //! `BackendEntry.lean` is invisible until `BackendEntry:static` is rebuilt.
 //!
 //! ⚠ The HMAC, the CSPRNG and the constant-time compare are NOT tested here
@@ -127,8 +126,7 @@ fn a_share_window_ends_today_and_a_disabled_share_has_none() {
     // "unrestricted" turns a revoked share into a full-history one.
     assert_eq!(lean::shareable_date_range("2026-08-17", 0).unwrap(), None);
     assert_eq!(lean::shareable_date_range("2026-08-17", -1).unwrap(), None);
-    // An unparsable date is the same answer. The TypeScript produced
-    // "NaN-NaN-NaN" here and stored it.
+    // An unparsable date is the same answer, never a "NaN-NaN-NaN" string.
     assert_eq!(lean::shareable_date_range("not-a-date", 7).unwrap(), None);
     assert_eq!(lean::shareable_date_range("", 7).unwrap(), None);
 }

@@ -1,4 +1,4 @@
-//! `date_bounds_utc` against the TypeScript it was transliterated from.
+//! `date_bounds_utc`, including its two known defects.
 //!
 //! The cases in `fixtures/date-bounds-ts.json` were produced by RUNNING
 //! `dist/geo/timezone.js`, not by writing down what I believed it did — see
@@ -43,11 +43,10 @@ fn every_case_matches_the_typescript() {
 
 /// ⚠ The two defects, pinned SO THEY CANNOT BE FIXED BY ACCIDENT.
 ///
-/// Both are the TypeScript's and both are reproduced deliberately, because the
-/// 35-day golden corpus is the only oracle for the pipeline this feeds and a
-/// port that differs cannot be checked against it. If either assertion starts
-/// failing, someone has improved the behaviour — which may well be right, but
-/// it re-blesses the corpus and is not a silent change.
+/// Both are known defects, pinned so that fixing either is a deliberate change:
+/// the golden corpus is the oracle for the pipeline this feeds, and a change
+/// here re-blesses it. If either assertion starts failing, someone has improved
+/// the behaviour, which may well be right, but it is not a silent change.
 #[test]
 fn the_inherited_defects_are_still_here() {
     // A half-hour zone truncates to the hour: Asia/Kolkata is +05:30, and the

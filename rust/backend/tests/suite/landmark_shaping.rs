@@ -1,11 +1,9 @@
 //! A landmark table that ANSWERS EMPTY names nothing, and counts as answered.
 //!
-//! This is the shape of #1054. `nearbyLandmarks` is what puts a venue name on a
-//! timeline instead of a bare "stationary". When the shaping returned an empty
-//! list, every ask still read as answered, the stay
-//! still rendered, and two venue names a day silently vanished — measured
-//! against production on a day where all six asks answered and all six were
-//! empty.
+//! `nearbyLandmarks` is what puts a venue name on a timeline instead of a bare
+//! "stationary". If the shaping returns an empty list, every ask still reads as
+//! answered, the stay still renders, and venue names silently vanish: a day
+//! where all six asks answer and all six are empty.
 //!
 //! ⚠ The fixture here is SYNTHETIC on purpose: a tracked test must not
 //! carry a real coordinate and a real venue, which together record where

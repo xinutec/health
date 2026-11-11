@@ -1,4 +1,4 @@
-//! The `env` observation block, against the request the TypeScript built.
+//! The `env` observation block, against frozen reference requests.
 //!
 //! # The oracle is a whole real request, per day
 //!
@@ -48,9 +48,8 @@ fn every_day_encodes_its_observations_as_the_typescript_does() {
                 continue;
             }
             if k == "lookups" {
-                // Compared per SECTION and per ROW, because one huge
-                // assert_eq over the whole lookups object names nothing: the
-                // #859 fixture fold was debugged entirely from this readout.
+                // Compared per section and per row, because one huge assert_eq
+                // over the whole lookups object names nothing.
                 let got_lk =
                     encode_lookups(cap.get("trace"), cap.get("tzAt"), cap.get("bestPlace"))
                         .expect("lookups encode");
@@ -122,8 +121,8 @@ fn the_speed_lookup_matches_the_track_it_is_derived_from() {
 /// ⚠ THE SAME FIELD, TWO DEFAULTS, AND THE CORPUS EXERCISES NEITHER.
 ///
 /// `radiusM` is `optBits(p.radiusM)` in `stayPlaces` and `bits(p.radiusM ?? 50)`
-/// in `enrichPlaces` — absent stays absent in one and becomes fifty metres in
-/// the other. Both are the TypeScript's, on one field, three lines apart.
+/// in `enrichPlaces`: absent stays absent in one and becomes fifty metres in
+/// the other, on one field, three lines apart.
 ///
 /// This is a hand-built case because ABLATION SHOWED THE CORPUS CANNOT SEE IT:
 /// every captured place carries a radius, so changing the default from 50 to 0
@@ -163,11 +162,10 @@ fn an_absent_radius_defaults_in_one_view_and_stays_absent_in_another() {
 
 /// ⚠ A CORRUPT CACHE ROW IS AN ERROR, not an absent route.
 ///
-/// `railRouteCache` carries its geometry as a JSON string inside the row. The
-/// first version of the encoder dropped a row that would not parse and called
-/// that an improvement on the TypeScript, which throws; `dev-lint`'s
-/// `rust-serde-swallow` rejected it and was right. A dropped route is a matcher
-/// scoring the day against a route set that is quietly missing something.
+/// `railRouteCache` carries its geometry as a JSON string inside the row. A row
+/// that will not parse is an error, not dropped: a dropped route is a matcher
+/// scoring the day against a route set that is quietly missing something
+/// (`dev-lint`'s `rust-serde-swallow` enforces it).
 #[test]
 fn an_unparseable_route_geometry_is_reported_not_skipped() {
     let bad = serde_json::json!([

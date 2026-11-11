@@ -11,9 +11,8 @@
 //! symptom is a timeline with more entries than it should have, every one of
 //! them correctly labelled — which is why no name comparison caught it.
 //!
-//! This checks the fixture arm against the answers the TypeScript RECORDED for
-//! the same day, so it measures agreement with the oracle rather than
-//! self-consistency.
+//! This checks the fixture arm against the answers recorded for the same day,
+//! so it measures agreement with the oracle rather than self-consistency.
 //!
 //! ⚠ `tests/golden/days` is gitignored — the fixtures carry real coordinates and
 //! place names. Like `corpus_gate`, this ANNOUNCES A SKIP rather than passing
@@ -42,7 +41,7 @@ fn fixture() -> Option<Value> {
 }
 
 /// Every line the day asked about, answered from the fixture's own row set and
-/// compared against what the TypeScript recorded.
+/// compared against what was recorded.
 #[test]
 fn the_fixture_arm_reproduces_the_recorded_answers() {
     lean::init().expect("the Lean runtime must start");
@@ -102,9 +101,8 @@ fn the_fixture_arm_reproduces_the_recorded_answers() {
 
 /// A name whose base token no way carries is an EMPTY answer, not a decline.
 ///
-/// ⚠ This is the one place an empty answer is honest, and the distinction is
-/// worth pinning because #1054 was the opposite mistake. "No way of this name"
-/// really is "no stations on it" — a siding, a junction curve. Declining would
+/// ⚠ This is the one place an empty answer is honest: "no way of this name"
+/// really is "no stations on it" (a siding, a junction curve). Declining would
 /// leave the fold asking about it forever.
 #[test]
 fn a_line_the_mirror_does_not_carry_is_answered_empty() {

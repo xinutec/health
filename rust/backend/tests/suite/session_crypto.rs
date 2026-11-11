@@ -1,20 +1,19 @@
 //! The signing half of auth — the part that is NOT in Lean.
 //!
-//! # ⚠ The expected signatures come from Node, not from this implementation
+//! # ⚠ The expected signatures come from the reference, not this implementation
 //!
-//! Every string below was printed by `lean/experiments/session-refs.mts` calling
-//! the production `signValue`. That matters because the failure modes here are
-//! all silent: `digest("base64url")` is UNPADDED, so a port that pads produces a
-//! perfectly well-formed signature that never matches; HMACing the wrong bytes
-//! produces the same shape as HMACing the right ones.
+//! Every string below is the original `signValue`'s output. That matters
+//! because the failure modes here are all silent: base64url output is
+//! unpadded, so a version that pads produces a perfectly well-formed signature
+//! that never matches; HMACing the wrong bytes produces the same shape as
+//! HMACing the right ones.
 //!
-//! ⚠ The cutover is clean, so the Rust service does NOT have to accept a cookie
-//! the TypeScript minted. These are not a compatibility requirement — they are
-//! the only available oracle for whether this HMAC is the one anyone intended.
+//! These are not a compatibility requirement; they are the available oracle for
+//! whether this HMAC is the one intended.
 
 use backend::auth::session::{mint_id, sign_value, verify_value};
 
-/// The fixed test secret from `session-refs.mts`. Nothing in production uses it.
+/// The fixed test secret. Nothing in production uses it.
 const SECRET: &str = "a-test-secret-not-used-anywhere";
 
 #[test]

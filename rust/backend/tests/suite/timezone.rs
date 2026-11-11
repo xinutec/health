@@ -58,8 +58,8 @@ fn a_malformed_wall_clock_yields_nothing() {
 
 #[test]
 fn both_separators_parse_and_a_suffix_is_ignored() {
-    // The TypeScript's regex is unanchored, so rows written by the older path
-    // carry a `.000Z` suffix and must still parse to the same wall clock.
+    // The parse is unanchored: stored rows carry a `.000Z` suffix and must
+    // still parse to the same wall clock.
     let a = parse_wall_clock("2026-08-17 14:30:00").expect("space form");
     let b = parse_wall_clock("2026-08-17T14:30:00").expect("T form");
     let c = parse_wall_clock("2026-08-17T14:30:00.000Z").expect("suffixed form");
@@ -72,10 +72,10 @@ fn the_wall_clock_that_happened_twice_takes_the_later_instant() {
     // 2026-10-25: clocks go 02:00 → 01:00, so 01:30 occurs twice — once on BST
     // (00:30 UTC) and once on GMT (01:30 UTC).
     //
-    // ⚠ EVERY VALUE HERE WAS READ OUT OF THE PRODUCTION TypeScript, not
-    // derived. The earlier instant is the defensible reading and is NOT what
-    // `wallClockToUtcString` returns; a port that chose it would silently
-    // re-time rows already in the database.
+    // ⚠ Every value here is a stored row's instant, not derived. The earlier
+    // instant is the defensible reading and is not what `wall_clock_to_unix`
+    // returns; choosing it would silently re-time rows already in the
+    // database.
     assert_eq!(
         wall_clock_to_utc_string("2026-10-25 01:30:00", Some("Europe/London")).as_deref(),
         Some("2026-10-25 01:30:00")
@@ -166,10 +166,9 @@ fn the_fall_back_transition_stays_monotonic() {
 
 #[test]
 fn the_spring_forward_gap_is_not_monotonic_and_that_is_recorded_not_repaired() {
-    // ⚠ THIS TEST ASSERTS A DEFECT, DELIBERATELY. `00:45` maps to `00:45` UTC
-    // and the following `01:00` maps to `00:00` — an hour backwards. The
-    // production TypeScript does the same, and the port matches it rather than
-    // inventing a monotonic answer.
+    // ⚠ This test asserts a defect, deliberately. `00:45` maps to `00:45` UTC
+    // and the following `01:00` maps to `00:00`, an hour backwards, rather than
+    // an invented monotonic answer.
     //
     // It is not repaired because it cannot arise from a device: the watch's own
     // clock jumps at the transition too, so no Fitbit sample ever carries a wall

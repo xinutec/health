@@ -33,9 +33,9 @@ fn the_lean_decisions_answer_through_the_ffi() {
         lean::midnight_utc("1969-12-31").unwrap() < 0,
         "pre-epoch dates are negative, not unsigned garbage"
     );
-    // ⚠ Where this is STRICTER than the TypeScript it replaced. `new Date`
-    // rolled "2026-02-30" forward to March and turned "nonsense" into `NaN`,
-    // which reached the query string as the literal text `NaN`.
+    // ⚠ Stricter than JavaScript's `new Date`, which rolls 30 February forward
+    // to March and turns "nonsense" into `NaN`, reaching a query string as the
+    // literal text `NaN`.
     for bad in ["2026-02-30", "nonsense", "", "2026-8-17"] {
         assert!(
             lean::midnight_utc(bad).is_err(),

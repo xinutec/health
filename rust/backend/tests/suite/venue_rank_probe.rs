@@ -17,9 +17,9 @@
 //! # ⚠ THIS PROBE DOES NOT YET REPRODUCE THE FOLD. Do not settle a naming
 //! # question with it.
 //!
-//! Measured on #1405 the same day it landed. Fed the fold's OWN landmark bucket,
-//! the captured stay window and the same priors blob, `bestplace` agrees with the
-//! fold on one arm and disagrees on two:
+//! Fed the fold's own landmark bucket, the captured stay window and the same
+//! priors blob, `bestplace` agreed with the fold on one arm and disagreed on
+//! two:
 //!
 //!     blob                              probe            fold
 //!     fixture                           Pizza Union      Pizza Union
@@ -39,8 +39,8 @@
 //!
 //! whose output carries `segsSplit`/`segsEnriched`/`segsMid`/`segs`/`states`, so
 //! the stage a label changes at is readable. Fix this probe against the three
-//! rows above or delete it — a probe that disagrees with the artefact is the
-//! failure #1405 is a monument to.
+//! rows above or delete it: a probe that disagrees with the artefact is worth
+//! nothing.
 
 use backend::lean;
 use serde_json::{Value, json};
@@ -49,10 +49,10 @@ use serde_json::{Value, json};
 fn the_ranking_reports_the_term_that_decided_it() {
     lean::init().expect("the Lean runtime must start");
 
-    // Two venues at the same place, differing only in subtype and distance —
-    // the shape of the #1405 case. No priors and no stay: the shape and hours
-    // terms are then BOTH absent, so distance is the only thing left that can
-    // order them, and the nearer one must win.
+    // Two venues at the same place, differing only in subtype and distance. No
+    // priors and no stay: the shape and hours terms are then both absent, so
+    // distance is the only thing left that can order them, and the nearer one
+    // must win.
     let req = json!({
         "mode": "rankvenues",
         "landmarks": [
@@ -99,11 +99,10 @@ fn the_ranking_reports_the_term_that_decided_it() {
         );
     }
 
-    // ⚠ The gap the probe MEASURED on #1405, pinned so it cannot rot: at these
-    // two distances the whole geometric advantage is ~0.67 nats, while the
-    // shape term's own clamps span 9.4. A venue prior can therefore outvote a
-    // 3x distance difference — which is a fact about the CLAMPS, and was NOT
-    // what moved the live case. See #1405 before tuning either.
+    // ⚠ The gap the probe measured, pinned so it cannot rot: at these two
+    // distances the whole geometric advantage is ~0.67 nats, while the shape
+    // term's own clamps span 9.4. A venue prior can therefore outvote a 3x
+    // distance difference, which is a fact about the clamps.
     let near = ranked[0]["distance"].as_f64().unwrap();
     let far = ranked[1]["distance"].as_f64().unwrap();
     assert!(
@@ -115,12 +114,11 @@ fn the_ranking_reports_the_term_that_decided_it() {
 
 /// The `bestplace` mode — the WHOLE chain, not just the ranking.
 ///
-/// ⚠ THIS EXISTS BECAUSE THE MODE DID NOT HAVE A CALLER. I added `bestplace`
-/// beside `rankvenues` and warned in this very header about #1003's
-/// mode-nothing-exercises debt, then shipped one. What it pins is the chain's
-/// two DECISIVE gates, which the ranking alone cannot show: an enclosing
-/// landmark short-circuits everything, and without one the label comes from the
-/// ranked winner rather than the geocode.
+/// ⚠ A mode with no caller is the debt the reachability check exists to find,
+/// so `bestplace` gets one here. What it pins is the chain's two decisive
+/// gates, which the ranking alone cannot show: an enclosing landmark
+/// short-circuits everything, and without one the label comes from the ranked
+/// winner rather than the geocode.
 #[test]
 fn the_chain_reports_a_label_and_an_enclosure_wins_outright() {
     lean::init().expect("the Lean runtime must start");

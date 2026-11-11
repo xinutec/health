@@ -1,4 +1,4 @@
-//! The Overpass client's response handling (#982 Tier 2).
+//! The Overpass client's response handling.
 //!
 //! ⚠ THE CASE THAT MATTERS IS A MISSING `elements` KEY. Overpass omits it for a
 //! query that matched nothing, and reading that as an error would turn "this
@@ -72,9 +72,9 @@ use backend::overpass::Outcome;
 
 #[test]
 fn a_throttled_tile_may_be_retried() {
-    // 504 and 429 are the server TALKING. It has not stopped taking our
-    // packets, and 2026-09-14 lost 15 tiles to 504s while other tiles in the
-    // same window answered normally.
+    // 504 and 429 are the server talking. It has not stopped taking our
+    // packets: a run can lose 15 tiles to 504s while other tiles in the same
+    // window answer normally.
     let throttled = Outcome::AllFailed {
         errors: vec!["https://overpass-api.de/api/interpreter returned 504".into()],
         answered: true,
@@ -84,12 +84,11 @@ fn a_throttled_tile_may_be_retried() {
 
 #[test]
 fn a_banned_tile_is_not_retried() {
-    // ⚠ THE CASE THAT MATTERS. During the 2026-09-13 ban the connection was
-    // REFUSED at 46 ms — nothing answered, including `/api/status`. That makes
-    // `wait_for_slot` return 0 instantly, so a retry would fire with nothing
-    // pacing it and double the request rate into a server that has already
-    // stopped listening. This ticket's own design note calls that out by name:
-    // an eager retry just re-trips it.
+    // ⚠ The case that matters. During a ban the connection is refused at 46 ms:
+    // nothing answers, including `/api/status`. That makes `wait_for_slot`
+    // return 0 instantly, so a retry would fire with nothing pacing it and
+    // double the request rate into a server that has already stopped
+    // listening.
     let banned = Outcome::AllFailed {
         errors: vec!["https://overpass-api.de/api/interpreter: error sending request".into()],
         answered: false,

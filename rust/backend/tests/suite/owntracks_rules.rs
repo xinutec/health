@@ -1,10 +1,10 @@
 //! How often a phone is told to look for itself.
 //!
-//! ⚠ It is NEVER told to stop looking. The user's decision, 2026-09-23: a
-//! missing journey is a hole in the record and a flat battery is not, so the
-//! backend never pushes Significant mode. What it chooses is the locate
-//! interval inside Move — and the night, when a still phone is asked once an
-//! hour. These tests pin both halves.
+//! ⚠ It is never told to stop looking. The user's decision: a missing journey
+//! is a hole in the record and a flat battery is not, so the backend never
+//! pushes Significant mode. What it chooses is the locate interval inside Move,
+//! and the night, when a still phone is asked once an hour. These tests pin
+//! both halves.
 
 use backend::lean::{self, OwntracksFix};
 
@@ -48,9 +48,8 @@ fn high_speed_escalates_on_one_fix() {
     assert_eq!(d.move_mode_locator_interval, Some(10));
 }
 
-/// ⚠ THE STANDSTILL NEVER DEMOTES. Ten minutes still by day, with any
-/// history: the phone keeps its Move profile. The rule that used to answer
-/// "stationary" here cost a walk on 2026-06-07 and again on 2026-09-23.
+/// ⚠ The standstill never demotes. Ten minutes still by day, with any history:
+/// the phone keeps its Move profile. Answering "stationary" here costs walks.
 #[test]
 fn a_standstill_by_day_keeps_move_mode() {
     init();

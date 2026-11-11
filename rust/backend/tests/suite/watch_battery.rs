@@ -1,9 +1,9 @@
 //! The watch-battery series through the linked Lean host.
 //!
-//! `Verified.Geo.Velocity`'s `#guard`s settle the shaping — each is what
-//! `src/fitbit/watch-battery.ts` produced under Node. These re-ask a few of them
-//! across the wire, because the crate links a PREBUILT static library and a mode
-//! added to `ServeEntry.lean` is invisible until `ServeEntry:static` is rebuilt.
+//! `Verified.Geo.Velocity`'s `#guard`s settle the shaping. These re-ask a few of
+//! them across the wire, because the crate links a prebuilt static library and a
+//! mode added to `ServeEntry.lean` is invisible until `ServeEntry:static` is
+//! rebuilt.
 //!
 //! The SQL half has no test here: it needs `device_battery_log` on a real
 //! database, and the risk it carries is stated in the module rather than

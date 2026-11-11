@@ -69,9 +69,9 @@ fn shape_table_matches_lean() {
 /// An unmapped type must REFUSE, not render as null.
 ///
 /// ⚠ FLOAT and DOUBLE are in this list on purpose. Rendering a float to JSON
-/// means reproducing V8's shortest-round-trip output, and `serde_json` is known
-/// to disagree with it — so until a column needs one, refusing is the honest
-/// answer and a guess would be an invisible one.
+/// for a JavaScript client means reproducing shortest-round-trip output, so
+/// until a column needs one, refusing is the honest answer and a guess would
+/// be an invisible one.
 #[test]
 fn unmapped_types_are_refused() {
     init();
@@ -142,9 +142,8 @@ fn date_renders_as_a_full_timestamp() {
 
 /// `days` coercion, against what zod actually returned.
 ///
-/// ⚠ Every expectation here is an output of
-/// `lean/experiments/apiwindow-refs.mts`, which runs the production `daysParam`
-/// schema under Node. They are not derived from reading the zod documentation.
+/// ⚠ Every expectation here is the original `daysParam` schema's answer, not
+/// derived from reading documentation.
 #[test]
 fn days_coercion_matches_number() {
     init();
@@ -177,14 +176,12 @@ fn days_coercion_matches_number() {
     assert_eq!(lean::validate_days(None).expect("absent"), Some(30));
 }
 
-/// How a JS number renders, against what V8 actually printed.
+/// How a JS number renders.
 ///
-/// ⚠ Every expectation here is an output of `lean/experiments/rowshape-refs.mts`
-/// under Node. The rule matters because JavaScript has no integer/float
-/// distinction: a derived `Serialize` writes `120.0` where `JSON.stringify`
-/// writes `120`. That cost 8,790 bytes of difference across one day of GPS
-/// fixes on the first `/locations` parity run, and no test in this repo would
-/// have caught it — only the byte diff did.
+/// ⚠ Every expectation here is JavaScript's own rendering. The rule matters
+/// because JavaScript has no integer/float distinction: a derived `Serialize`
+/// writes `120.0` where `JSON.stringify` writes `120`, 8,790 bytes of
+/// difference across one day of GPS fixes, which only a byte diff caught.
 #[test]
 fn numbers_render_as_javascript_renders_them() {
     use backend::row_json::{js_number_opt, js_number_value};

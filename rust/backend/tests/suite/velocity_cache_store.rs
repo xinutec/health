@@ -204,9 +204,9 @@ async fn different_keys_do_not_block_each_other() {
     assert_eq!((vx, vy), (json!("x done"), json!("y done")));
 }
 
-/// ⚠ An expired entry is released by ANY traffic, not only by a read of its own
-/// key. Thirty-two parsed days pinned the serving pod at its memory limit
-/// (2026-09-25) while every one of them was long past its window.
+/// ⚠ An expired entry is released by any traffic, not only by a read of its own
+/// key: parsed days held past their window pin the serving pod at its memory
+/// limit.
 #[tokio::test]
 async fn expired_entries_are_swept_by_traffic_on_other_keys() {
     backend::lean::init().expect("lean host");

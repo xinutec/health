@@ -1,13 +1,11 @@
-//! `encode_seg` against the TypeScript that produced the wire format.
+//! `encode_seg` against frozen reference output.
 //!
-//! # The oracle is the TypeScript's OUTPUT, not my reading of its source
+//! # The oracle is reference output, not a reading of a source
 //!
-//! `fixtures/encode-seg-ts.json` was produced by running
-//! `dist/lean/fold-payload.js`'s `encodeSeg` over segments from the golden
-//! corpus's fold captures — see `fixtures/encode-seg-ts.mjs`. Writing the
-//! expectations by hand would have encoded my reading, and my first attempt at
-//! this function stopped at `wayName`, fifteen fields early, because that is
-//! where the first screenful of the TypeScript ends.
+//! `fixtures/encode-seg-ts.json` is `encodeSeg`'s output over segments from the
+//! golden corpus's fold captures. Expectations written by hand would encode a
+//! reading of the rules, and a short encoding is easy to write: a first attempt
+//! stopped at `wayName`, fifteen fields early.
 //!
 //! # Why a short encoding is worse than a malformed one
 //!

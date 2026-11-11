@@ -3,19 +3,16 @@
 //! # Why this exists
 //!
 //! `focus` mines the place list the whole venue-naming stack reads. It is
-//! called once, from the weekly focus-places cron, and until now from no test:
-//! #1003's two-hop check measured it as dispatched, live in production, and
-//! executed by nothing any gate could see. The call sat inline in
-//! `refresh_focus_places_one`, a DB-backed `async fn` in the BINARY crate,
-//! which is why no test could reach it — the decode moved to `lean.rs` so this
-//! could exist.
+//! called once, from the weekly focus-places cron, inside
+//! `refresh_focus_places_one`, a DB-backed `async fn` in the binary crate; the
+//! decode lives in `lean.rs` so this test can reach it.
 //!
 //! # The geography is INVENTED, and has to be
 //!
-//! #860: no tracked test may carry real coordinates or place names. Synthetic
-//! points are also the sharper instrument — a cluster built at a chosen spot
-//! with a chosen dwell is one whose expected mining outcome is known, which a
-//! real day's smear is not.
+//! No tracked test may carry real coordinates or place names. Synthetic points
+//! are also the sharper instrument: a cluster built at a chosen spot with a
+//! chosen dwell is one whose expected mining outcome is known, which a real
+//! day's smear is not.
 //!
 //! ⚠ ONE `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
 //! starts a runtime and several tests racing on it would flake.

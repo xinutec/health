@@ -130,10 +130,10 @@ mod the_cutover_opens_exactly_once {
 }
 
 /// The `list` walk has no date window, so its days are filtered by a
-/// LEXICOGRAPHIC compare against the cutover string. That is sound only while
-/// every date reaching it is zero-padded, so this pins the PRODUCER as well as
-/// the predicate — the failure it guards against is silent: `2026-9-1` sorts
-/// before `2026-09-01` and the day is dropped with no error anywhere.
+/// lexicographic compare against the cutover string. That is sound only while
+/// every date reaching it is zero-padded, so this pins the producer as well as
+/// the predicate: an unpadded month sorts wrong and the day is dropped with no
+/// error anywhere.
 mod the_string_filter_is_sound_because_the_producer_pads {
     use backend::google::health::day_of_list_point;
     use backend::google::sync::owned_by_google;
@@ -146,10 +146,10 @@ mod the_string_filter_is_sound_because_the_producer_pads {
         assert!(!owned_by_google("2023-04-15"));
     }
 
-    /// ⚠ SINGLE-DIGIT MONTH AND DAY, which is exactly where padding decides the
-    /// answer. September the 1st parsed out of the API's integer fields must
-    /// come back as `2026-09-01`, not `2026-9-1` — the second sorts below the
-    /// cutover and would drop the migration's first day without a trace.
+    /// ⚠ Single-digit month and day, which is exactly where padding decides the
+    /// answer. The first of a month parsed out of the API's integer fields must
+    /// come back zero-padded; unpadded, it sorts wrong against the cutover and
+    /// the migration's first day vanishes without a trace.
     #[test]
     fn a_single_digit_date_comes_back_padded_and_passes_the_filter() {
         let pt = serde_json::json!({
@@ -166,12 +166,11 @@ mod the_string_filter_is_sound_because_the_producer_pads {
     }
 }
 
-/// ⚠ THE TWO WRITERS MUST PARTITION THE TABLE, and before 2026-08-29 they did
-/// not: `google_streams` (run.rs:101) wrote five columns and
-/// `sync::activity::sync_activity` (run.rs:199) then assigned all twelve, in the
-/// same job, seconds later. Nothing errored and no row was lost — Fitbit's
-/// numbers are real — so the migration would have read as verified for weeks
-/// while its write path never once survived to the table.
+/// ⚠ The two writers must partition the table. Two writers in one job, one
+/// writing five columns and the other then assigning all twelve seconds later,
+/// error nowhere and lose no row (Fitbit's numbers are real), so a migration
+/// would read as verified while its write path never once survived to the
+/// table.
 ///
 /// A partition has exactly two ways to break and both are silent, which is why
 /// they are pinned here rather than left to the SQL:
@@ -241,8 +240,8 @@ mod the_two_writers_partition_daily_activity {
     }
 }
 
-/// One step minute served under two offsets — the watch's zone changed mid-day
-/// (London → Paris, 2026-09-30) — is ONE minute, at its instant.
+/// One step minute served under two offsets (the watch's zone changed mid-day,
+/// London → Paris) is one minute, at its instant.
 mod step_minutes {
     use backend::google::sync::merge_step_points;
     use serde_json::json;
@@ -310,7 +309,7 @@ mod step_minutes {
     }
 }
 
-/// `users.pairedDevices`, in the shape measured 2026-10-01 (ids invented).
+/// `users.pairedDevices`, in its real shape (ids invented).
 mod paired_devices {
     use backend::google::sync::{BatteryReading, battery_readings};
     use serde_json::json;
@@ -538,8 +537,8 @@ mod google_points {
 
 /// Active minutes per day from Google's `active-minutes` rollup: the
 /// replacement for Fitbit's lightly/fairly/very active columns, which the
-/// summary card's "active minutes" reads. Measured 2026-10-02 against 1,253
-/// Fitbit days: moderate + vigorous equals fairly + very on EVERY day.
+/// summary card's "active minutes" reads. Moderate + vigorous equals Fitbit's
+/// fairly + very on every day compared.
 mod active_minutes {
     use backend::google::health::active_minutes_of_rollup_point;
     use serde_json::json;

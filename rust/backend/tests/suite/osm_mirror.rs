@@ -1,9 +1,8 @@
 //! The base mirror's write half — bucketing, box sizing and the query.
 //!
-//! The rows these queries write sit BESIDE rows the TypeScript wrote before it
-//! was deleted, so the shapes are pinned against
-//! `06346bd^:src/geo/osm-local.ts` rather than trusted. A bucket that disagrees
-//! with its neighbours does not fail: it fills the mirror with rows the reader's
+//! The rows these queries write sit beside rows already in the mirror, so the
+//! shapes are pinned rather than trusted. A bucket that disagrees with its
+//! neighbours does not fail: it fills the mirror with rows the reader's
 //! `feature_type` filter never selects.
 
 use backend::osm_mirror::{
@@ -60,10 +59,10 @@ fn a_shop_with_a_footprint_stays_a_landmark() {
     assert_eq!(parse(&plain).expect("plain").feature_type, "building");
 }
 
-/// A NAMED hotel building is a venue even with no venue tag: 2026-10-01's hotel
-/// in San Sebastián is mapped as `building=hotel` + `name` and nothing else, so
-/// the stay inside it was named after the supermarket next door. Unnamed, or a
-/// named block of flats, it stays a footprint.
+/// A named hotel building is a venue even with no venue tag: a hotel mapped as
+/// `building=hotel` + `name` and nothing else would otherwise name the stay
+/// inside it after the supermarket next door. Unnamed, or a named block of
+/// flats, it stays a footprint.
 #[test]
 fn a_named_hotel_building_is_a_landmark() {
     let outline = [
@@ -99,8 +98,8 @@ fn a_named_hotel_building_is_a_landmark() {
     assert!(q.contains(r#"way["building"~"^(hotel)$"]["name"]"#), "{q}");
 }
 
-/// A NAMED beach is a place (La Concha, 2026-10-03): `natural=` is no venue rule,
-/// so without the venue tag it would not be kept at all. An unnamed beach, or a
+/// A named beach is a place (La Concha): `natural=` is no venue rule, so
+/// without the venue tag it would not be kept at all. An unnamed beach, or a
 /// named wood, is not.
 #[test]
 fn a_named_beach_is_a_landmark() {
@@ -231,7 +230,7 @@ fn a_box_is_never_narrower_than_the_question_that_provoked_it() {
     }
 }
 
-/// The TypeScript's floors survive as floors: a 50 m question still fetches a
+/// The old box sizes survive as floors: a 50 m question still fetches a
 /// neighbourhood, so one box answers the next street too.
 #[test]
 fn a_small_question_still_fetches_the_typescripts_box() {

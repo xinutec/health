@@ -1,13 +1,11 @@
 //! A missing static file is a 404, not the no-build page.
 //!
-//! ⚠ THIS EXISTS BECAUSE THE WRONG ANSWER WAS A 200, WHICH IS INVISIBLE.
-//! Measured against production 2026-09-08: `GET /media/nope.woff2` on
-//! health.xinutec.org answered **200 text/html** — the "no frontend build is
-//! present in this image" page — across every host in
-//! `nixos-config/frontdoor.json`. A browser handed HTML where it asked for a
-//! font renders broken icons and reports nothing at all. The failure is silent
-//! on both sides: a 200 is not an error to the client, and not a log line on
-//! the server.
+//! ⚠ This exists because the wrong answer is a 200, which is invisible:
+//! `GET /media/nope.woff2` answered **200 text/html**, the "no frontend build
+//! is present in this image" page, on every host. A browser handed HTML where
+//! it asked for a font renders broken icons and reports nothing at all. The
+//! failure is silent on both sides: a 200 is not an error to the client, and
+//! not a log line on the server.
 //!
 //! ⚠ THE ROUTING WAS ALREADY RIGHT, AND THE TEST IS AIMED UNDER IT.
 //! `routes/mod.rs` lists the SPA's routes by hand with a comment saying exactly

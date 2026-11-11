@@ -1,10 +1,10 @@
-//! The Overpass extraction path, end to end through the Lean FFI (#982 Tier 2).
+//! The Overpass extraction path, end to end through the Lean FFI.
 //!
-//! ⚠ THE FIXTURE IS A GENUINE OVERPASS RESPONSE, sliced from a real
-//! central-London rail tile fetched 2026-08-25 — two relations and exactly the
-//! nodes they reference. It is NOT hand-built, and that is the point: a
-//! hand-built fixture invented a wire format the producer never emitted once
-//! already this week, and five tests passed against the fiction.
+//! ⚠ The fixture is a genuine Overpass response, sliced from a real
+//! central-London rail tile: two relations and exactly the nodes they
+//! reference. It is not hand-built, and that is the point: a hand-built fixture
+//! can invent a wire format the producer never emits, and tests pass against
+//! the fiction.
 //!
 //! The expectations below are the TYPESCRIPT ARM'S OUTPUT for this same input,
 //! read off `dist/geo/osm-rail-stops.js`, not values chosen to match the port.
@@ -102,9 +102,8 @@ fn coordinates_survive_the_ffi_exactly() {
     assert_eq!(seqs, (0..36).collect::<Vec<i64>>());
 }
 
-/// ⚠ `stops_json` IS COMPARED ROW FOR ROW against the TypeScript arm's, and
-/// `JSON.stringify` follows the object literal's field order. `serde` follows
-/// declaration order, so this pins the declaration.
+/// ⚠ `stops_json` is compared row for row, so its field order is fixed. `serde`
+/// follows declaration order, so this pins the declaration.
 #[test]
 fn the_serialised_stop_field_order_matches_json_stringify() {
     setup();

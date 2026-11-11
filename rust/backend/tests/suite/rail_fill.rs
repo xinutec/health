@@ -1,11 +1,10 @@
 //! `railfill` through the linked Lean host.
 //!
-//! `Verified.Geo.RailRouteFill`'s `#guard`s settle whether the SCAN is right —
-//! each one is what `src/geo/rail-route-fill.ts` produced under Node. What they
-//! cannot settle is whether this process reaches it: the crate links a prebuilt
-//! static library, so a mode added to `ServeEntry.lean` is invisible until
-//! `lake build ServeEntry:static` has run, and Lean answers `unknown mode`,
-//! which reads as a broken mode rather than an absent one.
+//! `Verified.Geo.RailRouteFill`'s `#guard`s settle whether the scan is right.
+//! What they cannot settle is whether this process reaches it: the crate links
+//! a prebuilt static library, so a mode added to `ServeEntry.lean` is invisible
+//! until `lake build ServeEntry:static` has run, and Lean answers `unknown
+//! mode`, which reads as a broken mode rather than an absent one.
 //!
 //! These re-ask the guard cases across the wire, so a failure is about the link
 //! or the encoding and never about the decision.

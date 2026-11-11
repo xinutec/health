@@ -1,12 +1,11 @@
 //! `/api/share` answers one of TWO shapes, and the difference is absence.
 //!
-//! ⚠ WHY THIS IS A TEST AND NOT A COMMENT. The two shapes are spelled with
+//! ⚠ Why this is a test and not a comment. The two shapes are spelled with
 //! `Option<T>` + `skip_serializing_if = "Option::is_none"`, and what that pair
 //! does is invisible in the struct: a reader sees `Option` and reasonably
-//! expects `null`. dev-lint's wire extractor made exactly that mistake on
-//! 2026-09-04 and reported four drifts against this handler, all false
-//! (dev-lint a9a5edd). Serialising it is the only thing that settles it, so the
-//! serialisation is pinned here rather than argued anywhere.
+//! expects `null` (dev-lint's wire extractor once reported four false drifts
+//! against this handler for that reason). Serialising it is the only thing
+//! that settles it, so the serialisation is pinned here.
 //!
 //! The property both halves depend on: with no link the conditional keys are
 //! ABSENT — the settings page renders its create button off `active: false`

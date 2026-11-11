@@ -1,5 +1,5 @@
-//! The mirrors' decisions, through the Lean FFI (#982 Tier 2): which region,
-//! which tiles, whether to write, and the breaker.
+//! The mirrors' decisions, through the Lean FFI: which region, which tiles,
+//! whether to write, and the breaker.
 //!
 //! ⚠ NONE OF THESE ARE ARITHMETIC CHECKS. Each pins a decision that changes what
 //! the cron does to production data — which city gets mirrored, and whether a
@@ -94,10 +94,10 @@ fn the_tile_key_is_four_decimal_places_of_the_south_west_corner() {
 /// and the merge's per-tile `DELETE` only ever names keys from the CURRENT
 /// plan. Rows under the old names are then unreachable by every future run.
 ///
-/// ⚠ NOT HYPOTHETICAL. Measured against production 2026-09-12: nearly a third
-/// of `bus_route_cache` sat under names no plan could emit, some from before
-/// the column existed and the rest under a band from a retired grid. The reader
-/// takes the table unfiltered, so all of them reached the bus matcher.
+/// ⚠ Not hypothetical: nearly a third of production's `bus_route_cache` sat
+/// under names no plan could emit, some from before the column existed and the
+/// rest under a band from a retired grid. The reader takes the table
+/// unfiltered, so all of them reached the bus matcher.
 ///
 /// ⚠ THE NUMBERS BELOW ARE SYNTHETIC, and must stay that way. The real grid is
 /// derived from mined focus places, so its corners describe where he actually

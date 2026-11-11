@@ -2,12 +2,11 @@
 //!
 //! # Why a real-data test and not another mock
 //!
-//! The client being ported writes into `osmTrace.reverseGeocode`, a section the
-//! TypeScript filled from Nominatim and the Lean fold reads by field name. A
-//! hand-written sample proves only that the struct matches what I believed the
-//! shape was. The 42 golden days carry **795 answers the TypeScript actually
-//! recorded**, which is the only evidence available that the port's wire shape
-//! is the one already on disk.
+//! The client writes into `osmTrace.reverseGeocode`, a section the Lean fold
+//! reads by field name. A hand-written sample proves only that the struct
+//! matches what its author believed the shape was. The golden days carry 795
+//! recorded answers, the evidence that the wire shape is the one already on
+//! disk.
 //!
 //! Round-trip rather than parse: parsing succeeds while silently dropping a
 //! field serde does not know about, and a dropped field is exactly how a
@@ -154,11 +153,10 @@ fn sample() -> Value {
     })
 }
 
-/// ⚠ THE CLAIM THE WIRING RESTS ON. A geocode that reaches the fold from a live
+/// ⚠ The claim the wiring rests on. A geocode that reaches the fold from a live
 /// cache and one that reaches it from a recorded fixture section must be the
-/// SAME BYTES — otherwise a day graded on the corpus and the same day served
-/// would differ for a reason no gate can see (#1071 records that shape for
-/// `ROAD_CORRIDOR_MARGIN_M`).
+/// same bytes; otherwise a day graded on the corpus and the same day served
+/// would differ for a reason no gate can see.
 ///
 /// Both paths are driven here and compared: the answerer's live row against
 /// `build_day_request`'s encoding of the identical answer at the identical
@@ -183,8 +181,8 @@ fn a_live_geocode_and_a_recorded_one_are_the_same_row() {
         .expect("the arm runs")
         .expect("a source with a geocode answers");
 
-    // The recorded path: a fixture section keyed in PLAIN DECIMALS — the format
-    // the TypeScript wrote — through the encoder the request builder uses.
+    // The recorded path: a fixture section keyed in plain decimals, through the
+    // encoder the request builder uses.
     let section = serde_json::json!({
         format!("{lat}|{lon}|{zoom}"): sample(),
     });

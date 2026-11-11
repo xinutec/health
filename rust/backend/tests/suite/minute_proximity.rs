@@ -107,11 +107,10 @@ fn an_empty_neighbourhood_is_answered() {
     assert_eq!(unanswered, 0, "asked and answered, just empty");
 }
 
-/// ⚠ THE TWO MODES AND THE DECODER MUST AGREE ABOUT THE ENCODING. `proximitytable`
-/// writes bit patterns so a distance is the one the TypeScript compared rather
-/// than the one a JSON decimal survived; `assemblesegments` had only ever been
-/// handed plain numbers. This is the only test that runs the real table into the
-/// real decoder.
+/// ⚠ The two modes and the decoder must agree about the encoding.
+/// `proximitytable` writes bit patterns, so a distance is the computed one
+/// rather than the one a JSON decimal survived; `assemblesegments` must read
+/// them. This is the only test that runs the real table into the real decoder.
 #[test]
 fn the_table_feeds_assemblesegments_unread() {
     setup();
@@ -151,10 +150,9 @@ fn the_table_feeds_assemblesegments_unread() {
     assert!(!segs.as_array().unwrap().is_empty());
 }
 
-/// ⚠ `gpsoutliers` HAD NO RUST CALLER UNTIL THE DECODE PATH NEEDED IT — a #1003
-/// orphan one function away from the code that had to have it. The Lean guards
+/// ⚠ `gpsoutliers` is reached only through the decode path. The Lean guards
 /// cover the filter; this covers that the wire round trip reaches it at all, and
-/// that a fix survives it BIT-EXACT rather than through a decimal rendering.
+/// that a fix survives it bit-exact rather than through a decimal rendering.
 #[test]
 fn the_outlier_filter_is_reachable_and_exact() {
     use backend::lean::GpsFix;

@@ -1,10 +1,10 @@
 //! Every integration test that does not need a binary of its own.
 //!
-//! ⚠ **ONE BINARY, AND THE REASON IS BUILD TIME.** Cargo gives every file in
+//! ⚠ **One binary, and the reason is build time.** Cargo gives every file in
 //! `tests/` its own crate and its own executable, and each of ours statically
-//! links the Lean runtime — a mean of 58 MB across 115 of them, 6.5 GB of
-//! `target/`. Touching one line in `backend` relinks the lot. Measured
-//! 2026-09-13 on a warm tree, one `touch` of `backend/src/lib.rs`:
+//! links the Lean runtime: a mean of 58 MB across 115 of them, 6.5 GB of
+//! `target/`. Touching one line in `backend` relinks the lot. On a warm tree,
+//! one `touch` of `backend/src/lib.rs`:
 //!
 //! ```text
 //! lib + 1 test binary      16 s
@@ -14,10 +14,10 @@
 //! The tests themselves are not the cost: 378 of them total 214 s of CPU and
 //! 351 finish inside a second. The row was ~90% compilation.
 //!
-//! ⚠ **ISOLATION IS UNCHANGED.** `nextest` runs one process per TEST, not per
-//! binary, so sharing a binary does not share process state — which is what
-//! #1560 was about. `cargo test` would thread them together, and that is
-//! exactly why the corpus shards below stay out of here.
+//! ⚠ **Isolation is unchanged.** `nextest` runs one process per test, not per
+//! binary, so sharing a binary does not share process state. `cargo test` would
+//! thread them together, and that is exactly why the corpus shards below stay
+//! out of here.
 //!
 //! ⚠ **SIX BINARIES ARE DELIBERATELY NOT IN HERE**, because something names
 //! each by binary and would silently stop selecting it:

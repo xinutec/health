@@ -188,13 +188,11 @@ async fn a_malformed_date_or_an_unknown_zone_is_refused_rather_than_guessed() {
 /// not a share viewer, so it is ALLOWED, and `require_session` then attaches the
 /// session and runs the route. A read-only link would be able to write.
 ///
-/// ⚠ THIS MIRRORS THE REAL STACK RATHER THAN IMPORTING IT, AND THAT MEANS IT
-/// DOES NOT PROTECT THE PRODUCTION ORDER. This comment used to claim it would
-/// "go red if the production order is ever flipped". Measured 2026-08-22:
-/// flipping the two layers in `routes::mod` failed ZERO of the eleven tests
-/// here and in `auth_middleware.rs`, because every one of them builds its own
-/// copy of the stack. A check that can pass for the wrong reason is worse than
-/// none, because it silences the question.
+/// ⚠ This mirrors the real stack rather than importing it, so it does not
+/// protect the production order: flipping the two layers in `routes::mod`
+/// fails none of the tests here or in `auth_middleware.rs`, because every one
+/// builds its own copy of the stack. `tests/suite/share_route.rs` asserts the
+/// order through the real router.
 ///
 /// What protects the order now is `require_may_proceed` FAILING CLOSED on a
 /// missing session extension, which turns a misordering into an immediate 500

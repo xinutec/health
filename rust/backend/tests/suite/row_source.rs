@@ -7,9 +7,9 @@
 //!
 //! ⚠ The failure this guards is silent and looks like success. An answerer that
 //! turned "cannot vouch" into an empty row list would answer `nearbyWays` with
-//! "no roads near here" — a CLAIM about the world — and the fold would build a
+//! "no roads near here", a claim about the world, and the fold would build a
 //! day on it without one error. The fold counts a decline; it cannot count a
-//! lie. Same shape as #976.
+//! lie.
 
 use backend::lean::Answerer;
 use backend::lean::Ask;
@@ -62,10 +62,10 @@ impl RowSource for NeverCovered {
 /// line buckets and an aeroway POINT query — and a test that only checks the
 /// table declines cannot say WHICH of the five did it.
 ///
-/// ⚠ This is not hypothetical tidiness. Ablated 2026-08-22 by making the line
-/// path swallow a decline into an empty list: the earlier version of this file
-/// still passed, because the aeroway point query declined a moment later. The
-/// test was right about the table and blind about the reason.
+/// ⚠ This is not hypothetical tidiness: with the line path swallowing a decline
+/// into an empty list, a weaker version of this test still passed, because the
+/// aeroway point query declined a moment later. It was right about the table
+/// and blind about the reason.
 struct LinesOnly;
 
 impl RowSource for LinesOnly {

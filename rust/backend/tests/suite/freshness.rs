@@ -1,8 +1,8 @@
 //! The freshness check must FAIL, not only pass.
 //!
-//! ⚠ Every stream in prod was fresh when this was written, so the passing path
-//! is the only one a live run can exercise. A check nobody has seen fail is
-//! exactly the thing #1231 is about.
+//! ⚠ Every stream in prod is usually fresh, so the passing path is the only one
+//! a live run exercises. A check nobody has seen fail is exactly what these
+//! tests exist for.
 
 use backend::freshness::{FRESHNESS, stale_reason};
 
@@ -59,16 +59,15 @@ fn every_bound_records_why() {
     }
 }
 
-/// ⚠ A ROW CAN ARRIVE WITHOUT ITS DATA, and from the 2026-09-01 cutover
+/// ⚠ A row can arrive without its data, and from the Google cutover
 /// `daily_activity` is the table where that becomes possible. Fitbit writes
 /// seven columns and Google writes five; if Google fails, Fitbit still creates
 /// the row, `MAX(date)` is today, and the table-level check passes over a day
 /// with no step count in it.
 ///
-/// This is a blind spot the partition CREATED — before it, Fitbit filled every
+/// The partition created this blind spot: before it, Fitbit filled every
 /// column, so a Google failure was invisible and harmless. Now it is invisible
-/// and lossy, which is the same shape as the outage that opened #1231 and the
-/// reason the column is watched by name.
+/// and lossy, which is why the column is watched by name.
 mod a_migrated_column_is_watched_separately_from_its_table {
     use backend::freshness::{FRESHNESS, stale_reason};
 

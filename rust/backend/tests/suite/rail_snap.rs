@@ -2,18 +2,16 @@
 //!
 //! # Why this exists
 //!
-//! `rail_snap` is called from one place, `main.rs`'s train-leg snapper, and
-//! until now from no test at all. #1003's two-hop check measured that: the arm
-//! is dispatched, the function is live in production, and every gate was blind
-//! to it. A production path no gate can see is a worse defect than an unused
-//! one, so what this wants is a TEST, not another caller.
+//! `rail_snap` is called from one place, `main.rs`'s train-leg snapper. A
+//! production path no gate can see is a worse defect than an unused one, so
+//! what this wants is a test, not another caller.
 //!
 //! # The geography is INVENTED, and has to be
 //!
-//! #860: no tracked test may carry real coordinates or place names. A straight
-//! synthetic corridor is also the better instrument here — it makes the two
-//! refusals below unambiguous, where a real corridor would leave "did it refuse,
-//! or did my fixture just not resolve" open.
+//! No tracked test may carry real coordinates or place names. A straight
+//! synthetic corridor is also the better instrument here: it makes the two
+//! refusals below unambiguous, where a real corridor would leave "did it
+//! refuse, or did my fixture just not resolve" open.
 //!
 //! ⚠ ONE `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
 //! starts a runtime and several tests racing on it would flake.
