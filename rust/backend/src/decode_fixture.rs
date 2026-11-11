@@ -375,12 +375,6 @@ pub fn request(fx: &Value) -> Result<Value> {
         }
     };
 
-    let flags = &inputs["decodeFlags"];
-    anyhow::ensure!(
-        flags.is_object(),
-        "a v1 fixture with no recorded decodeFlags — decide its flags before gating it"
-    );
-
     let places = inputs["places"]
         .as_array()
         .context("inputs.places")?
@@ -407,7 +401,6 @@ pub fn request(fx: &Value) -> Result<Value> {
             "sleep": inputs["sleep"],
             "localCtx": crate::timezone::local_ctx_table(bounds.start_utc, tz)?,
             "proximity": proximity,
-            "imputeCadence": flags["imputeCadence"],
         },
         "edges": edges,
         "nodes": nodes,
@@ -416,7 +409,6 @@ pub fn request(fx: &Value) -> Result<Value> {
         "railStopRelations": inputs.get("railStopRelations").cloned().unwrap_or(Value::Null),
         "continuity": continuity,
         "flags": {
-            "chainContext": flags["chainContext"],
             // ⚠ ARM KNOB, harness-only: absent unless the environment sets
             // it, and production never builds its request here.
             "unknownBelow": arm_knob("HSMM_UNKNOWN_BELOW"),

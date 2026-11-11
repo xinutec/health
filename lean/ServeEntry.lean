@@ -501,7 +501,7 @@ focus places, the train-generator coverage map, continuity, and the C4 flags.
     "places": [{id, name, lat, lon, hourProfile:[num]|null, dwell}],
     "coverage": [[ts, [lines]]],                         // ts → generator-vouched lines
     "continuity": {priorPlaceId, priorPlaceCoord:[lat,lon]|null, hoursSince, priorPosterior}|null,
-    "flags": {chainContext, segEmission, …} }
+    "flags": {segEmission, …} }
  -/
 
 private def parseObsRow (j : Json) : Except String Verified.Hsmm.Observation.ObsRow := do
@@ -629,7 +629,6 @@ private def parseObservationInput (v : Json)
   let hr ← (← (← v.getObjVal? "hr").getArr?).mapM parseHrPoint
   let steps ← (← (← v.getObjVal? "steps").getArr?).mapM parseStepPoint
   let sleep ← (← (← v.getObjVal? "sleep").getArr?).mapM parseSleepRec
-  let imputeCadence ← (← v.getObjVal? "imputeCadence").getBool?
   -- The local-time table: 1440 [hour, dayOfWeek] pairs.
   let ctxArr ← (← (← v.getObjVal? "localCtx").getArr?).mapM (fun e => do
     let a ← e.getArr?
@@ -655,7 +654,6 @@ private def parseObservationInput (v : Json)
     points.toList hr.toList steps.toList sleep.toList
     (fun m => ctxArr.getD m (0, 0))
     (fun ts => proxMap.getD ts (none, none))
-    imputeCadence
 
 /-- A Float zero for the record parser's branches (a literal there is a GMP call). -/
 private def recordZero : Float := 0
@@ -871,7 +869,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let segEm := { segEm with journey := segEm.journey.map fun jp => { jp with wait := waitFit.isSome } }
   let ctx := Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
-    (← (← flags.getObjVal? "chainContext").getBool?) segEm
+    segEm
   let posRef := Verified.Hsmm.SegmentEmission.refOf obs
   let segPref := Verified.Hsmm.SegmentEmission.withPositions
     (Verified.Hsmm.SegmentEmission.prefixOf obs) obs posRef
@@ -1128,45 +1126,42 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   let lineNames := c.edgesByLine.toList.map (·.1)
   -- The fix's distances to every line and place, once per distinct fix: a
   -- gap's minutes all share one `prevGpsFix`.
-  let minutes : Array (Verified.Hsmm.RouteModel.ChainMinute × Bool) :=
-    if c.chainOn then Id.run do
-      let mut out : Array (Verified.Hsmm.RouteModel.ChainMinute × Bool) := #[]
-      let mut fd : Option Verified.Hsmm.RouteModel.FixDists := none
-      for o in c.obs do
-        if let some fx := o.prevGpsFix then
-          if !(fd.any (·.fx == fx)) then
-            fd := some (Verified.Hsmm.RouteModel.fixDists c.edgesByLine c.placeCoords placeIds lineNames fx)
-        out := out.push
-          (Verified.Hsmm.RouteModel.chainMinuteTabledD c.edgesByLine c.placeCoords placeIds lineNames
-             fd o,
-           Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)
-      return out
-    else #[]
+  let minutes : Array (Verified.Hsmm.RouteModel.ChainMinute × Bool) := Id.run do
+    let mut out : Array (Verified.Hsmm.RouteModel.ChainMinute × Bool) := #[]
+    let mut fd : Option Verified.Hsmm.RouteModel.FixDists := none
+    for o in c.obs do
+      if let some fx := o.prevGpsFix then
+        if !(fd.any (·.fx == fx)) then
+          fd := some (Verified.Hsmm.RouteModel.fixDists c.edgesByLine c.placeCoords placeIds lineNames fx)
+      out := out.push
+        (Verified.Hsmm.RouteModel.chainMinuteTabledD c.edgesByLine c.placeCoords placeIds lineNames
+           fd o,
+         Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)
+    return out
   -- The override rows go straight into the flat `nRows × T` array. A pure loop:
   -- the first envelope error is kept and thrown after it.
   let (ovPairs, transFlat, err) : Array (Nat × Nat) × Array Nat × Option String := Id.run do
     let mut ovPairs : Array (Nat × Nat) := #[]
     let mut flat : Array Nat := #[]
     let mut err : Option String := none
-    if c.chainOn then
-      for ((src, ws), a) in weighted do
-        for ((dst, _), b) in weighted do
-          if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst
-              && !(jOn && (isLeg src || isLeg dst)) then
-            -- A journey arrives at and leaves a place with the place's own
-            -- context, as a walk does.
-            let base := outerTransF src dst ws a b
-            -- The place-anchored boarding penalty once per pair; each minute adds
-            -- only what depends on it.
-            let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
-            for (cm, covered) in minutes do
-              let cv := Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine src dst covered pb cm
-              match encScore pOB (quant (base + cv)) with
-              | .ok v => flat := flat.push v
-              | .error e =>
-                if err.isNone then err := some e
-                flat := flat.push 0
-            ovPairs := ovPairs.push (a, b)
+    for ((src, ws), a) in weighted do
+      for ((dst, _), b) in weighted do
+        if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst
+            && !(jOn && (isLeg src || isLeg dst)) then
+          -- A journey arrives at and leaves a place with the place's own
+          -- context, as a walk does.
+          let base := outerTransF src dst ws a b
+          -- The place-anchored boarding penalty once per pair; each minute adds
+          -- only what depends on it.
+          let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
+          for (cm, covered) in minutes do
+            let cv := Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine src dst covered pb cm
+            match encScore pOB (quant (base + cv)) with
+            | .ok v => flat := flat.push v
+            | .error e =>
+              if err.isNone then err := some e
+              flat := flat.push 0
+          ovPairs := ovPairs.push (a, b)
     return (ovPairs, flat, err)
   if let some e := err then throw e
   let nRows := ovPairs.size
@@ -1193,13 +1188,12 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
     -- A journey's first leg boards as a walk would: the fix-anchored term.
     let walkSt : Verified.Hsmm.Emissions.State := ⟨.walking, none, none⟩
     let mut firstCtx := Verified.FloatConst.floats (L * T) journeyZero
-    if c.chainOn then
-      for (b, bi) in legs.zipIdx do
-        let dst := c.states[b]!
-        if dst.mode == .train then
-          for ((cm, covered), t) in minutes.zipIdx do
-            firstCtx := firstCtx.set! (bi * T + t)
-              (Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine walkSt dst covered none cm)
+    for (b, bi) in legs.zipIdx do
+      let dst := c.states[b]!
+      if dst.mode == .train then
+        for ((cm, covered), t) in minutes.zipIdx do
+          firstCtx := firstCtx.set! (bi * T + t)
+            (Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine walkSt dst covered none cm)
     let mut out := Verified.FloatConst.floats (T * L * L) Verified.FloatConst.negInf
     for (a, ai) in legs.zipIdx do
       for (b, bi) in legs.zipIdx do
@@ -1212,7 +1206,7 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
         let base := if src.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then
             (if dst.mode == .train then journeyZero else Verified.FloatConst.negInf)
           else baseTransF src dst ws a
-        if c.chainOn && chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
+        if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
           let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
           for ((cm, covered), t) in minutes.zipIdx do
             out := out.set! ((t * L + ai) * L + bi)

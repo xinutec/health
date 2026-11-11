@@ -141,10 +141,9 @@ fn the_table_feeds_assemblesegments_unread() {
             "hr": [], "steps": [], "sleep": [],
             "localCtx": (0..1440).map(|m| [(m / 60) % 24, 1]).collect::<Vec<_>>(),
             "proximity": table,
-            "imputeCadence": true,
         },
         "edges": [], "places": [], "nodes": null, "continuity": null,
-        "flags": { "chainContext": true },
+        "flags": {},
         "maxD": 30,
     })))
     .expect("the decoder must accept the table this pipeline produces")

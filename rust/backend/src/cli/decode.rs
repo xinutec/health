@@ -292,7 +292,6 @@ pub(crate) async fn decode_one(
             "sleep": obs.get("sleep").cloned().unwrap_or(serde_json::json!([])),
             "localCtx": backend::timezone::local_ctx_table(bounds.start_utc, tz)?,
             "proximity": osm.proximity,
-            "imputeCadence": flag("USE_CADENCE_IMPUTATION"),
         },
         "edges": edges,
         "nodes": nodes,
@@ -304,14 +303,10 @@ pub(crate) async fn decode_one(
         "placeNearLine": osm.place_near_line,
         "railStopRelations": inputs.get("railStopsCache").cloned().unwrap_or(serde_json::Value::Null),
         "continuity": continuity,
-        // The three C4 flags, from the env (see [`flag`]).
-        //
         // `maxD` is absent on purpose: it is the trellis depth, and
         // `Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION` holds it. The decoder
         // parameters (`DECODER_PARAMS`, below) carry their own.
-        "flags": {
-            "chainContext": flag("USE_CHAIN_CONTEXT"),
-        },
+        "flags": {},
         "date": date,
         "tz": tz,
     });
@@ -462,17 +457,6 @@ pub(crate) async fn load_continuity(
         "hoursSince": hours_since,
         "priorPosterior": posterior,
     }))
-}
-
-/// A decode feature flag: set and exactly `"1"` is on, anything else,
-/// including unset, is off.
-///
-/// ⚠ Not defaulted to `true`. Production sets all three (`decodeFlags` in
-/// `kubes/dhall/apps/health.dhall`), and `scripts/prod-db.sh` mirrors the pod
-/// env so a Mac replay decodes the day the cron wrote; a default would be
-/// right in the cluster and wrong everywhere else.
-pub(crate) fn flag(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|v| v == "1")
 }
 
 /// `head::capture`'s `obs.points` as fixes.

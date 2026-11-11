@@ -30,7 +30,7 @@ fn request(observation: serde_json::Value) -> serde_json::Value {
     with_record(serde_json::json!({
         "observation": observation,
         "edges": [], "places": [], "nodes": null, "continuity": null,
-        "flags": { "chainContext": true },
+        "flags": {},
         "maxD": 30,
     }))
 }
@@ -54,7 +54,6 @@ fn observation(proximity: serde_json::Value) -> serde_json::Value {
         "sleep": [],
         "localCtx": local_ctx(),
         "proximity": proximity,
-        "imputeCadence": true,
     })
 }
 
@@ -317,12 +316,12 @@ fn ride_request(relations: serde_json::Value) -> serde_json::Value {
     with_record(serde_json::json!({
         "observation": {
             "startUtc": T0, "points": points, "hr": [], "steps": [], "sleep": [],
-            "localCtx": local_ctx(), "proximity": proximity, "imputeCadence": false,
+            "localCtx": local_ctx(), "proximity": proximity,
         },
         "edges": edges, "nodes": nodes, "places": [], "placeNearLine": [],
         "continuity": null,
         "railStopRelations": relations,
-        "flags": { "chainContext": true },
+        "flags": {},
     }))
 }
 

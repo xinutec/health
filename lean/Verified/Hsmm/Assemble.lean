@@ -72,7 +72,6 @@ structure ModelContext where
   coverage : Std.HashMap Int (List String)
   placeNearLine : Std.HashSet String
   continuity : Option Continuity.ContinuityContext
-  chainOn : Bool
   stepPref : Array Float
   /-- Per minute, what the line-proximity term asks of the graph
       (`RouteModel.minuteLines`) — computed once per minute, not per state. -/
@@ -163,7 +162,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float))
     (coverage : Std.HashMap Int (List String)) (placeNearLine : Std.HashSet String)
     (continuity : Option Continuity.ContinuityContext)
-    (chainOn : Bool) (segEm : SegmentEmission.Params) : ModelContext :=
+    (segEm : SegmentEmission.Params) : ModelContext :=
   -- A line is a state only where the day's route graph has its track: abroad
   -- a London line had no evidence against it and named a TGV (10-01).
   let lines := KNOWN_LINES.filter (RouteModel.linesInGraph model).contains
@@ -191,7 +190,6 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     modeledLines := RouteModel.linesInGraph model
     edgesByLine := RouteModel.buildEdgesByLine model
     placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
-    chainOn
     segEm := SegmentEmission.prepare segEm obs.size
     stepPref := SegmentEvidence.stepPrefix obs
     minuteLines := obs.map (RouteModel.minuteLines model)
@@ -673,13 +671,11 @@ def transAt (c : ModelContext) (a b t : Nat) : Float :=
   | none, _ | _, none => negInf
   | some src, some dst =>
   let chainVal :=
-    if c.chainOn then
-      match c.obs[t]? with
-      | some o => RouteModel.chainContext c.edgesByLine c.placeCoords src dst o (coveredAt c o.ts)
-      | none => negInf
-    else 0.0
+    match c.obs[t]? with
+    | some o => RouteModel.chainContext c.edgesByLine c.placeCoords src dst o (coveredAt c o.ts)
+    | none => negInf
   let placeNear := fun (pid : Int) (line : String) => c.placeNearLine.contains s!"{pid}|{line}"
-  Assembly.transitionLogProbFull placeNear c.states.toList NO_SELF_LOOP src dst c.chainOn
+  Assembly.transitionLogProbFull placeNear c.states.toList NO_SELF_LOOP src dst
     (c.weights.chain * chainVal) c.transWeight
     + stayEntryAt c a dst
 
@@ -706,10 +702,10 @@ private def places : List (FocusPlaceRef × Float × Float × Option (Array Floa
 -- A record with no fitted mode: every base term stays per minute.
 private def segNone : SegmentEmission.Params := { sigmaW := 8, rho := 0.8, byMode := [] }
 -- Uncovered day, and a day where the generator vouches "Jubilee Line" at ts 1600.
-private def ctxU : ModelContext := buildContext #[obsTrain] jm places {} {} none false segNone
+private def ctxU : ModelContext := buildContext #[obsTrain] jm places {} {} none segNone
 private def ctxC : ModelContext :=
   buildContext #[obsTrain] jm places (({} : Std.HashMap Int (List String)).insert 1600 ["Jubilee Line"])
-    {} none false segNone
+    {} none segNone
 private def jubIdx : Nat := (ctxU.states.findIdx? (fun s => s.lineName == some "Jubilee Line")).getD 0
 private def statIdx : Nat := (ctxU.states.findIdx? (fun s => s.placeId == some 5)).getD 0
 private def noneIdx : Nat := (ctxU.states.findIdx? (fun s => s.mode == .stationary && s.placeId == none)).getD 0
@@ -747,7 +743,7 @@ private def trainsN : Float := Verified.FloatConst.natToFloat (ctxU.states.filte
 #guard durAt ctxU jubIdx 1 0 == -10                        -- uncovered → hard floor
 
 -- transAt: the `−∞` hard-zero short-circuit survives the chain-context layer.
-#guard transAt { ctxU with chainOn := true } statIdx noneIdx 0 == negInf  -- stat@5 → stat@none
+#guard transAt ctxU statIdx noneIdx 0 == negInf  -- stat@5 → stat@none
 
 -- tensor dims.
 #guard (buildEmit ctxU).size == 1 && (buildEmit ctxU)[0]!.size == 9

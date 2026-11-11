@@ -145,8 +145,7 @@ def buildObservationTensor
     (points : List GpsPoint) (hr : List HrPoint) (steps : List StepPoint)
     (sleep : List SleepRec)
     (localCtx : Nat → Nat × Nat)
-    (proximityAt : Int → Option Float × Option Float)
-    (imputeCadence : Bool) : Array ObsRow :=
+    (proximityAt : Int → Option Float × Option Float) : Array ObsRow :=
   let endUtc := startUtc + (Int.ofNat MINUTES_PER_DAY) * SECONDS_PER_MINUTE
   let gpsB := bucketize startUtc endUtc GpsPoint.ts points
   let hrB := bucketize startUtc endUtc HrPoint.ts hr
@@ -171,7 +170,7 @@ def buildObservationTensor
     a.push (!(stepB[m]?.getD #[]).isEmpty || !(hrB[m]?.getD #[]).isEmpty)) #[]
   let dayHasStepRows := (List.range MINUTES_PER_DAY).any (fun m => !(stepB[m]?.getD #[]).isEmpty)
   let cad : Array (Option Float) :=
-    if imputeCadence && dayHasStepRows then
+    if dayHasStepRows then
       let pd := prevAliveDist alive
       let nd := nextAliveDist alive
       (List.range MINUTES_PER_DAY).foldl (fun a m =>
@@ -228,7 +227,7 @@ private def hrs : List HrPoint := [hp 20 60, hp 50 70, hp 210 80, hp 425 72]
 private def stps : List StepPoint := [sp 60 50, sp 480 30]
 
 private def tensor : Array ObsRow :=
-  buildObservationTensor 1784156400 pts hrs stps [] (fun _ => (0, 0)) (fun _ => (none, none)) true
+  buildObservationTensor 1784156400 pts hrs stps [] (fun _ => (0, 0)) (fun _ => (none, none))
 
 /-- Project a minute to the fields the reference pins (fix ts shown relative to
     startUtc). -/
@@ -260,7 +259,7 @@ private def proj (o : ObsRow) :
 -- The same day before its last two fixes arrived: the fix at minute 7 reaches
 -- back over the dark minutes 2–6 (`nextGpsFix`), so they are the first to move.
 private def tensorEarly : Array ObsRow :=
-  buildObservationTensor 1784156400 (pts.take 3) hrs stps [] (fun _ => (0, 0)) (fun _ => (none, none)) true
+  buildObservationTensor 1784156400 (pts.take 3) hrs stps [] (fun _ => (0, 0)) (fun _ => (none, none))
 #guard firstDiff tensor tensor == none
 #guard firstDiff tensorEarly tensor == some 2
 
