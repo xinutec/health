@@ -1,7 +1,7 @@
 import Verified.Hsmm.FloatScore
 import Verified.JsNum
 /-!
-# "Which focus place is the user in right now" (port of `src/geo/current-place.ts`)
+# "Which focus place is the user in right now"
 
 A pure selector over the user's mined `focus_places` and the latest fix, behind
 the internal `/internal/place/current` endpoint that coach uses to auto-select a

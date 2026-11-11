@@ -6,7 +6,7 @@ import Std.Data.HashMap
 import Verified.FloatConst
 
 /-!
-# Fix-cloud-weighted rail snapper (port of `src/geo/rail-snap.ts`)
+# Fix-cloud-weighted rail snapper
 
 Snap a confident train leg onto the rail network, routing between its two named
 stations along the line the user's past journeys actually traced rather than the

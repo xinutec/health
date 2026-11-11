@@ -1,6 +1,6 @@
 import Verified.Fix
 /-!
-# Which train legs are worth a route fill (port of `src/geo/rail-route-fill.ts`)
+# Which train legs are worth a route fill
 
 A train leg is drawn on rails only when its `<board> → <alight>[ · <line>]` label
 has a row in `rail_route_cache`. The nightly job computes those from history, so

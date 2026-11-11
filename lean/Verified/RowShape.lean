@@ -1,6 +1,6 @@
 import Verified.Civil
 /-!
-# What a `selectAll()` row looks like on the wire (port of `src/routes/api.ts`)
+# What a `selectAll()` row looks like on the wire
 
 Twelve `/api` endpoints are one line of logic each — `selectFrom(t).selectAll()`,
 then `c.json(rows)`. The logic is trivial and the *shape* is not: the response

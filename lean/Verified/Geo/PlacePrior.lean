@@ -1,7 +1,6 @@
 import Verified.Hsmm.FloatScore
 /-!
-# Probabilistic place assignment (port of `src/geo/place-prior.ts` and
-`src/geo/place-snap.ts`)
+# Probabilistic place assignment
 
 Which of the user's mined long-term clusters (`focus_places`) a stationary
 segment belongs to. `pickBestPlace` combines, in log-space:

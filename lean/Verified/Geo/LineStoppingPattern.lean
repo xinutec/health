@@ -1,5 +1,5 @@
 /-!
-# Stopping-pattern line disambiguation (port of `src/geo/line-stopping-pattern.ts`)
+# Stopping-pattern line disambiguation
 
 Which of two lines sharing a track did the train run on? Ask where it STOPPED.
 Out of Wembley Park the Metropolitan and the Jubilee run on the same rails for

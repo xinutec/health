@@ -2,7 +2,7 @@ import Verified.Geo.WalkableRoute
 import Verified.JsNum
 
 /-!
-# Corridor road-geometry fetch (port of `src/geo/osm-corridor.ts`)
+# Corridor road-geometry fetch
 
 Read the OSM ways along a GPS track by sampling small discs down the track and
 unioning them, instead of one giant disc around the track's centroid. The

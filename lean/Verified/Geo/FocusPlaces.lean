@@ -1,7 +1,7 @@
 import Verified.Hsmm.FloatScore
 import Verified.Geo.Velocity
 /-!
-# Focus-place mining (port of `src/geo/focus-places.ts`)
+# Focus-place mining
 
 The whole pipeline that turns raw GPS into the user's long-term places:
 

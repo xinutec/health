@@ -1,7 +1,7 @@
 import Std.Data.HashSet
 import Verified.Geo.LineStations
 /-!
-# Served-station sets (port of `src/hmm/served-stations.ts`)
+# Served-station sets
 
 Does a line actually stop at a candidate station? `station-chain.ts` uses this to
 refuse a (board, alight) pair the mirrored OSM route relations say the line does

@@ -1,7 +1,7 @@
 import Verified.Hsmm.FloatScore
 import Verified.Geo.SegmentMerge
 /-!
-# HSMM→pipeline place-override decision leaves (port of `src/hmm/place-override.ts`)
+# HSMM→pipeline place-override decision leaves
 
 `applyHsmmPlaceOverride` overlays the HSMM's place / train-line picks onto the
 heuristic pipeline's segments. The WHOLE pass is here now — see "The pass itself"

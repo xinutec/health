@@ -4,7 +4,7 @@ import Verified.Geo.Segments
 import Verified.JsNum
 import Verified.Fix
 /-!
-# Velocity-owned pure kernels (port of the pure helpers in `src/geo/velocity.ts`)
+# Velocity-owned pure kernels
 
 `velocity.ts` is mostly the post-decode ORCHESTRATOR — it loads GPS/biometrics
 from the DB, resolves tz, and sequences ~40 pass modules. That sequencing stays

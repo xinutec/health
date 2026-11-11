@@ -1,7 +1,6 @@
 import Verified.Civil
 /-!
-# The PhoneTrack visualisation filter's start date (port of
-`src/nextcloud/phonetrack-prefs.ts`)
+# The PhoneTrack visualisation filter's start date
 
 The dashboard re-sets PhoneTrack's date filter each time it loads, so the map
 opens on "the day you are currently living" rather than on the calendar day.

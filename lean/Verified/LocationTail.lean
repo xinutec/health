@@ -1,6 +1,6 @@
 import Verified.VelocityCache
 /-!
-# The live-map reads (port of `src/routes/api.ts`)
+# The live-map reads
 
 Three endpoints feed the Map tab, and between them they hold four constants and
 two comparisons. None of it is hard; all of it is the kind of thing that is

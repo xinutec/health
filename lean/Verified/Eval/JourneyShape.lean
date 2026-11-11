@@ -1,6 +1,6 @@
 import Verified.Eval.Journeys
 /-!
-# Journey reconstruction scoring (port of `src/eval/journey-score.ts`)
+# Journey reconstruction scoring
 
 The gate's referee for the DRAWN timeline: does the day read as the right
 sequence of trips? `Verified.Eval.Journeys.groundTruthJourneys` builds the

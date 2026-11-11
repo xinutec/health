@@ -1,5 +1,5 @@
 /-!
-# How long a computed day may be reused (port of `src/routes/velocity-cache.ts`)
+# How long a computed day may be reused
 
 `/velocity` is expensive — a data-rich day is 5–10 s of fetch, Kalman,
 segmentation, OSM enrichment and biometric joins — and deterministic for a given

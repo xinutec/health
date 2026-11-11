@@ -1,5 +1,5 @@
 /-!
-# Rail-vs-road proximity kernel (port of `railRoadDistFromWays` in `src/geo/rail-road-proximity.ts`)
+# Rail-vs-road proximity kernel
 
 Given a fix's `nearbyWays` (OSM ways with a distance, type, and subtype), the
 nearest rail-only way and the nearest drivable road — the road-vs-rail evidence

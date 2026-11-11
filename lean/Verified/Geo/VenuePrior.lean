@@ -1,5 +1,5 @@
 /-!
-# Venue-plausibility scoring (port of `src/geo/venue-prior.ts`)
+# Venue-plausibility scoring
 
 Ranking the candidate places a stay might have happened at, by summed
 log-evidence in nats — the same discipline as the mode factor scorer:

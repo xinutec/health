@@ -1,7 +1,7 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.PathPoint
 /-!
-# Vehicle identity (port of `src/geo/passes/vehicle-identity.ts`)
+# Vehicle identity
 
 `resolveVehicleIdentity` demotes the trailing `driving` leg to `vehicle` when no
 pass has claimed it. `driving` doubles as the placeholder for "a vehicle-speed

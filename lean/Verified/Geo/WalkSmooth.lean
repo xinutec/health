@@ -5,7 +5,7 @@ import Verified.JsNum
 import Verified.FloatConst
 
 /-!
-# Continuous MAP walk reconstruction (port of `src/geo/walk-smooth-map.ts`)
+# Continuous MAP walk reconstruction
 
 A walk is drawn as the maximum-a-posteriori continuous trajectory rather than
 the cheapest network path that touches the GPS dots. Three factors are fused —

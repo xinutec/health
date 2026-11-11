@@ -3,7 +3,7 @@ import Verified.Hsmm.TrainHopDuration
 import Verified.Hsmm.Transitions
 import Verified.Hsmm.Quantize
 /-!
-# Model assembly — factor composition + quantised tensor build (port of `buildHsmmModel` + `quantizeModel`)
+# Model assembly — factor composition + quantised tensor build
 
 The last structural layer before `Main.lean`: compose the per-cell scoring
 callbacks exactly as `buildHsmmModel` sums its ported factors, then quantise them

@@ -1,7 +1,7 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.TubeHop
 /-!
-# Transit continuity for place-naming (port of `src/geo/transit-place.ts`)
+# Transit continuity for place-naming
 
 Four rules that give the place-picker the transit context it otherwise lacks.
 The venue scorer ranks what is mapped near a coordinate; it has no idea the

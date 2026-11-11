@@ -2,7 +2,7 @@ import Verified.Geo.SegmentMerge
 import Verified.Geo.DayState
 import Verified.Geo.FocusPlaces
 /-!
-# Dwell-prior continuation (port of `src/geo/dwell-continuation.ts`)
+# Dwell-prior continuation
 
 When the phone goes quiet at a strong focus_place with no closing bracket,
 silence is evidence the user is still there. Model P(still here | Δ) as an

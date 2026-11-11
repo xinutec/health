@@ -1,7 +1,7 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.PathPoint
 /-!
-# Walk endpoint anchors (port of `walkEndpointAnchors`, `pedestrian-match-annotate.ts`)
+# Walk endpoint anchors
 
 A walking leg's endpoints are often confidently known from its NEIGHBOURS: the
 stay it left or arrived at contributes its centroid, and the train it alighted

@@ -1,6 +1,5 @@
 /-!
-# Naming the venue a stay is at (port of `shapeLandmarks` / `filterLandmarks`
-in `src/geo/osm.ts`)
+# Naming the venue a stay is at
 
 This turns OSM features near a stay into the candidate venues the picker ranks.
 It is what puts a venue name — a restaurant, a hospital — on a timeline instead

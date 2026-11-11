@@ -1,7 +1,7 @@
 import Verified.Geo.RailAbsorbers
 import Verified.Fix
 /-!
-# Worldline feasibility (port of `src/eval/worldline-feasibility.ts`)
+# Worldline feasibility
 
 A model-independent assertion on the OUTPUT timeline: a real worldline is one
 continuous path through space-time, so some outputs are simply impossible

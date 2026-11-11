@@ -2,7 +2,7 @@ import Verified.Geo.DayState
 import Verified.Geo.DwellContinuation
 import Verified.Geo.EpisodeGeometry
 /-!
-# The day after the fold (port of `velocity.ts`'s tail)
+# The day after the fold
 
 `Verified.Geo.PassFold` ends at `withBiometrics`. What `computeVelocityFromInputs`
 does next — attribute the sleep windows, cut the segment list into a state

@@ -3,7 +3,7 @@ import Verified.Geo.Worldline
 import Verified.JsNum
 import Verified.Fix
 /-!
-# Re-cutting segments on evidence (port of `src/geo/stay-split.ts`, grown since)
+# Re-cutting segments on evidence
 
 Three passes of `PassFold`'s tail that move a boundary where the track alone
 put it wrong, each in its own namespace, over the fix helpers in `Shed`:

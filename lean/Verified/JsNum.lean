@@ -1,6 +1,6 @@
 import Verified.FloatConst
 /-!
-# JS numeric formatting (port of `Number.prototype.toFixed`)
+# JS numeric formatting
 
 `toFixed` is load-bearing algorithm in this codebase, not presentation. Two OSM
 coordinates fuse into ONE graph vertex exactly when their `toFixed(7)` strings

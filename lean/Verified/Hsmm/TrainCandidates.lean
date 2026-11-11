@@ -1,7 +1,7 @@
 import Verified.Hsmm.TrainWindows
 import Verified.Hsmm.RouteModel
 /-!
-# Train (board, line, alight) candidate generator (port of `enumerateTrainCandidates`)
+# Train (board, line, alight) candidate generator
 
 The graph-dependent completion of the train-candidate generator: each train
 window from `findTrainWindows` is matched to board/alight station nodes near its
@@ -196,8 +196,7 @@ def boardingWait (g : StationGraph) (obs : Array ObsRow) (c : Candidate) : Candi
       | none => s := s - 1
   return { c with startMin := s }
 
-/-- Coverage map `ts → lines vouched there` (port of `buildTrainEntryFromCandidates`'s
-    coverage). Feeds `isCovered`/`linesAt`, i.e. the `covered`/`lineValid` facts the
+/-- Coverage map `ts → lines vouched there`. Feeds `isCovered`/`linesAt`, i.e. the `covered`/`lineValid` facts the
     train-entry prior and per-minute route factors consume. -/
 def buildCoverage (candidates : List Candidate) (obs : Array ObsRow) : Std.HashMap Int (List String) := Id.run do
   let mut cov : Std.HashMap Int (List String) := {}

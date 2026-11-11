@@ -1,6 +1,6 @@
 import Verified.Eval.GroundTruth
 /-!
-# Ground-truth journey structure (port of `groundTruthJourneys`)
+# Ground-truth journey structure
 
 The `score-decoder` gate compares ten counts per day against
 `tests/golden/decoder-scoreboard.json`. Every one of them is computed from

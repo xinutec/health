@@ -2,8 +2,7 @@ import Verified.Geo.SegmentMerge
 import Verified.Hsmm.FloatScore
 import Verified.Fix
 /-!
-# Bus cluster (port of the pure kernels in `src/geo/bus-route-match.ts` and
-`src/geo/bus-evidence.ts`)
+# Bus cluster
 
 Two independent ways to tell a bus from a taxi on the same streets, both
 ported here in full:

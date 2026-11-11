@@ -1,7 +1,7 @@
 import Verified.Eval.GroundTruth
 import Verified.Eval.Journeys
 /-!
-# Three-way truth check (port of `src/eval/truth-check.ts`)
+# Three-way truth check
 
 The golden harness diffs pipeline output against the last blessed SNAPSHOT,
 which conflates three different things into one must-not-change blob: lines we

@@ -3,8 +3,7 @@ import Verified.Geo.BiometricCoherence
 import Verified.Geo.TransitPlace
 import Verified.Geo.BestPlace
 /-!
-# Naming a stay (port of the stationary branch of the enrichment loop,
-`src/geo/velocity.ts` 916-1044)
+# Naming a stay
 
 The enrichment loop has two branches and this is the second one.
 {@link Verified.Geo.Enrich} is the first — `enrichMovingSegment`, ported for

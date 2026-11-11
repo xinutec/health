@@ -1,5 +1,5 @@
 /-!
-# Biometric coherence (port of `src/geo/biometric-coherence.ts`)
+# Biometric coherence
 
 The per-segment "is the user actually sitting here vs moving through" signal
 `B_s ∈ [0,1]` that modulates a focus-place's magnetic pull. A logistic gate over

@@ -1,6 +1,6 @@
 import Verified.Hsmm.FloatScore
 /-!
-# Telling a phone how hard to look for itself (port of `src/routes/owntracks.ts`)
+# Telling a phone how hard to look for itself
 
 The Owntracks Android app posts each GPS fix here on its way to PhoneTrack, and
 the response carries a configuration patch. So this decides, on every fix, how

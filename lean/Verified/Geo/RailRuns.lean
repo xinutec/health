@@ -2,7 +2,7 @@ import Verified.Hsmm.FloatScore
 import Verified.FloatConst
 import Verified.Fix
 /-!
-# Rail-run leaves (port of the pure functions in `src/geo/passes/rail-runs.ts`)
+# Rail-run leaves
 
 Three helpers the train labeller (`Verified.Geo.RailRunAnnotate`) uses to decide
 where a ride began and ended, and what to call the line it ran on.

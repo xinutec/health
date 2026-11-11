@@ -1,5 +1,5 @@
 /-!
-# Session and share-viewer rules (port of `src/middleware/session.ts`, `share-auth.ts`)
+# Session and share-viewer rules
 
 The decisions in front of every authenticated request. What is NOT here, and
 deliberately: the HMAC, the CSPRNG that mints a session id, and the constant-time

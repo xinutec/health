@@ -5,7 +5,7 @@ import Verified.FloatConst
 import Verified.Geo.Metric
 
 /-!
-# Building-escape walk corrector (port of `src/geo/walk-building-escape.ts`)
+# Building-escape walk corrector
 
 The explicit, case-based reconstruction of a drawn walk line so it stops running
 through houses:

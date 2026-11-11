@@ -3,7 +3,7 @@ import Std.Data.HashMap
 import Verified.FloatConst
 
 /-!
-# Point-to-point routing on the walkable network (port of `src/geo/walkable-route.ts`)
+# Point-to-point routing on the walkable network
 
 The case-2 primitive of the building-escape corrector: when a drawn walk's chord
 cuts through a building block and no vertex sits inside the block to push

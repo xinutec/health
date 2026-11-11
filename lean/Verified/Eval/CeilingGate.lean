@@ -1,5 +1,5 @@
 /-!
-# The one-way ceiling (port of `src/eval/ceiling-gate.ts`)
+# The one-way ceiling
 
 The count-shaped sibling of `FloorGate`. Where a floor records what the pipeline
 gets RIGHT and may only grow, a ceiling records standing DEFECTS as a per-day

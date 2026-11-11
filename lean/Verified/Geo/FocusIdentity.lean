@@ -1,6 +1,6 @@
 import Verified.Hsmm.FloatScore
 /-!
-# Focus-place identity across re-mining (port of `src/geo/focus-places-identity.ts`)
+# Focus-place identity across re-mining
 
 `refresh-focus-places` wipes and re-inserts every cluster nightly, so the
 auto-increment id churns on every run. Anything that wants to reference a focus

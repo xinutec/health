@@ -1,6 +1,6 @@
 import Verified.Hsmm.FloatScore
 /-!
-# OSM spatial kernel (port of `queryPoints` + the `nearbyStations` pipeline)
+# OSM spatial kernel
 
 The part of the OSM lookup that has been running as SQL inside MariaDB. Moving
 it here is what turns "the nearest station to this fix" from an ORACLE — a

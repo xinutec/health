@@ -1,6 +1,5 @@
 /-!
-# Signing in (port of `src/middleware/return-to.ts` and
-`src/middleware/pending-login.ts`)
+# Signing in
 
 Two rules that guard the sign-in redirect. Both are small, both are security
 boundaries, and both fail in ways a user would not notice.

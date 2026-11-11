@@ -1,6 +1,5 @@
 /-!
-# Whether an account is linked (port of `src/nextcloud/credentials.ts` and
-`src/fitbit/token-manager.ts`)
+# Whether an account is linked
 
 `/api/me` reports two connection statuses, both computed the same way from one
 nullable column, so there is one rule here rather than two.

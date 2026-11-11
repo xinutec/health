@@ -2,8 +2,7 @@ import Verified.Geo.RefineMode
 import Verified.Geo.Velocity
 import Verified.Fix
 /-!
-# OSM enrichment for a moving segment (port of `enrichMovingSegment`,
-`src/geo/velocity.ts`)
+# OSM enrichment for a moving segment
 
 Sample along the leg, aggregate the ways near it, refine the mode, name the road,
 tag the city.

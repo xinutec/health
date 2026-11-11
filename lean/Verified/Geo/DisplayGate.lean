@@ -7,7 +7,7 @@ import Std.Data.HashSet
 import Verified.FloatConst
 
 /-!
-# Display-acceptance gate (port of the off-network cluster in `src/geo/map-match-core.ts`)
+# Display-acceptance gate
 
 The decision *whether to draw the matched line at all*, and where to fall back
 to the raw fixes:

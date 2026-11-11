@@ -1,5 +1,5 @@
 /-!
-# Flattening client text into one log field (port of `src/routes/api.ts`)
+# Flattening client text into one log field
 
 `/api/telemetry` writes UI text the browser sent into a log line as `label=…`.
 That makes this a SECURITY BOUNDARY rather than tidiness: a newline inside a

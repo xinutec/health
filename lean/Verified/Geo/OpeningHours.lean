@@ -1,5 +1,5 @@
 /-!
-# `opening_hours` subset parser (port of `src/geo/opening-hours.ts`)
+# `opening_hours` subset parser
 
 OSM venue POIs carry an `opening_hours` tag that the venue-plausibility scorer
 turns into weighted evidence — never a veto, because OSM hours go stale. The

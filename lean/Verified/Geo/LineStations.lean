@@ -1,5 +1,5 @@
 /-!
-# Which stations does a line serve? (port of `src/geo/line-stations.ts`)
+# Which stations does a line serve?
 
 The two halves of the `stationsOnLine` ask, with the host's SQL between them:
 `lineNamesMatching` resolves the line name against the mirror's names, and

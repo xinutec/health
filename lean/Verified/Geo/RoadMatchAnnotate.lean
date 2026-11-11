@@ -5,7 +5,7 @@ import Verified.Geo.EpisodeGeometry
 import Verified.Geo.Segments
 
 /-!
-# The road-match pass (port of `annotateRoadMatches`, `src/geo/road-match-annotate.ts`)
+# The road-match pass
 
 Attach a street-matched geometry to every road-vehicle leg the matcher can
 confidently place. Purely ADDITIVE: it never rewrites the mode or the raw fixes,

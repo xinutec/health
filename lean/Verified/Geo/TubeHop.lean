@@ -2,7 +2,7 @@ import Verified.Geo.SegmentMerge
 import Verified.Geo.RailRuns
 import Verified.Fix
 /-!
-# Picking a station (port of `pickBestStation` and its ranking, `src/geo/passes/tube-hop.ts`)
+# Picking a station
 
 `NearbyStation` is a rail station near a coordinate as the OSM adapter reports
 it; `rankStations` orders candidates (an entrance node below the station it

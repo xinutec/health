@@ -5,7 +5,7 @@ import Verified.Hsmm.ServedStations
 import Verified.Geo.WalkableRoute
 import Verified.Hsmm.Journey
 /-!
-# C4.3 chained train triples — the graph layer (port of `src/hmm/station-chain.ts`)
+# C4.3 chained train triples — the graph layer
 
 `resolveStationChain` assigns each named-line train leg a (board, alight)
 station pair, scored jointly along the journey chain. It runs on the SERVED and
