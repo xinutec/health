@@ -1,7 +1,7 @@
 import Std.Data.HashMap
 import Std.Data.HashSet
 /-!
-# Per-line route connectivity (implementation-first port of `pathExistsOnLine`)
+# Per-line route connectivity
 
 Route-rail's `connected` fact: does a path of edges ALL carrying line `L` join
 the fixes near the boarding platform to those near the alighting platform? A BFS

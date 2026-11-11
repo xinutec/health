@@ -1,18 +1,17 @@
 import Verified.Fix
 /-!
-# Per-minute observation tensor (implementation-first port of `observation.ts`)
+# Per-minute observation tensor
 
 Stitches the GPS / HR / step / sleep streams into one 1440-row day: per-minute
 median lat/lon + mean speed, mean HR, summed cadence, sleep-overlap `inBed`,
 watch-liveness cadence imputation, and the forward/backward nearest-fix
 scans.
 
-The one thing Lean cannot do — IANA-timezone resolution (`Intl.DateTimeFormat`
-for hour/day-of-week, and the day's UTC bounds) — stays in the thin caller: this
-module takes `startUtc` and a per-minute `localCtx` lookup as inputs. Everything
-else is pure array logic over `median`/`mean`/sums, so it is BIT-EXACT with TS
-(no transcendentals; float sums fold in the same order V8 uses). UNPROVEN;
-pinned by the `#guard`s.
+The one thing Lean cannot do, IANA-timezone resolution (hour/day-of-week, and
+the day's UTC bounds), stays in the thin caller: this module takes `startUtc`
+and a per-minute `localCtx` lookup as inputs. Everything else is pure array
+logic over `median`/`mean`/sums, so it is bit-exact (no transcendentals; float
+sums fold in a fixed order). UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Observation
@@ -74,8 +73,8 @@ structure ObsRow where
   lastFix : Option Fix := none
   deriving Inhabited, BEq
 
-/-- `median` — JS `sort((a,b)=>a-b)` then middle (even length averages the two
-    central values, in ascending order, exactly as TS does). Empty → 0. -/
+/-- `median`: sort ascending, then the middle (even length averages the two
+    central values, in ascending order). Empty → 0. -/
 def median (values : List Float) : Float :=
   if h0 : values.length = 0 then 0 else
   let sorted := (values.mergeSort (fun a b => decide (a ≤ b))).toArray
@@ -103,7 +102,7 @@ private def emptyBuckets {α : Type} : Array (Array α) :=
   (List.replicate MINUTES_PER_DAY (#[] : Array α)).toArray
 
 /-- Bucket a stream into per-minute arrays, preserving input order within each
-    minute (so downstream `mean` folds match V8's iteration order). -/
+    minute (so downstream `mean` folds are order-fixed). -/
 def bucketize {α : Type} (startUtc endUtc : Int) (tsOf : α → Int) (xs : List α) : Array (Array α) :=
   xs.foldl (fun buckets x =>
     match bucketIndex startUtc endUtc (tsOf x) with
@@ -215,7 +214,7 @@ def buildObservationTensor
 def firstDiff (a b : Array ObsRow) : Option Nat :=
   (List.range (max a.size b.size)).find? fun m => a[m]? != b[m]?
 
--- Parity with the real `buildObservationTensor` (values from Node/V8).
+-- `buildObservationTensor`'s reference values.
 private def gp (relTs : Int) (lat lon spd : Float) : GpsPoint := ⟨1784156400 + relTs, lat, lon, spd, none⟩
 private def hp (relTs : Int) (bpm : Float) : HrPoint := ⟨1784156400 + relTs, bpm⟩
 private def sp (relTs : Int) (n : Float) : StepPoint := ⟨1784156400 + relTs, n⟩

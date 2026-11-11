@@ -1,6 +1,6 @@
 import Verified.Hsmm.Emissions
 /-!
-# HSMM state-space enumeration (implementation-first port of `state-space.ts`)
+# HSMM state-space enumeration
 
 The served decode's hidden state at each minute is a `(mode, place, line)` tuple
 with structural constraints. This is the line-only enumeration that the served
@@ -9,16 +9,16 @@ per-edge Phase-1 states — and their `trainEdgeId` — never arise here; that l
 in the separate `route-aware-decoder.ts`, off the flip path). Faithful to the
 served path, so the Lean `State` (mode/placeId/lineName) matches exactly.
 
-Pure enumeration + dedup by `stateKey`, no geometry — a structural resolver, not
-a scoring kernel. Ordering and first-occurrence dedup pinned against Node/V8.
-UNPROVEN; pinned by the `#guard`.
+Pure enumeration + dedup by `stateKey`, no geometry: a structural resolver, not
+a scoring kernel. Ordering and first-occurrence dedup are pinned. UNPROVEN;
+pinned by the `#guard`.
 -/
 
 namespace Verified.Hsmm.StateSpace
 
 open Verified.Hsmm.Emissions (Mode State)
 
-/-- Mode → its `stateKey` token (matches the TS `ModelledMode` string). -/
+/-- Mode → its `stateKey` token. -/
 def modeName : Mode → String
   | .stationary => "stationary"
   | .walking => "walking"
@@ -51,8 +51,8 @@ structure FocusPlaceRef where
     minute the decoder cannot place goes to the likeliest real mode. -/
 def MOVEMENT_MODES : List Mode := [.walking, .cycling, .driving, .plane]
 
-/-- Append in order, dropping any state whose key already appeared (mirrors the
-    TS `seen`-set `push`, first occurrence wins). -/
+/-- Append in order, dropping any state whose key already appeared (first
+    occurrence wins). -/
 def dedupByKey (states : List State) : List State :=
   (states.foldl
     (fun (acc : List String × List State) s =>
@@ -71,8 +71,8 @@ def buildStateSpace (focusPlaces : List FocusPlaceRef) (knownLines : List String
     ++ knownLines.map (fun ln => ⟨.train, none, some ln⟩)
     ++ [⟨.train, none, some "unknown_rail"⟩]
 
--- Parity with the real `buildStateSpace` (ordering + first-occurrence dedup;
--- keys from Node/V8). Duplicate place id 5 and duplicate "Jubilee Line" drop.
+-- `buildStateSpace`'s reference ordering and first-occurrence dedup. Duplicate
+-- place id 5 and duplicate "Jubilee Line" drop.
 private def places : List FocusPlaceRef := [⟨5, some "Home"⟩, ⟨7, some "Work"⟩, ⟨5, some "dup"⟩]
 private def lines : List String := ["Jubilee Line", "Central Line", "Jubilee Line"]
 

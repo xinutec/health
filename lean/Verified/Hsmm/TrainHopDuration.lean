@@ -1,7 +1,7 @@
 import Verified.Hsmm.Duration
 import Verified.Hsmm.Emissions
 /-!
-# Train one-stop-hop duration prior (implementation-first port of `train-hop-duration.ts`)
+# Train one-stop-hop duration prior
 
 The per-mode duration prior floors every sub-`minDuration` movement segment at
 `HARD_FLOOR_LOG_PROB` — a 1-minute `train` is normally a bridge artifact. But a
@@ -39,11 +39,11 @@ def trainHopDurationLogProb (s : State) (d : Float) (covered : Bool)
   else logDurationProb d fit minForMode
 
 /-- `trainHopDurationLogProb` with the per-mode prior handed in. Everything but
-    the relaxation is independent of the segment END, so a caller walking `e`
+    the relaxation is independent of the segment end, so a caller walking `e`
     computes `base = logDurationProb d fit minForMode` once per `(s, d)` and
-    finishes each `e` from it (#1774: the duration tensor was ~60 % of the model
-    build, one gamma log-pdf per cell). `trainHopDurationLogProb_eq` is the
-    exactness: the two are the same term. -/
+    finishes each `e` from it (the duration tensor dominates the model build,
+    one gamma log-pdf per cell). `trainHopDurationLogProb_eq` is the exactness:
+    the two are the same term. -/
 def trainHopDurationLogProbFrom (s : State) (d : Float) (covered : Bool)
     (trainMin base : Float) : Float :=
   if s.mode == .train && lineIsNamed s.lineName && d < trainMin && covered then 0.0

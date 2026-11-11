@@ -5,7 +5,7 @@ import Verified.Hsmm.RouteModel
 import Verified.Hsmm.Continuity
 import Verified.FloatConst
 /-!
-# Full HSMM emission composition (implementation-first port of `buildHsmmModel`'s emission)
+# Full HSMM emission composition
 
 `emission = baseEmission + geometricFn + routeRailFn + lineProximityFn`, summed
 in `buildHsmmModel` order, over the unified route-graph model and the real
@@ -14,21 +14,17 @@ compose end-to-end: base emission (+ the reacquire-robust speed correction),
 geometric feasibility, and the two route-graph factors all consume one `ObsRow`
 and the shared model.
 
-Mirrors `buildHsmmModel`'s parameterisation, so it is faithful to the served
-decode. The
-TypeScript also passed the generator's per-minute `isCovered` here and switched
-the two line factors OFF on a covered minute, leaving the entry prior as the
-only line signal. Since 2026-09-29 the factors stay live there: measured
-on the eleven decoder days, a covered fix-less ride earned nothing per minute
-and lost to `stationary` on the mode prior (06-12's Victoria ride shrank to one
-minute), and every line the generator vouched at entry scored identically
-afterwards, so a line it stopped vouching mid-ride was never charged (05-18,
-07-14: the Metropolitan leg came out Hammersmith & City on a tie). Coverage
-still reaches the entry and duration terms. Continuity (`continuityContext`) is a further optional additive
-term, ported only if the served path enables it. UNPROVEN; pinned by the `#guard`s
-(values from Node/V8's factor builders, summed as `buildHsmmModel` does). Route-
-graph/geometric factors flow through `haversine`/`pointToPolyline`, so sums are
-ULP-close (`approx`), the accepted near-tie class.
+The served decode's parameterisation. The two line factors stay live on a
+minute the generator covers: switched off there, a covered fix-less ride earned
+nothing per minute and lost to `stationary` on the mode prior (06-12's Victoria
+ride shrank to one minute), and every line the generator vouched at entry scored
+identically afterwards, so a line it stopped vouching mid-ride was never charged
+(05-18, 07-14: the Metropolitan leg came out Hammersmith & City on a tie).
+Coverage still reaches the entry and duration terms. Continuity
+(`continuityContext`) is a further optional additive term. UNPROVEN; pinned by
+the `#guard`s (reference factor values, summed as the model sums them).
+Route-graph/geometric factors flow through `haversine`/`pointToPolyline`, so sums
+are ULP-close (`approx`), the accepted near-tie class.
 -/
 
 namespace Verified.Hsmm.EmissionFull
@@ -87,18 +83,17 @@ def emissionRestWith
     + (if w.gap == REST_ZERO then REST_ZERO else
       w.gap * Geometric.gapTerm s o.gps.isSome
         (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) priors)
-    -- The kernels' `isCovered` is the TypeScript gate, held open (see above).
+    -- The kernels' `isCovered` gate, held open (see above).
     + w.rail * railEv
     + w.lineProximity * RouteModel.lineProximityFactorWith modeledLines minute s o false
     + w.continuity * Continuity.continuityLogLikelihood s o.gps.isSome
         (o.prevGpsFix.map (fun f => (f.lat, f.lon))) continuity
 
-/-- Full per-cell emission log-probability over the model — the TS
-    `buildEmissionFn` closure plus the geometric/rail/line-proximity terms the
-    model sums onto it. `placeCoords` resolves `s.placeId`. `continuity` is
-    the presence-continuity seed; the
-    production caller always supplies it, and the `none` arm is the chain-start
-    and test shape rather than a flag being off (see `Continuity`). -/
+/-- Full per-cell emission log-probability over the model: the base emission
+    plus the geometric/rail/line-proximity terms the model sums onto it.
+    `placeCoords` resolves `s.placeId`. `continuity` is the presence-continuity
+    seed; the production caller always supplies it, and the `none` arm is the
+    chain-start and test shape rather than a flag being off (see `Continuity`). -/
 def emissionLogProbFullWith
     (modeledLines : List String) (minute : RouteModel.MinuteLines) (railEv : Float)
     (placeCoords : Std.HashMap Int (Float × Float))
@@ -109,10 +104,10 @@ def emissionLogProbFullWith
   w.base * emissionLogProb s (toThin o) placeCoord priors
     + emissionRestWith modeledLines minute railEv placeCoords continuity s o priors w
 
-/-- The per-cell emission with its per-minute facts computed in place — what
-    every caller read before #1774 hoisted them, and what the parity guards pin.
-    The model build computes `minuteLines` once per minute and the rail
-    evidence once per bracketing pair, then calls `emissionLogProbFullWith`. -/
+/-- The per-cell emission with its per-minute facts computed in place, what the
+    reference guards pin. The model build computes `minuteLines` once per minute
+    and the rail evidence once per bracketing pair, then calls
+    `emissionLogProbFullWith`. -/
 def emissionLogProbFull
     (model : RouteGraphModel) (connGraph : RouteConnectivity.Graph) (modeledLines : List String)
     (placeCoords : Std.HashMap Int (Float × Float))
@@ -121,7 +116,7 @@ def emissionLogProbFull
   emissionLogProbFullWith modeledLines (RouteModel.minuteLines model o)
     (routeRailEvidence model connGraph s o false) placeCoords continuity s o
 
--- Parity with `buildHsmmModel`'s emission (base+geo+routeRail+lineProx; Node/V8).
+-- The model's emission (base+geo+routeRail+lineProx), reference values.
 private def m : RouteGraphModel := buildRouteGraphModel #[
   (⟨"way:1", [⟨51.50, -0.10⟩, ⟨51.525, -0.075⟩], ["Test Line"], true, "nA", "nMid"⟩ : RouteEdge),
   (⟨"way:2", [⟨51.525, -0.075⟩, ⟨51.55, -0.05⟩], ["Test Line"], true, "nMid", "nB"⟩ : RouteEdge)]

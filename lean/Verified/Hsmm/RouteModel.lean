@@ -15,11 +15,10 @@ into the route-rail emission term — the FIRST factor whose route-graph facts
 connectivity) are computed IN Lean rather than taken as caller-resolved booleans.
 
 The shell supplies parsed edges (id, geometry, line memberships, underground
-flag, and the `toFixed`-derived node ids that define adjacency — the parity-hard
-graph-STRUCTURE boundary); everything downstream is pure Lean. Caches are dropped
-(pure recompute — the TS caches are semantically transparent memoisation, keyed
-by `toFixed` rounding that only affected hit-rate, never results). UNPROVEN;
-pinned by the `#guard`s (decisions from Node/V8's `buildRouteRailEvidence`).
+flag, and the `toFixed`-derived node ids that define adjacency, the
+graph-structure boundary); everything downstream is pure Lean. No caches: pure
+recompute, since a cache keyed by rounding would affect only the hit rate, never
+results. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.RouteModel
@@ -136,16 +135,16 @@ def routeRailEvidence (g : RouteGraphModel) (cg : RouteConnectivity.Graph)
           else if next.ts - prev.ts > MAX_GAP_DURATION_S then 0.0
           else if haversineMeters prev.lat prev.lon next.lat next.lon < MIN_GAP_DISTANCE_M then 0.0
           else
-            -- A WALKED minute inside the gap is an interchange (06-09:
+            -- A walked minute inside the gap is an interchange (06-09:
             -- Victoria → King's Cross, a step burst, King's Cross → Baker
             -- Street, all dark). The ride this minute belongs to then reaches
-            -- only ONE bookend — the one on its side of the walk — so the line
+            -- only one bookend, the one on its side of the walk, so the line
             -- is asked to be present and underground there alone, and the
-            -- end-to-end connectivity (which only a line spanning the whole
-            -- gap could pass: the Circle, on both rides) is not asked. A minute
-            -- walked on BOTH sides (a platform descent after the fix, then the
-            -- interchange) keeps the whole-gap rule: measured 2026-10-06, scoring
-            -- it as bookend-less cost 06-09 its first ride's mode.
+            -- end-to-end connectivity (which only a line spanning the whole gap
+            -- could pass: the Circle, on both rides) is not asked. A minute
+            -- walked on both sides (a platform descent after the fix, then the
+            -- interchange) keeps the whole-gap rule: scoring it as bookend-less
+            -- costs 06-09 its first ride's mode.
             let pe := computeFixLineEvidence g prev.lat prev.lon
             let ne := computeFixLineEvidence g next.lat next.lon
             let lineAt := fun (e : FixLineEvidence) =>
@@ -161,7 +160,7 @@ def routeRailEvidence (g : RouteGraphModel) (cg : RouteConnectivity.Graph)
               else UNDERGROUND_BOOST
         | _, _ => 0.0
 
--- Parity with the real `buildRouteRailEvidence` over a built graph (Node/V8).
+-- `buildRouteRailEvidence` over a built graph, reference values.
 private def edge (id : String) (g : List LatLon) (ug : Bool) (n1 n2 : String) : RouteEdge :=
   ⟨id, g, ["Test Line"], ug, n1, n2⟩
 
@@ -251,7 +250,7 @@ def lineProximityFactor (g : RouteGraphModel) (modeledLines : List String)
     (s : State) (o : ObsRow) (isCovered : Bool) : Float :=
   lineProximityFactorWith modeledLines (minuteLines g o) s o isCovered
 
--- Parity with the real `buildLineProximityFactor` (decisions from Node/V8).
+-- `buildLineProximityFactor`'s reference decisions.
 private def lpModel : RouteGraphModel := buildRouteGraphModel #[
   edge "way:1" [⟨51.50, -0.101⟩, ⟨51.50, -0.099⟩] false "lA" "lB"]
 private def lpLines : List String := linesInGraph lpModel
@@ -332,8 +331,7 @@ def isMovingMode : Mode → Bool
 /-- The place-anchored boarding penalty of a pair, when the pair has one: `toS`
     a named train line with edges, `fromS` a place with coordinates. It does not
     depend on the minute, so `buildTransitions` computes it once per pair and
-    hands it to `chainContextFrom` for every `t` (#1774: this distance over the
-    whole line was recomputed 1,440 times per pair). -/
+    hands it to `chainContextFrom` for every `t`. -/
 def chainPlaceBoard (edgesByLine : Std.HashMap String (List LineEdge))
     (placeCoords : Std.HashMap Int (Float × Float)) (fromS toS : State) : Option Float :=
   if toS.mode == .train then
@@ -503,7 +501,7 @@ def chainContext (edgesByLine : Std.HashMap String (List LineEdge))
   chainContextFrom edgesByLine placeCoords fromS toS o isTrainCovered
     (chainPlaceBoard edgesByLine placeCoords fromS toS)
 
--- Parity with the real `buildChainContext` (decisions/values from Node/V8).
+-- `buildChainContext`'s reference decisions and values.
 private def ccModel : RouteGraphModel := buildRouteGraphModel #[
   edge "way:1" [⟨51.50, -0.101⟩, ⟨51.50, -0.099⟩] false "cA" "cB"]
 private def ccEdgesByLine : Std.HashMap String (List LineEdge) := buildEdgesByLine ccModel

@@ -1,6 +1,6 @@
 import Verified.Hsmm.FloatScore
 /-!
-# Quantise (implementation-first port of `quantize` in `lean-shadow-core.ts`)
+# Quantise
 
 The bridge from the float scoring to the integer trellis: `round(x · 2²⁰)`, with
 `-∞` mapped to the `null`/`none` sentinel the packed decoder reads as a hard
@@ -9,8 +9,8 @@ tie `#guard`s below. Scores here are far below `2⁵²`, so `floor(y+0.5)` and
 `Math.round(y)` never diverge.
 
 The value is returned as an integer-valued `Float` (`none` for `-∞`); packing it
-into the trellis's `Nat`/`Int` representation is a mechanical follow-on. UNPROVEN,
-per the implementation-first direction; bit-exact with the TS `quantize`.
+into the trellis's `Nat`/`Int` representation is a mechanical follow-on.
+UNPROVEN; bit-exact.
 -/
 
 namespace Verified.Hsmm.Quantize
@@ -28,7 +28,7 @@ def HALF : Float := 0.5
   if x == negInf then none
   else some (Float.floor (x * SCALE + HALF))
 
--- Parity with the TS `quantize` (values from Node/V8):
+-- `quantize`'s reference values:
 #guard quantize (-5.7721301172670145) == some (-6052517)
 #guard quantize (-0.05129329438755058) == some (-53785)
 #guard quantize (-3.6477794064106472) == some (-3824974)

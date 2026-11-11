@@ -12,8 +12,8 @@ trellis's layout — and proves every cell pointwise equal to `col`
 problem* (via `pickBest_congr`), so `decodeFast_correct` and
 `decodeFast_none_iff` are inherited outright.
 
-`decodeFast` runs in `O(T·S·(S + maxD))` like the TypeScript decoder — this
-is the production-grade verified decoder.
+`decodeFast` runs in `O(T·S·(S + maxD))`: the production-grade verified
+decoder.
 -/
 
 namespace Verified.Hsmm

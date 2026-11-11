@@ -3,18 +3,18 @@ import Verified.JsNum
 import Verified.Hsmm.FloatScore
 import Verified.FloatConst
 /-!
-# Route-graph primitives (implementation-first port of `route-graph.ts`)
+# Route-graph primitives
 
 Pure primitives the HSMM route factors need from the OSM route graph:
 
   - `parseLineMemberships` — an OSM way's `name` tag → the set of tube lines it
     carries (strip "… Eastbound", split "Circle, Hammersmith & City and
     Metropolitan Lines"). Pure string work, EXACT.
-  - `pointToPolylineMeters` — min perpendicular distance from a point to a
-    track polyline (equirectangular projection, clamped per segment). Uses
-    `cos` and a `sqrt(x²+y²)` magnitude (V8 uses `Math.hypot`, which differs by
-    ≤1 ULP), so distances are ULP-close (on-segment zeros stay exact) — the same
-    accepted class as `haversine`.
+  - `pointToPolylineMeters`: min perpendicular distance from a point to a track
+    polyline (equirectangular projection, clamped per segment). Uses `cos` and a
+    `sqrt(x²+y²)` magnitude, ≤1 ULP from an overflow-careful hypot, so distances
+    are ULP-close (on-segment zeros stay exact), the same accepted class as
+    `haversine`.
 
 UNPROVEN; pinned by the `#guard`s.
 -/
@@ -92,7 +92,7 @@ def parseLineMemberships (name : Option String) : List String :=
     | [] => dedup ((n.splitOn " and ").flatMap linesOfName)
     | ls => ls
 
--- Parity with the real `parseLineMemberships` (Node/V8; Set → insertion-ordered list).
+-- `parseLineMemberships`' reference values (a set, as an insertion-ordered list).
 #guard parseLineMemberships (some "Metropolitan Line") == ["Metropolitan Line"]
 #guard parseLineMemberships (some "Hammersmith & City Line") == ["Hammersmith & City Line"]
 #guard parseLineMemberships (some "Circle, Hammersmith & City and Metropolitan Lines")
@@ -144,7 +144,7 @@ def pointToSegmentMeters (lat lon : Float) (a b : LatLon) : Float :=
     Float.sqrt ((pX - projX) * (pX - projX) + (pY - projY) * (pY - projY))
 
 /-- Min distance (m) from a point to a polyline: the minimum over its segments.
-    Empty / single-vertex geometry has no segment → `+∞` (as in TS). -/
+    Empty / single-vertex geometry has no segment → `+∞`. -/
 def pointToPolylineMeters (lat lon : Float) (geometry : List LatLon) : Float :=
   -- One pass carrying the previous vertex: the same segments in the same
   -- order as zipping the list with its tail, without building that list —
@@ -161,8 +161,8 @@ private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 
 private def geom : List LatLon := [⟨51.5, -0.1⟩, ⟨51.51, -0.1⟩, ⟨51.51, -0.08⟩]
 
--- Parity with the real `pointToPolylineMeters` (Node/V8). On-segment → exact 0;
--- off-segment distances are ULP-close (approx).
+-- `pointToPolylineMeters`' reference values. On-segment → exact 0; off-segment
+-- distances are ULP-close (approx).
 #guard pointToPolylineMeters 51.505 (-0.1) geom == 0
 #guard pointToPolylineMeters 51.51 (-0.09) geom == 0
 #guard approx (pointToPolylineMeters 51.5 (-0.05) geom) 2357.8274447064964
@@ -171,11 +171,11 @@ private def geom : List LatLon := [⟨51.5, -0.1⟩, ⟨51.51, -0.1⟩, ⟨51.51
 /-! ## Spatial index
 
 The grid buckets every edge into every ~500 m cell any of its geometry vertices
-touches, so a proximity query (`RouteModel.edgesNearIdx`) scans only the local 3×3 cell neighbourhood. The grid is
-COARSE (bucketed by vertices, not swept segments) — that is load-bearing: it can
-miss an edge whose segment crosses the query cell while its vertices don't, and
-this port reproduces that exactly. Cell keys are internal (never cross the
-JS↔Lean boundary), so they use `(Int, Int)` rather than V8's `"cy:cx"` strings.
+touches, so a proximity query (`RouteModel.edgesNearIdx`) scans only the local
+3×3 cell neighbourhood. The grid is coarse (bucketed by vertices, not swept
+segments), and that is load-bearing: it can miss an edge whose segment crosses
+the query cell while its vertices do not. Cell keys are internal, so they are
+`(Int, Int)`.
 -/
 
 def GRID_CELL_DEG_LAT : Float := 0.0045
@@ -186,8 +186,8 @@ def GRID_CELL_DEG_LON : Float := 0.007
 def cellOf (lat lon : Float) : Int × Int :=
   ((lat / GRID_CELL_DEG_LAT).floor.toInt64.toInt, (lon / GRID_CELL_DEG_LON).floor.toInt64.toInt)
 
-/-- The 3×3 cell neighbourhood, in V8's iteration order (dy −1..1 outer,
-    dx −1..1 inner). -/
+/-- The 3×3 cell neighbourhood, in a fixed order (dy −1..1 outer, dx −1..1
+    inner). -/
 def neighborCells (lat lon : Float) : List (Int × Int) :=
   let (cy, cx) := cellOf lat lon
   (List.range 3).flatMap (fun dy => (List.range 3).map (fun dx =>
@@ -206,8 +206,8 @@ episode-geometry port used for its three private helpers.
 export Verified.Hsmm.FloatScore (haversineMeters)
 
 /-- JS `Number(s)` narrowed to what an OSM `layer` value can be: an optional
-minus sign and digits. Anything else is `NaN` in the TS, and every comparison
-with `NaN` is false — modelled here as `none`. -/
+minus sign and digits. Anything else would be `NaN`, and every comparison with
+`NaN` is false, modelled here as `none`. -/
 private def jsIntegerLayer? (s : String) : Option Float :=
   let (neg, digits) := if s.startsWith "-" then (true, s.drop 1) else (false, s)
   if digits.isEmpty || !digits.all Char.isDigit then none
@@ -218,9 +218,9 @@ conventions OSM uses to mean it, plus the subtype: any `tunnel` value other than
 `"no"`, a negative `layer`, `covered=yes`, `subway=yes`, or `subtype=subway`.
 
 An unparseable `layer` means "not underground" rather than an error, because
-`NaN < 0` is false. And `covered`/`subway` test `=== "yes"` exactly — so
-`covered=no` is not underground — while `tunnel` tests `!== "no"`, so
-`tunnel=building_passage` IS. That asymmetry is in the TS; both arms are pinned.
+`NaN < 0` is false. And `covered`/`subway` test `== "yes"` exactly, so
+`covered=no` is not underground, while `tunnel` tests `!= "no"`, so
+`tunnel=building_passage` is. Both arms of that asymmetry are pinned.
 
 `tags` is an association list rather than a map because only membership and one
 value are read, and the order the shell parsed them in is irrelevant. -/
@@ -231,9 +231,9 @@ def isUnderground (tags : List (String × String)) (subtype : Option String) : B
   else get "covered" == some "yes" || get "subway" == some "yes" || subtype == some "subway"
 
 /-- Total length (m) of a polyline: the haversine sum over its legs. A geometry
-with fewer than two vertices has no leg and measures 0 — unreachable through
+with fewer than two vertices has no leg and measures 0, unreachable through
 `buildRouteGraph`, which drops such a way before building an edge at all, so
-that arm is stated by the definition rather than pinned against V8. -/
+that arm is stated by the definition rather than pinned. -/
 def geometryLengthM (geom : List LatLon) : Float :=
   match geom with
   | [] => 0
@@ -241,7 +241,7 @@ def geometryLengthM (geom : List LatLon) : Float :=
     (rest.foldl (fun (acc : Float × LatLon) b =>
       (acc.1 + haversineMeters acc.2.lat acc.2.lon b.lat b.lon, b)) (0, a0)).1
 
--- Parity via `buildRouteGraph`'s published `attrs` (Node/V8).
+-- Pinned via `buildRouteGraph`'s published `attrs`.
 private def undergroundOf (tunnel layer covered subway subtype : Option String) : Bool :=
   isUnderground
     ([("tunnel", tunnel), ("layer", layer), ("covered", covered), ("subway", subway)].filterMap
@@ -276,13 +276,11 @@ private def track : List LatLon := [⟨51.52, -0.13⟩, ⟨51.53, -0.13⟩, ⟨5
 
 /-! ## Assembling the wire graph from raw OSM rows
 
-⚠ This is `route-graph.ts`'s `buildRouteGraph`, narrowed to what actually
-crosses to `parseAssemble`: `{id, geometry, lineMemberships, underground,
-startNode, endNode}` per edge and `{id, lat, lon, stationName, edgeIds}` per
-node. The TypeScript's `RouteGraph` additionally carries a cell index, per-edge
-`lengthM` and endpoint copies — all of which Lean REBUILDS in
-`buildRouteGraphModel`, so shipping them would be shipping a second copy of an
-index the receiver constructs anyway.
+⚠ This is `buildRouteGraph` narrowed to what crosses to `parseAssemble`:
+`{id, geometry, lineMemberships, underground, startNode, endNode}` per edge and
+`{id, lat, lon, stationName, edgeIds}` per node. A cell index, per-edge
+`lengthM` and endpoint copies are rebuilt by `buildRouteGraphModel`, so shipping
+them would ship a second copy of an index the receiver constructs anyway.
 
 The shell supplies rows with the WKT already parsed (a format concern) and
 nothing else: `isUnderground`, `parseLineMemberships`, the node keying and the
@@ -358,8 +356,8 @@ structure WireNode where
 /--
 Build the edge and node arrays `parseAssemble` consumes.
 
-⚠ A way with fewer than two vertices is DROPPED, matching the TypeScript. It has
-no endpoints to key on, so it could not join the graph regardless.
+⚠ A way with fewer than two vertices is dropped: it has no endpoints to key on,
+so it could not join the graph regardless.
 
 ⚠ Node order follows FIRST APPEARANCE of each key across the ways, because the
 receiver reads `nodes` as an ordered array (`StationChain` documents four things

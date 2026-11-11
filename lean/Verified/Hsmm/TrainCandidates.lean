@@ -212,7 +212,7 @@ def isCovered (cov : Std.HashMap Int (List String)) (ts : Int) : Bool := cov.con
 /-- Lines the generator vouches at `ts`. -/
 def linesAt (cov : Std.HashMap Int (List String)) (ts : Int) : List String := cov.getD ts []
 
--- Parity with the real `enumerateTrainCandidates` (Node/V8): Alpha—Beta on Test Line.
+-- `enumerateTrainCandidates`' reference answer: Alpha—Beta on Test Line.
 private def mkMap {α : Type} (ps : List (String × α)) : Std.HashMap String α :=
   ps.foldl (fun m (k, v) => m.insert k v) {}
 private def way1 : RouteEdge := ⟨"way:1", [⟨51.50, -0.10⟩, ⟨51.525, -0.075⟩], ["Test Line"], true, "nA", "nM"⟩

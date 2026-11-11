@@ -1,6 +1,6 @@
 import Verified.Hsmm.FloatScore
 /-!
-# Emission log-likelihood (implementation-first port of `src/hmm/emissions.ts`)
+# Emission log-likelihood
 
 `buildEmissionFn`'s per-(state, observation) log-probability, in Lean `Float`.
 This is the BASE path: hand-tuned `MODE_PRIORS`, no learned emissions, no
@@ -8,12 +8,9 @@ presence-continuity, no per-place HR fit, no reacquire-robust widening. Those
 refinements are follow-on bricks (each needs extra input plumbing); the base
 path is what fires when their flags/inputs are absent.
 
-UNPROVEN, per the implementation-first direction (see the strategic-direction
-section of `docs/proposals/2026-07-verified-core-lean.md`). The accumulation is
-ordered exactly as `emissions.ts` sums it (mode → gps → speed/plane → hr →
-cadence → in-bed → place), and skipped factors add `0.0`, so the result is
-bit-for-bit identical to TS — pinned by the `#guard`s below against values
-computed from the real `buildEmissionFn`.
+UNPROVEN. The accumulation is ordered (mode → gps → speed/plane → hr → cadence
+→ in-bed → place), and skipped factors add `0.0`, so the result is bit-for-bit
+fixed; the `#guard`s below pin it against reference values.
 -/
 
 namespace Verified.Hsmm.Emissions
@@ -191,7 +188,7 @@ def emissionLogProb (s : State) (o : Observation) (placeCoord : Option (Float ×
     + pBed
     + placeTerm s o placeCoord
 
--- Parity with the real `buildEmissionFn` (base path; values from Node/V8):
+-- `buildEmissionFn`'s reference values (base path):
 private def g (lat lon spd : Float) : Gps := ⟨lat, lon, spd⟩
 private def obs (gps : Option Gps) (hr cad : Option Float) (inBed : Bool) : Observation := ⟨gps, hr, cad, inBed⟩
 private def stt (m : Mode) (pid : Option Int) : State := ⟨m, pid, none⟩

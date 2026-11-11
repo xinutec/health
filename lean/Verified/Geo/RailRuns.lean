@@ -15,7 +15,7 @@ where a ride began and ended, and what to call the line it ran on.
 
 ## `expandTubeLineNames` is a THIRD line-name canonicaliser, not a duplicate
 
-`Verified.Hsmm.RouteGraph.parseLineMemberships` (from `route-graph.ts`) does a
+`Verified.Hsmm.RouteGraph.parseLineMemberships` does a
 similar job and the two are NOT interchangeable:
 
 * that one REQUIRES a `" Line"`/`" Lines"` suffix and returns the empty set

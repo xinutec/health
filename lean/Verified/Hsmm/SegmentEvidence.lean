@@ -41,8 +41,8 @@ def stepPrefix (obs : Array ObsRow) : Array Float :=
 
 /-- The caller-side `Window` for `[startIndex, segEnd]`, or `none` ("assert
     nothing") when a bracketing fix is missing or non-advancing. `startIndex` may
-    be negative for early segments; it is clamped for the `first`/step lookups
-    exactly as the TS `Math.max(0, startIndex)`. -/
+    be negative for early segments; it is clamped at 0 for the `first`/step
+    lookups. -/
 def windowFor (obs : Array ObsRow) (pref : Array Float) (startIndex segEnd : Int) : Option Window :=
   if hse : segEnd < 0 ∨ segEnd ≥ (obs.size : Int) then none
   else

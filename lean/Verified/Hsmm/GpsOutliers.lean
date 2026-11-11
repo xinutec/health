@@ -1,7 +1,7 @@
 import Verified.Hsmm.Observation
 import Verified.FloatConst
 /-!
-# HMM GPS outlier filter (implementation-first port of `gps-outliers.ts`)
+# HMM GPS outlier filter
 
 A robust-statistics pass run on the fix stream BEFORE the observation tensor:
 for each fix, take the median position over a ±30-min window and drop the fix if
@@ -12,13 +12,11 @@ The median alone is right about an isolated teleport (a stale buffer, a cell
 triangulation): the cluster stays put and the rogue fix sits kilometres off it.
 It is wrong about a ride between two stays shorter than its window. There the
 window straddles both stays, its coordinate-wise median lands between them, and
-every fix on the way — the platform wait, the run at 100 km/h, the walk to the
-station — is 2 km from a point nobody was at. Measured 2026-09-29 over the
-eleven decoder days: 35 to 115 fixes a day gone, always a ride's interior, so
-the decoder saw every ride from its bookends only (#238: a line credited on
-endpoint proximity, because endpoints were all that survived). The speed rescue
-tells the two apart: a teleport implies thousands of km/h from the fix before
-it, a ride implies tens.
+every fix on the way (the platform wait, the run at 100 km/h, the walk to the
+station) is 2 km from a point nobody was at; on the decoder days that was 35 to
+115 fixes a day, always a ride's interior, so the decoder saw every ride from
+its bookends only. The speed rescue tells the two apart: a teleport implies
+thousands of km/h from the fix before it, a ride implies tens.
 
 Composes directly into `buildObservationTensor` (same `GpsPoint`, same
 `median`). The only transcendental is `cos` in the equirectangular distance,
@@ -94,7 +92,7 @@ def dropGpsOutliers (points : List GpsPoint) : List GpsPoint :=
       else (keptRev, lastKept, some p)
     (points.foldl step ([], none, none)).1.reverse
 
--- Parity with the real `dropGpsOutliers` (kept ts sets from Node/V8).
+-- `dropGpsOutliers`' reference kept-ts sets.
 private def mk (ts : Int) (lat lon : Float) : GpsPoint := ⟨ts, lat, lon, 0, none⟩
 
 private def pts : List GpsPoint :=

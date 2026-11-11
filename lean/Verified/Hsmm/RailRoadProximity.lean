@@ -5,11 +5,9 @@ import Verified.JsNum
 # Is this fix on the track, or on a road?
 
 The per-minute `roadDistM` / `railDistM` the observation tensor carries, and the
-single source of truth for the rail-vs-road call. The decoder never
-credits a tube line to a fix that hugs a road, and this is what lets it tell the
-difference (#982 Tier 2).
-
-Port of the pure half of `src/geo/rail-road-proximity.ts`.
+single source of truth for the rail-vs-road call. The decoder never credits a
+tube line to a fix that hugs a road, and this is what lets it tell the
+difference.
 
 ## What is here and what is not
 
@@ -58,9 +56,8 @@ structure Proximity where
   roadDistM : Option Float
   deriving Repr, Inhabited, BEq
 
-/-- ⚠ A NON-FINITE DISTANCE IS SKIPPED, not compared. The TypeScript tests
-`Number.isFinite(d)` before using it, and a NaN would otherwise win every `<`
-comparison it took part in and pin the minimum at NaN. -/
+/-- ⚠ A non-finite distance is skipped, not compared: a NaN would otherwise win
+every `<` comparison it took part in and pin the minimum at NaN. -/
 private def usable (d : Option Float) : Option Float :=
   match d with
   | none => none
@@ -148,11 +145,10 @@ def distinctQueryPoints (ms : Array MinuteFix) : Array MinuteFix :=
 /-- One answered query: the location the shell asked about, and the ways it
 found there.
 
-⚠ A QUERY THAT FAILED IS SIMPLY ABSENT from `answers`. It is NOT sent as an
+⚠ A query that failed is simply absent from `answers`. It is not sent as an
 empty list: `[]` is "nothing within 300 m", which is evidence, and a failure is
-no evidence at all (#976 — a failed mirror query must not read as an empty
-answer). {@link proximityTable} counts the minutes left unanswered so the shell
-can say which it had. -/
+no evidence at all. {@link proximityTable} counts the minutes left unanswered so
+the shell can say which it had. -/
 structure WayAnswer where
   lat : Float
   lon : Float
@@ -318,8 +314,8 @@ private def M (ts : Int) (lat lon : Float) : MinuteFix :=
           #[A 51.5 0 [W "railway" "rail" 1], A 51.9 0 [W "railway" "rail" 2]]).1.map (·.1))
         == #[180, 60]
 
--- A duplicate answer for one key does not change the value: the FIRST wins,
--- matching the TypeScript's `coordCache`, which never overwrites a hit.
+-- A duplicate answer for one key does not change the value: the first wins, and
+-- a cached hit is never overwritten.
 #guard (proximityTable #[M 60 51.5 0]
           #[A 51.5 0 [W "railway" "rail" 10], A 51.5 0 [W "railway" "rail" 99]])
         == (#[(60, { railDistM := some 10, roadDistM := none })], 0)

@@ -25,7 +25,7 @@ place seen on a single day from claiming a stop 118 m away (the Wembley
 "Selekt Chicken" bug). The veto relaxes under magnet × coherence, but only
 within the magnet radius and never past 2× the base 3σ.
 
-`snapToPlace` (from `place-snap.ts`) is the separate, simpler magnetic snap:
+`snapToPlace` is the separate, simpler magnetic snap:
 pull a noisy fix onto a known centroid when it is in range, unambiguous, and
 the GPS accuracy is worse than how precisely the place is known.
 

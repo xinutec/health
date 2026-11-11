@@ -1,14 +1,13 @@
 import Verified.Hsmm.Emissions
 /-!
-# Entry / initial priors (implementation-first port of `entry-prior.ts` + `initial-state.ts`)
+# Entry / initial priors
 
 `initialLogProb` is uniform `0` today. `entryLogProb` fires once per segment
 (not per minute): for a `stationary @ knownPlace` it adds the hour-of-day arrival
 rate `log(24 · hourProfile[hourLocal])` (floored) and the visit-frequency weight
 `log(nPlaces · weight)` (with a `1/(10·nPlaces)` fallback). Per-place data is
-passed resolved (profile for the state's place, weight lookup) — the caller owns
-the maps, exactly as `buildHsmmModel` resolves them. UNPROVEN; bit-exact with TS,
-pinned by the `#guard`s.
+passed resolved (profile for the state's place, weight lookup); the caller owns
+the maps. UNPROVEN; bit-exact, pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Entry
@@ -56,7 +55,7 @@ def entryLogProb (s : State) (hourLocal : Nat) (useHourProfiles : Bool)
       else ZERO
     p1 + p2
 
--- Parity with the real `buildEntryPrior` / `buildInitialStatePrior` (Node/V8).
+-- `buildEntryPrior` / `buildInitialStatePrior`'s reference values.
 private def prof : Array Float := ((Array.range 24).map (fun i => (i.toFloat + 1) / 300)).set! 3 0.0005
 private def stt (m : Mode) (pid : Option Int) : State := ⟨m, pid, none⟩
 

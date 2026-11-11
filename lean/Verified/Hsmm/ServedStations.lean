@@ -3,14 +3,13 @@ import Verified.Geo.LineStations
 /-!
 # Served-station sets
 
-Does a line actually stop at a candidate station? `station-chain.ts` uses this to
+Does a line actually stop at a candidate station? The station chain uses this to
 refuse a (board, alight) pair the mirrored OSM route relations say the line does
-not serve — the membership test the graph's proximity-based line memberships
-cannot make, because an edge passing NEAR a station is not the same claim as a
-service STOPPING at it (#238 is about that confusion in the other direction).
+not serve: the membership test the graph's proximity-based line memberships
+cannot make, because an edge passing near a station is not the same claim as a
+service stopping at it.
 
-Unlike the rest of `station-chain`, every function here is EXPORTED in the TS, so
-these are pinned directly against V8 (`experiments/served-stations-refs.mts`)
+Unlike the rest of the station chain, every function here is pinned directly
 rather than through `resolveStationChain`.
 
 ## Hash order is safe here, and that is worth stating rather than assuming
@@ -46,20 +45,17 @@ private def containsSub (hay needle : String) : Bool :=
 /-- Lowercase alphanumerics only: "King's Cross St. Pancras" and "King's Cross
     St Pancras" normalise identically.
 
-    The TS lowercases FIRST and then strips, so an uppercase ASCII letter
-    survives as its lowercase self. Note the one place this could in principle
-    diverge: JS `toLowerCase` is Unicode-aware and Lean's is not, so a character
-    whose lowercase is an ASCII letter but which is not itself ASCII (Turkish
-    `İ` → `i̇`) would be kept by one and stripped by the other. No station name
-    in the mirror contains one; recorded because the equivalence is an
-    assumption about the DATA, not about the two implementations. -/
+    Lowercase first, then strip, so an uppercase ASCII letter survives as its
+    lowercase self. Lean's lowercasing is ASCII-only, so a character whose
+    Unicode lowercase is an ASCII letter but which is not itself ASCII (Turkish
+    `İ` → `i̇`) is stripped. No station name in the mirror contains one. -/
 def normalizeStationName (name : String) : String :=
   String.ofList (name.toLower.toList.filter (fun c =>
     (c ≥ 'a' && c ≤ 'z') || (c ≥ '0' && c ≤ '9')))
 
 structure RailStop where
   name : Option String
-  /-- Where the stop is, when the cache says (#238: the chain's pass term). -/
+  /-- Where the stop is, when the cache says (the chain's pass term). -/
   lat : Option Float := none
   lon : Option Float := none
   deriving Inhabited, Repr
@@ -73,15 +69,13 @@ structure RailStopRelation where
 /-- Relations that ARE the line: the ref equals the line's base token, or the
     relation's own name has that base token, case-insensitively.
 
-    Until 2026-09-29 this was CONTAINMENT of the token in the ref or the name
-    (`rail-stops-cache.ts`), and for the Victoria line the token `victoria`
-    matched every Southern service terminating at London Victoria: 38 relations
-    and 147 stations for a line with 16. Measured on a fixture's cache:
-    Victoria 38 → 4, Northern 41 → 26, Central 32 → 12; Jubilee, Circle and
-    Metropolitan unchanged. The tube carries its designation in the ref
-    (`Victoria`); National Rail carries an operator code (`SN7.2`), so a
-    Southern relation no longer looks like the tube line its terminus shares a
-    name with.
+    Containment of the token in the ref or the name would match every Southern
+    service terminating at London Victoria for the Victoria line: 38 relations
+    and 147 stations for a line with 16. Exact: Victoria 38 → 4, Northern
+    41 → 26, Central 32 → 12; Jubilee, Circle and Metropolitan unchanged. The
+    tube carries its designation in the ref (`Victoria`); National Rail carries
+    an operator code (`SN7.2`), so a Southern relation does not look like the
+    tube line its terminus shares a name with.
 
     An empty base matches NOTHING, mirroring `lineNamesMatching`: a `'%%'` LIKE
     would have matched every relation in the mirror. -/
@@ -158,7 +152,7 @@ def intermediateCalls (relations : Array RailStopRelation) (line a b : String) :
 def intermediateStops (relations : Array RailStopRelation) (line a b : String) : Option Nat :=
   (intermediateCalls relations line a b).map (·.size)
 
-/-! ## Guards — V8 values from `experiments/served-stations-refs.mts` -/
+/-! ## Guards -/
 
 private def rel (lineRef lineName : Option String) (stops : List String) : RailStopRelation :=
   ⟨lineRef, lineName, (stops.map (fun n => ({ name := some n } : RailStop))).toArray⟩

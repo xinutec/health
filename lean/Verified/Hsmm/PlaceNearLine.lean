@@ -8,14 +8,12 @@ HARD-ZEROES a transition from focus place P to train line L when P is not near a
 station on L — you cannot board the Central Line from a flat two miles from any
 Central Line station, and without this the trellis is free to say you did.
 
-Port of `buildPlaceNearLine` in `src/cli/decode-day.ts`.
-
 ## ⚠ AN ABSENT `placeNearLine` IS NOT A SOFTER CONSTRAINT — IT IS A DIFFERENT ONE
 
-`parseAssemble` reads it as OPTIONAL, and an absent one is the empty set, which
+`parseAssemble` reads it as optional, and an absent one is the empty set, which
 reads to the transition matrix as "no place is near any line". That removes
 every hard zero rather than adding them: the decode runs, produces a plausible
-timeline, and allows boardings the TypeScript forbids.
+timeline, and allows forbidden boardings.
 
 ## The shell's half
 
@@ -62,10 +60,9 @@ def nearAnyStation (p : Place) (stations : Array Station) : Bool :=
 
 /-- The `"{placeId}|{lineName}"` keys for one line.
 
-⚠ A LINE WITH NO STATIONS CONTRIBUTES NOTHING, which is the TypeScript's
-`if (stations.length === 0) continue`. It reads the same as a line every place is
-far from, and it must: an OSM gap is not evidence that nobody lives near the
-Piccadilly Line. -/
+⚠ A line with no stations contributes nothing. It reads the same as a line
+every place is far from, and it must: an OSM gap is not evidence that nobody
+lives near the Piccadilly Line. -/
 def pairsForLine (places : Array Place) (line : String) (stations : Array Station)
     : Array String :=
   if stations.isEmpty then #[]
@@ -74,10 +71,9 @@ def pairsForLine (places : Array Place) (line : String) (stations : Array Statio
 /-- Every place/line pair within walking distance, over all the lines the shell
 resolved stations for.
 
-⚠ LINES OUTER, PLACES INNER — the TypeScript's loop order, kept so the emitted
-order is the same one the consumer has always seen. The consumer builds a set
-from it, so order cannot change a decode; a diff of the two arms reads far more
-easily when it is stable. -/
+⚠ Lines outer, places inner, so the emitted order is stable. The consumer builds
+a set from it, so order cannot change a decode; a diff reads far more easily
+when it is stable. -/
 def buildPlaceNearLine (places : Array Place) (lines : Array (String × Array Station))
     : Array String :=
   lines.foldl (fun acc (line, sts) => acc ++ pairsForLine places line sts) #[]
@@ -95,10 +91,9 @@ private def S (lat lon : Float) : Station := ⟨lat, lon⟩
 -- ⚠ THE BOUNDARY IS PINNED FROM BOTH SIDES, roughly a metre apart. A rule
 -- tested only from the far side passes with the comparison reversed.
 --
--- ⚠ The `≤` versus `<` of `WALK_DIST_M` itself is NOT pinned, and claiming it
+-- ⚠ The `≤` versus `<` of `WALK_DIST_M` itself is not pinned, and claiming it
 -- were would be false precision: no pair of coordinates lands a haversine on
--- exactly 400.0, so the two comparisons are indistinguishable by any guard. It
--- is `≤` because the TypeScript's is.
+-- exactly 400.0, so the two comparisons are indistinguishable by any guard.
 #guard (distM (P 1 51.5 0) (S 51.50359 0) - 399.189787).abs < 1e-5   -- inside
 #guard (distM (P 1 51.5 0) (S 51.50360 0) - 400.301736).abs < 1e-5   -- outside
 #guard nearAnyStation (P 1 51.5 0) #[S 51.50359 0]

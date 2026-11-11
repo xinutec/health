@@ -24,19 +24,16 @@ import Verified.Hsmm.Assemble
 /-!
 # HSMM port aggregator (scoring factors + structural resolvers)
 
-The Lean re-implementations of the TypeScript HSMM — the scoring-factor kernels
-and the structural resolvers (state-space enumeration, …) — each pinned to V8 by
-`#guard` parity checks. Importing them here pulls every module (and therefore
-every guard) into the default `Verified` library build, so `pnpm run verify`
-(`lake build`) fails on any TS↔Lean divergence — the guards are worthless if
-they never run.
+The HSMM's scoring-factor kernels and structural resolvers (state-space
+enumeration, …), each pinned by `#guard`s. Importing them here pulls every
+module, and so every guard, into the default `Verified` library build, so
+`lake build` fails on any divergence; the guards are worthless if they never
+run.
 
 This file itself defines nothing and asserts nothing — it is an import surface,
 and `lean-coverage` reports it as one. A checker that credited it would be
 crediting the imports below, which are counted in their own right.
 
-Implementation-first: these compute in Lean `Float` to match TS bit-for-bit
-(exactly, for `sqrt`/arithmetic/discrete factors; ≤1-ULP where a factor uses
-`sin`/`cos`/`atan2`/`log`). The fixed-point / theorem layer lands later; see
-`docs/proposals/2026-07-verified-core-lean.md`.
+These compute in Lean `Float` (exactly for `sqrt`/arithmetic/discrete factors;
+≤1 ULP where a factor uses `sin`/`cos`/`atan2`/`log`).
 -/

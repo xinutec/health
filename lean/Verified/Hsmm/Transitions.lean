@@ -1,6 +1,6 @@
 import Verified.Hsmm.Emissions
 /-!
-# Transition log-probabilities (implementation-first port of `src/hmm/transitions.ts`)
+# Transition log-probabilities
 
 The row-normalised static-prior transition matrix, in Lean `Float`. For each
 `src` state: the self-loop holds `exp(selfLoop)` of the mass; the rest is split
@@ -10,10 +10,9 @@ across the valid (non-hard-zero) cross destinations in proportion to
 so it's a follow-on brick, exactly as `buildTransitionMatrix` behaves with no
 `placeNearLine` provided.
 
-UNPROVEN, per the implementation-first direction. Arithmetic mirrors
-`transitions.ts` exactly — including computing `crossMass = 1 - exp(selfLoop)`
-the same way (not the literal `0.05`) — so it's bit-for-bit identical to TS,
-pinned by the `#guard`s against `buildTransitionMatrix` values.
+UNPROVEN. `crossMass = 1 - exp(selfLoop)` is computed, not the literal `0.05`,
+so the values are bit-for-bit fixed, pinned by the `#guard`s against reference
+values.
 -/
 
 namespace Verified.Hsmm.Transitions
@@ -87,8 +86,8 @@ def crossWeightSumP (placeNear : Int → String → Bool) (states : List State) 
     (fun acc dst => if sameState src dst || isHardZeroP placeNear src dst then acc else acc + weight src dst)
     0.0
 
-/-- Transition log-probability under the station-graph hard-zero — the served
-    TS `buildTransitionMatrix` with `placeNearLine`. -/
+/-- Transition log-probability under the station-graph hard zero
+    (`buildTransitionMatrix` with `placeNearLine`). -/
 def transitionLogProbP (placeNear : Int → String → Bool) (states : List State) (selfLoop : Float)
     (src dst : State) (weight : State → State → Float := transitionWeight) : Float :=
   if sameState src dst then selfLoop
@@ -125,7 +124,7 @@ def transitionLogProbPre (placeNear : Int → String → Bool) (selfLoop weightS
   else if weightSum <= 0.0 then negInf
   else Float.log ((1.0 - Float.exp selfLoop) * weight src dst / weightSum)
 
--- Parity with the real `buildTransitionMatrix` (base path; values from Node/V8).
+-- `buildTransitionMatrix`'s reference values (base path).
 -- State space: 0 stat@5, 1 stat@7, 2 walk, 3 train@Central, 4 driving.
 private def S (m : Mode) (pid : Option Int) (ln : Option String) : State := ⟨m, pid, ln⟩
 private def space : List State :=

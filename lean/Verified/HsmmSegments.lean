@@ -2,12 +2,11 @@ import Verified.JsNum
 /-!
 # Per-minute HSMM states → stored segments
 
-Port of `groupStatesIntoSegments` in `src/hmm/persist.ts`. The decoder emits one
-state per minute; `decoded_days` stores the run-length compaction of that, and
-everything downstream — the day fold, the presence rollup — reads the compacted
-form.
+`groupStatesIntoSegments`. The decoder emits one state per minute;
+`decoded_days` stores the run-length compaction of that, and everything
+downstream (the day fold, the presence rollup) reads the compacted form.
 
-Pure and total. UNPROVEN; the run boundary and the `+ 60` are the TypeScript's.
+Pure and total. UNPROVEN; the guards pin the run boundary and the `+ 60`.
 
 ⚠ **`endTs` is EXCLUSIVE and is built by adding 60 to the run's LAST minute**,
 not by reading the next run's start. Those differ wherever the timestamp series
@@ -39,17 +38,15 @@ structure Segment where
   lineName : Option String
   deriving Inhabited, BEq, Repr
 
-/-- Do two minutes belong to the same run? All three fields, and the TypeScript
-compares them with `===` — so `null` and `undefined` would differ there but
-cannot here, which is a case Lean removes rather than reproduces. -/
+/-- Do two minutes belong to the same run? All three fields compared. -/
 def sameState (a b : State) : Bool :=
   a.mode == b.mode && a.placeId == b.placeId && a.lineName == b.lineName
 
 /-- Run-length compact the day.
 
-⚠ MISMATCHED LENGTHS ARE A CALLER BUG. The TypeScript throws; this returns
-`none`, so the host reports it rather than silently compacting the shorter of
-the two and writing a day that is missing its tail. -/
+⚠ Mismatched lengths are a caller bug: this returns `none`, so the host reports
+it rather than silently compacting the shorter of the two and writing a day
+that is missing its tail. -/
 def groupStates (states : Array State) (timestamps : Array Int) : Option (Array Segment) :=
   if states.size != timestamps.size then none
   else if states.isEmpty then some #[]
@@ -118,17 +115,17 @@ private def st (m : String) (p : Option Int := none) (l : Option String := none)
 
 The decode reports a platform wait as what it is, a stay: the phone stood still,
 no steps, a fix a minute. The narratives fold one into the walk or the ride
-beside it, and keep a longer one as a stay of its own. Measured 2026-10-10 on
-every decoded stay touching a train against the narrated minutes it covers: 25
-of 28 under ten minutes were narrated as movement, 7 of 8 of ten or more as a
-stay. So a stay shorter than `RIDE_WAIT_MAX_S` with a train beside it joins the
-walk on its side, or the train when there is no walk; the decode itself is
-untouched. A short stop between two pieces of one mainline ride is the train
-standing at a station, and the pieces are one ride (10-01's TGV, split at four
-stops of five to seven minutes). Between two pieces of a NAMED line the stop is
-left alone: joined, 05-15's Jubilee was re-lined by the station chain, whose
-duration term does not know a train can stand; an unnamed ride has no line for
-the chain to re-line. -/
+beside it, and keep a longer one as a stay of its own. Over every decoded stay
+touching a train against the narrated minutes it covers, 25 of 28 under ten
+minutes were narrated as movement, 7 of 8 of ten or more as a stay. So a stay
+shorter than `RIDE_WAIT_MAX_S` with a train beside it joins the walk on its
+side, or the train when there is no walk; the decode itself is untouched. A
+short stop between two pieces of one mainline ride is the train standing at a
+station, and the pieces are one ride (10-01's TGV, split at four stops of five
+to seven minutes). Between two pieces of a named line the stop is left alone:
+joined, 05-15's Jubilee was re-lined by the station chain, whose duration term
+does not know a train can stand; an unnamed ride has no line for the chain to
+re-line. -/
 
 def RIDE_WAIT_MAX_S : Int := 10 * 60
 

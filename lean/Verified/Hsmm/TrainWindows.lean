@@ -1,7 +1,7 @@
 import Verified.Hsmm.Observation
 import Verified.Hsmm.FloatScore
 /-!
-# Train-window detection (implementation-first port of `findTrainWindows`)
+# Train-window detection
 
 The observation-only core of the train-candidate generator: from the per-minute
 GPS speeds and the bracketing fixes, find the disjoint `[start, end]` windows the
@@ -10,13 +10,12 @@ displacement implying train velocity. Pure over the observation tensor; the
 station/line matching (`enumerateTrainCandidates`) is the graph-dependent
 follow-on that consumes these windows.
 
-The TS is heavily imperative (tag array + in-place bracketed-displacement pass +
-while-loop window extraction), so this uses `Id.run do` (mutable arrays, `for`)
-for the passes. The scans are total: each one walks towards an edge of the
-tensor and Lean checks that the distance to that edge shrinks. `haversine` makes
-the velocity tests ULP-close, but they compare against thresholds far from the
-boundary in the tested cases, so the windows are exact. Correctness UNPROVEN;
-pinned by the `#guard`s.
+The passes are imperative (a tag array, an in-place bracketed-displacement pass,
+window extraction), so this uses `Id.run do` (mutable arrays, `for`). The scans
+are total: each one walks towards an edge of the tensor and Lean checks that the
+distance to that edge shrinks. `haversine` makes the velocity tests ULP-close,
+but they compare against thresholds far from the boundary in the tested cases,
+so the windows are exact. Correctness UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.TrainWindows
@@ -166,9 +165,9 @@ def windowIfValid (obs : Array ObsRow) (start endN : Nat) : Option (Nat × Nat) 
     return some (start, start + windowLen - 1)
   return none
 
-/-- Outer window-extraction loop (the TS `while (i < T)`): each candidate run
-    `[i, j)` of not-`notTrain` minutes is trimmed of `unknown` at both ends and
-    validated; the loop resumes after the run. -/
+/-- Outer window-extraction loop: each candidate run `[i, j)` of not-`notTrain`
+    minutes is trimmed of `unknown` at both ends and validated; the loop resumes
+    after the run. -/
 def extractWindows (obs : Array ObsRow) (tag : Array Tag) (i : Nat) : Array (Nat × Nat) :=
   if h : i < tag.size then
     if tag[i] == Tag.notTrain then extractWindows obs tag (i + 1)
@@ -215,7 +214,7 @@ def findTrainWindows (obs : Array ObsRow) : Array (Nat × Nat) := Id.run do
           lastObs := (t : Int)
   return extractWindows obs tag 0
 
--- Parity with the real `findTrainWindows` (windows from Node/V8).
+-- `findTrainWindows`' reference windows.
 private def mk (i : Nat) (lat lon : Float) (spd : Option Float) : ObsRow :=
   { ts := 1000 + (i : Int) * 60, gps := spd.map (fun s => ⟨lat, lon, s, none⟩), hr := none, cadence := none,
     hourLocal := 0, dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none,

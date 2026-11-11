@@ -1,6 +1,6 @@
 import Verified.Hsmm.Emissions
 /-!
-# Line-proximity factor (implementation-first port of `line-proximity-factor.ts`)
+# Line-proximity factor
 
 Emission term for `train @ L`: at a GPS-present minute, boost when the fix sits
 on L's track corridor, penalise when L is modelled but the fix is off it (or is
@@ -8,7 +8,7 @@ road-nearer-than-rail). The route-graph spatial queries (`edgesNearIdx`,
 `linesInGraph`) stay caller-side and are passed in as resolved facts
 (`lineModeled`, `lineNear`, road/rail distances); this module is the pure
 decision. All outputs are exact rational constants, so parity is exact `==`.
-Bit-exact with TS, pinned by the `#guard`s.
+Bit-exact, pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.LineProximity
@@ -55,14 +55,14 @@ def lineProximityFactor (s : State) (isCovered gpsPresent : Bool)
       else if !gpsPresent then 0.0
       else scoreLineProximity lineModeled lineNear roadDistM railDistM
 
--- Parity with the real `scoreLineProximity` (Node/V8):
+-- `scoreLineProximity`'s reference values:
 #guard scoreLineProximity false false none none == 0
 #guard scoreLineProximity true false none none == -2.5
 #guard scoreLineProximity true true (some 200) (some 100) == 1.5   -- rail nearer → boost
 #guard scoreLineProximity true true (some 100) (some 200) == -2.5  -- road nearer → penalty
 #guard scoreLineProximity true true none none == 1.5
 
--- Wrapper decision branches (constants match the TS routing):
+-- Wrapper decision branches:
 private def tr (line : Option String) : State := ⟨.train, none, line⟩
 #guard lineProximityFactor (tr (some "Jubilee")) false true true true none none == 1.5
 #guard lineProximityFactor (tr (some "Jubilee")) false true true false none none == -2.5   -- far

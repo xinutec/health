@@ -94,9 +94,9 @@ private def checkTrellis (P : Problem) : Bool :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
   checkTrellis blocked
 
--- The proved decoder must agree with the imperative trellis EXACTLY — same
+-- The proved decoder must agree with the imperative trellis exactly: same
 -- Option, same best, same path. `pickBest`'s first-best tie-break composes to
--- the same selection order as the TypeScript argmax loops, so even ties match.
+-- the same selection order as the argmax loops, so even ties match.
 #guard decode (mkP 0 1 1 1) == viterbi (mkP 0 1 1 1)
 #guard decode (mkP 0 0 3 2) == viterbi (mkP 0 0 3 2)
 #guard decode (mkP 0 4 0 2) == viterbi (mkP 0 4 0 2)

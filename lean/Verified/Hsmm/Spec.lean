@@ -3,13 +3,12 @@ import Verified.Hsmm.Score
 /-!
 # HSMM decoding — the specification
 
-The mathematical meaning of `src/hmm/hsmm-viterbi.ts`, stated independently of
-any algorithm: a *segmentation* of the observation window `[0, T)` into runs of
+The mathematical meaning of the HSMM decoder, stated independently of any
+algorithm: a *segmentation* of the observation window `[0, T)` into runs of
 equal state, its *score* under the model, and well-formedness. The decoder's
 contract is: return a path whose segmentation is well-formed and whose score
 equals the maximum over all well-formed segmentations (`none` when every
-segmentation scores `-∞` — the TypeScript version's silent all-`states[0]`
-fallback becomes an explicit signal here).
+segmentation scores `-∞`, an explicit signal rather than a fallback path).
 
 The model is a bundle of score functions over plain `Nat` indices, mirroring
 the callback interface of `HsmmInput`:

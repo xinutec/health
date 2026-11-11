@@ -3,28 +3,27 @@ import Verified.Hsmm.Spec
 /-!
 # The HSMM Viterbi trellis
 
-A faithful port of `src/hmm/hsmm-viterbi.ts` (Yu/Rabiner explicit-duration
-formulation): `trellis[s][τ]` rolling over `t`, a per-`t` precomputation of the
-best close-of-segment score per previous state, backpointers stored only at
-segment starts, and final-segment closure at `T-1`. Loop order and strict-`>`
-argmax comparisons mirror the TypeScript exactly, so on identical integer
-scores the two decoders tie-break identically.
+The explicit-duration Viterbi (Yu/Rabiner formulation): `trellis[s][τ]` rolling
+over `t`, a per-`t` precomputation of the best close-of-segment score per
+previous state, backpointers stored only at segment starts, and final-segment
+closure at `T-1`. Loop order and strict-`>` argmax comparisons fix the
+tie-breaks on identical integer scores.
 
-Differences from the TypeScript, both deliberate:
-  - degenerate input (every path scores `-∞`) returns `none` instead of the
+Two deliberate choices:
+  - degenerate input (every path scores `-∞`) returns `none` rather than a
     silent all-`states[0]` path;
-  - a missing backpointer during backtrack returns `none` instead of leaving
-    path minutes unfilled (unreachable when the best score is finite — making
-    it a visible signal instead of silent corruption).
+  - a missing backpointer during backtrack returns `none` rather than leaving
+    path minutes unfilled (unreachable when the best score is finite, so it is
+    a visible signal instead of silent corruption).
 
 The goal theorem is proved for the *specification* decoder (`Decode.lean`:
 `decode_correct`, `decode_none_iff`) and inherited by the memoised forms
 (`Memo.decodeFast`, `Ckpt.decodeCk`) and by `ByStart.sDecode`, what
-`verified_cli` runs. This array `viterbi` is **not** itself proved and is
-**not** on the production path: it is the TS-faithful reference that `Tests.lean`
-`#guard`-pins the spec decoder against — paths included — so a divergence
-between the ported loop and the verified spec fails the build. It exists to
-cross-check faithfulness, not to decode in production.
+`verified_cli` runs. This array `viterbi` is **not** itself proved and is **not**
+on the production path: it is the reference loop that `Tests.lean` `#guard`-pins
+the spec decoder against, paths included, so a divergence between the loop and
+the verified spec fails the build. It exists to cross-check, not to decode in
+production.
 -/
 
 namespace Verified.Hsmm
@@ -44,8 +43,8 @@ namespace Viterbi
 end Viterbi
 
 open Viterbi in
-/-- The TS `hsmmViterbi`: decode the MAP state-per-minute path. `none` when no path has a finite
-score (or the window/state space is degenerate with `T > 0`). -/
+/-- `hsmmViterbi`: decode the MAP state-per-minute path. `none` when no path has
+a finite score (or the window/state space is degenerate with `T > 0`). -/
 def viterbi (P : Problem) : Option DecodeResult := Id.run do
   let T := P.T
   let S := P.S
