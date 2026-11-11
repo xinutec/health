@@ -1,6 +1,6 @@
 import Verified.FloatConst
 /-!
-# GPS Kalman filter (implementation-first port of `src/geo/kalman.ts`)
+# GPS Kalman filter
 
 The upstream input-pipeline stage: smooth a raw GPS track into filtered
 position + velocity fixes (`filterGpsTrack`), feeding the observation tensor.

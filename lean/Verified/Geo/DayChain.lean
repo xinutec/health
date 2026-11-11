@@ -51,8 +51,8 @@ namespace Verified.Geo.DayChain
 open Verified.Geo.DayState (DayState SleepWindow StayFix StayKnownPlace StayCandidate
   segmentsToDayStates detectKnownPlaceStays)
 
-/-- A Fitbit sleep window before place attribution — `RawSleepWindow`
-(`src/sleep/load.ts`). The `place` this lacks is exactly what the chain adds. -/
+/-- A Fitbit sleep window before place attribution (`RawSleepWindow`). The
+`place` this lacks is exactly what the chain adds. -/
 structure RawSleepWindow where
   startTs : Int
   endTs : Int

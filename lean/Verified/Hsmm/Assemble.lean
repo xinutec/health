@@ -15,13 +15,12 @@ and produces the five per-cell model callbacks — `emitAt`/`entryAt`/`initAt`/
 `buildCellTensor`/`buildVector` (with `quantize`) yields the integer tensors the
 verified trellis reads — the whole model, built in Lean from parsed inputs.
 
-The callbacks add NO new arithmetic over the composition layer: each is a lookup
-into the bundled maps (`isCovered ts`, `placeCoords`, the mode's
-`baselineFit`) feeding an already-V8-pinned composed callback. So the guards here
-check the RESOLUTION — that each callback pulls the right observation row, state,
-coverage verdict, and place datum — riding on the composition's own parity pins
-(`EmissionFull`/`Assembly`). End-to-end NUMERIC parity against `buildHsmmModel`
-for a real day is the `Main.lean` + `compare.mjs` step; this is its pure core.
+The callbacks add no new arithmetic over the composition layer: each is a lookup
+into the bundled maps (`isCovered ts`, `placeCoords`, the mode's `baselineFit`)
+feeding an already pinned composed callback. So the guards here check the
+resolution, that each callback pulls the right observation row, state, coverage
+verdict, and place datum, riding on the composition's own pins
+(`EmissionFull`/`Assembly`).
 
 The `date → tz`-resolved context and the shell-parsed edges / station annotation
 enter as already-built Lean structures (the settled I/O boundary). Still deferred
@@ -139,12 +138,9 @@ def WAIT_MARK : String := "wait"
 
 /-- The longest segment the HSMM will consider, in minutes.
 
-⚠ A MODEL PARAMETER, NOT A TUNING KNOB, and it belongs here because it is the
-`maxD` of the `O(T·S·maxD)` trellis every arm must agree on. The TypeScript twin
-is `DEFAULT_MAX_DURATION` in `src/hmm/hsmm-viterbi.ts`, which goes with the rest
-of the TS arms; after that this is the only copy, which is why the shell
-now omits `maxD` and lets the request default to it rather than spelling 240 in
-Rust.
+⚠ A model parameter, not a tuning knob: the `maxD` of the `O(T·S·maxD)` trellis.
+This is the only copy, so the shell omits `maxD` and lets the request default to
+it rather than spelling 240 in Rust.
 
 Four hours: long enough for a workday stay to be one segment, short enough that
 the duration axis stays affordable at S ≈ 160. -/
@@ -647,10 +643,10 @@ theorem durAtFrom_eq_W (c : ModelContext) (s d e : Nat) (base : Float) :
   unfold durAtFrom durAtFromW coveredAtE segEmAt
   cases c.states[s]? <;> rfl
 
-/-- `duration(s, d, obs[e])` — the mode's duration prior at `d`, the train-hop
-    relaxation and the segment emission at `e`. DEFINED as the split
-    (`durPriorBase` then `durAtFrom`) since 2026-09-29, so the hoisted decoder
-    and this reference cannot drift. -/
+/-- `duration(s, d, obs[e])`: the mode's duration prior at `d`, the train-hop
+    relaxation and the segment emission at `e`. Defined as the split
+    (`durPriorBase` then `durAtFrom`), so the hoisted decoder and this reference
+    cannot drift. -/
 def durAt (c : ModelContext) (s d e : Nat) : Float :=
   durAtFrom c s d e (durPriorBase c s d)
 
@@ -686,9 +682,9 @@ def buildEmit (c : ModelContext) : Array (Array (Option Float)) :=
 def buildInit (c : ModelContext) : Array (Option Float) :=
   Assembly.buildVector c.states.size (initAt c)
 
--- Parity of the RESOLUTION wiring (composition values ride on EmissionFull /
--- Assembly's own V8 pins). A connected-underground "Jubilee Line" pair so the
--- route-rail term fires on a bracketed no-GPS train minute.
+-- Resolution wiring (composition values ride on EmissionFull / Assembly's own
+-- pins). A connected-underground "Jubilee Line" pair so the route-rail term
+-- fires on a bracketed no-GPS train minute.
 private def jEdge (id : String) (g : List RouteGraph.LatLon) (n1 n2 : String) : RouteModel.RouteEdge :=
   ⟨id, g, ["Jubilee Line"], true, n1, n2⟩
 private def jm : RouteGraphModel := RouteModel.buildRouteGraphModel #[
@@ -717,8 +713,8 @@ private def approxG (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 #guard ctxU.states.size == 9           -- 4 movement + 2 stationary + the graph's one line + unknown_rail + unknown_metro
 #guard ctxU.nPlaces == 1
 
--- emitAt: with no fitted mode the composed value is EmissionFull's V8-pinned
--- emission, and coverage does not reach it — it flows through the entry and
+-- emitAt: with no fitted mode the composed value is EmissionFull's pinned
+-- emission, and coverage does not reach it: it flows through the entry and
 -- duration terms (below).
 #guard approxG (emitAt ctxU 0 jubIdx)
   (EmissionFull.emissionLogProbFull jm (RouteModel.toConnGraph jm) (RouteModel.linesInGraph jm)

@@ -1,6 +1,6 @@
 import Verified.Hsmm.Emissions
 /-!
-# Presence-continuity emission bonus (implementation-first port of `continuityLogLikelihood`)
+# Presence-continuity emission bonus
 
 Phase 3 of presence-continuity: a per-no-fix-minute log-bonus to the stationary state matching the
 prior day's end-of-day place, decaying with hours-since-last-fix and scaled by the
@@ -8,15 +8,8 @@ prior posterior — silenced once today's most-recent fix contradicts the prior
 place (>`CONTRADICTION_RADIUS_M`). This carries a multi-day no-data stay (e.g. a
 hospital) to the prior place with decaying confidence.
 
-⚠ `USE_CONTINUITY_CONTINUATION` NO LONGER GATES THIS, and saying it does sends
-the next reader looking for a flag to flip. The Rust that builds the decode
-request calls `load_continuity` UNCONDITIONALLY (`main.rs`) — the seed is sent on
-every decode, and the env var is read by nothing in this repo. Measured
-2026-09-17: of the 46 workloads in namespace `health`, only the one-shot
-`health-decode-backfill-v6` job still carries the variable at all; the serving
-Deployment and `CronJob/health-decode-recent` do not, and the decode is
-continuity-seeded regardless. So the seed is always on, but by the CALLER, not
-by that name (health #192).
+⚠ No flag gates this: the Rust that builds the decode request calls
+`load_continuity` unconditionally, so the seed is sent on every decode.
 
 Pure factor; `haversine`/`exp`/`log` make the fired bonus ULP-close (`approx`),
 the gated-zero branches exact. UNPROVEN; pinned by the `#guard`s.
@@ -64,7 +57,7 @@ def continuityLogLikelihood (s : State) (gpsPresent : Bool) (prevFix : Option (F
           let w := decay * post
           if w <= 0 then 0.0 else Float.log (1 + EMISSION_STRENGTH * w)
 
--- Parity with the real `continuityLogLikelihood` (Node/V8).
+-- `continuityLogLikelihood`'s reference values.
 private def approxK (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 private def ctx : ContinuityContext := ⟨some 5, some (51.52, -0.13), 3, 0.95⟩
 private def near : Option (Float × Float) := some (51.521, -0.131)

@@ -1162,7 +1162,7 @@ private def envF : Env :=
     -- The refinement's base is the SPLICED line, not the coarse one.
     (F_SPLICED.map PathPt.pt) none
 
--- The Lean splice agrees with V8's, vertex for vertex.
+-- The Lean splice agrees with the reference, vertex for vertex.
 #guard spliceMatchedWithDivergentRuns (F_CLEAN.map PedFix.pathPt) F_LINE WALK_MATCH_MAX_STRAY_M
   == some F_SPLICED
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1420] FORECOURT anySpeed envF)

@@ -16,8 +16,7 @@ the GPS corridor, then a rebuild:
    spatially supported but its corridor position is frozen — any
    stretch travelling ≥ `minStall` with corridor advance below `stall`
    of it that returns near its start (net displacement < `return` of
-   the span) is excised; the *last* qualifying end wins, exactly as the
-   TS scan overwrites `found`.
+   the span) is excised; the *last* qualifying end wins.
 
 Corridor positions (`corridorPositions`) are the monotone-floor
 projections of path vertices onto the fixes polyline: per vertex, the
@@ -41,7 +40,7 @@ namespace Verified.Geo
 variable {π : Type}
 
 /-- Trim thresholds: µm distances, ratios as exact rationals, and the
-corridor-position slack (the TS `minS - 1` metre). -/
+corridor-position slack (`minS - 1` metre). -/
 structure TrimP where
   offM : Nat
   detourNum : Nat
@@ -67,7 +66,7 @@ termination_by n - i
 def arcArr (pd : π → π → Nat) (pts : Nat → π) (n : Nat) : Array Nat :=
   arcArrGo pd pts n 1 0 #[0]
 
-/-- Is some fix within `offM` of `v` (the TS min-over-fixes test)? -/
+/-- Is some fix within `offM` of `v` (min over fixes)? -/
 def anyFix (pd : π → π → Nat) (fx : Nat → π) (nf offM : Nat) (v : π)
     (i : Nat) : Bool :=
   if _h : i < nf then
@@ -132,8 +131,8 @@ def pass1 (P : TrimP) (n : Nat) (onc : Nat → Bool) (cum : Nat → Nat)
            then markRange rm k (nextOn onc n k) else rm)
     else rm
 
-/-- Pass 2's inner scan: the *last* `b` in the unremoved stretch from
-`a` qualifying as a temporal stall (the TS `found` overwrite). -/
+/-- Pass 2's inner scan: the *last* `b` in the unremoved stretch from `a`
+qualifying as a temporal stall. -/
 def stallScan (P : TrimP) (pd : π → π → Nat) (path : Nat → π) (n : Nat)
     (rm : Array Bool) (cum : Nat → Nat) (cp : Nat → Int) (a : Nat)
     (b : Nat) (found : Option Nat) : Option Nat :=
@@ -163,8 +162,8 @@ def pass2 (P : TrimP) (pd : π → π → Nat) (path : Nat → π) (n : Nat)
         | none => pass2 P pd path n cum cp fuel (a + 1) rm
     else rm
 
-/-- The rebuild: drop excised vertices, then any now-coincident
-neighbours (`nearLe` — the TS `> 0.5 m` push guard). -/
+/-- The rebuild: drop excised vertices, then any now-coincident neighbours
+(`nearLe`, the `> 0.5 m` push guard). -/
 def trimRebuild (nearLe : π → π → Bool) (path : Nat → π) (n : Nat)
     (rm : Array Bool) (i : Nat) (hasPrev : Bool) (prev : π) (acc : List π) :
     List π :=
@@ -193,8 +192,8 @@ def trimFlags (P : TrimP) (pd : π → π → Nat) (projD : π → π → π →
       (fun j => cu.getD j 0) (fun j => cp.getD j 0)
       (n + 1) 0 (Array.replicate n false))
 
-/-- The TS `trimOverRouteExcursions` over `n` path vertices and `nf`
-fixes (short inputs unchanged). -/
+/-- `trimOverRouteExcursions` over `n` path vertices and `nf` fixes (short
+inputs unchanged). -/
 def trim (P : TrimP) (pd : π → π → Nat) (projD : π → π → π → Nat)
     (arcPos : π → π → π → Int → Int → Int) (nearLe : π → π → Bool)
     (fx : Nat → π) (nf : Nat) (path : Nat → π) (n : Nat) : List π :=

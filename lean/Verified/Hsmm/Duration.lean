@@ -1,7 +1,7 @@
 import Verified.Hsmm.Emissions
 import Verified.FloatConst
 /-!
-# Duration log-probabilities (implementation-first port of `src/hmm/duration-dist.ts`)
+# Duration log-probabilities
 
 Per-mode segment-duration model in Lean `Float`: a Gamma log-pdf evaluated via
 a Lanczos `log Γ`, and the per-mode physical-floor override. UNPROVEN;
@@ -78,7 +78,7 @@ def logDurationProbWith (d : Float) (fit : GammaFit) (minDuration floorLog : Flo
 def logDurationProb (d : Float) (fit : GammaFit) (minDuration : Float) : Float :=
   logDurationProbWith d fit minDuration HARD_FLOOR_LOG_PROB
 
--- Parity with the real `logDurationProb` (Node/V8):
+-- `logDurationProb`'s reference values:
 private def gf (a b : Float) : GammaFit := ⟨a, b, 10⟩
 #guard logDurationProb 30 (gf 4 0.13333333333333333) 2 == -3.6477794064106472
 #guard logDurationProb 1 (gf 4 0.1333) 2 == -10

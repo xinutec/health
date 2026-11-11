@@ -17,19 +17,17 @@ through houses:
    walkable streets, or failing that around the footprint's own corners;
 3. with no streets nearby, the GPS stands.
 
-The TS module is pure geometry end to end, so ALL of it ports — including the
-output records, which here (as in `DayState`) *are* the decision rather than a
+The corrector is pure geometry end to end, so all of it is here, including the
+output records, which here (as in `DayState`) are the decision rather than a
 re-clone of an input row.
 
 Two boundary notes:
 
 * `correctWalkPathIn` takes a context built once per walk (`makeBadnessCtx`):
   the ring boxes, the way grid and the walk graph.
-* The TS `diag` sink is optional, and when it is absent the anchor snap
-  distances are not even computed. The Lean twin always returns the records —
-  i.e. it reproduces the diag-supplied arm, which is the one with observable
-  numbers. The `WALK_CORNER_DEBUG` `console.error` tracing stays shell: it is an
-  env read with no effect on the geometry.
+* The anchor snap distances are always computed and returned: the records
+  carry the observable numbers. Corner-debug tracing stays shell: it is an env
+  read with no effect on the geometry.
 -/
 
 namespace Verified.Geo.WalkEscape
@@ -252,9 +250,8 @@ def escapedPosition (p : Pt) (walkable : Ways) (buildings : Array Ring)
     (opts : EscapeOptions) : Option Pt :=
   escapedFrom (containingBuilding p buildings) p opts (nearestWalkable · walkable)
 
-/-- Apply the escape to a drawn line. Only `lat`/`lon` are rewritten; the TS is
-    generic over the vertex type so every other field rides through — that
-    record-preserving wrapper is shell, the decision is `escapedPosition`. -/
+/-- Apply the escape to a drawn line. Only `lat`/`lon` are rewritten, and every
+    other field rides through in the shell; the decision is `escapedPosition`. -/
 def escapeBuildings (drawn : Array TPt) (walkable : Ways) (buildings : Array Ring)
     (opts : EscapeOptions := {}) : Array TPt :=
   if buildings.isEmpty then drawn
@@ -1092,13 +1089,13 @@ def snapPassagesIn (ctx : BadnessCtx) (pts : Array TPt) : Array TPt := Id.run do
     else out := out.push p
   return out
 
-/-! ## Parity with Node/V8 (`lean/experiments/walk-escape-refs.mts`)
+/-! ## Guards
 
 Reference geometry: a 100 m × 100 m block ring of streets at a London origin,
-with footprints placed against it. Everything below is the V8 output verbatim.
-The corrector's private helpers are pinned THROUGH these exported callers, and
-the diag records expose `segBadnessM` / `pathBadnessM` / the way grid as exact
-numbers.
+with footprints placed against it. Everything below is the reference output
+verbatim. The corrector's private helpers are pinned through these exported
+callers, and the records expose `segBadnessM` / `pathBadnessM` / the way grid
+as exact numbers.
 -/
 
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9

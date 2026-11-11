@@ -11,16 +11,15 @@ it), NOT on absence of evidence — two user-confirmed taxis carry no road match
 either. It keys on `effectiveMode`, so a leg some earlier pass refined is judged
 by what it now is.
 
-Wholly pure, no Float arithmetic ⇒ EXACT. UNPROVEN; pinned against Node/V8
-(`lean/experiments/small-leaves-refs.mts`).
+Wholly pure, no Float arithmetic ⇒ exact. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.SegmentPasses
 
 abbrev Mode := String
 
-/-- A matched-path vertex. Only the path's LENGTH is read here, but it is
-carried as the real array so this projection stores what the TS record does. -/
+/-- A matched-path vertex. Only the path's length is read here, but it is
+carried as the real array so this projection stores the whole record. -/
 abbrev SPt := Verified.Geo.PathPt
 
 /-- The pipeline's segment record. This pass reads and rewrites a subset of
@@ -37,9 +36,9 @@ export Verified.Geo.SegmentMerge (effectiveMode)
 def UNIDENTIFIED_VEHICLE_REASON : String :=
   "unidentified vehicle: a ride still in progress — vehicle speed, but no pass has yet placed it on a road, a bus route or a rail line, so a car cannot be asserted"
 
-/-- Whether SOME pass has placed this ride: a matched road, a named street, or
-an identified bus route. All three are read for TRUTHINESS in the TS, so an
-empty `matchedPath` and an empty `wayName` are both "no claim". -/
+/-- Whether some pass has placed this ride: a matched road, a named street, or
+an identified bus route. All three are read for truthiness, so an empty
+`matchedPath` and an empty `wayName` are both "no claim". -/
 def hasVehicleClaim (s : Seg) : Bool :=
   (s.matchedPath.getD #[]).size > 0 || s.wayName.any (· != "") || s.vehicleKind.isSome
 
@@ -58,7 +57,7 @@ def resolveVehicleIdentity (segments : Array Seg) : Array Seg :=
     else if hasVehicleClaim s then s
     else { s with refinedMode := some "vehicle", refinedReason := some UNIDENTIFIED_VEHICLE_REASON }
 
-/-! ## Guards (V8 reference values) -/
+/-! ## Guards -/
 
 private def TRAIN : String := "Euston Square → Wembley Park · Metropolitan Line"
 
@@ -74,7 +73,7 @@ private def iview (out : Array Seg) : Array (Int × Mode × Option Mode × Optio
 private def DEMOTED (startTs : Int) (mode : Mode) : Int × Mode × Option Mode × Option String :=
   (startTs, mode, some "vehicle", some UNIDENTIFIED_VEHICLE_REASON)
 
--- The 2026-07-12 bug: the trailing unclaimed placeholder is demoted.
+-- The trailing unclaimed placeholder is demoted (07-12).
 #guard iview (resolveVehicleIdentity #[sg 0 100 "stationary", sg 100 200 "driving"])
   == #[(0, "stationary", none, none), DEMOTED 100 "driving"]
 -- A FINISHED ride keeps what the cascade concluded — the two confirmed taxis.
@@ -87,9 +86,8 @@ private def DEMOTED (startTs : Int) (mode : Mode) : Int × Mode × Option Mode �
   == #[(100, "driving", none, none)]
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (vehicleKind := some "bus")])
   == #[(100, "driving", none, none)]
--- An EMPTY path or way name is not a claim (both are falsy in the TS), and an
--- ABSENT path is the shape the matcher actually leaves behind when it declines
--- a leg — `undefined`, which `?.length ?? 0` collapses to the same answer.
+-- An empty path or way name is not a claim, and an absent path is the shape
+-- the matcher actually leaves behind when it declines a leg.
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (matchedPath := some #[])]) == #[DEMOTED 100 "driving"]
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (matchedPath := none)]) == #[DEMOTED 100 "driving"]
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (some "")]) == #[DEMOTED 100 "driving"]

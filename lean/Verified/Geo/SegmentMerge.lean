@@ -5,8 +5,7 @@ import Verified.FloatConst
 import Verified.Fix
 import Verified.PlaceSource
 /-!
-# The segment record, and the list rewrites the tail shares (from
-`src/geo/passes/moving.ts` and `src/geo/passes/stays.ts`)
+# The segment record, and the list rewrites the tail shares
 
 `Seg` is the record every pass reads and rewrites. Beside it:
 
@@ -52,8 +51,8 @@ structure BiometricEnrichment where
 projection than `Verified.Geo.SegmentPasses.Seg`: the merges have to carry the
 weighted numeric fields, and the stay passes need the centroid and focus id.
 
-`focusPlaceId` is `string | number` in the TS; the mined ids are numeric and
-only EQUALITY is tested, so `Int` loses nothing here. -/
+`focusPlaceId`: the mined ids are numeric and only equality is tested, so
+`Int` loses nothing here. -/
 structure Seg where
   startTs : Int
   endTs : Int
@@ -93,11 +92,11 @@ structure Seg where
   window changed and its inherited enrichment is therefore no longer evidence
   about it. The `reenrichSplitWalks` pass sends these back through OSM naming. -/
   needsReenrich : Bool := false
-  /-- The weaker sibling of `needsReenrich`: re-derive this segment's road NAME
+  /-- The weaker sibling of `needsReenrich`: re-derive this segment's road name
   from its own geometry, but leave its mode alone. Set by
   `claimStayArrivalFromWalk`, whose carve changes a walk's window but never what
-  it IS — so the inherited name is stale while the inherited mode is still
-  right. Asking for the full re-derivation instead cost a mode on 2026-04-29.
+  it is, so the inherited name is stale while the inherited mode is still
+  right; the full re-derivation would cost a mode on 04-29.
   -/
   needsRename : Bool := false
   /-- The bus passes' judgement of a road-vehicle leg: which KIND of vehicle it
@@ -206,11 +205,11 @@ def composeWayName (contribs : Array (String × Float)) : Option String :=
 
 /-- Two stays are at the same place when they carry the same non-empty name.
 
-⚠ NOT the same mined place. Tried 2026-09-29 for the carved stop that comes
-out `Subway` beside a stay the same election named `O2 Centre` (05-22): the
-identity test also merged Currys and Lidl, 57 m apart under one mined cluster
-on 06-24, and lost a confirmed row. A mined cluster is wider than a venue, so
-its id cannot say two stays are one visit; the name still can. -/
+⚠ Not the same mined place. For the carved stop that comes out `Subway` beside a
+stay the same election named `O2 Centre` (05-22), the identity test would also
+merge Currys and Lidl, 57 m apart under one mined cluster on 06-24, and lose a
+confirmed row. A mined cluster is wider than a venue, so its id cannot say two
+stays are one visit; the name still can. -/
 def samePlace (a b : Seg) : Bool :=
   a.place.any (· != "") && a.place == b.place
 
@@ -397,7 +396,7 @@ structure KnownPlaceProjection where
   centroidLon : Float
   deriving Inhabited, BEq, Repr
 
-/-! ## Guards (V8 reference values, `lean/experiments/stay-passes-refs.mts`) -/
+/-! ## Guards -/
 
 open Verified.FloatConst (pi)
 

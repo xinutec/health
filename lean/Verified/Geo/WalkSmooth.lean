@@ -511,10 +511,10 @@ structure ReconstructProfile where
       it. A field, so a chord grazing a corner is pushed off the wall even with
       no vertex inside it. -/
   buildingClearM : Float := 4
-  /-- Densify the state chain to ≤ this spacing by inserting FREE states.
-      Effectively OFF by default (vertex-per-fix): measured 2026-07-07, free
-      states did NOT reduce building-crossing (those residuals are OSM graph
-      gaps) and inflated corridor-stall ~2×. -/
+  /-- Densify the state chain to ≤ this spacing by inserting free states.
+      Effectively off by default (vertex-per-fix): free states do not reduce
+      building crossing (those residuals are OSM graph gaps) and inflate
+      corridor stall ~2×. -/
   targetSpacingM : Float := 100000
   /-- A FREE state's weak, non-robust tether toward its interpolated position on
       the raw GPS corridor. Large → nearly free. -/
@@ -535,9 +535,9 @@ structure ReconstructProfile where
       still violated: a smear contracts a bounded distance per solve, so the
       fixed schedule alone leaves a gross one half-collapsed. -/
   stepExtraIters : Nat := 12
-  /-- REFUTED on the corpus (2026-07-14) — it INTRODUCED crossings on 2 clean
-      walks and netted ~nothing, the soft clearance field already doing the
-      vertex work. Ported and pinned; shipped OFF. -/
+  /-- Refuted on the corpus: it introduced crossings on 2 clean walks and
+      netted ~nothing, the soft clearance field already doing the vertex work.
+      Pinned, and off. -/
   hardProjectBuildings : Bool := false
   /-- SHIPS: ΣoffPath 1081→987 m, walks-with-crossings 36→30, zero introduced
       crossings. Routes an output edge that still passes through a footprint
@@ -801,11 +801,10 @@ def WalkGrid.ringContaining (g : WalkGrid) (px py : Float) : Int := Id.run do
 
 /-! ### The stages of `reconstructWalk`
 
-Split out as STAGES, not as a decomposition of the solver: each is a contiguous
-prefix or suffix of the TS function with clean inputs and outputs, so reading the
-Lean one-to-one against `walk-smooth-map.ts` still works. The GNC/IRLS core stays
-whole — it threads too much shared mutable state to divide without inventing a
-state record that exists in neither language.
+Split out as stages, not as a decomposition of the solver: each is a contiguous
+prefix or suffix of the whole with clean inputs and outputs. The GNC/IRLS core
+stays whole: it threads too much shared mutable state to divide without
+inventing a state record.
 -/
 
 /-- One state of the chain the solver runs over: an observed fix (`obsW > 0`)
@@ -1168,12 +1167,12 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
     return some (spliceCornerDetours out buildings exempt fr)
   return some out
 
-/-! ## Parity with Node/V8 (`lean/experiments/walk-smooth-refs.mts`)
+/-! ## Guards
 
 Reference geometry: a straight east-west street with a north-south cross street,
 footprints placed against them, and a GPS-wobbly walk along the street. Profiles
-are passed explicitly (never read from the environment), and the V8 output is
-reproduced verbatim.
+are passed explicitly (never read from the environment), and the reference
+output is reproduced verbatim.
 
 The tolerance is `1e-9` degrees (~0.1 mm) rather than `==`: `Math.hypot` is not
 guaranteed to equal `sqrt (x²+y²)`, and the PCG only converges to a relative

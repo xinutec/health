@@ -5,14 +5,13 @@ import Verified.PlaceSource
 
 Port of the Tier-5 day-assembly cluster:
 
-* `src/sleep/day-state.ts` — `segmentsToDayStates` (the boundary sweep that
-  turns segments + watch sleep windows into the day's non-overlapping state
-  sequence) and `clipFuture`.
-* `src/sleep/load.ts` — `derivePlaceForSleepAt`, the side-ranked choice of
-  which stay names a sleep window.
-* `src/sleep/known-place-stays.ts` — `detectKnownPlaceStays`, dwell clustering
-  in raw fixes snapped to mined focus places.
-* `src/geo/inferred-stay.ts` — `buildInferredStayState`.
+* `segmentsToDayStates`: the boundary sweep that turns segments + watch sleep
+  windows into the day's non-overlapping state sequence, and `clipFuture`.
+* `derivePlaceForSleepAt`: the side-ranked choice of which stay names a sleep
+  window.
+* `detectKnownPlaceStays`: dwell clustering in raw fixes snapped to mined
+  focus places.
+* `buildInferredStayState`.
 
 All of these are pure: no DB, no `Intl`, no async, so they live here whole,
 including the output records; the `DayState[]` is the decision. What stays

@@ -1,16 +1,15 @@
 /-!
 # `simplifyPath`'s Douglas-Peucker guarantee — the display-pass layer, part 1
 
-`src/geo/map-match-core.ts` cleans a matched walk polyline with a pipeline
-of display passes. `simplifyPath` is the one whose *guarantee* is
-load-bearing: `spliceRouteDetail` restores way geometry exactly
-where a chord deviates within `(DETAIL_TOLERANCE_M, simplifyDropM]`, and
-its correctness argument is "a chord over simplify-dropped geometry
-deviates at most the simplify tolerance (the Douglas-Peucker guarantee),
-while a chord over a deliberate excision deviates beyond it — that is why
-simplify had kept the excised vertices". This file makes the guarantee a
-theorem: `simplifyIdx_dropped_le` — every dropped vertex lies within the
-tolerance of the retained chord spanning it.
+The matcher cleans a matched walk polyline with a pipeline of display passes.
+`simplifyPath` is the one whose guarantee is load-bearing: `spliceRouteDetail`
+restores way geometry exactly where a chord deviates within
+`(DETAIL_TOLERANCE_M, simplifyDropM]`, and its correctness argument is "a chord
+over simplify-dropped geometry deviates at most the simplify tolerance (the
+Douglas-Peucker guarantee), while a chord over a deliberate excision deviates
+beyond it, which is why simplify had kept the excised vertices". This file makes
+the guarantee a theorem: `simplifyIdx_dropped_le`, every dropped vertex lies
+within the tolerance of the retained chord spanning it.
 
 The pass layer is purely combinatorial over two primitives (point↔point
 and point↔chord distance), so everything here is *parametric over the
@@ -21,18 +20,14 @@ are needed (the guarantee is a statement about the recursion, true for
 an arbitrary `cd`). The quantised integer primitives arrive in a later
 V4 slice; toy `#guard`s pin the keep-set behaviour meanwhile.
 
-Mirroring notes vs the TS `simplifyPath`:
-- The TS explicit stack processes segments LIFO, but each segment's
-  outcome depends only on its own endpoints, so the recursive form here
-  computes the same keep set (the TS↔Lean harness twin will mirror the
-  recursive form and the fixture corpus pins the stack form against it).
-- The TS `maxd` starts at `-1` and updates on strict `>`; here it starts
-  at `0` over `Nat`. The split index is consumed only under
-  `tol < maxd` (with `tol : Nat`), where both versions have taken the
-  same first-argmax updates from the first positive deviation on, so
-  the decisions agree.
-- The TS `idx > 0` guard is vacuous (any updated index is `≥ a + 1 ≥ 1`)
-  and has no counterpart here.
+Notes on the form:
+- An explicit stack would process segments LIFO, but each segment's outcome
+  depends only on its own endpoints, so the recursive form here computes the
+  same keep set.
+- `maxd` starts at `0` over `Nat` and updates on strict `>`; the split index is
+  consumed only under `tol < maxd` (with `tol : Nat`), so starting at `-1`
+  would take the same first-argmax updates from the first positive deviation
+  on, and the decisions agree.
 -/
 
 namespace Verified.Geo
@@ -69,8 +64,7 @@ theorem adjPairs_concat : ∀ (front : List α) (last a : α),
     exact congrArg (List.cons (x, z)) (adjPairs_concat (z :: front) last a)
 
 /-- First-argmax scan of the chord deviation `cd (pts i) (pts a) (pts b)`
-over `i ∈ [i₀, b)` — the TS `for (i = a+1; i < b; i++) if (d > maxd)`
-loop, carried as `(maxd, idx)`. -/
+over `i ∈ [i₀, b)`, carried as `(maxd, idx)`. -/
 def devScan (cd : π → π → π → Nat) (pts : Nat → π) (a b : Nat) :
     Nat → Nat × Nat → Nat × Nat
   | i, best =>
@@ -142,7 +136,7 @@ theorem devScan_cases (cd : π → π → π → Nat) (pts : Nat → π) (a b : 
   termination_by i _ => b - i
   decreasing_by all_goals omega
 
-/-- The TS `(maxd, idx)` over the interior of `(a, b)`. -/
+/-- `(maxd, idx)` over the interior of `(a, b)`. -/
 def maxDev (cd : π → π → π → Nat) (pts : Nat → π) (a b : Nat) : Nat × Nat :=
   devScan cd pts a b (a + 1) (0, 0)
 
@@ -166,8 +160,8 @@ theorem maxDev_split (cd : π → π → π → Nat) (pts : Nat → π) {a b tol
 /-- The Douglas-Peucker keep set strictly between `a` and `b`: split at
 the max-deviation index while it exceeds `tol`, else drop the whole
 interior. Fuel `≥ b - a` always suffices (each split index is strictly
-interior). The TS stack form computes the same set — segment outcomes
-depend only on their own endpoints, so processing order is irrelevant. -/
+interior). Processing order is irrelevant: segment outcomes depend only on
+their own endpoints. -/
 def keepBetween (cd : π → π → π → Nat) (pts : Nat → π) (tol : Nat) :
     Nat → Nat → Nat → List Nat
   | 0, _, _ => []
@@ -272,10 +266,10 @@ theorem keepBetween_cover (cd : π → π → π → Nat) (pts : Nat → π) (to
     · rw [if_neg hlt] at hnot ⊢
       exact ⟨(a, b), by simp [adjPairs], hj1, hj2⟩
 
-/-- Kept indices of the TS `simplifyPath` over `n` points: endpoints plus
-the Douglas-Peucker keep set (`≤ 2` points are returned unchanged). The
-polyline itself is recovered by mapping `pts` over this list; keeping the
-index level makes the drop/keep statements direct. -/
+/-- Kept indices of `simplifyPath` over `n` points: endpoints plus the
+Douglas-Peucker keep set (`≤ 2` points are returned unchanged). The polyline
+itself is recovered by mapping `pts` over this list; keeping the index level
+makes the drop/keep statements direct. -/
 def simplifyIdx (cd : π → π → π → Nat) (pts : Nat → π) (n tol : Nat) : List Nat :=
   if n ≤ 2 then List.range n
   else 0 :: keepBetween cd pts tol (n - 1) 0 (n - 1) ++ [n - 1]
@@ -308,14 +302,13 @@ theorem simplifyIdx_endpoints (cd : π → π → π → Nat) (pts : Nat → π)
   · rw [if_neg h2]
     exact ⟨List.mem_cons_self .., List.mem_cons_of_mem _ (List.mem_append_right _ (by simp))⟩
 
-/-- **The Douglas-Peucker guarantee** — #369's load-bearing bound, as a
-theorem: every vertex `simplifyPath` drops lies within `tol` of the
-retained chord spanning it (and strictly between that chord's endpoint
-indices). This is the exact fact `spliceRouteDetail`'s comment-proof
-cites to separate simplify-flattened curves (deviation `≤ tol`,
-restorable) from deliberate artifact excisions (deviation `> tol`,
-which simplify would have kept — so their absence is someone else's
-decision and stays). -/
+/-- **The Douglas-Peucker guarantee**, the matcher's load-bearing bound, as a
+theorem: every vertex `simplifyPath` drops lies within `tol` of the retained
+chord spanning it (and strictly between that chord's endpoint indices). This is
+the exact fact `spliceRouteDetail`'s comment-proof cites to separate
+simplify-flattened curves (deviation `≤ tol`, restorable) from deliberate
+artifact excisions (deviation `> tol`, which simplify would have kept, so their
+absence is someone else's decision and stays). -/
 theorem simplifyIdx_dropped_le (cd : π → π → π → Nat) (pts : Nat → π)
     {n tol j : Nat} (hj : j < n) (hdrop : j ∉ simplifyIdx cd pts n tol) :
     ∃ p ∈ adjPairs (simplifyIdx cd pts n tol),

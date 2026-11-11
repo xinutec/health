@@ -11,12 +11,10 @@ import Verified.Geo.MatchViterbi
 /-!
 # Matcher core
 
-The Lean side of `src/geo/match-twin.ts`, the pinned integer semantics of
-the walk map-matcher (`map-match-core.ts` `matchTrajectory` +
-`pedestrian-match.ts` `matchWalkSegment`). Ported literally over the
-`Metric.lean` substrate (`qDist`/`cosQ`/`roundDiv`, contract: BigInt `/`
-↔ `Int.tdiv`, `>>` ↔ `Int.fdiv`; midpoints are `tdiv` since lons can be
-negative). The `compare-match` harness gates this at bit-exact quant↔Lean.
+The pinned integer semantics of the walk map-matcher (`matchTrajectory` +
+`matchWalkSegment`), over the `Metric.lean` substrate
+(`qDist`/`cosQ`/`roundDiv`; divisions are `Int.tdiv` or `Int.fdiv` as the
+arithmetic requires, and midpoints are `tdiv` since lons can be negative).
 
 The file runs the whole pipeline in three parts:
 - **Part 1 — metric-local primitives**: `qProject` (`projectPointToSegment`'s

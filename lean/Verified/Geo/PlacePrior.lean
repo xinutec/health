@@ -123,7 +123,7 @@ def magnetStrength (c : PlaceCandidate) : Float := Float.log (1 + c.uniqueDays)
 
     The corpus separates cleanly: a stay sits ~24 m from its true building and
     ~205 m from the neighbouring one, so the cut lies in the empty band
-    between. See `src/geo/place-prior.ts` for the measured case. -/
+    between. -/
 def magnetRadiusM (_c : PlaceCandidate) : Float :=
   MAGNET_BASE_RADIUS_M + MAGNET_SIGMA_MULTIPLIER * SIGMA_FLOOR_MIN_M
 

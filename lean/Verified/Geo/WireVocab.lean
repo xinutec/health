@@ -7,16 +7,13 @@ import Verified.Hsmm.StateSpace
 Two sets of strings cross to the browser and are hand-copied there: the mode of
 a day-state, and the kind of an episode's geometry. The frontend keys a
 `Record<DayStateMode, …>` on the first, so a mode it has never heard of falls
-through to a default style rather than failing — silently, in production. #337
-was opened for exactly that and `scripts/check-frontend-unions.mjs` closed it by
-comparing the frontend's union against the TypeScript backend's.
+through to a default style rather than failing, silently, in production. A
+test compares the frontend's unions against these.
 
 ## ⚠ THIS FILE EXISTS BECAUSE THAT COMPARISON LOST ITS OTHER SIDE
 
-`src/sleep/day-state.ts` held the only closed `DayStateMode` anywhere. Deleting
-the TypeScript backend removes it, and Lean has no replacement to point
-at: `Verified.Geo.DayState.Mode` is `abbrev Mode := String`, and the eleven
-members live as bare literals across ten files.
+`Verified.Geo.DayState.Mode` is `abbrev Mode := String`, and its members live as
+bare literals across many files; this is the one closed list.
 
 A bare `def DAY_STATE_MODES` would be a list nothing enforces — the shape that
 passes while being wrong. So each list below is tied by `#guard` to whatever

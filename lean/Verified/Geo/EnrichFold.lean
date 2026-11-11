@@ -5,7 +5,7 @@ import Verified.Geo.StaySplit
 /-!
 # Naming one stay from its own fixes
 
-What is left of the OSM enrichment loop (`src/geo/velocity.ts`'s `enriched`):
+What is left of the OSM enrichment loop:
 the stationary branch for ONE stay, with the window's centroid and scatter
 computed here, and the record of lookups it reads. `walkDwell` names a stop it
 carved out of a walk with it ({@link Verified.Geo.StayEnrich.enrichStay}), so a

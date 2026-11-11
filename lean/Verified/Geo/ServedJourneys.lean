@@ -7,10 +7,8 @@ import Verified.Eval.Journeys
 # Journeys assembled from the SERVED day states
 
 The timeline draws a run of consecutive travelling rows as one collapsible
-journey. That folding lives in the frontend today (`coalesceJourneys`,
-`timeline.component.ts`), which makes it a backend rule the client re-derives —
-the class #339 tracks. This module is the backend's answer, so #230 can delete
-the client's copy.
+journey. This module is that folding, so the client does not re-derive a
+backend rule.
 
 ## The rule is the SERVING rule, not the scorer's
 
@@ -177,7 +175,7 @@ private def wait (a b : Int) : DayState :=
 #guard (legOfState (st 0 60 "walking" (some TRAIN_LABEL))).board == none
 #guard (legOfState (st 0 60 "walking" (some TRAIN_LABEL))).line == none
 
--- A train label with no line suffix still names both stations (#810's 16 legs).
+-- A train label with no line suffix still names both stations.
 #guard (legOfState (st 0 60 "train" (some "Euston Square → King's Cross St Pancras"))).line == none
 #guard (legOfState (st 0 60 "train" (some "Euston Square → King's Cross St Pancras"))).board
   == some "Euston Square"

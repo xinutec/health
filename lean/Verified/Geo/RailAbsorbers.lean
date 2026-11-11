@@ -1,6 +1,6 @@
 import Verified.Geo.SegmentMerge
 /-!
-# The rail-label parser (from `src/geo/passes/rail-absorbers.ts`)
+# The rail-label parser
 
 `parseRailWayName` reads a rail leg's `Board → Alight · Line` label for the
 passes and the feasibility check.

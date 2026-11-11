@@ -3,14 +3,13 @@ import Verified.FloatConst
 /-!
 # Rail labels and step cadence for the cascade's passes
 
-The pieces of the old worldline port (`src/eval/worldline-feasibility.ts`) the
-passes still read: the `Board → Alight · Line` label parser rail-snap uses, the
-per-minute step cadence and the pedestrian-pace bounds the stay splitter judges
-walking by. The worldline invariants themselves live in
+The worldline pieces the passes read: the `Board → Alight · Line` label parser
+rail-snap uses, the per-minute step cadence and the pedestrian-pace bounds the
+stay splitter judges walking by. The worldline invariants themselves live in
 `Verified.Eval.Feasibility`, the one the corpus gate runs.
 
 Exact: string handling, comparison and one prorated sum. UNPROVEN; pinned by the
-`#guard`s against Node/V8.
+`#guard`s.
 -/
 
 namespace Verified.Geo.Worldline
@@ -39,10 +38,9 @@ structure RailTriple where
 /-- Parse `Board → Alight · Line`. `none` without the station arrow; the line is
     optional.
 
-    Mirrors the TS `indexOf`/`slice` exactly, and the ORDER matters: the line
-    suffix is stripped from the WHOLE string FIRST, then the remainder is split
-    on the station arrow. Doing it the other way round accepts
-    `"A · X → B"` — which the TS rejects, because after stripping ` · X → B`
+    The order matters: the line suffix is stripped from the whole string first,
+    then the remainder is split on the station arrow. The other way round
+    accepts `"A · X → B"`, which must be rejected: after stripping ` · X → B`
     the remainder `"A"` has no arrow left in it.
 
     Each field is trimmed, an empty board or alight rejects the whole label
@@ -54,7 +52,7 @@ def parseRailWayName (wayName : Option String) : Option RailTriple :=
   match wayName with
   | none => none
   | some s =>
-    -- Strip the ` · Line` suffix from the whole string first (TS order).
+    -- Strip the ` · Line` suffix from the whole string first.
     let (rest, line) :=
       match s.splitOn RAIL_LINE_SEP with
       | [] => (s, none)
@@ -92,7 +90,7 @@ def meanCadenceSpm (steps : List FeasibilityStepPoint) (startTs endTs : Int) : O
   if !overlapped then return none
   return some (total / max 1 (Float.ofInt (endTs - startTs) / 60))
 
-/-! ## Parity with Node/V8 (`lean/experiments/worldline-refs.mts`) -/
+/-! ## Guards -/
 
 #guard parseRailWayName (some "A → B · Victoria") == some ⟨"A", "B", some "Victoria"⟩
 #guard parseRailWayName (some "A → B") == some ⟨"A", "B", none⟩

@@ -3,7 +3,7 @@ import Verified.Geo.RailAbsorbers
 import Verified.Geo.RailSnap
 import Verified.JsNum
 /-!
-# Snapped rail paths (from `src/geo/passes/rail-reconcile.ts`)
+# Snapped rail paths
 
 `annotateSnappedPaths` attaches the offline-computed route geometry to a train
 leg and interpolates its time window along it; `reattachSnappedPaths` runs it

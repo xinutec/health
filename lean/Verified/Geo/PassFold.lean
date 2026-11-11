@@ -215,8 +215,8 @@ because the fold has no scenario guards yet. The pass each one feeds does pin
 its own behaviour, so a wrong value surfaces as a wrong answer rather than as
 silence — but that is weaker than a fixture either side of the bar. -/
 
-/-- `DEFAULT_RADIUS_M.linesAtPoint` (`src/geo/osm.ts`) — what the adapter falls
-back to when the caller names none, which is how `railRuns` calls it. -/
+/-- `DEFAULT_RADIUS_M.linesAtPoint`: what the adapter falls back to when the
+caller names none, which is how `railRuns` calls it. -/
 def LINES_AT_POINT_DEFAULT_RADIUS_M : Float := 100
 
 /-! ## The two passes with no module of their own

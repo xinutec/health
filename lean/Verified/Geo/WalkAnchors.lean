@@ -19,8 +19,8 @@ This is the last exported pure leaf in `computeVelocity`'s dependency set.
 Everything else `pedestrian-match-annotate.ts` exports is a mutable diagnostic
 sink or the async `annotateWalkMatches`, both shell.
 
-Wholly EXACT — the only arithmetic is a timestamp subtraction. UNPROVEN; pinned
-against Node/V8 (`lean/experiments/walk-anchors-refs.mts`).
+Wholly exact: the only arithmetic is a timestamp subtraction. UNPROVEN; pinned
+by the `#guard`s.
 -/
 
 namespace Verified.Geo.WalkAnchors
@@ -86,12 +86,11 @@ def neighborAnchor (n? : Option Seg) (side : Side) (walkTs : Int) : Option WalkA
 /-- Both endpoint anchors for the walking segment at index `i`. -/
 def walkEndpointAnchors (segments : Array Seg) (i : Nat) : Option WalkAnchor × Option WalkAnchor :=
   -- `i - 1` truncates to 0 on `Nat`, so at index 0 the "previous" segment would
-  -- be the walk ITSELF, where the TS gets `undefined` from `segments[-1]`.
-  -- Guarded explicitly. No `#guard` can catch its removal, and that is not a
-  -- gap: this is only ever called on a WALKING leg, and a walk anchoring to
-  -- itself falls through every arm (no centroid, not a train) to `none`. The
-  -- guard is kept because the equivalence depends on the caller, not on this
-  -- function.
+  -- be the walk itself; guarded explicitly. No `#guard` can catch its removal,
+  -- and that is not a gap: this is only ever called on a walking leg, and a
+  -- walk anchoring to itself falls through every arm (no centroid, not a train)
+  -- to `none`. The guard is kept because that equivalence depends on the
+  -- caller, not on this function.
   let prev? := if i == 0 then none else segments[i - 1]?
   match segments[i]? with
   | none => (none, none)  -- no walk, no anchors
@@ -99,7 +98,7 @@ def walkEndpointAnchors (segments : Array Seg) (i : Nat) : Option WalkAnchor × 
     (neighborAnchor prev? .«end» walk.startTs,
      neighborAnchor segments[i + 1]? .start walk.endTs)
 
-/-! ## Guards (V8 reference values) -/
+/-! ## Guards -/
 
 private def TRACK : Array SPt := #[⟨51.5, -0.1, 0⟩, ⟨51.51, -0.11, 300⟩, ⟨51.52, -0.12, 600⟩]
 private def stay (a b : Int) : Seg :=

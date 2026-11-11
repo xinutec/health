@@ -35,11 +35,11 @@ caller falls back to trusting the GPS: no way within `snapRadiusM`, a
 disconnected network, or a route longer than `maxRouteM` (a longer "shortest"
 path is a dishonest detour for a walk-leg gap, not a route).
 
-Exactness: the Dijkstra ordering, the heap, the splice arithmetic and every
-gate are EXACT. `metersBetween` uses `Math.hypot` in the TS and `sqrt(dx²+dy²)`
-here, which may differ by ≤1 ULP, and that feeds edge weights and `distM`; the
-`cos` in the local projection is likewise ≤1 ULP. UNPROVEN; pinned against
-Node/V8 (`lean/experiments/walkable-route-refs.mts`).
+Exactness: the Dijkstra ordering, the heap, the splice arithmetic and every gate
+are exact. `metersBetween` uses `sqrt(dx²+dy²)`, which may differ from an
+overflow-careful hypot by ≤1 ULP, and that feeds edge weights and `distM`; the
+`cos` in the local projection is likewise ≤1 ULP. UNPROVEN; pinned by the
+`#guard`s.
 -/
 
 namespace Verified.Geo.WalkableRoute
@@ -51,8 +51,8 @@ structure Pt where
   lon : Float
   deriving Inhabited, BEq, Repr
 
-/-- Local equirectangular metres. The TS uses `Math.hypot`; `sqrt` of the sum of
-    squares agrees to ≤1 ULP at these magnitudes. -/
+/-- Local equirectangular metres. `sqrt` of the sum of squares agrees with an
+    overflow-careful hypot to ≤1 ULP at these magnitudes. -/
 def metersBetween (a b : Pt) : Float :=
   let dLat := (b.lat - a.lat) * 111320.0
   let dLon := (b.lon - a.lon) * 111320.0 * Float.cos (((a.lat + b.lat) / 2) * pi / 180)
@@ -278,11 +278,10 @@ structure RouteOptions where
 Shortest walkable path from `a` to `b`:
 `[snapped-a, …graph nodes…, snapped-b]`, or `none`.
 
-`ways` must be in way-iteration order — it fixes node numbering and breaks the
-snap tie. `graph` is `buildWalkGraph ways`: a caller routing several gaps over one
-network builds it once (`routeOnWalkable` builds it per call, as the TS did, and
-the building-escape corrector paid ~450 ms a call for it on a 5,000-way
-network, 2026-10-04).
+`ways` must be in way-iteration order: it fixes node numbering and breaks the
+snap tie. `graph` is `buildWalkGraph ways`: a caller routing several gaps over
+one network builds it once (`routeOnWalkable` builds it per call, which costs the
+building-escape corrector ~450 ms a call on a 5,000-way network).
 -/
 def routeOnWalkableIn (graph : WalkGraph) (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
     Option (Array Pt) := Id.run do
@@ -393,7 +392,7 @@ def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) : Optio
 theorem routeOnWalkable_eq_In (a b : Pt) (ways : Ways) (opts : RouteOptions) :
     routeOnWalkable a b ways opts = routeOnWalkableIn (buildWalkGraph ways) a b ways opts := rfl
 
-/-! ## Parity with Node/V8 (`lean/experiments/walkable-route-refs.mts`) -/
+/-! ## Guards -/
 
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 

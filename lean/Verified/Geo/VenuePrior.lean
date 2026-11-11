@@ -23,28 +23,25 @@ and the miner.
 
 Two inputs arrive pre-resolved from the shell, because both are `Intl`/tz work:
 
-* `Landmark.openFraction` — the fraction of the stay the venue was open,
-  i.e. `parseOpeningHours` (ported in `Verified.Geo.OpeningHours`) fed through
-  `openFractionOver`. `none` means tag absent OR outside the parser subset;
-  both are "no evidence", exactly as the TS `hoursScore` returns null.
+* `Landmark.openFraction`: the fraction of the stay the venue was open, i.e.
+  `parseOpeningHours` (`Verified.Geo.OpeningHours`) fed through
+  `openFractionOver`. `none` means tag absent or outside the parser subset;
+  both are "no evidence".
 * `StayShape.localHour` — the venue-local hour of the stay midpoint
   (`localHourOf`).
 
 ## Exactness
 
 Arithmetic, bucketing, the attribution gate and every ordering decision are
-EXACT. `shapeScore` goes through `log`/`exp`, so those are ≤1
-ULP. One documented limit: the comparator's LAST-RESORT tie-break is
-`String.localeCompare`, i.e. full ICU collation. {@link collateAscii}
-reproduces it for ASCII (punctuation < digits < letters, case-folded primary,
-lowercase-first on tie — verified against Node's en-GB), which covers realistic
-venue names; **accented and non-ASCII names are out of scope** and may order
+exact. `shapeScore` goes through `log`/`exp`, so those are ≤1 ULP. One stated
+limit: the comparator's last-resort tie-break is locale collation.
+{@link collateAscii} implements it for ASCII (punctuation < digits < letters,
+case-folded primary, lowercase first on tie, as en-GB collation orders them),
+which covers realistic venue names; accented and non-ASCII names may order
 differently. That tie-break only fires when two candidates agree on enclosing,
-near-field, total AND distance bit-for-bit, so it is close to unreachable in
-production — but the limit is real and stated rather than hidden.
+near-field, total and distance bit for bit, so it is close to unreachable.
 
-UNPROVEN; pinned by the `#guard`s against Node/V8
-(`lean/experiments/venue-prior-refs.mts`).
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.VenuePrior
@@ -117,7 +114,7 @@ structure VenueCandidateScore where
   nearField : Bool
   deriving Inhabited
 
-/-! ## Calibration (verbatim from the TS) -/
+/-! ## Calibration -/
 
 def DISTANCE_SIGMA_M : Float := 40
 def VENUE_OVER_AREA_NATS : Float := 1.5
@@ -126,15 +123,15 @@ def HOURS_CLOSED_NATS : Float := -2.5
 def DWELL_PSEUDO_VISITS : Float := 4
 def HOUR_PSEUDO_VISITS : Float := 8
 def CATEGORY_VISIT_CAP : Float := 12
-/-- The Dirichlet pseudo-count behind the base-rate term — how many visits of
+/-- The Dirichlet pseudo-count behind the base-rate term: how many visits of
     every subtype the mined counts are assumed to sit on. It sets how fast
     "never seen" becomes evidence: at 0.5 an unseen subtype already costs 1.4
-    nats after 20 mined stays and the −2 clamp binds by 47, so a thin period
-    prior spoke like a year's. Fitted 2026-09-29 on the 56 confirmed corpus
-    stays under each day's own prior snapshot (20–47 stays): 0.5 →
-    49 right, 1 → 53, 2 → 54, 4 → 54, and the two that stay wrong are
-    geometry (04-29) and a dry cleaner beside a restaurant (06-09). At 2 an
-    unseen subtype costs 0.6 nats at 20 stays, 1.0 at 47, the clamp at ~400. -/
+    nats after 20 mined stays and the −2 clamp binds by 47, so a thin period's
+    prior spoke like a year's. Fitted on the confirmed corpus stays under each
+    day's own prior snapshot (20–47 stays): 0.5 → 49 right, 1 → 53, 2 → 54,
+    4 → 54, and the two that stay wrong are geometry (04-29) and a dry cleaner
+    beside a restaurant (06-09). At 2 an unseen subtype costs 0.6 nats at 20
+    stays, 1.0 at 47, the clamp at ~400. -/
 def BASE_RATE_PSEUDO : Float := 2
 def BASE_RATE_MIN_TYPES : Nat := 8
 def NEAR_FIELD_DECISIVE_M : Float := 12
@@ -172,14 +169,12 @@ off all fail — they name an AREA, not a venue, and the cluster is better left
 with no `amenity_label` (the runtime then resolves a neutral area/address)
 than labelled with a place the user was never inside.
 
-⚠ Takes the two fields rather than a `Landmark`, because it is asked of BOTH
+⚠ Takes the two fields rather than a `Landmark`, because it is asked of both
 landmark shapes: `rankVenues`' input (`VenuePrior.Landmark`) and the shaped
-output of `nearbyLandmarks` (`Landmarks.Landmark`). In the TypeScript those
-are one type, so a version taking either would have to pick one and leave the
-other call site to convert.
+output of `nearbyLandmarks` (`Landmarks.Landmark`).
 
-⚠ Absent from Lean entirely until 2026-08-24 (\#1003): it is a mining-only
-gate, and no live comparison reaches the mining path.
+A mining-only gate: no live comparison reaches the mining path, so its guards
+are its only check.
 -/
 def isLabelWorthyVenue (type : String) (distanceM : Float) : Bool :=
   VENUE_TYPES.contains type && decide (distanceM ≤ VENUE_VOTE_MAX_DIST_M)
@@ -290,10 +285,10 @@ def hoursScore (openFraction : Option Float) : Option Float :=
 
 /-! ### ASCII collation
 
-Reproduces `String.localeCompare` under Node's ICU for ASCII: punctuation and
-space sort below digits, which sort below letters; letters compare
-case-folded, and an otherwise-equal pair breaks with LOWERCASE FIRST. Accented
-and non-ASCII characters are out of scope (see the module header). -/
+Locale collation for ASCII: punctuation and space sort below digits, which sort
+below letters; letters compare case-folded, and an otherwise-equal pair breaks
+with lowercase first. Accented and non-ASCII characters are out of scope (see
+the module header). -/
 
 private def isAsciiUpper (c : Char) : Bool := c ≥ 'A' && c ≤ 'Z'
 private def isAsciiLower (c : Char) : Bool := c ≥ 'a' && c ≤ 'z'
@@ -345,8 +340,7 @@ private def isVenueType (l : Landmark) : Bool := VENUE_TYPES.contains l.type
 private def isFurniture (l : Landmark) : Bool := NEVER_DESTINATION_SUBTYPES.contains l.subtype
 
 /-- Stable insertion into a list already ordered by `before`: `x` lands before
-    the first element it strictly precedes, so ties keep input order — this is
-    what V8's stable `Array.prototype.sort` does. -/
+    the first element it strictly precedes, so ties keep input order. -/
 private def insertBy (before : VenueCandidateScore → VenueCandidateScore → Bool)
     (x : VenueCandidateScore) : List VenueCandidateScore → List VenueCandidateScore
   | [] => [x]
@@ -555,7 +549,7 @@ def NO_CUT : Int := 1 <<< 62
 def priorsOfEvents (events : List PriorEvent) : VenuePriors :=
   priorsAsOf events NO_CUT
 
-/-! ## Parity with Node/V8 (`lean/experiments/venue-prior-refs.mts`) -/
+/-! ## Guards -/
 
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 private def approxO : Option Float → Option Float → Bool

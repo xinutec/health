@@ -7,8 +7,6 @@ in?*, and both answer it the same way: cluster the recent focus places into
 metropolitan regions, take the largest, bound it, and cut that box into tiles
 small enough that one Overpass call stays light.
 
-Port of the pure half of `src/geo/route-graph-loader.ts`.
-
 ## Why the region step exists at all
 
 A user who has lived in London and visited Amsterdam and San Francisco has focus

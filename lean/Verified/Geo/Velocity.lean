@@ -6,10 +6,9 @@ import Verified.Fix
 /-!
 # Velocity-owned pure kernels
 
-`velocity.ts` is mostly the post-decode ORCHESTRATOR — it loads GPS/biometrics
-from the DB, resolves tz, and sequences ~40 pass modules. That sequencing stays
-shell (TS→Rust last); each pass is ported in its own tier. This module ports the
-pure numeric kernels velocity.ts itself *owns*:
+The velocity pipeline is mostly an orchestrator: it loads GPS/biometrics from
+the DB, resolves tz, and sequences ~40 pass modules, each with its own module
+here. This module holds the pure numeric kernels the pipeline itself owns:
 
 * `localSolarHour` — solar time from a unix instant.
 * `computeRoadNearestFraction` — per-segment rail-vs-road GPS evidence
@@ -17,11 +16,10 @@ pure numeric kernels velocity.ts itself *owns*:
   `railRoadDistFromWays`).
 * `batterySeries` / `appendBatteryTail` — the battery-chart reduction.
 
-`localSolarHour` is pure integer arithmetic on the epoch (`getUTCHours/Minutes`
-are deterministic functions of `ts`, no tz): `utcMinutes = ⌊ts/60⌋ mod 1440`.
-The proximity kernels are `min`/mean over a filtered list — no transcendentals,
-exact. Battery is filter + one linear interpolation (`Math.round`). UNPROVEN;
-pinned by the `#guard`s against Node/V8.
+`localSolarHour` is pure integer arithmetic on the epoch (no tz):
+`utcMinutes = ⌊ts/60⌋ mod 1440`. The proximity kernels are `min`/mean over a
+filtered list, no transcendentals, exact. Battery is filter + one linear
+interpolation, rounded. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.Velocity
@@ -153,11 +151,10 @@ structure WatchRow where
 Drop the phone pseudo-tracker and the unresolved clocks, keep the half-open
 window `[startUtc, endUtc)`, sort by time, then collapse.
 
-⚠ The sort is STABLE and the collapse depends on it. Two devices reporting at the
-same instant keep the row that came LATER IN THE INPUT — which is the table's own
-order, not a rule about which device is right. Reversing the input reverses which
-level is drawn, and the TypeScript does the same because `Array.prototype.sort`
-is stable in V8.
+⚠ The sort is stable and the collapse depends on it. Two devices reporting at
+the same instant keep the row that came later in the input, which is the table's
+own order, not a rule about which device is right; reversing the input reverses
+which level is drawn.
 
 ⚠ A run of equal levels collapses to its FIRST reading: the flat step is already
 drawn from the point that started it. A level that RETURNS to an earlier value is
@@ -181,7 +178,7 @@ def watchBatterySeries (rows : List WatchRow) (startUtc endUtc : Int) : List Bat
       else acc ++ [s]
     | none => [s]
 
-/-! ## Parity with Node/V8 (values from `lean/experiments/velocity-refs.mts`) -/
+/-! ## Guards -/
 
 private def t0 : Int := 1768435200  -- 2026-01-15 00:00:00 UTC
 #guard localSolarHour t0 (-0.1) == 23
@@ -214,7 +211,7 @@ private def batPts : List (Int × Option Int) :=
 #guard appendBatteryTail (batterySeries batPts) (some (55, 60)) 90
   == [(0, 90), (20, 90), (30, 85), (50, 84), (60, 80)]
 
-/-! ### Watch trace — values from `lean/experiments/watchbattery-refs.mts` -/
+/-! ### Watch trace -/
 
 private def D0 : Int := 1767225600  -- 2026-01-01 00:00:00 UTC
 private def D1 : Int := D0 + 86400

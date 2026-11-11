@@ -1,6 +1,6 @@
 import Verified.FloatConst
 /-!
-# Local OSM mirror coverage (implementation-first port of `src/geo/osm-local.ts`)
+# Local OSM mirror coverage
 
 The gate in front of every OSM lookup. `covered` means the local mirror has
 already been filled for this area and a spatial query over it is an ANSWER;

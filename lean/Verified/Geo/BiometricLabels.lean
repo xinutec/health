@@ -8,8 +8,8 @@ import Verified.Fix
 /-!
 # Biometric label rewrites
 
-Ports the second half of `src/geo/biometrics.ts` — the four passes that use the
-step counter to overrule what GPS alone decided about a segment's mode:
+The four passes that use the step counter to overrule what GPS alone decided
+about a segment's mode:
 
 | decision                        | velocity pass          | direction                |
 | ------------------------------- | ---------------------- | ------------------------ |

@@ -6,8 +6,7 @@ import Verified.Geo.OsmRouteMembers
 `refresh-bus-routes` mirrors OSM `route=bus` relations with their ordered stop
 lists into `bus_route_cache`: the ingestion half of the bus matcher.
 
-Port of `src/geo/osm-bus-routes.ts` and the pure decision in
-`src/geo/bus-route-cache.ts`.
+The pure decision in the bus route cache is here too.
 
 ## ⚠ THIS ARM AND THE RAIL ARM DISAGREE, TWICE, AND BOTH DISAGREEMENTS ARE PORTED
 

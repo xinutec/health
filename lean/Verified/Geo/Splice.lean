@@ -1,27 +1,24 @@
 /-!
 # `spliceRouteDetail` — the display-pass layer, part 2
 
-The pass that fixed #369: for each chord of the cleaned `coarse` line,
-re-insert the assembled route's vertices between the chord's endpoints
-when the route curves away from the chord by more than the detail
-tolerance but no more than the simplify tolerance. Together with
-`Simplify.lean`'s Douglas-Peucker guarantee this is the whole #369
-argument: simplify-flattened curves deviate `≤ simplifyDropM` (so they
-are restorable — and get restored), while deliberate excisions (spur
-removal, over-route trim, despiked apexes) deviate beyond it and stay
-excised.
+For each chord of the cleaned `coarse` line, re-insert the assembled route's
+vertices between the chord's endpoints when the route curves away from the
+chord by more than the detail tolerance but no more than the simplify
+tolerance. Together with `Simplify.lean`'s Douglas-Peucker guarantee this is
+the whole argument: simplify-flattened curves deviate `≤ simplifyDropM` (so they
+are restorable, and get restored), while deliberate excisions (spur removal,
+over-route trim, despiked apexes) deviate beyond it and stay excised.
 
-Like `Simplify.lean`, everything is parametric over the metric and the
-point type: `cd` is chord deviation, `same` is the TS `1e-9` coordinate
-match (exact equality once quantised), `near` is the `< 0.5 m` dedupe
-check, and `clampTs a b v` is `v` with its timestamp clamped into the
-chord window (the TS `min(max(ts, a.ts), b.ts)`) — all supplied by the
-eventual arithmetic substrate, none needed for the theorems here.
+Like `Simplify.lean`, everything is parametric over the metric and the point
+type: `cd` is chord deviation, `same` is the `1e-9` coordinate match (exact
+equality once quantised), `near` is the `< 0.5 m` dedupe check, and
+`clampTs a b v` is `v` with its timestamp clamped into the chord window
+(`min(max(ts, a.ts), b.ts)`), all supplied by the arithmetic substrate and none
+needed for the theorems here.
 
-The insertion loop threads `prev` (the last emitted vertex) explicitly;
-the TS reads it back as `out[out.length - 1]`, which is the same value —
-the previous coarse vertex at window start (its chord's `a`), then the
-last inserted vertex.
+The insertion loop threads `prev` (the last emitted vertex) explicitly: the
+previous coarse vertex at window start (its chord's `a`), then the last inserted
+vertex.
 
 Theorems:
 - `splice_sound`: every output vertex is either a coarse vertex or a
@@ -37,8 +34,8 @@ namespace Verified.Geo
 
 variable {π : Type}
 
-/-- First route index `≥ k` whose point matches `p` (the TS `indexOf`
-scan; `same` is the coordinate match). -/
+/-- First route index `≥ k` whose point matches `p` (`same` is the coordinate
+match). -/
 def indexFrom (same : π → π → Bool) (route : Nat → π) (m : Nat) (p : π)
     (k : Nat) : Option Nat :=
   if _h : k < m then
@@ -60,8 +57,8 @@ theorem indexFrom_lt (same : π → π → Bool) (route : Nat → π) (m : Nat) 
   termination_by k => m - k
   decreasing_by omega
 
-/-- Running maximum of `cd (route k) a b` over `k ∈ [k₀, stop)` — the TS
-window-deviation loop. -/
+/-- Running maximum of `cd (route k) a b` over `k ∈ [k₀, stop)`: the window
+deviation. -/
 def winDev (cd : π → π → π → Nat) (a b : π) (route : Nat → π)
     (stop k best : Nat) : Nat :=
   if _h : k < stop then
@@ -100,10 +97,9 @@ theorem winDev_bound (cd : π → π → π → Nat) (a b : π) (route : Nat →
   termination_by k _ _ _ _ => stop - k
   decreasing_by omega
 
-/-- Insert the window's route vertices (timestamp-clamped by `clamp`)
-onto the reversed output, skipping any `near` the previously-emitted
-vertex `prev` — the TS insertion loop, with `acc` as the reversed
-`out`. -/
+/-- Insert the window's route vertices (timestamp-clamped by `clamp`) onto the
+reversed output, skipping any `near` the previously emitted vertex `prev`;
+`acc` is the reversed output. -/
 def insWin (near : π → π → Bool) (clamp : π → π) (route : Nat → π)
     (stop k : Nat) (prev : π) (acc : List π) : List π :=
   if _h : k < stop then
@@ -159,9 +155,9 @@ theorem insWin_sublist (near : π → π → Bool) (clamp : π → π) (route : 
   termination_by k _ _ => stop - k
   decreasing_by all_goals omega
 
-/-- One chord's insertion step: find the window, check the deviation
-guard, insert — the TS `if (ia >= 0 && ib > ia + 1) {...}` body. `a` is
-the previously-emitted coarse vertex, so it seeds `prev`. -/
+/-- One chord's insertion step: find the window, check the deviation guard,
+insert when the window is non-empty. `a` is the previously emitted coarse
+vertex, so it seeds `prev`. -/
 def insChord (cd : π → π → π → Nat) (same near : π → π → Bool)
     (clampTs : π → π → π → π) (route : Nat → π) (m : Nat) (tol dropM : Nat)
     (a b : π) (ia : Option Nat) (acc : List π) : List π :=
@@ -218,7 +214,7 @@ theorem insChord_sublist (cd : π → π → π → Nat) (same near : π → π 
       next => exact insWin_sublist near (clampTs a b) route jb (ja + 1) a acc
       next => exact List.Sublist.refl _
 
-/-- The TS `ia` update: the found window end, else a fresh scan from 0. -/
+/-- The `ia` update: the found window end, else a fresh scan from 0. -/
 def nextIa (same : π → π → Bool) (route : Nat → π) (m : Nat) (b : π) :
     Option Nat → Option Nat
   | some ja =>
@@ -303,8 +299,8 @@ theorem spliceLoop_sublist (cd : π → π → π → Nat) (same near : π → �
   termination_by i _ _ _ _ => n - i
   decreasing_by omega
 
-/-- The TS `spliceRouteDetail`, over `n` coarse points and `m` route
-points, as a list of points (short inputs are returned unchanged). -/
+/-- `spliceRouteDetail` over `n` coarse points and `m` route points, as a list
+of points (short inputs are returned unchanged). -/
 def splice (cd : π → π → π → Nat) (same near : π → π → Bool)
     (clampTs : π → π → π → π) (route : Nat → π) (m : Nat) (tol dropM : Nat)
     (coarse : Nat → π) (n : Nat) : List π :=

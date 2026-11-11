@@ -4,12 +4,10 @@ import Verified.Geo.ArrayLemmas
 /-!
 # Lazy-vs-eager Dijkstra — `LazyDijkstra`'s refinement comment-proof
 
-`src/geo/map-match-core.ts` replaced an eager bounded Dijkstra (run once,
-break at the target or the radius) with `LazyDijkstra`: the search pauses
-when the requested target settles and *resumes* on the next
-`settle(target')`, memoised per source. The comment claims the lazy form
-matches "the eager version's post-break state". That refactor argument is
-what this file proves.
+The map matcher's search is a lazy bounded Dijkstra: it pauses when the
+requested target settles and resumes on the next `settle(target')`, memoised
+per source. That it matches the eager search's post-break state (run once,
+break at the target or the radius) is what this file proves.
 
 The observation that makes it a theorem: the search is a **deterministic
 step sequence** that never consults the target — `settle(t)` only chooses

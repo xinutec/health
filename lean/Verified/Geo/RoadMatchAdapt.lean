@@ -5,10 +5,9 @@ import Verified.Geo.WalkMatchAdapt
 /-!
 # `RoadMatchAdapt` — `RoadMatchAnnotate.Env.matcher`, backed by the real matcher
 
-The road twin of `WalkMatchAdapt`, and it exists for the same reason: the pass
-takes its matcher as an injected `Env` field, every caller so far has passed
-`fun _ _ => none`, and the matcher it wants is already written —
-`Verified.Geo.Match.qMatchRoadSegment`, the port of `matchRoadSegment`.
+The road twin of `WalkMatchAdapt`, for the same reason: the pass takes its
+matcher as an `Env` field, and the matcher it wants is
+`Verified.Geo.Match.qMatchRoadSegment`.
 
     Env.matcher       Array MPt → Array Way → Option (Array MPt)
     qMatchRoadSegment Array QPt → Array QWay → Array (Array QPt)
@@ -32,24 +31,19 @@ with — its second field is `routeDetail` — so this is one field, taken whole
 
 # Buildings
 
-The road matcher gets none: `matchRoadSegment(fixes, { ways })` has no
-impassable layer, because a vehicle on a mapped street does not need one and
-`buildingsNear` is never read on a road leg. `#[]` here is the TS's absence, not
-a shortcut.
+The road matcher gets no impassable layer: a vehicle on a mapped street does not
+need one, and `buildingsNear` is never read on a road leg. `#[]` here is that
+absence, not a shortcut.
 
 # The quantisation, and where it is adjudicated
 
-Same 1e-7° grid and the same `Math.round` rule as the walk arm — the conversions
-are `WalkMatchAdapt`'s, imported rather than copied, because a second copy of a
+Same 1e-7° grid and the same rounding rule as the walk arm; the conversions are
+`WalkMatchAdapt`'s, imported rather than copied, because a second copy of a
 rounding rule that disagrees with the first on negative ties is precisely the
-defect that file's header exists to prevent (see also #957).
+defect that file's header exists to prevent.
 
-So, exactly as for the walk arm: wiring this is NOT expected to leave the day
-gate unchanged, and the day gate compares exactly. `RoadMatchAnnotate.lean`'s
-own header says the quantised arm is "measured and ceilinged against the TS
-rather than bit-identical to it". Judge it with
-`compare-match --gate`, and do not quiet a divergence by widening the
-accepted-delta manifest — `deploy.sh:139`.
+So the quantised arm is judged by the corpus gates; do not quiet a divergence by
+widening an accepted delta.
 -/
 
 namespace Verified.Geo.RoadMatchAdapt

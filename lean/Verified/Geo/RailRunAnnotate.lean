@@ -3,7 +3,7 @@ import Verified.Geo.RailRuns
 import Verified.Geo.TubeHop
 import Verified.Geo.LineStoppingPattern
 /-!
-# Labelling an unnamed train (from `annotateRailRuns` in `src/geo/passes/rail-runs.ts`)
+# Labelling an unnamed train
 
 `labelUnnamedTrains` gives each train segment that carries no route its
 `board → alight · line` label, as a run of its own: the decoder has already

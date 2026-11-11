@@ -17,12 +17,12 @@ invariants are needed: each step is justified by `col_eq_openVal` +
 `closeB_eq`, and the chosen candidate's score is pinned by `pickBest`'s
 attainment lemma.
 
-`decode` evaluates `col` without memoisation, so it is exponential — a
+`decode` evaluates `col` without memoisation, so it is exponential: a
 *specification* decoder, exact on tiny instances (see the `#guard`s in
 `Tests.lean` pinning it against the imperative `viterbi`, including paths:
-`pickBest`'s first-best tie-break composes to the same selection order as the
-TypeScript loops). The efficiency step — memoising `col` into arrays — is a
-pointwise refinement that cannot disturb these theorems.
+`pickBest`'s first-best tie-break composes to the same selection order). The
+efficiency step, memoising `col` into arrays, is a pointwise refinement that
+cannot disturb these theorems.
 -/
 
 namespace Verified.Hsmm

@@ -5,10 +5,9 @@ import Verified.JsNum
 /-!
 # `WalkMatchAdapt` — `WalkAnnotate.Env.matcher`, backed by the real matcher
 
-`WalkAnnotate` takes its matcher as an injected `Env` field, and every caller so
-far has passed the shell `fun _ _ _ => none`. The matcher it wants exists:
-`Verified.Geo.Match.qMatchWalkSegment`, which is the port of `matchWalkSegment`.
-What kept them apart is that they speak different coordinate types.
+`WalkAnnotate` takes its matcher as an `Env` field, and the matcher it wants is
+`Verified.Geo.Match.qMatchWalkSegment`. They speak different coordinate types,
+which is what this module bridges.
 
     Env.matcher       Array MPt → Ways → Array Ring → Option MatchOut
     qMatchWalkSegment Array QPt → Array QWay → Array (Array QPt)
@@ -41,23 +40,19 @@ derives the same figures). That is the float↔quant deviation
 `compare-match --gate` measures and adjudicates — over 35 days and 207 legs it
 is 0.00–0.14 m on all but two legs.
 
-⚠ SO WIRING THIS IS NOT EXPECTED TO LEAVE THE DAY GATE UNCHANGED, and the day
-gate compares exactly. `RoadMatchAnnotate.lean`'s header says the same thing
-about the road twin: the quantised arm is "measured and ceilinged against the TS
-rather than bit-identical to it". Judge a change here with
-`compare-match --gate`, and do NOT quiet a divergence by widening the
-accepted-delta manifest — `deploy.sh:139`.
+⚠ The quantised arm is judged by the corpus gates; do not quiet a divergence by
+widening an accepted delta.
 
-# Ways DO carry names here since #445 — and they still decide nothing
+# Ways carry names here, and they still decide nothing
 
-`QWay` has a `name`. For the walk profile it cannot move the LINE:
+`QWay` has a `name`. For the walk profile it cannot move the line:
 `WALK_QPROFILE.wayContinuityNats = 0`, so the way-switch penalty it feeds is
-zero nats — `switchPenScaled` multiplies through to 0 and the trellis scores
-are bit-identical with or without the names. What the names now feed is the
-matcher's IDENTITY REPORT (`QMatchResult.wayUm`): #445 measured that naming a
-walk by re-deriving "which way" from the drawn line is unanswerable (the line
-is snapped onto the network, every nearby way is ~0 m from it), so the matcher
-reports the way each stretch of its route ran along, and naming reads that.
+zero nats (`switchPenScaled` multiplies through to 0) and the trellis scores are
+bit-identical with or without the names. What the names feed is the matcher's
+identity report (`QMatchResult.wayUm`): naming a walk by re-deriving "which way"
+from the drawn line is unanswerable (the line is snapped onto the network, every
+nearby way is ~0 m from it), so the matcher reports the way each stretch of its
+route ran along, and naming reads that.
 -/
 
 namespace Verified.Geo.WalkMatchAdapt
@@ -71,7 +66,7 @@ open Verified.JsNum (jsRoundInt)
 /-- 1e-7° per unit — `QPt`'s scale. -/
 def SCALE : Float := 1e7
 
-/-- `quantPt`. A way vertex has no timestamp; the TS spells that `p.ts ?? 0`. -/
+/-- `quantPt`. A way vertex has no timestamp, so it gets 0. -/
 def toQ (lat lon : Float) (ts : Float := 0) : QPt :=
   { la := jsRoundInt (lat * SCALE), lo := jsRoundInt (lon * SCALE), ts := jsRoundInt ts }
 
@@ -86,8 +81,7 @@ def intToFloat (i : Int) : Float :=
   if i < 0 then -((-i).toNat.toFloat) else i.toNat.toFloat
 
 /-- Back to floats. Exact for any `QPt` this codebase produces: `la / 1e7` is a
-plain division, and the value it lands on is the one the TS twin's inverse lands
-on too. -/
+plain division, the inverse of the quantisation. -/
 def fromQ (q : QPt) : Verified.Geo.PathPt :=
   { lat := intToFloat q.la / SCALE, lon := intToFloat q.lo / SCALE, ts := intToFloat q.ts }
 
@@ -130,8 +124,8 @@ values are the ones `quant-twin.ts`'s `quantPt` produces for the same inputs. -/
 -- The round trip is the identity on anything already on the grid.
 #guard fromQ (toQ 51.5 (-0.1)) == ({ lat := 51.5, lon := -0.1, ts := 0 } : Verified.Geo.PathPt)
 
--- Names survive since #445 — the identity report needs them. An unnamed way
--- stays unnamed rather than becoming "".
+-- Names survive for the identity report. An unnamed way stays unnamed rather
+-- than becoming "".
 #guard (waysToQ #[{ osmId := 0, coords := #[⟨51.5, -0.1⟩] }])[0]!.name == none
 #guard (waysToQ #[{ osmId := 0, name := some "Queen's Walk",
                     coords := #[⟨51.5, -0.1⟩, ⟨51.6, -0.2⟩] }])[0]!.name == some "Queen's Walk"

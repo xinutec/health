@@ -25,11 +25,9 @@ Chain-context's per-transition penalty stays caller-resolved, as that module
 declares (the geometry it needs is the parity boundary); everything the
 callbacks themselves do is here.
 
-`quantizeModel`'s sparse/class-factorised/RLE duration export exists ONLY to
-shrink the JSON crossing the TS→Lean process boundary. Assembling the tensors
-in-process removes that boundary, so the Lean build is the dense map of
-`quantize` over the grid — `buildCellTensor` / `buildVector` — with no export
-machinery. UNPROVEN; pinned by the `#guard`s.
+The tensors are assembled in-process, so the Lean build is the dense map of
+`quantize` over the grid (`buildCellTensor` / `buildVector`), with no sparse
+export machinery. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Assembly

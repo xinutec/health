@@ -7,7 +7,7 @@ import Verified.Fix
 `NearbyStation` is a rail station near a coordinate as the OSM adapter reports
 it; `rankStations` orders candidates (an entrance node below the station it
 belongs to, a preferred name first) and `pickBestStation` takes the best.
-Exact. UNPROVEN; pinned against Node/V8 (`lean/experiments/tube-hop-refs.mts`).
+Exact. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.TubeHop
@@ -15,11 +15,10 @@ namespace Verified.Geo.TubeHop
 
 /-- A rail station near a coordinate, as the OSM adapter reports it.
 
-`lat`/`lon` are OPTIONAL, matching the TS interface: fixture recordings made
-before those fields existed replay without them, and a consumer that wants the
-station's own node coordinate must degrade to the query point. The rail-run
-line-intersection retry is the consumer that cares — see
-`Verified.Geo.RailRunAnnotate.stationCoord`. -/
+`lat`/`lon` are optional: fixture recordings made before those fields existed
+replay without them, and a consumer that wants the station's own node coordinate
+must degrade to the query point. The rail-run line-intersection retry is the
+consumer that cares; see `Verified.Geo.RailRunAnnotate.stationCoord`. -/
 structure NearbyStation where
   name : String
   subtype : String := "station"
@@ -33,9 +32,9 @@ export Verified.Geo.SegmentMerge (effectiveMode)
 
 /-! ## `pickBestStation` -/
 
-/-- Whether a name is an entrance CODE — a bare capital optionally followed by
-ONE digit (`"A"`, `"B2"`). The TS regex is `^[A-Z]\d?$`, so `"B22"` and `"a"`
-are real names. -/
+/-- Whether a name is an entrance code: a bare capital optionally followed by
+one digit (`"A"`, `"B2"`, i.e. `^[A-Z]\d?$`), so `"B22"` and `"a"` are real
+names. -/
 def isEntranceCode (name : String) : Bool :=
   match name.toList with
   | [c] => c.isUpper
@@ -78,14 +77,13 @@ because the realisable-alight sweep in `RailRunAnnotate` walks the whole order
 and cuts at tier ≥ 2 — it needs to tell a station node from a gate without
 restating the rule.
 
-Ties keep INPUT ORDER. The TS relies on `Array#sort` being stable; rather than
-lean on `List.mergeSort` being left-biased to match it, the index is carried in
-the key and compared last, which makes the order TOTAL and the agreement a fact
-about the comparator instead of about either sort.
+Ties keep input order. Rather than lean on `List.mergeSort` being left-biased,
+the index is carried in the key and compared last, which makes the order total
+and the tie-break a fact about the comparator instead of about the sort.
 
 The distance comparison is written as two strict `<` tests falling through to
-the index, not as `≠` then `<`. That is deliberate: it makes a NaN distance keep
-input order, which is what V8 does (a comparator returning NaN is read as 0). -/
+the index, not as `≠` then `<`, deliberately: a NaN distance then keeps input
+order, as a comparator returning NaN does when read as 0. -/
 def rankStations (stations : Array NearbyStation) (prefer : Option String := none) :
     Array NearbyStation :=
   let keyed := stations.mapIdx fun i s => (s, i)
@@ -106,7 +104,7 @@ def pickBestStation (stations : Array NearbyStation) (prefer : Option String := 
     Option NearbyStation :=
   (rankStations stations prefer)[0]?
 
-/-! ## Guards (V8 reference values) -/
+/-! ## Guards -/
 
 private def st (name : String) (distanceM : Float) (subtype : String := "station") : NearbyStation :=
   { name, subtype, distanceM }
@@ -127,9 +125,9 @@ private def st (name : String) (distanceM : Float) (subtype : String := "station
 #guard (pickBestStation #[st "First" 100, st "Second" 100]).map (·.name) == some "First"
 #guard pickBestStation #[] == none
 
--- A PLATFORM position loses to the station node from four times as far away.
--- This is the #373 shape: naming a Metropolitan ride after the Met platform's
--- own tag gave "London St Pancras", a mainline terminus the rider never entered.
+-- A platform position loses to the station node from four times as far away:
+-- naming a Metropolitan ride after the Met platform's own tag gave "London St
+-- Pancras", a mainline terminus the rider never entered.
 #guard (pickBestStation #[st "London St Pancras" 50 "stop_position",
                           st "King's Cross St Pancras" 200]).map (·.name)
   == some "King's Cross St Pancras"

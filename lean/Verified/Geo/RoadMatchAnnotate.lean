@@ -17,11 +17,11 @@ the leg reads from the mirror, and whether the drawn line changes.
 
 ## What is injected, and what is not
 
-The **matcher** is injected. Its Lean counterpart is `Verified.Geo.Match`'s
-`qMatchRoadSegment`, the QUANTISED arm, which is measured and ceilinged against
-the TS rather than bit-identical to it; wiring it in directly
-would make these guards assert the ceiling instead of the orchestration. The
-**mirror read** is injected for the usual reason: it is the shell.
+The **matcher** is supplied by the caller. Its Lean counterpart is
+`Verified.Geo.Match`'s `qMatchRoadSegment`, the quantised arm; wiring it in
+directly would make these guards assert the matcher instead of the
+orchestration. The **mirror read** is supplied for the usual reason: it is the
+shell.
 
 Everything the pass DECIDES with is the real Lean leaf — the spike rejection
 (`Verified.Geo.rejectSpikes` under `EpisodeGeometry.spikeAt`), the speed cap
@@ -56,7 +56,7 @@ NOTHING, so its absence from the trace is itself pinned.
 The `ROAD_MATCH_DEBUG` branch is a `console.error` diagnostic with no effect on
 the returned segments and is not modelled.
 
-UNPROVEN; pinned against Node/V8 (`lean/experiments/road-match-annotate-refs.mts`).
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.RoadMatchAnnotate
@@ -84,15 +84,14 @@ structure Env where
   does not cover this disc — and is not the same answer as `some #[]`, which is
   "asked, and there is no road here". -/
   drivableRoads : Float → Float → Float → Option (Array Way)
-  /-- `matchRoadSegment(fixes, { ways })` — `none` is the TS `null`, i.e. "draw
-  the raw fixes". -/
+  /-- `matchRoadSegment(fixes, { ways })`: `none` means "draw the raw fixes". -/
   matcher : Array MPt → Array Way → Option (Array MPt)
 
 /-! ## Constants -/
 
-/-- Effective modes drawn as a raw road polyline today. A SEPARATE literal from
-`EpisodeGeometry.ROAD_MATCH_MODES`, as in the TS, where the two agree by
-intent rather than by sharing a definition. -/
+/-- Effective modes drawn as a raw road polyline today. A separate literal from
+`EpisodeGeometry.ROAD_MATCH_MODES`; the two agree by intent rather than by
+sharing a definition. -/
 def ROAD_MODES : List Mode := ["driving", "bus", "cycling"]
 
 /-- Below this many in-window fixes a leg is too sparse to map-match. -/
@@ -193,18 +192,17 @@ def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array
 def annotateRoadMatches (env : Env) (segments : Array Seg) (points : Array Fix) : Array Seg :=
   (annotateRoadMatchesTraced env segments points).run' #[]
 
-/-! ## Guards (V8 reference values)
+/-! ## Guards
 
-Every number below is `lean/experiments/road-match-annotate-refs.mts`'s output
-on the same fixture, transcribed at V8's own precision.
+Every number below is the original implementation's answer on the same
+fixture, at full double precision.
 
-The two shell values are ORACLE TABLES, not stubs that re-derive an answer.
-`stubRoads` holds every `(lat, lon, radius)` the V8 arm was actually asked
-about; `stubMatcher` holds every fix array the V8 matcher was actually handed.
-A query outside either table is a query this arm never made: the roads table
-answers `some #[]` and the matcher table answers `MISS`, an off-Africa vertex
-that no output guard can accept. Neither can silently agree with a wrong
-caller.
+The two shell values are oracle tables, not stubs that re-derive an answer.
+`stubRoads` holds every `(lat, lon, radius)` the reference was asked about;
+`stubMatcher` holds every fix array the reference matcher was handed. A query
+outside either table is a query this arm never made: the roads table answers
+`some #[]` and the matcher table answers `MISS`, a far-off vertex that no
+output guard can accept. Neither can silently agree with a wrong caller.
 -/
 
 section Guards
@@ -233,9 +231,9 @@ private structure RoadsEntry where
   radiusM : Float
   ways : Array Way
 
-/-- Every `(lat, lon, radius)` the V8 arm was asked about, with its answer.
-A query this table does not hold is a query the reference arm never made —
-it comes back EMPTY, which shows up as a leg that bails. -/
+/-- Every `(lat, lon, radius)` the reference was asked about, with its answer.
+A query this table does not hold is one the reference never made: it comes back
+empty, which shows up as a leg that bails. -/
 private def ROADS : Array RoadsEntry := #[
   { lat := 51.501317523056656, lon := (-0.1363322829128949), radiusM := 443.0,
     ways := #[
@@ -326,10 +324,9 @@ private structure MatchEntry where
   path : Option (Array MPt)
 
 /-- The answer a table MISS returns: a line 2 km southwest of every fixture,
-which no output guard accepts. It is deliberately LOCAL rather than at (0, 0)
-— `DisplayGate.NearGrid.nearestDist` scans rings outward to the occupied
-bounding box, so a null-island sentinel would make the gate scan ~90,000 rings
-(the same shape as #416, where a (0, 0) centroid met a spatial index).
+which no output guard accepts. Deliberately local rather than at (0, 0):
+`DisplayGate.NearGrid.nearestDist` scans rings outward to the occupied
+bounding box, so a null-island sentinel would make the gate scan ~90,000 rings.
 
 A miss is a second net, not the only one: the matcher key is derived from the
 same despiked fix set that builds the corridor track, so any divergence in the

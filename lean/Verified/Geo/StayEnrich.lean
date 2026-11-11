@@ -6,18 +6,16 @@ import Verified.Geo.BestPlace
 # Naming a stay
 
 The enrichment loop has two branches and this is the second one.
-{@link Verified.Geo.Enrich} is the first — `enrichMovingSegment`, ported for
-`reenrichSplitWalks` but the same function the loop runs on every moving
-segment. So this module is the LAST piece of that stage, and with it the Lean
-day stops being two sub-chains: `classifySegments` through to the episodes
-becomes one chain (#430 B2).
+{@link Verified.Geo.Enrich} is the first, `enrichMovingSegment`, the function
+the loop runs on every moving segment. With both, the day is one chain from
+`classifySegments` through to the episodes.
 
 ## The cascade, in the order it decides
 
 1. **Just alighted a train?** Then the stay is at that station, whatever else
-   is co-located — the 2026-05-22 Finchley Road ambulance wait, mislabelled
-   "Loft Coffee Company". {@link Verified.Geo.TransitPlace.stationAtTrainAlight}.
-   The city still comes from the venue resolver; only the LABEL is the station.
+   is co-located (05-22's Finchley Road ambulance wait was mislabelled "Loft
+   Coffee Company"). {@link Verified.Geo.TransitPlace.stationAtTrainAlight}.
+   The city still comes from the venue resolver; only the label is the station.
 2. Otherwise score the mined `focus_places`
    ({@link Verified.Geo.PlacePrior.pickBestPlace}), with the stay's hour profile
    and its biometric coherence
@@ -56,25 +54,23 @@ the place's stored centroid blended by precision — the day's fixes weighted by
 their own scatter and by how much of the stay they observed
 ({@link Verified.Geo.EnrichFold.nameStay}), the place by its
 {@link Verified.Geo.PlacePrior.effectiveSigmaM}.
-The TS snapped to the stored centroid outright, on the reading that the day's
-aggregate is noisy and the place's is true. Measured over the corpus the opposite holds for a tight stay: on the days whose name was
-wrong the stay's fixes scattered 8–14 m and sat 79–90 m from the stored
+Snapping to the stored centroid outright assumes the day's aggregate is noisy
+and the place's is true. For a tight stay the opposite holds: on the days whose
+name was wrong the stay's fixes scattered 8–14 m and sat 79–90 m from the stored
 centroid, which averages a cluster wider than its nominal radius, so the
 resolver was asked about a neighbour's doorstep. A smeared stay (scatter of
 50–110 m) still leans on the place.
 
-A NIGHT at a residence keeps the stored centroid; a daytime stay there is
-named like any other. Where he sleeps is identified by the place, and a
-night's fixes indoors scatter — 2026-06-02's night at the clinic spreads
-85 m and its centroid lands on a sandwich shop (measured 2026-09-29, two
-confirmed rows lost when every residence stay took its fixes). A daytime
-stay at a residence is a visit like any other: the 2026-04-29 midday stay
-whose fixes sit 118 m from the hotel and 7 m from a café was the café (his
-word), and a hospital cluster that has counted fourteen sleep hours over
-forty-two days was naming every visit at its stored centroid, where a
-neighbouring building's footprint answered. The lodging override
-still runs for every residence stay (`preferResidential`), from whichever
-coordinate is asked.
+A night at a residence keeps the stored centroid; a daytime stay there is named
+like any other. Where the user sleeps is identified by the place, and a night's
+fixes indoors scatter: a night at the clinic spreads 85 m and its centroid lands
+on a sandwich shop (two confirmed rows lost when every residence stay took its
+fixes). A daytime stay at a residence is a visit like any other: 04-29's midday
+stay, whose fixes sit 118 m from the hotel and 7 m from a café, was the café,
+and a hospital cluster with fourteen sleep hours over forty-two days was naming
+every visit at its stored centroid, where a neighbouring building's footprint
+answered. The lodging override still runs for every residence stay
+(`preferResidential`), from whichever coordinate is asked.
 
 ## No new shell
 
@@ -82,8 +78,8 @@ coordinate is asked.
 the fold's existing `tzAt`. `localSolarHour` looks like it needs a zone and does
 not — it is longitude arithmetic on the epoch, so it ports exactly.
 
-The solar arithmetic is UNPROVEN and pinned against Node/V8
-(`lean/experiments/stay-enrich-refs.mts`) rather than derived by hand.
+The solar arithmetic is UNPROVEN and pinned by the `#guard`s rather than derived
+by hand.
 -/
 
 namespace Verified.Geo.StayEnrich
@@ -91,7 +87,7 @@ namespace Verified.Geo.StayEnrich
 open Verified.Geo.SegmentMerge (Seg ResolvedPlace)
 open Verified.Geo.TubeHop (NearbyStation)
 
-/-! ## Local solar time (`src/geo/focus-places.ts`) -/
+/-! ## Local solar time -/
 
 /-- JS `%` on doubles: the TRUNCATED remainder, not Lean's `%` and not a
 floored modulo. Exact for every value here — `|a/b| < 3`, so the quotient's
@@ -103,7 +99,7 @@ private def jsMod (a b : Float) : Float :=
 /-- Hour of the local SOLAR day at a longitude — no tzdata, no zone, just
 `lon / 15` hours of offset from UTC.
 
-The double `%` is the TS's, kept rather than collapsed into one floored modulo:
+The double `%` is kept rather than collapsed into one floored modulo:
 `(x % 1440 + 1440) % 1440` adds 1440 in between, and that addition can round
 where a single operation would not. -/
 def localSolarHour (ts : Int) (lon : Float) : Nat :=
@@ -111,7 +107,7 @@ def localSolarHour (ts : Int) (lon : Float) : Nat :=
   -- the UTC day, so seconds are DROPPED before the offset is applied.
   let secOfDay := ((ts % 86400) + 86400) % 86400
   let utcMinutes := Float.ofInt (secOfDay / 60)
-  -- `local` is the TS's name for it and a Lean keyword, so `solarMinutes`.
+  -- `local` is a Lean keyword, so `solarMinutes`.
   let solarMinutes := utcMinutes + (lon / 15) * 60
   let wrapped := jsMod (jsMod solarMinutes 1440 + 1440) 1440
   (Float.floor (wrapped / 60)).toUInt64.toNat
@@ -170,16 +166,16 @@ def RESIDENCE_SLEEP_THRESHOLD_H : Float := 5
 
 /-- In σ of the place ({@link Verified.Geo.PlacePrior.effectiveSigmaM}), how far
 a stay must sit from the Home or Work it elected before the building around it
-is asked about. Census over the corpus (2026-10-04): of 74 stays named
-Home or Work, 72 sit within 50 m of the stored centroid and one at 50–100 m,
-all with σ ≈ 100 m; the one past it is 09-30's 74-minute wait inside St Pancras
-station, 150–200 m from Work, which elected Work as an ordinary candidate. -/
+is asked about. Over the corpus, of 74 stays named Home or Work, 72 sit within
+50 m of the stored centroid and one at 50–100 m, all with σ ≈ 100 m; the one
+past it is 09-30's 74-minute wait inside St Pancras station, 150–200 m from
+Work, which elected Work as an ordinary candidate. -/
 def HOME_WORK_FAR_SIGMA : Float := 1.2
 
 /-- …and how long it must last. A piece of the walk in, carved as a stay before
 the merge, is far from Work and inside the station next to it: named for the
-station, it carried that name into the merged Work stay on 07-10 (live,
-2026-10-04). The 09-30 wait was 74 minutes. -/
+station, it carried that name into 07-10's merged Work stay. The 09-30 wait was
+74 minutes. -/
 def HOME_WORK_FAR_MIN_S : Int := 30 * 60
 
 /-- A mined `focus_places` row as this branch reads it: the scorer's candidate
@@ -218,9 +214,8 @@ structure Biom where
 
 /-! ## The branch -/
 
-/-- Attach `place` and `city` to a stay. Returns the segment UNCHANGED when the
-resolver has no answer — the TS's `if (!place) return seg`, which is a refusal
-to name rather than a name of nothing. -/
+/-- Attach `place` and `city` to a stay. Returns the segment unchanged when the
+resolver has no answer: a refusal to name rather than a name of nothing. -/
 def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
     (prev : Option Seg) (seg : Seg) (cLat cLon : Float) (spreadM : Float := 0) : Seg :=
   let withCity (s : Seg) (p : Option ResolvedPlace) : Seg :=
@@ -238,7 +233,7 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
     let bs := Verified.Geo.BiometricCoherence.biometricCoherence
       seg.startTs seg.endTs biom.hr biom.steps
     -- 2. The posterior over mined places. `pickBestPlace` refuses an empty list
-    -- itself, so the TS's `knownPlaces.length > 0` guard is not restated.
+    -- itself, so no emptiness guard is needed here.
     let winner := (Verified.Geo.PlacePrior.pickBestPlace (places.map (·.cand))
       cLat cLon stayHourProfile (some bs)).bind fun (c, _) =>
         places.find? fun p => p.cand.id == c.id
@@ -348,8 +343,8 @@ private def ONE_HOUR_SPAN : List Float := hourProfileForRange 0 3600 0
 -- One sample is half an hour and does not reach the bar; two do.
 #guard hasOvernightPresence 0 0 0 == false
 #guard hasOvernightPresence 0 1800 0 == true
--- 06:00 is OUTSIDE the window — the TS tests `h < 6`, so the 06:00 bucket is
--- morning, not night. A stay from 05:30 to 06:30 has one overnight sample.
+-- 06:00 is outside the window (`h < 6`), so the 06:00 bucket is morning, not
+-- night. A stay from 05:30 to 06:30 has one overnight sample.
 #guard hasOvernightPresence (5 * 3600 + 1800) (6 * 3600 + 1800) 0 == false
 #guard hasOvernightPresence (5 * 3600) (6 * 3600) 0 == true
 -- Daytime never qualifies however long it runs.
@@ -445,11 +440,11 @@ private def runFar (reads : Reads) : Seg := enrichStay reads {} [farHome] none s
 #guard (run spy [cafe]).focusPlaceId == some 2
 #guard (run spy [cafe2day]).place == some "51.520|-0.130|false|true"
 #guard (run spy [cafe1day]).place == some "51.520|-0.130|false|true"
--- And note WHICH question the one-day cluster asks: `preferResidential=false`.
--- A one-day cluster still carries an `amenityLabel`, so it is
--- NOT `venueless` — contrast the venueless guard below, which asks with `true`.
--- Folding this gate into `venueless` is the plausible-looking change that would
--- diverge from the TS, which tests the FIELD and not this verdict.
+-- And note which question the one-day cluster asks: `preferResidential=false`.
+-- A one-day cluster still carries an `amenityLabel`, so it is not `venueless`;
+-- contrast the venueless guard below, which asks with `true`. Folding this gate
+-- into `venueless` is the plausible-looking change that would break this: the
+-- rule tests the field, not this verdict.
 #guard (run spy [cafe1day]).focusPlaceId == some 5
 -- ... and a RESIDENTIAL one does not, even carrying the same label: it falls
 -- through to the resolver, which the spy answers with its arguments —

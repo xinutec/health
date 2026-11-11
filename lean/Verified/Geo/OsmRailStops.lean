@@ -8,8 +8,6 @@ light_rail, tram) with their ordered stop lists into `rail_stops_cache`.
 This module is the cron's judgement: the Overpass query it asks, and which of
 the relations that come back are kept.
 
-Port of `src/geo/osm-rail-stops.ts`.
-
 ## Why relations and not proximity
 
 "Does line L stop at station S" is ground truth only a relation's `stop` members

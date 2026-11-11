@@ -3,10 +3,9 @@ import Verified.Hsmm.FloatScore
 /-!
 # Biometric window aggregations + the stay bridge
 
-Ports the per-segment biometric reductions from `src/geo/biometrics.ts`
-(`enrichSegmentWithBiometrics`, `stepsInWindow`, `cadenceForSegment`,
-`peakCadenceForSegment`) and the decision core of
-`src/geo/bridge-stays-biometrics.ts`.
+The per-segment biometric reductions (`enrichSegmentWithBiometrics`,
+`stepsInWindow`, `cadenceForSegment`, `peakCadenceForSegment`) and the decision
+core of bridging stays across biometric gaps.
 
 Two conventions here are load-bearing and easy to get wrong, so both are
 pinned by `#guard`s:

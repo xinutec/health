@@ -187,8 +187,8 @@ structure PlaceLookup where
   lon : Option Float
   deriving Inhabited, BEq, Repr
 
-/-- Generic clustering-bucket markers assigned by `assignDisplayNames`
-(`src/geo/focus-places.ts`). These are NOT venue labels — they identify a
+/-- Generic clustering-bucket markers assigned by `assignDisplayNames`. These
+are NOT venue labels: they identify a
 cluster's KIND (you sleep here sometimes) without naming the venue. The
 pipeline's `bestPlace` lookup has already resolved a real venue name, and the
 override must not overwrite it with the bucket marker. -/

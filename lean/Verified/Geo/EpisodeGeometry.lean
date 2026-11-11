@@ -5,7 +5,7 @@ import Verified.Fix
 /-!
 # Episode geometry — the map's half of "one day, two renderers"
 
-Port of `src/geo/episode-geometry.ts`. The narrative renders the smoothed
+The narrative renders the smoothed
 `DayState[]` sequence; `buildEpisodes` resolves a display geometry for each of
 those states, 1:1, so the map cannot draw a story the timeline does not tell.
 

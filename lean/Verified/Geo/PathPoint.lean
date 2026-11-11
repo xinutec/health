@@ -19,8 +19,7 @@ dependencies so that any module may import it.
 
 namespace Verified.Geo
 
-/-- One vertex of a derived polyline, carrying an interpolated timestamp
-(`SnappedPoint` in `src/geo/rail-snap.ts`). -/
+/-- One vertex of a derived polyline, carrying an interpolated timestamp. -/
 structure PathPt where
   lat : Float
   lon : Float

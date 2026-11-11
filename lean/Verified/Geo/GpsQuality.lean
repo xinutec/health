@@ -1,7 +1,7 @@
 import Verified.Geo.Kalman
 import Verified.FloatConst
 /-!
-# GPS quality-control pre-filter (implementation-first port of `src/geo/gps-quality.ts`)
+# GPS quality-control pre-filter
 
 Runs BEFORE the Kalman filter: drop physically-incoherent runs of GPS fixes
 (underground / cell-tower garbage) so downstream gap-inference sees an honest

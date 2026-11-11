@@ -29,12 +29,12 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 /-- A Kalman-filtered fix as the passes read it. -/
 abbrev PointF := Verified.SpeedFix
 
-/-- `refinedMode ?? mode` — the TS `segMode`. -/
+/-- `refinedMode`, else `mode`. -/
 def segMode (s : Seg) : String := s.refinedMode.getD s.mode
 
 open Verified.JsNum (jsRound)
 
-/-- The TS `median`: ascending sort, mean of the middle pair when even. -/
+/-- The median: ascending sort, mean of the middle pair when even. -/
 def median (values : Array Float) : Float :=
   let sorted := (values.toList.mergeSort (· ≤ ·)).toArray
   if h : sorted.size = 0 then 0
@@ -150,24 +150,18 @@ private def footArrival (cur next : Seg) (points : Array PointF) : Option (Seg �
       if cur.endTs - arrivalTs ≤ 0 then return none
       let movedS := cur.endTs - arrivalTs
       -- `jsRound … .toInt64.toInt`, not `Float.round`: the latter stays a Float
-      -- and `s!` renders it "3.000000", where the TS arm's `Math.round` prints
-      -- "3". The reason string is compared field-for-field by the day gate, so
-      -- the formatting IS the parity.
+      -- and `s!` renders it "3.000000" where "3" is wanted. The reason string
+      -- is compared field for field by the day gate.
       let reason := s!"arrival boundary moved back {movedS} s: the walk's tail held position within {toString (jsRound spreadM).toInt64.toInt} m for {durS} s"
-      -- `walkRemainder` is the family's rebuild: it recomputes pointCount /
-      -- avgSpeed / maxSpeed / linearity over the new window and clears the
-      -- enrichment derived from the old one. By hand the walk would keep an
-      -- avgSpeed the standing tail dragged down — the very seconds this pass
-      -- has just taken away from it.
       -- `walkRemainder` recomputes the kinematics over the new window, which is
-      -- what this pass wants — the seconds it removes are the standing ones
-      -- that dragged the average down. But it also clears the enrichment and
-      -- flags `needsReenrich`, and that is wrong here: its own callers carve a
-      -- remainder whose MODE is genuinely in question, while trimming an
-      -- arrival changes the window and never what the segment IS. Forcing the
-      -- re-derivation made a shortened leg come back `cycling` on 2026-04-29,
-      -- and `repairVehicleHandoff` absorbed 27 minutes of it into the adjacent
-      -- train as an impossible vehicle hand-off.
+      -- what this pass wants: the seconds it removes are the standing ones that
+      -- dragged the average down. But it also clears the enrichment and flags
+      -- `needsReenrich`, and that is wrong here: its own callers carve a
+      -- remainder whose mode is genuinely in question, while trimming an
+      -- arrival changes the window and never what the segment is. Forcing the
+      -- re-derivation makes a shortened leg come back `cycling` on 04-29, and
+      -- `repairVehicleHandoff` absorbs 27 minutes of it into the adjacent train
+      -- as an impossible vehicle hand-off.
       --
       -- The NAME is a different matter: the shorter walk is a shorter stretch
       -- of street, and the name it carries was derived from a line drawn
@@ -203,8 +197,7 @@ def claimStayArrivalFromWalk (segments : Array Seg) (points : Array PointF) : Ar
     else out := out.push cur
   return out
 
-/-! ### Guards — pinned against V8 on the same construction
-`tests/stay-arrival-claim.test.ts` builds. -/
+/-! ### Guards, on the same construction as the original's tests. -/
 namespace FootArrivalGuards
 
 open Verified.Geo.SegmentMerge (Seg)
@@ -250,8 +243,8 @@ private def runOn (dwellS : Int) (spread : Float := 4) : Array Seg :=
 -- The boundary lands on the first standing fix, not on the segmenter's window
 -- edge: 1000616, where HEAD left it at 1000784 (168 s late).
 #guard (runOn 140)[0]!.endTs == 1000616
--- It does NOT force re-derivation: that redoes the MODE too, and a shortened
--- leg came back `cycling` on 2026-04-29 and was absorbed into a train.
+-- It does not force re-derivation: that redoes the mode too, and a shortened
+-- leg comes back `cycling` on 04-29 and is absorbed into a train.
 #guard (runOn 140)[0]!.needsReenrich == false
 -- Time is moved, never dropped: the stay picks up exactly what the walk gave up.
 #guard (runOn 140)[1]!.startTs == (runOn 140)[0]!.endTs
@@ -288,10 +281,10 @@ step counter is the veto, not the evidence: a run whose cadence reads
 `DWELL_WALKING_CADENCE` or more is a GPS that froze while the wearer walked
 on, and is left alone; no step data at all lets the GPS decide.
 
-Runs LATE in the cascade, after every rail and vehicle carver: in the split
-stage (measured 2026-09-23) a held position next to a train was the platform
-wait, and carving it moved the train's edge and lost four confirmed rail
-rows. A walk with a train on either side is left alone.
+Runs late in the cascade, after every rail and vehicle carver: in the split
+stage a held position next to a train is the platform wait, and carving it moves
+the train's edge and loses four confirmed rail rows. A walk with a train on
+either side is left alone.
 
 The stay is named the way the enrichment stage names every stay — a mined
 place elected from the run's own fixes, then the venue resolver at the naming
@@ -322,13 +315,12 @@ abbrev Namer := Seg → Seg
 def DWELL_MIN_S : Int := 240
 /-- How far a fix may sit from the run's mean and still be "here". Observed
     foot arrivals hold within 1–9 m; a shop's aisles are wider than a kerb.
-    ⚠ BOTH THRESHOLDS WERE SWEPT on the corpus (2026-09-26, health #1694).
-    40 m is inert: across 45 days it moves one stop's start by a minute on a
-    day with no narrative, and clears no confirmed row — so 30 stands. 180 s
-    is NOT free: with either radius it turns a confirmed walk into a shop stop
-    (2026-06-22 10:34Z) and breaks the 2026-07-06 Work stay, whose GPS wander
-    a later pass used to absorb as a walk and no longer can once a stop is
-    carved out of it. Four minutes stands. -/
+    ⚠ Both thresholds were swept on the corpus. 40 m is inert (it moves one
+    stop's start by a minute on a day with no narrative and clears no confirmed
+    row), so 30 stands. 180 s is not free: with either radius it turns a
+    confirmed walk into a shop stop (06-22 10:34Z) and breaks 07-06's Work stay,
+    whose GPS wander a later pass absorbs as a walk and no longer can once a
+    stop is carved out of it. Four minutes stands. -/
 def DWELL_RADIUS_M : Float := 30
 /-- A dwell at a walk's edge is the arrival and departure passes' business. -/
 def DWELL_MIN_REMAINDER_S : Int := 60
@@ -393,11 +385,11 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
       let (wa, wb) := if stopAtEnd then (b - DWELL_TRAIN_SIDE_WALK_S, b) else (a, a + DWELL_TRAIN_SIDE_WALK_S)
       decide (b - a ≥ DWELL_TRAIN_SIDE_WALK_S) &&
         (meanCadenceSpm steps wa wb).any (fun c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM))
-    -- Only the LAST stop before a train can be its platform wait. One with a
+    -- Only the last stop before a train can be its platform wait. One with a
     -- later stop between it and the train is not against the train at all,
-    -- and, read to the train, the later sits pulled the cadence under the bar:
-    -- the hour in Gare Montparnasse (2026-10-01) came out one 46-minute walk
-    -- with no stop in it.
+    -- and, read to the train, the later sits pull the cadence under the bar:
+    -- an hour in Gare Montparnasse comes out one 46-minute walk with no stop in
+    -- it.
     let anotherStopAfter := fun (de : Int) =>
       (findDwell (fixes.filter (·.ts > de)) steps de seg.endTs (fun _ _ => true)).isSome
     let admit := fun (ds de : Int) =>
@@ -420,11 +412,11 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
           displayTz := seg.displayTz
           refinedReason := some s!"stop inside a walk: held position within {toString (jsRound spreadM).toInt64.toInt} m for {de - ds} s"
           refinedKinds := #["walk-dwell"] }
-      -- The remainders keep the walk's NAME and refinement: a stop taken out
-      -- of a walk changes its window and never which street it was, and a
-      -- name re-derived over the shorter window picked the neighbouring street
-      -- on 2026-06-24 and lost a confirmed row. Only the kinematics are
-      -- rebuilt, as the foot-arrival trim does.
+      -- The remainders keep the walk's name and refinement: a stop taken out
+      -- of a walk changes its window and never which street it was, and a name
+      -- re-derived over the shorter window picks the neighbouring street on
+      -- 06-24 and loses a confirmed row. Only the kinematics are rebuilt, as the
+      -- foot-arrival trim does.
       let keep (r : Seg) : Seg :=
         { r with wayName := seg.wayName, refinedMode := seg.refinedMode, place := seg.place
                  needsReenrich := false, needsRename := false }
@@ -451,13 +443,13 @@ end Dwell
 
 /-! ## `claimSteplessDepartures`
 
-A walk that leaves a stay begins at its first STEPPED minute. Where the walk's
-head carries no minute of `STEPLESS_MAX_SPM` steps or more — and the stay before
-it had step data, so the watch was counting — the head is still the stay: GPS
-wander out of a building reads as a slow walk the watch never saw (2026-07-15:
-zero steps 12:43–12:50 after the hospital, then a walk from 12:53, served as a
-walk from 12:45). The stay is extended to that minute; the walk keeps its name.
-Absent steps INSIDE the walk nothing moves: no stepped minute is no evidence of
+A walk that leaves a stay begins at its first stepped minute. Where the walk's
+head carries no minute of `STEPLESS_MAX_SPM` steps or more, and the stay before
+it had step data so the watch was counting, the head is still the stay: GPS
+wander out of a building reads as a slow walk the watch never saw (07-15: zero
+steps 12:43–12:50 after the hospital, then a walk from 12:53, served as a walk
+from 12:45). The stay is extended to that minute; the walk keeps its name.
+Absent steps inside the walk nothing moves: no stepped minute is no evidence of
 where walking began. -/
 
 namespace StepDeparture
@@ -552,10 +544,10 @@ private def shopAlpha : Namer := fun s =>
 private def TRAIN : Seg := { startTs := 1200, endTs := 2400, mode := "train" }
 #guard (splitWalksOnDwell #[WALK, TRAIN] STOP [] unnamed).size == 2
 
--- TWO stops before a train (2026-10-01, Gare Montparnasse): the first has the
--- second between it and the train, so it is no platform wait and is carved
--- however slow the walk on; the second is the last before the train and needs
--- the stretch to it walked.
+-- Two stops before a train (Gare Montparnasse): the first has the second
+-- between it and the train, so it is no platform wait and is carved however
+-- slow the walk on; the second is the last before the train and needs the
+-- stretch to it walked.
 private def TWO_STOPS : Array PointF :=
   (Array.range 10).map (fun i => dfx (Int.ofNat i * 30) (Float.ofNat i * 45)) ++
   (Array.range 11).map (fun i => dfx (300 + Int.ofNat i * 30) (450 + (if i % 2 == 0 then 0 else 3)) 0.5) ++

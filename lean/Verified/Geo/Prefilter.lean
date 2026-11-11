@@ -3,9 +3,8 @@ import Verified.Geo.Simplify
 /-!
 # GPS pre-filters — `holdImplausibleSpeed` and `rejectSpikes`
 
-`src/geo/episode-geometry.ts`'s display pre-filters, the "stable, pure,
-small" stratum of the V4 port. Parametric over the point type and the
-per-hop predicates, like the rest of the pass layer:
+The episode geometry's display pre-filters. Parametric over the point type and
+the per-hop predicates, like the rest of the pass layer:
 
 - `holdSpeed` (`holdImplausibleSpeed`): keep the longest plausible-speed run
   over all start fixes; `ok last cur` is the "`dt > 0` and implied speed within
