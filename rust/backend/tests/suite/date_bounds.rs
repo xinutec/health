@@ -1,71 +1,101 @@
-//! `date_bounds_utc`, including its two known defects.
+//! `date_bounds_utc`: a civil date runs from its local midnight to the next.
 //!
-//! The cases in `fixtures/date-bounds-ts.json` were produced by RUNNING
-//! `dist/geo/timezone.js`, not by writing down what I believed it did — see
-//! `fixtures/date-bounds-ts.mjs`, which regenerates them. That distinction is
-//! the whole value here: this function reproduces two defects on purpose, and a
-//! hand-written expectation would have encoded my reading of them rather than
-//! their behaviour.
+//! The oracle is the zone's own local date at each instant, asked through
+//! `chrono-tz` one second either side of each bound, so it checks the bounds
+//! without repeating how they are computed. The hand-written cases below pin
+//! the days where a fixed 24-hour day or an hour-only offset would be wrong.
 
 use backend::timezone::date_bounds_utc;
-use serde::Deserialize;
+use chrono::{DateTime, NaiveDate};
+use chrono_tz::Tz;
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Case {
-    date: String,
-    tz: Option<String>,
-    start_utc: i64,
-    end_utc: i64,
+const ZONES: [&str; 10] = [
+    "UTC",
+    "Europe/London",
+    "America/New_York",
+    "Asia/Tokyo",
+    "Pacific/Kiritimati",
+    "Pacific/Midway",
+    "Asia/Kolkata",
+    "America/St_Johns",
+    "Australia/Lord_Howe",
+    "Pacific/Chatham",
+];
+
+const DATES: [&str; 10] = [
+    "2026-01-15",
+    "2026-03-29",
+    "2026-10-25",
+    "2026-02-28",
+    "2026-12-31",
+    "2026-01-01",
+    "2024-02-29",
+    "2026-06-30",
+    "2026-11-01",
+    "2026-03-31",
+];
+
+fn local_date(ts: i64, zone: Tz) -> NaiveDate {
+    DateTime::from_timestamp(ts, 0)
+        .expect("representable")
+        .with_timezone(&zone)
+        .date_naive()
 }
 
 #[test]
-fn every_case_matches_the_typescript() {
-    let raw = include_str!("../fixtures/date-bounds-ts.json");
-    let cases: Vec<Case> = serde_json::from_str(raw).expect("fixture parses");
-    assert!(cases.len() >= 100, "fixture shrank: {} cases", cases.len());
-
-    let mut checked = 0;
-    for c in &cases {
-        let got = date_bounds_utc(&c.date, c.tz.as_deref())
-            .unwrap_or_else(|e| panic!("{} {:?}: {e}", c.date, c.tz));
-        assert_eq!(
-            (got.start_utc, got.end_utc),
-            (c.start_utc, c.end_utc),
-            "{} in {:?}",
-            c.date,
-            c.tz
-        );
-        checked += 1;
+fn each_bound_is_where_the_local_date_changes() {
+    for tz in ZONES {
+        let zone: Tz = tz.parse().unwrap();
+        for date in DATES {
+            let day: NaiveDate = date.parse().unwrap();
+            let b = date_bounds_utc(date, Some(tz)).unwrap();
+            assert_eq!(local_date(b.start_utc, zone), day, "{date} {tz} start");
+            assert!(local_date(b.start_utc - 1, zone) < day, "{date} {tz} start");
+            assert_eq!(local_date(b.end_utc - 1, zone), day, "{date} {tz} end");
+            assert!(local_date(b.end_utc, zone) > day, "{date} {tz} end");
+        }
     }
-    assert_eq!(checked, cases.len());
 }
 
-/// ⚠ The two defects, pinned SO THEY CANNOT BE FIXED BY ACCIDENT.
-///
-/// Both are known defects, pinned so that fixing either is a deliberate change:
-/// the golden corpus is the oracle for the pipeline this feeds, and a change
-/// here re-blesses it. If either assertion starts failing, someone has improved
-/// the behaviour, which may well be right, but it is not a silent change.
 #[test]
-fn the_inherited_defects_are_still_here() {
-    // A half-hour zone truncates to the hour: Asia/Kolkata is +05:30, and the
-    // offset applied is +05:00, so the day starts 30 minutes late.
-    let kolkata = date_bounds_utc("2026-01-15", Some("Asia/Kolkata")).unwrap();
-    let utc_midnight = 1_768_435_200;
-    assert_eq!(
-        utc_midnight - kolkata.start_utc,
-        5 * 3600,
-        "+05:30 is applied as +05:00"
-    );
+fn no_zone_is_utc_midnight_to_midnight() {
+    let b = date_bounds_utc("2026-01-15", None).unwrap();
+    assert_eq!((b.start_utc, b.end_utc), (1_768_435_200, 1_768_521_600));
+    assert_eq!(date_bounds_utc("2026-01-15", Some("")).unwrap(), b);
+}
 
-    // A spring-forward day is still exactly 86400 seconds, so it runs one hour
-    // past the next local midnight rather than stopping at it. 2026-03-29 is
-    // when Europe/London goes to BST.
-    let dst = date_bounds_utc("2026-03-29", Some("Europe/London")).unwrap();
-    assert_eq!(
-        dst.end_utc - dst.start_utc,
-        86_400,
-        "the day is a fixed 24h, not the next local midnight"
-    );
+#[test]
+fn a_dst_day_is_23_or_25_hours() {
+    // London's clocks change at 01:00 UTC on both days.
+    let spring = date_bounds_utc("2026-03-29", Some("Europe/London")).unwrap();
+    assert_eq!(spring.start_utc, 1_774_742_400, "00:00 GMT");
+    assert_eq!(spring.end_utc - spring.start_utc, 23 * 3600);
+
+    let autumn = date_bounds_utc("2026-10-25", Some("Europe/London")).unwrap();
+    assert_eq!(autumn.start_utc, 1_792_882_800, "00:00 BST is 23:00 UTC");
+    assert_eq!(autumn.end_utc - autumn.start_utc, 25 * 3600);
+}
+
+#[test]
+fn a_half_hour_zone_keeps_its_minutes() {
+    let utc_midnight = 1_768_435_200; // the date's 00:00 UTC
+    let kolkata = date_bounds_utc("2026-01-15", Some("Asia/Kolkata")).unwrap();
+    assert_eq!(utc_midnight - kolkata.start_utc, 5 * 3600 + 1800, "+05:30");
+    let st_johns = date_bounds_utc("2026-01-15", Some("America/St_Johns")).unwrap();
+    assert_eq!(st_johns.start_utc - utc_midnight, 3 * 3600 + 1800, "-03:30");
+}
+
+#[test]
+fn a_midnight_that_never_happens_starts_the_day_at_the_jump() {
+    // America/Santiago springs forward at local midnight: this date has no
+    // 00:00, its first instant is 01:00 -03 (04:00 UTC).
+    let b = date_bounds_utc("2026-09-06", Some("America/Santiago")).unwrap();
+    assert_eq!(b.start_utc, 1_788_667_200);
+    assert_eq!(b.end_utc - b.start_utc, 23 * 3600);
+}
+
+#[test]
+fn a_bad_date_or_zone_is_an_error() {
+    assert!(date_bounds_utc("2026-02-30", Some("UTC")).is_err());
+    assert!(date_bounds_utc("2026-01-15", Some("Mars/Olympus")).is_err());
 }

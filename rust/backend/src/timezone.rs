@@ -24,7 +24,7 @@
 //! made.
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{Datelike, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 
 /// Parse Fitbit's wall-clock form: `YYYY-MM-DD HH:MM:SS`, or the same with `T`.
@@ -108,40 +108,26 @@ pub struct DayBounds {
     pub end_utc: i64,
 }
 
-/// The UTC bounds of a civil date in a zone.
+/// The UTC bounds of a civil date in a zone: its local midnight to the next.
 ///
 /// The calendar arithmetic could be Lean's — `Verified.Civil` has it — but the
 /// ZONE cannot: that file's own header says "nothing here needs a `Float`, a
 /// timezone database, or a clock", and a tz database is data about what
-/// governments did, not a rule a proof constrains. Same split as the Fitbit tz
-/// decision already uses.
+/// governments did, not a rule a proof constrains.
 ///
-/// # ⚠ Two known defects, kept until a deliberate re-bless
-///
-/// Unlike [`wall_clock_to_unix`] above, which asks `chrono-tz` directly, this
-/// reads the offset the way the original bounds did:
-///
-///   * **The day is always 86400 seconds.** `end_utc` is `start_utc + 86400`,
-///     not the next local midnight, so a spring-forward day runs an hour past
-///     it and an autumn day stops an hour short.
-///   * **The offset is read from the HOUR FIELD ALONE**, so a half-hour zone
-///     truncates: Asia/Kolkata (+05:30) is applied as +05:00 and
-///     America/St_Johns (−03:30) as −04:00.
-///
-/// Both are wrong. The golden corpus is the oracle for the pipeline this feeds,
-/// and every corpus day is Europe/London, where the offset is a whole number of
-/// hours, so the truncation cannot be seen; the 86400-second day is wrong on
-/// London's two DST days a year. Fixing either is a deliberate change that
-/// re-blesses the corpus, not a tidy-up.
+/// A DST day is 23 or 25 hours long, and a half-hour zone keeps its minutes.
+/// An absent or empty zone is UTC, the loader's own fallback.
 pub fn date_bounds_utc(date: &str, tz: Option<&str>) -> Result<DayBounds> {
     let day = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .with_context(|| format!("{date} is not a YYYY-MM-DD date"))?;
-    let midnight: DateTime<Utc> =
-        Utc.from_utc_datetime(&day.and_hms_opt(0, 0, 0).expect("midnight is a valid time"));
-    let start_utc = midnight.timestamp();
+    let next = day
+        .succ_opt()
+        .with_context(|| format!("{date} has no next day"))?;
 
     let Some(tz) = tz.filter(|t| !t.is_empty()) else {
-        // No zone: the boundaries are UTC midnight, the loader's own fallback.
+        let start_utc = Utc
+            .from_utc_datetime(&day.and_time(NaiveTime::MIN))
+            .timestamp();
         return Ok(DayBounds {
             start_utc,
             end_utc: start_utc + 86_400,
@@ -151,30 +137,27 @@ pub fn date_bounds_utc(date: &str, tz: Option<&str>) -> Result<DayBounds> {
     let zone: Tz = tz
         .parse()
         .with_context(|| format!("{tz} is not a known timezone"))?;
-    let local = midnight.with_timezone(&zone);
-
-    // ⚠ `hour()` and `day()` only: this is the truncation described above.
-    // Replacing it with `local.offset()` changes the answer for zones the corpus
-    // cannot see, which is a re-blessing rather than a refactor.
-    let local_hour = i64::from(local.hour());
-    let local_day = i64::from(local.day());
-    let date_day = i64::from(day.day());
-
-    let offset_seconds = if local_day == date_day {
-        local_hour * 3600
-    } else if local_day > date_day || (date_day > 27 && local_day == 1) {
-        // So far east the local clock already rolled over. The `> 27` arm is
-        // how a month boundary is told from a genuinely smaller day number.
-        (local_hour + 24) * 3600
-    } else {
-        (local_hour - 24) * 3600
-    };
-
-    let start_utc = start_utc - offset_seconds;
     Ok(DayBounds {
-        start_utc,
-        end_utc: start_utc + 86_400,
+        start_utc: first_instant_of(day, zone)?,
+        end_utc: first_instant_of(next, zone)?,
     })
+}
+
+/// The first instant whose local date in `zone` is `day`.
+///
+/// Usually local midnight. Where midnight falls in a spring-forward gap
+/// (America/Santiago jumps 00:00 → 01:00) the day starts at the jump, so this
+/// steps forward a minute at a time to the first wall clock that exists; no
+/// zone's gap is longer than a few hours.
+fn first_instant_of(day: chrono::NaiveDate, zone: Tz) -> Result<i64> {
+    let midnight = day.and_time(NaiveTime::MIN);
+    (0..24 * 60)
+        .find_map(|m| {
+            zone.from_local_datetime(&(midnight + chrono::TimeDelta::minutes(m)))
+                .earliest()
+        })
+        .map(|dt| dt.timestamp())
+        .with_context(|| format!("{day} has no wall clock in {zone}"))
 }
 
 /// The local hour of an instant in a zone, `0..=23`.
