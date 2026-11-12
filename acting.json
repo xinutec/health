@@ -1,8 +1,8 @@
 {
   "ceilings": {
-    "acts": 2,
+    "acts": 1,
     "bootstrap": 0,
-    "by_design": 0,
+    "by_design": 1,
     "observer_checks": 0,
     "observes": 1
   },
@@ -148,9 +148,9 @@
       "why": ""
     },
     {
-      "class": "Acts",
+      "class": "ByDesign",
       "path": "scripts/deploy.sh",
-      "why": "pushes and rolls health on isis by hand: a deploy-plan row's target (item 15)"
+      "why": "health's release pipeline: full gate, commit, push, CI, memory smoke; the roll is the deploy plan's"
     },
     {
       "class": "OutOfScope",

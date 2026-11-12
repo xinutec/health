@@ -38,10 +38,9 @@
 # have). Every CronJob in the health namespace pulls `:latest` per
 # invocation, so a green CI run puts new classification code into
 # production the next time a cron fires, with no replay gate in front of
-# it. Step 6 restarts ONE Deployment — health-auth — which is the only
-# workload that does not re-pull on its own, and therefore the only thing
-# these gates actually gate. Measured and written down 2026-08-14 (#813),
-# where the two ways to end that asymmetry are set out.
+# it. Step 6 restarts the Deployments (health-auth), the only workloads
+# that do not re-pull on their own, and therefore the only thing these
+# gates actually gate.
 #
 # Usage:
 #   scripts/deploy.sh -m "commit message"
@@ -293,9 +292,12 @@ if [[ $ci_status -ne 0 ]]; then
 fi
 
 # --- rollout -------------------------------------------------------------
+# The deploy plan rolls the Deployments that do not re-pull on their own and
+# then requires /version to answer the pushed commit: a rollout that completes
+# proves a pod came up, not which image it came up on.
 step "[6/7] rollout on isis"
-ssh root@isis.xinutec.org \
-	'kubectl -n health rollout restart deploy/health-auth && kubectl -n health rollout status deploy/health-auth --timeout=180s'
+# dev-lint: allow-pii the kubes checkout's path names its repository, not a person's data
+"$HOME/Code/pippijn/code/kubes/deploy.sh" health
 
 # --- memory smoke -----------------------------------------------------------
 # ⚠ AFTER the rollout, as a loud red rather than a block: the policy is roll
