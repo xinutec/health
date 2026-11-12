@@ -1,17 +1,12 @@
 {
   "ceilings": {
-    "acts": 3,
+    "acts": 2,
     "bootstrap": 0,
     "by_design": 0,
     "observer_checks": 0,
     "observes": 1
   },
   "subjects": [
-    {
-      "class": "Acts",
-      "path": "android/deploy.sh",
-      "why": "builds the APK and installs it on a phone over adb: the phone-shells plan's target (automation-model item 14)"
-    },
     {
       "class": "OutOfScope",
       "path": "frontend/gen-icons.sh",

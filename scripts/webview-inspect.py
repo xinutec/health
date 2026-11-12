@@ -39,7 +39,7 @@ DEFAULT_PACKAGE = "org.xinutec.health"
 DEFAULT_MATCH = "health.xinutec.org"
 DEFAULT_MODEL = "Pixel 9"
 # Endpoints to probe when auto-picking: persistent tcpip :5555 on the VPN IP
-# (stable) then the LAN DHCP reservation. Mirrors android/deploy.sh.
+# (stable) then the LAN DHCP reservation.
 CANDIDATE_ENDPOINTS = ["10.100.0.12:5555", "192.168.1.133:5555"]
 
 
