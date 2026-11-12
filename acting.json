@@ -1,0 +1,221 @@
+{
+  "ceilings": {
+    "acts": 3,
+    "bootstrap": 0,
+    "by_design": 0,
+    "observer_checks": 0,
+    "observes": 1
+  },
+  "subjects": [
+    {
+      "class": "Acts",
+      "path": "android/deploy.sh",
+      "why": "builds the APK and installs it on a phone over adb: the phone-shells plan's target (automation-model item 14)"
+    },
+    {
+      "class": "OutOfScope",
+      "path": "frontend/gen-icons.sh",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/board-reach-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/day-centre-fit.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/decode-trace.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/hr-recovery-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/naming-coordinate.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/pair-outlier-runs.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/place-term-fit.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/reacquire-fit.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/ride-time-fit.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/round-trip-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/split-waits.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/station-reach-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/stay-distance-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/stay-edge-fit.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/stay-footprint-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/stay-return-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/venue-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/venue-fit-outside.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/venue-fit.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/walk-ends-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "lean/experiments/walk-spread-fit.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/_devshell.sh",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/cdp-inspect.py",
+      "why": ""
+    },
+    {
+      "class": "Observes",
+      "path": "scripts/check-decoder-record.sh",
+      "why": "reads production's decoder secret and compares it with the tree's"
+    },
+    {
+      "class": "Acts",
+      "path": "scripts/check-serving-conditions.sh",
+      "why": "starts the candidate image as a pod under production's conditions and deletes it after"
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/ci-toolchain-check.sh",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/commit-table.sh",
+      "why": ""
+    },
+    {
+      "class": "Acts",
+      "path": "scripts/deploy.sh",
+      "why": "pushes and rolls health on isis by hand: a deploy-plan row's target (item 15)"
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/lean-check.sh",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/place-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/probe-cosq-monotonicity.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/prod-db.sh",
+      "why": "opens a tunnel to production's database for one command; changes nothing itself"
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/render-episodes.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/replay-corpus-states.sh",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/rules-live-in-lean.sh",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/setup-hooks.sh",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/smoke-summary.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/venue-prior-drift.sh",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/venue-rank-census.py",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/webview-inspect.py",
+      "why": "inspects the app's WebView over adb; changes nothing"
+    }
+  ]
+}
