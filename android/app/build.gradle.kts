@@ -16,7 +16,10 @@ android {
         // so the Angular dashboard renders as it does in Chrome.
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        // The plan that installs this (`plan-run android-<phone>`) passes the
+        // number it holds the phone to: commits touching this tree and the shell's.
+        // A hand build is 1, which that plan reads as stale.
+        versionCode = providers.gradleProperty("versionCode").map(String::toInt).getOrElse(1)
         versionName = "0.1"
     }
 
