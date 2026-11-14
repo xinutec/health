@@ -1,9 +1,6 @@
-//! The two sign-in guards.
-//!
-//! Both are small, both are security boundaries, and both fail in ways nobody
-//! would notice from the outside: an open redirect looks like a working login,
-//! and a pending-login check that is too strict looks like an account that
-//! simply cannot sign in.
+//! The two sign-in guards, both failing invisibly: an open redirect looks like
+//! a working login, an over-strict pending-login check like an account that
+//! cannot sign in.
 
 use backend::lean;
 
@@ -56,12 +53,10 @@ fn return_to_keeps_internal_paths() {
     }
 }
 
-/// Nextcloud drops `state` for a browser with no NC session. That callback is
-/// never trusted (RFC 6749 §10.12): with `state` empty nothing ties its code to
-/// this browser, so anyone's code would sign it in. It is retried once, and the
-/// retry finds Nextcloud signed in, so `state` comes back. Refusing it outright
-/// would strand a cookie-less browser, which is what stranded fleetwatch's
-/// WebView.
+/// Nextcloud drops `state` for a browser without an NC session. Such a callback
+/// is never trusted (RFC 6749 §10.12), but retried once, when Nextcloud is
+/// signed in and returns `state`; refusing outright would strand a cookie-less
+/// browser.
 #[test]
 fn a_dropped_state_is_retried_once_never_trusted() {
     use lean::Callback::{Accept, Refuse, Retry};

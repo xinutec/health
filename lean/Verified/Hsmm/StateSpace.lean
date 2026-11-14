@@ -2,13 +2,9 @@ import Verified.Hsmm.Emissions
 /-!
 # HSMM state-space enumeration
 
-The served decode's hidden state at each minute is a `(mode, place, line)` tuple
-with structural constraints. This is the line-only enumeration: a train state
-names a line, never a rail edge.
-
-Pure enumeration + dedup by `stateKey`, no geometry: a structural resolver, not
-a scoring kernel. Ordering and first-occurrence dedup are pinned. UNPROVEN;
-pinned by the `#guard`.
+A minute's hidden state is a `(mode, place, line)` tuple; a train state names
+a line, not a rail edge. Enumeration and first-occurrence dedup by `stateKey`,
+order pinned. UNPROVEN; pinned by the `#guard`.
 -/
 
 namespace Verified.Hsmm.StateSpace

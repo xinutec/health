@@ -2,14 +2,9 @@ import Verified.FloatConst
 /-!
 # Float scoring primitives
 
-The verified trellis (`Score.lean` and below) works over integer fixed-point
-scores. They are produced by computing emission / transition / duration
-log-likelihoods in IEEE `Float` and quantising, and this module holds that
-scoring, so the decoder builds its own tensors from raw observations.
-
-An UNPROVEN `Float` implementation; theorems and a fixed-point representation
-are a separate layer. The `#guard`s below pin the values bit for bit (the
-platform libm decides the primitives to the ULP on these inputs).
+The emission, transition and duration log-likelihoods in IEEE `Float`, before
+quantising into the trellis's integer scores. UNPROVEN; the `#guard`s pin values
+bit for bit (the platform libm decides primitives to the ULP).
 -/
 
 namespace Verified.Hsmm.FloatScore

@@ -1,15 +1,7 @@
 //! Splitting a capped PhoneTrack window loses no second and repeats none.
-//!
-//! PhoneTrack truncates at `maxPoints` and puts nothing in the response to say
-//! so, and a truncated week is shaped exactly like a quiet one. The fetch reacts
-//! to the symptom — a response of exactly the cap — by halving the window and
-//! asking again, so the arithmetic below is what stands between a lost tail and
-//! a correct one.
-//!
-//! Both bounds are inclusive. So the halves must be `[a, mid]` and `[mid + 1, b]`: splitting at
-//! `mid` twice re-fetches the boundary second, and `[mid, b]` with `[a, mid - 1]`
-//! would drop it. Coverage is asserted second by second below rather than
-//! argued.
+//! PhoneTrack truncates at `maxPoints` silently, so a response of exactly the
+//! cap is halved and re-asked. Bounds are inclusive, so the halves are
+//! `[a, mid]` and `[mid + 1, b]`; coverage is asserted second by second.
 
 use backend::nextcloud::phonetrack::split_window;
 

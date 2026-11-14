@@ -1,9 +1,6 @@
-//! `/api/status` parsing: the slot protocol Overpass publishes.
-//!
-//! The bodies here are real. The first is what `overpass-api.de` returned to
-//! isis, pasted unedited apart from the client id. The exhausted shapes are the
-//! documented ones. A hand-invented status page would test the parser against
-//! this file's author rather than against the server.
+//! `/api/status` parsing: Overpass's slot protocol. The first body is a real
+//! `overpass-api.de` reply (client id removed); the exhausted shapes are the
+//! documented ones.
 
 use backend::overpass::{Slots, parse_status};
 
@@ -73,10 +70,8 @@ fn one_slot_is_singular_and_still_free() {
     assert_eq!(s.next_in_s, None, "a free slot is not a wait");
 }
 
-/// A changed status page must not stop the refresh. `None` means "no opinion",
-/// and the caller proceeds — the breaker and the deadline are what protect the
-/// run. Returning a wait here would let an unrelated HTML error page halt a
-/// nightly job.
+/// A changed status page must not stop the refresh: `None` is "no opinion" and
+/// the caller proceeds, protected by the breaker and the deadline.
 #[test]
 fn something_that_is_not_a_status_page_has_no_opinion() {
     assert_eq!(

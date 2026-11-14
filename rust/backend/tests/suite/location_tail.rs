@@ -1,10 +1,6 @@
-//! The live-map rules.
-//!
-//! `/location/tail` filters and caps its buffer inline rather than asking Lean
-//! per poll — a tail is thousands of points and shipping them across the FFI
-//! every ten seconds would cost more than the fetch it saves. This file is
-//! therefore the only thing holding the host's copy against the rule, and the
-//! same goes for the three constants restated in `lean.rs`.
+//! The live-map rules. `/location/tail` filters and caps inline rather than
+//! shipping thousands of points to Lean per poll, so this file holds the host's
+//! copy, and the three constants restated in `lean.rs`, to the rule.
 
 use backend::lean;
 use backend::location_cache::{TailPoint, tail_after};
@@ -71,11 +67,7 @@ fn since_is_exclusive() {
     );
 }
 
-/// The cap keeps the newest points.
-///
-/// Taking the first 2000 instead would answer a live map with the oldest
-/// points in the buffer and never reach the present — which looks like lag
-/// rather than like a bug, so nothing else would catch it.
+/// The cap keeps the newest points; the oldest would look like lag, not a bug.
 #[test]
 fn the_cap_keeps_the_newest() {
     let tss: Vec<i64> = (1..=3000).collect();

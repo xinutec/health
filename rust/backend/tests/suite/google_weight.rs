@@ -1,11 +1,6 @@
-//! The Google Health weight feed and its dedup.
-//!
-//! One `#[test]`, for the reason `lean_ffi.rs` gives: `health_backend_init`
-//! starts a process-global runtime and cargo does not serialise tests within a
-//! binary. The page-parsing half needs no runtime, but splitting it across two
-//! files to gain nothing would just be a second place to look.
-//!
-//! The masses below are plausible-but-invented numbers. No real measurements.
+//! The Google Health weight feed and its dedup. One `#[test]`: `lean::init()`
+//! starts process-global state parallel tests would race on. The masses are
+//! invented.
 
 use backend::google::health::{body_fat_pct, parse_body_fat_page, parse_page};
 use backend::lean::{self, Weigh};
@@ -121,10 +116,8 @@ fn the_weight_feed_and_its_dedup() {
         assert_eq!(lean::dedupe_weigh_ins(&pair).unwrap().kept[0].grams, 222);
     }
 
-    // The guard that matters most. An empty fetch names no boundary, so the
-    // caller deletes nothing. A Google outage, a revoked token and a scope
-    // change all return zero points, and reading that as "replace from the
-    // beginning of time" would empty the weight history.
+    // An empty fetch names no boundary, so nothing is deleted: an outage or a
+    // revoked token returns zero points.
     let nothing = lean::dedupe_weigh_ins(&[]).unwrap();
     assert_eq!(nothing.replace_from, None);
     assert!(nothing.kept.is_empty());

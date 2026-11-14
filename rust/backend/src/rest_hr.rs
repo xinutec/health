@@ -1,11 +1,7 @@
-//! Heart rate awake and at rest, per local day — the host side of
-//! `Verified.RestHr`: read the day's samples, step minutes and sleep stages,
-//! ask Lean, keep the answer.
-//!
-//! A day holds ~38,000 heart-rate samples, so a 30-day window is over a million
-//! rows. A finished day does not change once synced, so its answer is kept for
-//! the life of the process; today and yesterday are always recomputed, because
-//! the watch can still be catching up.
+//! Heart rate awake and at rest, per local day: the host side of
+//! `Verified.RestHr`. A day is ~38,000 samples, so a finished day's answer is
+//! kept for the process's life; today and yesterday are recomputed while the
+//! watch catches up.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};

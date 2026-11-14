@@ -1,15 +1,8 @@
-//! `clipfuture` through the linked Lean host.
-//!
-//! `Verified.Geo.DayState.clipFuture` decides what to drop and what to
-//! truncate. What this covers is the wire around it, which has a failure the
-//! decision cannot have: the mode parses the day mode's own state objects and
-//! re-emits them, so a field `parseDayState` does not read is a field the
-//! clipped day silently loses. The unclipped day keeps it, so the two disagree
-//! about a state that was never clipped at all.
-//!
-//! That is why the encoder is shared (`Day.stateJson`) rather than restated, and
-//! why the first test below round-trips a real day's states rather than a
-//! hand-written object with the fields I happened to think of.
+//! `clipfuture` through the Lean worker. `Verified.Geo.DayState.clipFuture`
+//! decides; the risk here is the wire: the mode re-emits the day's state
+//! objects, so a field `parseDayState` skips is silently lost from clipped days
+//! only. Hence the shared encoder (`Day.stateJson`) and a round trip of a real
+//! day's states.
 
 use std::path::Path;
 

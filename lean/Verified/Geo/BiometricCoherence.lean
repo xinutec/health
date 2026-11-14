@@ -1,12 +1,10 @@
 /-!
 # Biometric coherence
 
-The per-segment "is the user actually sitting here vs moving through" signal
-`B_s ∈ [0,1]` that modulates a focus-place's magnetic pull. A logistic gate over
-step density and HR-elevation: near 1 for clearly-sitting, near 0 for
-clearly-moving. Missing biometrics ⇒ 1 (degrade to "no information"). The only
-transcendental is `exp` in the logistic (≤1 ULP). UNPROVEN; pinned by the
-`#guard`s.
+`B_s ∈ [0,1]`, whether the user is sitting at a place rather than moving
+through, modulating a focus place's magnetic pull: a logistic gate over step
+density and HR elevation. Missing biometrics give 1 (no information). `exp` is
+≤1 ULP. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.BiometricCoherence

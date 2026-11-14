@@ -1,11 +1,9 @@
 /-!
 # Scores: log-probabilities with `-∞`
 
-The trellis adds log-probabilities and takes maxima; `-∞` marks a hard zero
-(impossible transition / emission / duration). It works over integer scores,
-fixed-point nats, rather than floats: integer arithmetic is exact, so the spec,
-the oracle and the decoder agree bit for bit, and every order/algebra lemma is
-provable without a float model.
+Integer fixed-point nats with `-∞` for a hard zero: exact arithmetic, so spec,
+oracle and decoder agree bit for bit and the algebra is provable without a
+float model.
 -/
 
 namespace Verified.Hsmm

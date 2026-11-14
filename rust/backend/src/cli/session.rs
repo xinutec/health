@@ -4,15 +4,10 @@
 use anyhow::{Context, Result};
 use backend::{config::Config, db};
 
-/// Mint a session and print its cookie value, for end-to-end verification.
+/// Mint a real session and print its cookie value, for end-to-end checks.
 ///
-/// This creates real credentials. It exists to check an authenticated
-/// response end to end: a session minted here is as valid as one from a
-/// login.
-///
-/// ⚠ Pair every call with `drop-session`. A session left behind is a working
-/// credential for the named user with the full TTL ahead of it, and nothing
-/// distinguishes it from one the user created by logging in.
+/// ⚠ Pair every call with `drop-session`: a leftover is a working credential
+/// with the full TTL, indistinguishable from a login.
 pub(crate) async fn mint_session(user: &str) -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;
     let secret = cfg

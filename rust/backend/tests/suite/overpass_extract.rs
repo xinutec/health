@@ -1,13 +1,7 @@
-//! The Overpass extraction path, end to end through the Lean FFI.
-//!
-//! The fixture is a genuine Overpass response, sliced from a real
-//! central-London rail tile: two relations and exactly the nodes they
-//! reference. It is not hand-built, and that is the point: a hand-built fixture
-//! can invent a wire format the producer never emits, and tests pass against
-//! the fiction.
-//!
-//! The expectations below are recorded output for this input, not values
-//! chosen to match the code.
+//! The Overpass extraction path, end to end through Lean, on a real Overpass
+//! response sliced from a central-London rail tile (two relations and their
+//! nodes), so the wire format is the producer's. Expectations are recorded
+//! output.
 
 use backend::lean;
 

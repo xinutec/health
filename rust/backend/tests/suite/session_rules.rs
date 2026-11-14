@@ -1,12 +1,6 @@
-//! Session and share-viewer rules through the linked Lean host.
-//!
-//! `Verified.Session`'s `#guard`s settle the rules. These re-ask them across the
-//! wire, because the crate links a prebuilt static library and an op added to
-//! `BackendEntry.lean` is invisible until `BackendEntry:static` is rebuilt.
-//!
-//! The HMAC, the CSPRNG and the constant-time compare are not tested here
-//! because they are not here. They are the host's, and there is nothing to prove
-//! about them beyond that they were asked for.
+//! Session and share-viewer rules through the Lean worker: `Verified.Session`'s
+//! `#guard`s settle them, these check the wire. The HMAC, CSPRNG and
+//! constant-time compare are the host's and tested elsewhere.
 
 use backend::lean;
 

@@ -1,11 +1,6 @@
 //! `JsNumber` must render exactly as `js_number_value` does, for every case the
-//! encoder documents.
-//!
-//! Why a test and not a glance. The two paths are used side by side —
-//! `rows_to_json` goes through `js_number_value`, a typed response struct goes
-//! through `JsNumber` — and a route converted from one to the other must not
-//! move a single byte. A plain `f64` field differs on integral values and on
-//! negative zero, which is invisible until a parity run counts bytes.
+//! encoder documents: routes move between the two, and a plain `f64` differs on
+//! integral values and negative zero.
 
 use backend::row_json::{JsNumber, js_number_value};
 

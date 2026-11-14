@@ -1,15 +1,7 @@
-//! Google Health: OAuth, the weight feed, and the reconciliation it drives.
-//!
-//! # Why weight comes from here and not from Fitbit
-//!
-//! The scale reaches Google, not Fitbit: Hume → Health Connect → Google Health.
-//! The legacy Fitbit weight feed was a forward-filled daily series, and it froze
-//! in Apr 2026 when that path died — leaving a flat line in the `body` table
-//! that looks exactly like a stable weight rather than like missing data.
-//!
-//! This is why the Fitbit sync, while it ran, never wrote body: it would have
-//! overwritten these real measurements nightly with Fitbit's stale
-//! carry-forward, and the result would still have looked like data.
+//! Google Health: OAuth, the feeds, and the weight reconciliation. The scale
+//! reaches Google (Hume → Health Connect → Google Health); the legacy Fitbit
+//! weight series was forward-filled and froze, a flat line that looks like a
+//! stable weight.
 
 pub mod archive;
 pub mod body;

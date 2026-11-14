@@ -1,12 +1,6 @@
-//! Flattening client text into one log field.
-//!
-//! ⚠ This is the security boundary of `/api/telemetry`, not formatting. A label
-//! is verbatim UI text written into a line as `label=…`, so a newline inside it
-//! forges whole log lines — including further `client-event` lines attributed to
-//! someone else. A log the observed thing can write into is not evidence.
-//!
-//! Every expectation is a recorded `oneLine` answer, with the Unicode tables
-//! derived by testing every code point rather than transcribing a chart.
+//! Flattening client text into one log field. ⚠ The security boundary of
+//! `/api/telemetry`: a newline in a label would forge log lines attributed to
+//! someone else. Expectations are recorded `oneLine` answers.
 
 use backend::lean;
 

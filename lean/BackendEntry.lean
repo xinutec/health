@@ -28,15 +28,11 @@ import Verified.Share
 import Verified.VelocityCache
 
 /-!
-# The backend's C ABI entry point
+# The backend's decision dispatch
 
-`rust/backend` links this, so the decisions in `Verified.Session` and its
-siblings are called rather than reimplemented. A `lean_lib`, not a `lean_exe`:
-an archive carrying `_main` silently wins the link in a foreign host.
-
-String in, string out: the narrowest ABI, with no structs to keep in sync
-across languages, and the JSON cost is invisible beside the HTTP and database
-work. One dispatch symbol, so a new decision is a `match` arm.
+`ServeEntry` forwards the backend's ops here (`dispatch`), so the decisions in
+`Verified.Session` and its siblings are called rather than reimplemented. JSON in,
+JSON out, one dispatch: a new decision is a `match` arm.
 -/
 
 namespace BackendEntry

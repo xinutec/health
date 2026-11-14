@@ -1,13 +1,7 @@
-//! A route mirror whose area is mostly stale must fail its run, on both arms.
-//!
-//! This drives the real path. The rule is Lean's, and these go through the
-//! same `lean::mirror_staleness` FFI call the CronJob makes — not a
-//! re-implementation of the arithmetic here, which would test its own copy.
-//!
-//! One `#[test]` function, deliberately, for the reason `lean_ffi.rs` gives:
-//! `health_backend_init` starts a process-global runtime and cargo does not
-//! serialise the tests inside one binary, so several racing on initialisation
-//! flake in a way that reads as a Lean bug.
+//! A route mirror whose area is mostly stale must fail its run, on both arms,
+//! through the same `lean::mirror_staleness` call the CronJob makes. One
+//! `#[test]`: `lean::init()` starts process-global state parallel tests would
+//! race on.
 
 use backend::lean;
 

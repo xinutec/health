@@ -1,13 +1,6 @@
-//! The watch-battery series through the linked Lean host.
-//!
-//! `Verified.Geo.Velocity`'s `#guard`s settle the shaping. These re-ask a few of
-//! them across the wire, because the crate links a prebuilt static library and a
-//! mode added to `ServeEntry.lean` is invisible until `ServeEntry:static` is
-//! rebuilt.
-//!
-//! The SQL half has no test here: it needs `device_battery_log` on a real
-//! database, and the risk it carries is stated in the module rather than
-//! asserted — no `ORDER BY`, and the window applied after the conversion.
+//! The watch-battery series through the Lean worker: `Verified.Geo.Velocity`'s
+//! `#guard`s settle the shaping; these check the wire. The SQL half needs a real
+//! `device_battery_log`.
 
 use backend::lean;
 use serde_json::{Value, json};

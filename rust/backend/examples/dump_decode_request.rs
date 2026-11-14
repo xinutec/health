@@ -1,15 +1,13 @@
-//! Dump the decode request for one frozen decoder day, as the decoder receives it.
-//!
-//! The instrument for a wrong line: add `"chainDebug": true` and feed it to
-//! `verified_cli serve` to see every station pair the chain weighed, per leg,
-//! with its duration and pass terms.
+//! Dump the decode request for one frozen decoder day, as the decoder receives
+//! it. For a wrong line: add `"chainDebug": true` and feed it to
+//! `verified_cli serve` to see every station pair the chain weighed, per leg.
 //!
 //! ```text
 //! cargo run --example dump_decode_request -- <YYYY-MM-DD>-$USER > /tmp/req.json
 //! ```
 //!
-//! An example, not a `bin/backend` verb, for the reason `dump_day_request` gives:
-//! the frozen days are a test artifact. Exit 2 when the corpus is absent.
+//! An example, not a `backend` verb, like `dump_day_request`. Exit 2 when the
+//! corpus is absent.
 
 use anyhow::Result;
 

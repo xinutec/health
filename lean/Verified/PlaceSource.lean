@@ -1,11 +1,10 @@
 /-!
 # Where a stay's name came from
 
-A served stay's name is a claim about where he was. The record keeps the claim
+A served stay's name claims where the user was. The record keeps the claim
 whole: the name, the rule that chose it, and the coordinate it was asked for.
-A later pass that renames the stay leaves the record behind, and a name that no
-longer matches its record has no source, so neither a confidence nor a position
-can outlive the name it was measured for.
+A later rename leaves no source, so neither a confidence nor a position outlives
+the name it was measured for.
 -/
 
 namespace Verified

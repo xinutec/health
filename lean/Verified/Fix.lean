@@ -1,11 +1,9 @@
 /-!
 # One GPS fix, once
 
-One fix type for every pass module, rather than a record per module with the
-same three fields (some with a speed); each module's `Fix` is an `abbrev` of
-these (named `GeoFix`, not `Fix`, so a bare `Fix` inside a `Verified.*`
-namespace still means the module's own), so its name, constructor and field
-access read as before.
+One fix type for every pass module; each module's `Fix` is an `abbrev` of
+`GeoFix` (not `Fix`, so a bare `Fix` in a `Verified.*` namespace still means
+the module's own).
 -/
 
 namespace Verified
