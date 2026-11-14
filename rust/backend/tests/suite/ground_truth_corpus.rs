@@ -1,36 +1,16 @@
-//! The ground-truth narratives, parsed by Lean, against blessed totals.
+//! The ground-truth narratives, parsed by `Verified.Eval.GroundTruth`, against
+//! blessed totals: the corpus's only truth not derived from the pipeline.
 //!
-//! `tests/golden/ground-truth/*.md` is the corpus's only truth signal that is
-//! not self-referential: every other check compares the pipeline against itself
-//! or its blessed output. The parser is `Verified.Eval.GroundTruth`.
+//! The oracle is the row, enforceable, unparseable (rows), zone, journey and
+//! leg totals below, not a file: the narratives are gitignored real places in
+//! public repos. `README.md` is skipped by name, so a narrative that stops
+//! producing rows fails.
 //!
-//! # The oracle is a handful of numbers, not a file
+//! A tripwire with no second implementation: change a total only with the
+//! narrative edit that moved it, in the same commit, saying which rows moved.
 //!
-//! Row, enforceable, unparseable, zone, journey and leg totals are asserted
-//! below. They are not a fixture file because the narratives are gitignored
-//! (`tests/golden/*`): they name clinics, hotels and homes, and these repos are
-//! public. The directory's `README.md` has no `## Audit of` section and is
-//! filtered by name, so a real narrative that stops producing rows fails here
-//! rather than being excluded.
-//!
-//! Unparseable is a count of rows, not of distinct shapes.
-//!
-//! The numbers are a tripwire, not a cross-check: there is no second
-//! implementation to re-derive them from. Edit a narrative and they move, which
-//! is the point. Change a constant only with the narrative edit that caused it,
-//! in the same commit, saying which rows moved and why; a constant nudged to
-//! turn a red gate green destroys the only signal this file has.
-//!
-//! # Why the reply carries civil time
-//!
-//! Resolving a wall clock in a named zone needs the tz database, which is data.
-//! Lean stops at the anchored `(day, hh, mm)` and `timezone.rs` resolves it, so
-//! this test checks the anchoring, the part that is logic.
-//!
-//! # Local-only
-//!
-//! Announces a skip rather than passing quietly when the corpus is absent, and
-//! prints counts only, never a place name.
+//! Lean anchors civil `(day, hh, mm)`; `timezone.rs` resolves it.
+//! Local-only: announces a skip when absent; prints counts, never places.
 
 use std::path::Path;
 
@@ -41,12 +21,9 @@ const NARRATIVES: &str = concat!(
     "/../../tests/golden/ground-truth"
 );
 
-/// Narratives outside the blessed totals, named rather than counted.
-///
-/// The totals below were blessed once over a fixed set of files and stay exact
-/// over them; a narrative written since is listed here, so adding one is a
-/// deliberate, named act that cannot dilute a blessed number. `head_corpus`
-/// makes the same split for a day with no `tsArm`.
+/// Narratives outside the blessed totals, named rather than counted, so adding
+/// one cannot dilute a blessed number. `head_corpus` splits days without a
+/// `tsArm` the same way.
 const POST_TS: &[&str] = &[
     // The coverage cliff, and two confirmed venue misnamings on ground that
     // was blank until the geocode fetch ran.
@@ -122,11 +99,8 @@ const TS_UNPARSEABLE: usize = 4;
 /// Narratives whose `Times:` is not London: 04-29 (Amsterdam), 05-10
 /// (Brussels), 06-24 (UTC), and 10-02 to 10-07 (Madrid).
 const TS_DECLARED_TZ: usize = 9;
-/// `groundTruthJourneys` over the same corpus, same source, same day. A stay
-/// the day boards a ride from is its wait, so the waits before rides belong to
-/// their trips; the platform waits on 06-15, 06-17 and 06-18 are rows of their
-/// own, each ride row starting at its boarding; 07-16's hospital visit ends
-/// where its steps begin and the hop after it is a journey of its own.
+/// `groundTruthJourneys` over the same corpus and source. A stay the day boards
+/// a ride from is that trip's wait.
 const TS_JOURNEYS: usize = 91;
 const TS_LEGS: usize = 248;
 /// The histogram, not just the total. The leg total could be reached with the

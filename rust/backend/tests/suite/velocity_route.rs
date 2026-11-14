@@ -1,14 +1,9 @@
-//! `/velocity`'s gate: who reaches it, and what it refuses before computing.
+//! `/velocity`'s gate: what the route decides before any work. No database, so
+//! computed days are `corpus/day.rs` and `backend day-mirror`. Covered here:
 //!
-//! No database, so this cannot test a computed day — that is `corpus/day.rs`
-//! offline and `backend day-mirror` against production. What it covers is
-//! everything the route decides before any work happens, which is where a
-//! mistake is both cheap to make and invisible:
-//!
-//!   * an unauthenticated request never reaches the handler at all;
-//!   * a share recipient asking for a date outside their window is refused,
-//!     and refused BEFORE a day is computed for them;
-//!   * a malformed date or an unknown zone is a 400, not a plausible wrong day.
+//!   * an unauthenticated request never reaches the handler;
+//!   * a share recipient's out-of-window date is refused before computing;
+//!   * a malformed date or unknown zone is a 400, not a plausible wrong day.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -30,10 +25,8 @@ fn state() -> AppState {
                 .port(1)
                 .database("nowhere"),
         );
-    // A signing key is required even for tests that never sign anything. Its
-    // absence is its own refusal — `require_session` answers 500 rather than
-    // "not logged in" — so a state without one would make every gate test
-    // report that rule instead of the one it names.
+    // A signing key even for tests that sign nothing: without one
+    // `require_session` answers 500, masking the rule each test names.
     let mut cfg = Config::for_test();
     cfg.session_secret = Some("a-secret-at-least-16-chars".into());
     AppState::new(pool, cfg, reqwest::Client::new())
@@ -75,10 +68,7 @@ async fn get(app: axum::Router, uri: &str) -> (StatusCode, serde_json::Value) {
     let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
         .await
         .unwrap();
-    // Fails loudly rather than defaulting to null. A response body that did
-    // not parse is a broken handler, and reading it as "no fields" would make
-    // every field assertion below fail for the wrong reason — or pass, when the
-    // assertion happens to be about something absent.
+    // An unparseable body is a broken handler, not "no fields".
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_else(|e| {
         panic!(
             "the response body is not JSON ({e}): {}",
@@ -174,31 +164,10 @@ async fn a_malformed_date_or_an_unknown_zone_is_refused_rather_than_guessed() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// The `/api` group's layer stack, with a POST route added.
-///
-/// This exists because an ablation came back clean. Reversing the two layers
-/// in `routes::router` changed no test, and that was honest: the group currently
-/// holds one GET route, and for a GET the order genuinely does not matter — an
-/// anonymous request is refused by `require_session` either way.
-///
-/// The order matters the moment a POST route lands. `require_may_proceed` reads
-/// the session from the request extensions, and `require_session` is what puts
-/// it there. Run them the wrong way round and a share viewer's POST is judged
-/// before their session exists — it looks like an anonymous request, which is
-/// not a share viewer, so it is allowed, and `require_session` then attaches the
-/// session and runs the route. A read-only link would be able to write.
-///
-/// This mirrors the real stack rather than importing it, so it does not
-/// protect the production order: flipping the two layers in `routes::mod`
-/// fails none of the tests here or in `auth_middleware.rs`, because every one
-/// builds its own copy of the stack. `tests/suite/share_route.rs` asserts the
-/// order through the real router.
-///
-/// What protects the order now is `require_may_proceed` failing closed on a
-/// missing session extension, which turns a misordering into an immediate 500
-/// on every request — caught by `share_route.rs`'s anonymous test, which uses
-/// the real router. What this file still tests is the rule, which is worth
-/// keeping.
+/// The `/api` group's layer stack, with a POST route added, to test the share
+/// viewer's write rule; with only GETs, layer order cannot show. This builds its
+/// own stack, so the production order is asserted by `share_route.rs` through
+/// the real router.
 fn api_stack_with_a_write_route(session: UserSession) -> axum::Router {
     axum::Router::new()
         .route("/api/settings", axum::routing::post(|| async { "ok" }))

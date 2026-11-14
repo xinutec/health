@@ -2,27 +2,19 @@
 //! ridden today.
 //!
 //! A train leg is drawn on rails when its `<board> → <alight>[ · <line>]` label
-//! has a row in `rail_route_cache`. The nightly `refresh-rail-routes` writes
-//! those from three weeks of rides pooled per label; a label first ridden
-//! today has no row until the next night, so the ride draws raw on the day it
-//! is most looked at. The fill closes that gap: a fold that meets such a leg
-//! offers it here ([`offer`]), one background worker snaps it from the day's
-//! own fixes ([`geometry`]), and the next fold of the day draws it on rails.
+//! has a `rail_route_cache` row. The nightly `refresh-rail-routes` pools three
+//! weeks of rides per label; a label first ridden today would draw raw all day.
+//! So a fold offers such a leg ([`offer`]), a background worker snaps it from
+//! the day's fixes ([`geometry`]), and the next fold draws it on rails.
 //!
-//! * The nightly row wins. The fill only inserts where no row exists; the
-//!   nightly upsert then replaces it with the pooled geometry.
-//! * One at a time, through the fold slot. A snap reads up to
-//!   [`RAIL_CORRIDOR_LINE_LIMIT`] ways and holds them like a fold does, so it
-//!   waits for the slot rather than adding its peak to a fold's.
-//! * A refusal is remembered for [`REFUSED_FOR`]. A label the snap cannot
-//!   route stays unroutable on the same fixes; without the wait every fold of
-//!   the day would snap it again.
-//! * No Overpass. The nightly job's relation fallback for long mainline
-//!   rides fetches from Overpass; the serving pod never calls out for this.
+//! * The nightly row wins: the fill only inserts where none exists.
+//! * One snap at a time, through the fold slot: it holds up to
+//!   [`RAIL_CORRIDOR_LINE_LIMIT`] ways, like a fold.
+//! * A refusal is remembered for [`REFUSED_FOR`], or every fold would retry it.
+//! * No Overpass from the serving pod.
 //!
-//! Only the serving process fills. [`start`] is called where the server
-//! starts; everywhere else (the nightly job, gates, the CLI) [`offer`] is
-//! never reached, so a measurement never writes the cache.
+//! Only the serving process fills ([`start`]), so a measurement never writes
+//! the cache.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
@@ -57,10 +49,8 @@ pub fn line_bits(wkt: &str) -> Vec<Value> {
         .collect()
 }
 
-/// `POINT(lon lat)` → `(lat, lon)`.
-///
-/// ⚠ WKT is `lon lat`, the other way round. Backwards, every station lands in
-/// the wrong hemisphere and the snap simply never resolves one.
+/// `POINT(lon lat)` → `(lat, lon)`. ⚠ WKT is `lon lat`; swapped, no station
+/// ever resolves.
 pub fn parse_point_wkt(wkt: &str) -> Option<(f64, f64)> {
     let inner = wkt
         .trim()
@@ -72,16 +62,9 @@ pub fn parse_point_wkt(wkt: &str) -> Option<(f64, f64)> {
     Some((lat, lon))
 }
 
-/// The corridor around a fix cloud, snapped.
-///
-/// Corridor-weighted snap first; if that refuses (thin cloud, ambiguous
-/// corridor) and the key names a line, route between the two stations over only
-/// that line's ways. `None` means leave it raw — never a guessed path.
-///
-/// The line-restricted retry passes the same way list. Lean's
-/// `snapTrainSegmentOnLine` does the filtering itself with `wayOnLine`, so
-/// nothing is asked of this caller beyond the full list — which is why the
-/// fallback needs no second query and no station lookup here.
+/// The corridor around a fix cloud, snapped: corridor-weighted first, then, if
+/// the key names a line, between the stations over that line's ways (Lean's
+/// `snapTrainSegmentOnLine` filters the same list). `None` leaves it raw.
 pub async fn geometry(
     pool: &MySqlPool,
     key: &str,
@@ -103,11 +86,8 @@ pub async fn geometry(
         min_lon = min_lon.min(*lo);
         max_lon = max_lon.max(*lo);
     }
-    // A metres margin converted to degrees, with the longitude term corrected
-    // for latitude — not a fixed degree pad. A constant 0.01 deg would be ~1.1 km
-    // north-south everywhere but only ~700 m east-west in London and ~1.1 km at
-    // the equator, so the corridor would silently narrow the further north the
-    // ride was. This mirrors `corridorBox`.
+    // A metres margin in degrees, longitude corrected for latitude, as
+    // `corridorBox` does: a fixed degree pad narrows the corridor northward.
     let d_lat = RAIL_CORRIDOR_MARGIN_M / 111_320.0;
     let mid_lat = (min_lat + max_lat) / 2.0;
     let d_lon =

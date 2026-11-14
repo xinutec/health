@@ -5,28 +5,20 @@ import Verified.Hsmm.Memo
 /-!
 # Abstract first-order Viterbi optimality
 
-The matcher's trajectory decoder (`qMatchTrajectory` in `Match.lean`) is a
-plain first-order max-sum trellis: one layer per observation, `width t`
-candidates at layer `t`, a node score `emit t j`, and an edge weight
-`step t i j` between consecutive layers (`-∞` when the two candidates are not
-route-connected — which, by `qRouteBetween_route_pure`, is a well-defined pure
-function of the graph, so this trellis is well-defined).
+The matcher's decoder (`qMatchTrajectory` in `Match.lean`) is a first-order
+max-sum trellis: `width t` candidates per layer, node score `emit t j`, edge
+weight `step t i j` (`-∞` when not route-connected, a pure function of the graph
+by `qRouteBetween_route_pure`). The matcher's analogue of the HSMM
+`decode_correct` / `decode_none_iff`, without durations:
 
-This file proves the flagship optimality for such a trellis, on a clean
-spec-style decoder — the matcher analogue of the HSMM `decode_correct` /
-`decode_none_iff`, one dimension simpler (no segment durations):
+* `cell_eq_listMax` — a forward cell is the max score over paths reaching it
+  (addition distributes over the maximum);
+* `bestPath_score` — the backtracked path attains its cell;
+* `decode_argmax` — the decoded path attains the max `pathScore` over every
+  length-`T` chain;
+* `decode_none_iff` — `none` exactly when no chain has a finite score.
 
-* `cell_eq_listMax` — the forward DP cell equals the max declarative score over
-  all in-range paths reaching it (the tropical-semiring heart: addition
-  distributes over the running maximum, `Score.add_listMax` / `add_max`);
-* `bestPath_score` — the backtracked path attains its cell value;
-* `decode_argmax` — the decoded path attains the maximum `pathScore` over every
-  length-`T` candidate chain;
-* `decode_none_iff` — the decoder returns `none` exactly when no chain has a
-  finite score.
-
-Reuses `Verified.Hsmm.Score` (the exact-integer tropical semiring: `+` = `⊗`,
-`Score.max` = `⊕`, `negInf` = `-∞`, `listMax`, and the distributivity kit).
+Reuses `Verified.Hsmm.Score`, the exact-integer tropical semiring.
 -/
 
 namespace Verified.Geo.MatchViterbi
@@ -157,10 +149,8 @@ theorem pathScore_snoc (Tr : Trellis) {t i j : Nat} {p : List Nat}
   simp only [stepG]
   rw [Score.add_assoc]
 
-/-- The cell is the max declarative score over all paths reaching it. The
-tropical-semiring heart of Viterbi correctness: the DP's running maximum-of-
-sums equals the maximum over enumerated chains, because addition distributes
-over the maximum (`Score.listMax_add_map`). -/
+/-- The cell is the max score over all paths reaching it, since addition
+distributes over the maximum (`Score.listMax_add_map`). -/
 theorem cell_eq_listMax (Tr : Trellis) :
     ∀ (t j : Nat), cell Tr t j = listMax ((pathsTo Tr t j).map (pathScore Tr)) := by
   intro t
@@ -387,20 +377,13 @@ theorem decode_none_iff (Tr : Trellis) :
       simp only [allFullPaths, List.mem_flatMap]
       exact ⟨j, hj, hq_mem⟩)]
 
-/-! ## The memoised decoder — production-grade, inherits the flagship
+/-! ## The memoised decoder
 
-`decode` recomputes `cell` exponentially (it is the *specification* decoder).
-This layer computes the forward rows once — `buildRows` produces row `t` as a
-flat `Array Score` indexed by candidate `j`, exactly the imperative trellis's
-`score[t]` row — and proves every cell pointwise equal to `cell`
-(`buildRows_get`). `decodeFast` is `decode` with array lookups in place of
-`cell` calls; `decodeFast_eq` shows the two are *equal as functions of the
-trellis* (via `pickBest_congr`), so `decodeFast_argmax` and
-`decodeFast_none_iff` are inherited outright.
-
-`decodeFast` runs in `O(T·W²)` — the imperative trellis's cost. This is the
-`Memo.lean` playbook, one dimension simpler (no `τ` duration index). It is the
-decoder the production matcher instantiates and runs. -/
+`decode` is the exponential specification. `buildRows` computes each forward
+row once, proved pointwise equal to `cell` (`buildRows_get`); `decodeFast` is
+`decode` with array lookups, equal as a function (`decodeFast_eq`), so it
+inherits `decodeFast_argmax` and `decodeFast_none_iff`. `O(T·W²)`; the matcher
+runs it. -/
 
 open Verified.Hsmm (pickBest_congr getD_of_lt)
 

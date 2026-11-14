@@ -4,28 +4,17 @@ import Verified.Geo.OsmRouteMembers
 # Which rail relations are worth mirroring
 
 `refresh-rail-stops` mirrors OSM rail route relations (subway, train,
-light_rail, tram) with their ordered stop lists into `rail_stops_cache`.
-This module is the cron's judgement: the Overpass query it asks, and which of
-the relations that come back are kept.
+light_rail, tram) with their ordered stops into `rail_stops_cache`. This is the
+cron's judgement: the Overpass query, and which relations are kept.
 
-## Why relations and not proximity
+Only a relation's `stop` members say whether line L stops at S; proximity
+cannot express passing without stopping.
 
-"Does line L stop at station S" is ground truth only a relation's `stop` members
-carry. Proximity cannot express passing without stopping: Dollis Hill sits within
-300 m of the Metropolitan's fast tracks and the Met does not stop there.
+Tram is included: several systems ridden as rail are tagged `tram`, and a
+missing network reads as "no stops", not as an error.
 
-## Tram is in, deliberately
-
-Several systems this pipeline labels as rail are tagged `tram` in OSM. Mirroring
-a mode the user never rides costs a few rows; not mirroring one silently loses a
-whole network, and the loss looks like "that line has no stops" rather than like
-an error.
-
-## Rail keeps a relation on `ref` or `name`; buses require `ref`
-
-Tube route relations frequently carry no `ref` at all — "Jubilee line: Stanmore →
-Stratford" is a name and nothing else. Requiring `ref` here, as the bus arm does,
-would drop most of the London Underground.
+Rail relations are kept on `ref` or `name`; buses require `ref`. Tube
+relations often carry only a name.
 -/
 
 namespace Verified.Geo.OsmRailStops
@@ -57,29 +46,19 @@ structure RailStopRelation where
   stops : Array RouteStop
   deriving Repr, Inhabited
 
-/-- The Overpass QL the mirror runs for one tile.
+/-- The Overpass QL the mirror runs for one tile. `node(r)` returns the full
+stop list of any relation touching the tile, so small tiles find relations
+without clipping them.
 
-`node(r)` returns the full stop list of any relation that merely touches the
-tile, so a line the user rides is mirrored end to end even when only its middle
-crosses the box. That is why tiling small is safe here: a tile is a way of
-finding relations, not of clipping them.
-
-The coordinates arrive already rendered, as strings: Lean has no
-shortest-round-trip float renderer, so the shell formats them. That is safe
-here and would not be elsewhere: Overpass parses this string, nothing compares
-it, and `51.5` against `51.500000` selects the same box. The same shortcut on
-`stops_json`, which is compared row for row, would be a defect. -/
+The coordinates arrive as strings Rust rendered: Overpass parses them and
+nothing compares them, unlike `stops_json`, which must be exact. -/
 def buildRailStopsOverpassQuery (minLat minLon maxLat maxLon : String) : String :=
   let box := s!"{minLat},{minLon},{maxLat},{maxLon}"
   let routeRe := s!"^({String.intercalate "|" RAIL_ROUTE_TYPES})$"
   s!"[out:json][timeout:180];relation[route~\"{routeRe}\"]({box});out body;node(r);out body;"
 
-/-- Keep the relations that can both identify a line and anchor a call pattern.
-
-A relation is dropped when it is not a route, is not a rail route, carries
-neither `ref` nor `name`, or resolves to fewer than two ordered stops. Nothing
-is guessed: a relation that cannot say which line it is has no use downstream,
-and one with a single stop cannot say anything about a sequence. -/
+/-- Keep the relations that can identify a line and anchor a call pattern: a
+rail route with a `ref` or `name` and at least two ordered stops. -/
 def extractRailStopRelations (rels : Array RawRelation) (nodes : Array (Nat × ResolvedNode))
     : Array RailStopRelation := Id.run do
   let mut out : Array RailStopRelation := #[]

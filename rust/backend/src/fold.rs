@@ -1,16 +1,9 @@
 //! Running the day fold: one request, every lookup asked and answered.
 //!
-//! The fold is a pure function of its inputs and of the answers to the
-//! questions it asks mid-run — the OSM tables, the zone at a coordinate, a
-//! geocode. Those arrive here as asks on the worker's pipe and are answered by
-//! whatever [`Answerer`] the caller supplies: the mirror in production, a golden
-//! fixture's recorded trace and row set in a replay, nothing at all when a day
-//! is being measured for what it needs.
-//!
-//! There is no round loop. The converge loop this replaces re-sent a 1.5 MiB
-//! request per round to discover, from a panic on stderr, which keys the fold
-//! had wanted; the fold now says so on the pipe and gets the row back before it
-//! moves on.
+//! The fold is pure in its inputs and the answers to its mid-run asks (OSM
+//! tables, the zone at a coordinate, a geocode), which arrive on the worker's
+//! pipe and are answered by the caller's [`Answerer`]: the mirror in
+//! production, a fixture's trace in a replay, nothing when measuring needs.
 
 // The ledgered shape (standards.md §3): the one `unsafe` in this module is the
 // glibc `malloc_trim` call in `trim_heap`. Conditional, because the block only
@@ -33,15 +26,10 @@ use crate::lean::{self, Answerer, Ask};
 pub const OSM_READS: [&str; 3] = ["walkableRoads", "buildingsNear", "drivableRoads"];
 
 /// Where a fold's host-side time went, by label: `{label: (count, nanos)}`,
-/// process-wide, read and reset per request by the route that reports it.
-///
-/// Exists because `foldDbMs` and `foldLeanMs` left ~1.7 s of a heavy day's
-/// asks unaccounted for (asks 3.5 s, SQL 1.3 s, scoring 0.5 s). A total that two timers do not add up to is a question; this is
-/// where it is answered rather than guessed at. Labels: `db.<query>` for each
-/// statement kind, `cover` for the coverage gate's nested Lean calls,
-/// `answer.<table>` for the whole of one ask's answer, `reply` for serialising
-/// it onto the pipe, `boxes.<bucket>` for how many coverage rows the gate
-/// ships per call (a count, no time).
+/// process-wide, read and reset per request. Labels: `db.<query>`, `cover`
+/// (the coverage gate's nested Lean calls), `answer.<table>`, `reply`
+/// (serialising onto the pipe), and `boxes.<bucket>` (coverage rows shipped,
+/// a count).
 pub struct Ledger(std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>>);
 
 impl Ledger {
@@ -188,15 +176,10 @@ pub fn run_day(cap: &Value, inputs: &Value, answerer: &mut dyn Answerer) -> Resu
     Ok(folded)
 }
 
-/// Give the heap a fold freed back to the kernel, and say what that moved.
-///
-/// With folds already running one at a time, a fresh pod folding two heavy
-/// days kept 191–389 MiB of anonymous memory at idle (glibc's arenas hold what a
-/// fold freed), and the third fold was OOM-killed at 403 MiB backend plus a
-/// 100 MiB Lean worker. `malloc_trim(0)` walks every arena and returns the free
-/// top and every wholly free page; it costs milliseconds against a fold that
-/// costs seconds. Linux/glibc only: no pod runs anywhere else, and macOS's
-/// allocator has no equivalent, so there this logs the same figure twice.
+/// Give the heap a fold freed back to the kernel, and log what that moved:
+/// glibc's arenas otherwise keep it, enough to OOM a pod after a few heavy
+/// folds. `malloc_trim(0)` costs milliseconds. Linux/glibc only; elsewhere the
+/// same figure logs twice.
 pub fn trim_heap() {
     let before = rss_mib();
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -237,12 +220,9 @@ pub fn cgroup_memory() -> Option<(u64, u64)> {
     Some((peak, oom))
 }
 
-/// Resident set size of this process (MiB), or 0 if nothing can say.
-///
-/// `/proc` first, because `ps` read zero in the container: the
-/// serving image is alpine, whose busybox `ps` does not take `-o rss= -p`.
-/// `/proc/self/statm` needs no fork and exists on every Linux; `ps` stays as
-/// the macOS fallback.
+/// Resident set size of this process (MiB), or 0 if nothing can say: from
+/// `/proc/self/statm` (the alpine image's busybox `ps` lacks `-o rss=`), `ps`
+/// on macOS.
 pub fn rss_mib() -> u64 {
     if let Ok(s) = std::fs::read_to_string("/proc/self/statm")
         && let Some(pages) = s.split_whitespace().nth(1)

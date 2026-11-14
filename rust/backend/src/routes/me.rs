@@ -1,23 +1,13 @@
-//! `GET /me` — who this request is, and what it is connected to.
+//! `GET /me` — who this request is, and what it is connected to: the SPA's
+//! first call, deciding which connect prompts to show and how far a share
+//! link's date arrows may move.
 //!
-//! The SPA's first call. It decides which "connect your account" prompts to
-//! show, and — for a share link — how far the date arrows may move.
+//! `fitbitLinked`/`nextcloudLinked` are legacy booleans for older SPA builds:
+//! a revoked credential is `needs_reauth` yet `linked: true`. Narrowing them
+//! would change what those builds render.
 //!
-//! # Two spellings of the same fact, on purpose
-//!
-//! `fitbitLinked`/`nextcloudLinked` are legacy booleans kept for older SPA
-//! builds, and they are not the same question as `connections.*.status`. A
-//! revoked credential is `needs_reauth` and `linked: true`, so an old build
-//! shows "connected" for an account that cannot fetch anything. Narrowing the
-//! boolean to `active` would be more truthful and would change what those
-//! builds render, so it stays.
-//!
-//! # `shareWindow` is how a recipient learns their own bounds
-//!
-//! Present only for a share-token request, `null` for the owner. The SPA
-//! clamps its previous/next-day arrows to it. It is not a security boundary —
-//! every endpoint enforces the window itself — but a host that omitted it would
-//! leave a recipient clicking into days that answer empty with no explanation.
+//! `shareWindow` (share requests only, `null` for the owner) bounds the SPA's
+//! day arrows. Not a security boundary: every endpoint enforces the window.
 
 use axum::extract::State;
 use axum::{Extension, Json};
@@ -28,12 +18,9 @@ use crate::error::AppError;
 use crate::lean;
 use crate::state::AppState;
 
-/// One connection's state, as the SPA's reauth banner reads it.
-///
-/// `status` is `Verified.connectionStatus`'s own vocabulary — `active`,
-/// `needs_reauth`, `not_linked` — and is deliberately a `String` rather than an
-/// enum: the value crosses from Lean, and narrowing it here would move the
-/// decision about what statuses exist out of the module that decides it.
+/// One connection's state, as the SPA's reauth banner reads it. `status` is
+/// `Verified.connectionStatus`'s vocabulary, kept a `String` so Lean alone
+/// decides which statuses exist.
 #[derive(Serialize)]
 pub struct ConnectionState {
     pub status: String,
@@ -54,14 +41,9 @@ pub struct ShareWindow {
     pub location: bool,
 }
 
-/// `GET /me`'s answer.
-///
-/// Field order is wire order: `preserve_order` is on, and serde emits struct
-/// fields in declaration order, so reordering them here is a wire change.
-///
-/// `shareWindow` is `Option` without `skip_serializing_if`: the owner's
-/// answer carries an explicit `null`, which is what the SPA distinguishes from
-/// a share view. Omitting the key would read as "an older server" instead.
+/// `GET /me`'s answer. Field order is wire order (`preserve_order`).
+/// `shareWindow` serialises an explicit `null` for the owner, which the SPA
+/// tells apart from an older server's missing key.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeResponse {
@@ -72,12 +54,8 @@ pub struct MeResponse {
     pub share_window: Option<ShareWindow>,
 }
 
-/// The error body is `AppError`'s, not this module's. It used to build its own
-/// `json!({"error": "internal"})`, which meant the handler had no wire type even
-/// once its success answer had one — the rule asks whether a handler builds JSON
-/// by hand at all, and an error envelope the SPA reads is part of the contract.
-/// `AppError::Other` logs the detail and answers generically, which is what the
-/// hand-rolled arm was doing.
+/// Errors are `AppError`'s envelope, part of the wire contract;
+/// `AppError::Other` logs the detail and answers generically.
 pub async fn handler(
     State(st): State<AppState>,
     Extension(session): Extension<UserSession>,
@@ -95,10 +73,8 @@ async fn run(st: &AppState, session: &UserSession) -> Result<Json<MeResponse>, A
             .fetch_optional(&st.pool)
             .await?;
 
-    // Two levels of absence collapse here, and they mean different things:
-    // no row is `not_linked`, while a row with a NULL status takes the
-    // fall-through and reads as `active`. `Option<Option<String>>` keeps them
-    // apart until this line, which is the only place the distinction is made.
+    // Two absences collapse here: no row is `not_linked`, a row with NULL
+    // status reads as `active`.
     let (nc_status, nc_linked) =
         lean::connection_status(nc.as_ref().map(|s| s.as_deref().unwrap_or("")))?;
 

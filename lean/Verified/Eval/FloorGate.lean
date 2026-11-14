@@ -1,46 +1,25 @@
 /-!
 # The one-way floor
 
-The shared mechanism behind every "this used to work and must not stop working"
-gate in the golden harness. A floor is a committed per-day set of
-narrative-stable window start times (unix seconds) naming what the pipeline
-currently gets right: the ground-truth journeys it reconstructs, the confirmed
-truth rows it still satisfies. A key in the floor and absent from the current run
-is a regression and fails the gate; a key present now and absent from the floor
-is an improvement to re-bless. The floor can only grow.
+Behind every "this used to work and must not stop" gate in the golden harness.
+A floor is a committed per-day set of window start times (unix seconds) the
+pipeline gets right. A floor key missing from the current run fails; a new key
+is an improvement to re-bless. Window starts survive rewording a narrative;
+a moved boundary is handled by `ratchetUpFloor`'s `described`.
 
-The keys are window starts because that is the one property a narrative keeps
-across an edit to its own prose: rewording a row, sharpening a place name or
-correcting a line label all leave the window alone. It is not a perfect identity
-— moving a boundary does move the key — which is what `ratchetUpFloor`'s
-`described` argument is for.
+⚠ A date absent from `current` satisfies nothing: unmeasured and lost
+everything look alike. A caller that cannot replay a day drops it from both
+sides.
 
-## ⚠ A DATE absent from `current` satisfies nothing
-
-That is the trap this module documents rather than solves: to a floor gate, "I
-could not measure this day" and "this day lost everything" are the same silence.
-A caller that cannot replay a day must drop it from both sides, or confirmed
-rows read as lost, one re-bless away from being destroyed for real.
-
-## Why blessing cannot launder a regression
-
-`ratchetUpFloor` takes the UNION, so a key that used to hold and does not now
-stays in the floor and keeps failing. The single exception is a key the
-narrative no longer `described` — a row rewritten or re-audited away, which a
-floor would otherwise fail on forever because nothing can satisfy it again. Every
-such drop is returned in `dropped` and must be said out loud: it is the only
-route from "the gate is red" to "the gate is green" that does not involve fixing
-anything, and an honest re-audit is distinguished from flipping rows until the
-gate passes only by being visible at the moment it happens.
+`ratchetUpFloor` takes the union, so blessing cannot launder a regression. The
+one exception, a key the narrative no longer describes, is returned in
+`dropped` and must be printed: it is the only way to green without a fix.
 -/
 
 namespace Verified.Eval.FloorGate
 
-/-- A per-date set of narrative-stable window start times (unix seconds).
-
-Represented as an association array rather than a map so the wire order is the
-caller's; every result below is either explicitly sorted or follows the input
-order, so no consumer depends on the representation. -/
+/-- A per-date set of window start times (unix seconds), as an association array
+so the wire order is the caller's. -/
 abbrev Floor := Array (String × Array Int)
 
 structure Key where
@@ -84,11 +63,9 @@ structure RatchetResult where
   dropped : Array Key
   deriving Inhabited
 
-/-- Ratchet the floor up to the current run: the union of the committed keys and
-the ones satisfied now, minus any the narrative no longer describes.
-
-A date absent from `described` was not measured this run, and its committed floor
-passes through untouched rather than being emptied by a silence. -/
+/-- Ratchet the floor up: committed keys plus those satisfied now, minus any the
+narrative no longer describes. A date absent from `described` passes through
+untouched. -/
 def ratchetUpFloor (committed current described : Floor) : RatchetResult := Id.run do
   let dates := ((committed.map (·.1) ++ current.map (·.1)).foldl
     (fun acc d => if acc.contains d then acc else acc.push d) #[]).qsort (· < ·)

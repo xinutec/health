@@ -1,10 +1,6 @@
-//! `assemblesegments` building the observation tensor itself.
-//!
-//! The request is `serde_json::Value`, so a wrong shape compiles; only a test
-//! that sends one through Lean can see it.
-//!
-//! The tensor must not cross the wire. Lean builds it from the day's fixes and
-//! two small lookup tables; shipping a row a minute instead is tens of MiB a day.
+//! `assemblesegments` building the observation tensor itself, from the day's
+//! fixes and two small tables: a row-a-minute tensor on the wire is tens of
+//! MiB a day. The request is a `Value`, so only a round trip shows a bad shape.
 
 use crate::with_record;
 use backend::lean;
@@ -136,11 +132,8 @@ fn the_day_tenant_obs_object_is_refused() {
     );
 }
 
-/// `maxD` is the model's, not the caller's. It is the depth of the
-/// `O(T·S·maxD)` trellis, so an absent one takes
-/// `Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION` rather than a number the shell
-/// spelled: the shell has no basis for an opinion about it, and a second copy
-/// in Rust is a second thing to drift. This pins the default.
+/// `maxD` is the model's: absent, it takes
+/// `Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION`, with no copy in Rust.
 #[test]
 fn an_absent_max_d_is_the_models_own_240() {
     setup();
@@ -164,13 +157,9 @@ fn an_absent_max_d_is_the_models_own_240() {
     );
 }
 
-/// A proximity value the decoder cannot read is a refusal, not a NULL. This is
-/// the worst failure available on this path: swallowed, the day decodes, every
-/// segment looks plausible, and the decoder simply never learned that any fix
-/// was on a railway — and it would take a ground-truth audit to notice. It is
-/// also what makes the bit-pattern test in `minute_proximity.rs` an actual test:
-/// with the bits support removed the table parses to nothing, and without this
-/// refusal that removal is invisible.
+/// A proximity value the decoder cannot read is a refusal, not a NULL:
+/// swallowed, the decoder never learns any fix was on a railway, unnoticed.
+/// It also gives `minute_proximity.rs`'s bit-pattern test teeth.
 #[test]
 fn an_unreadable_proximity_distance_is_refused_by_name() {
     setup();
@@ -187,15 +176,9 @@ fn an_unreadable_proximity_distance_is_refused_by_name() {
     );
 }
 
-/// The station chain runs inside `assemblesegments`, because the
-/// `stationchain` mode takes `obs`: wiring it from the shell would put the
-/// 1440-row tensor back on the wire.
-///
-/// And the fields are absent, not null, where the resolver did not reach.
-/// `boardStation`/`alightStation` are set only at the indices the resolver
-/// returned. `segments_json` is compared as text (a `jq` diff parses both sides
-/// and calls them equal), so a null where nothing should be written is a real
-/// divergence that the obvious comparison cannot see.
+/// The station chain runs inside `assemblesegments`, since it reads `obs`. Its
+/// fields are absent, not null, where the resolver did not reach;
+/// `segments_json` is compared as text, which a `jq` diff would not see.
 #[test]
 fn an_unresolved_segment_carries_no_station_keys_at_all() {
     setup();
@@ -219,10 +202,8 @@ fn an_unresolved_segment_carries_no_station_keys_at_all() {
     }
 }
 
-/// `railStopRelations` absent and `[]` are different requests. Absent means the
-/// mirror was never consulted, so every candidate's `servedPen` is 0; empty means
-/// it was consulted and had nothing. Both must decode — this pins that neither is
-/// an error, which is what a shell that cannot reach the mirror depends on.
+/// `railStopRelations` absent (never consulted, `servedPen` 0) and `[]`
+/// (consulted, nothing) both decode, so an unreachable mirror is not an error.
 #[test]
 fn the_two_empty_relation_forms_are_both_accepted() {
     setup();
@@ -331,14 +312,9 @@ fn ride_request(relations: serde_json::Value) -> serde_json::Value {
     }))
 }
 
-/// The positive case, without which the absent-key test above is vacuous. A
-/// day where nothing resolves would pass that test with the whole chain deleted.
-/// This one decodes an actual train leg and asserts the two stations by name, so
-/// removing the wiring fails here first.
-///
-/// It depends on the decoder choosing `train`, which is a model outcome rather
-/// than a wire contract. If a model change breaks this, read it as "the ride no
-/// longer decodes as a train" before reading it as a station-chain fault.
+/// The positive case, without which the absent-key test is vacuous: an actual
+/// train leg with both stations asserted by name. It relies on the decoder
+/// choosing `train`; if a model change breaks it, check that first.
 #[test]
 fn a_decoded_train_leg_carries_its_board_and_alight_stations() {
     setup();
@@ -376,10 +352,8 @@ fn a_decoded_train_leg_carries_its_board_and_alight_stations() {
     }
 }
 
-/// No relations is not no chain. Absent `railStopRelations` means every
-/// candidate's `servedPen` is 0 — the resolver still runs and still names the
-/// stations from the graph. This pins that the mirror being unreachable degrades
-/// the answer rather than removing it.
+/// No relations is not no chain: with `servedPen` 0 the resolver still names
+/// the stations from the graph.
 #[test]
 fn the_chain_still_resolves_without_the_relation_cache() {
     setup();
