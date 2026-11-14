@@ -9,14 +9,9 @@ import Verified.Hsmm.ByStart
 /-!
 # Compile-time parity checks: trellis vs brute-force oracle
 
-Every `#guard` here is evaluated during `lake build` — the build fails if the
-trellis ever disagrees with the exhaustive oracle on these instances. This is
-the executable stand-in for the equivalence theorem until it is proved.
-
-The check is tie-break-independent: rather than comparing paths (two optimal
-paths may differ), it demands (1) the trellis's best score equals the oracle's
-best score, (2) the trellis's returned path actually achieves that score, and
-(3) the path's segmentation is well-formed.
+Evaluated during `lake build`: the trellis must match the exhaustive oracle on
+these instances. Tie-break-independent: the best scores agree, the returned
+path attains it, and its segmentation is well-formed.
 -/
 
 namespace Verified.Hsmm.Tests
@@ -123,10 +118,8 @@ private def checkTrellis (P : Problem) : Bool :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
   decodeFast blocked == viterbi blocked
 
--- The checkpointed decoder is proved equal to decode for every stride K
--- (`decodeCk_eq`); pin a few strides — degenerate (0: `% 0` stores nothing
--- beyond the t=0 entry), dense (1: every column stored), and sparse (7, 64:
--- most queried columns recomputed via `colFrom`).
+-- `decodeCk` at strides 0 (only the t=0 entry), 1 (every column), and 7 and 64
+-- (most columns recomputed via `colFrom`).
 #guard (List.range 6).all fun seed =>
   [0, 1, 7, 64].all fun K => decodeCk (mkP seed 30 4 6) K == viterbi (mkP seed 30 4 6)
 #guard (List.range 4).all fun seed =>
@@ -136,10 +129,8 @@ private def checkTrellis (P : Problem) : Bool :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
   decodeCk blocked 7 == viterbi blocked
 
--- The by-start decoder (`Nat`-scalar arithmetic through `enc`) is proved equal
--- to decode under the envelope hypotheses (`sDecode_eq`); the seeded test
--- family sits comfortably inside the envelope, so it must match exactly.
--- `pdOf` lays a `Problem` out as the flat arrays the server builds, every
+-- The by-start decoder must match exactly: the seeded family sits inside the
+-- envelope. `pdOf` lays a `Problem` out as the server's flat arrays, every
 -- duration cell an override.
 private def pdOf (P : Problem) : PData :=
   let S := P.S

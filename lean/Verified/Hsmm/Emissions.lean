@@ -2,15 +2,13 @@ import Verified.Hsmm.FloatScore
 /-!
 # Emission log-likelihood
 
-`buildEmissionFn`'s per-(state, observation) log-probability, in Lean `Float`.
-This is the base path: hand-tuned `MODE_PRIORS`, no learned emissions, no
-presence-continuity, no per-place HR fit, no reacquire-robust widening. Those
-refinements are follow-on bricks (each needs extra input plumbing); the base
-path is what fires when their flags/inputs are absent.
+The per-(state, observation) base emission log-probability: hand-tuned
+`MODE_PRIORS`, without the refinements other modules add when their inputs are
+present.
 
-UNPROVEN. The accumulation is ordered (mode → gps → speed/plane → hr → cadence
-→ in-bed → place), and skipped factors add `0.0`, so the result is bit-for-bit
-fixed; the `#guard`s below pin it against reference values.
+UNPROVEN. The accumulation order is fixed (mode → gps → speed/plane → hr →
+cadence → in-bed → place) and skipped factors add `0.0`, so results are
+bit-for-bit; the `#guard`s pin them.
 -/
 
 namespace Verified.Hsmm.Emissions
@@ -41,10 +39,9 @@ structure ModePrior where
       Eurostar and TGV days 164 ± 388. -/
   mainlineSpeedMean : Float := MAINLINE_SPEED_MEAN
   mainlineSpeedStd : Float := MAINLINE_SPEED_STD
-  /-- A vehicle stops: the share of a mode's minutes at a standstill and that
-      component's spread, a second component beside the moving Gaussian in
-      the windowed speed term. `0` is no such component (walks, stays). On the
-      narrated days: Tube 10% (0.4 km/h), mainline 21%, driving 28% (2.1). -/
+  /-- A vehicle stops: the standstill share of a mode's minutes and its spread, a
+      second component beside the moving Gaussian. `0` for walks and stays. On
+      the narrated days: Tube 10% (0.4 km/h), mainline 21%, driving 28% (2.1). -/
   stopShare : Float := NO_STOP_SHARE
   stopStd : Float := STOP_STD_DEFAULT
   mainlineStopShare : Float := NO_STOP_SHARE
@@ -112,10 +109,9 @@ structure State where
     treats both as "no line". -/
 def isPlaceholderLine (l : String) : Bool := l == "unknown_rail" || l == "unknown_metro"
 
-/-! Rail that is not a modelled metro line rides in `unknown_rail`, and it is not
-the Tube: measured on the narrated rides, fix speeds on Tube lines run
-42 ± 33 km/h (99th percentile 100), on other rail 74 ± 71 (99th percentile 294,
-a TGV at 250–300). One distribution for both read a TGV minute as `unknown`. -/
+/-! Rail that is not a modelled metro line rides in `unknown_rail`, apart from
+the Tube: narrated Tube fixes run 42 ± 33 km/h (p99 100), other rail 74 ± 71
+(p99 294, a TGV). One distribution read a TGV minute as `unknown`. -/
 
 /-- A metro the day's route graph has no line for — abroad, the Paris Métro —
     rides in `unknown_metro` at the train's own (Tube) speeds, beside the

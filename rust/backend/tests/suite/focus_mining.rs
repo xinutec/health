@@ -1,27 +1,13 @@
-//! `mineCluster` answers, and answers the gates the cron depends on.
-//!
-//! The point is that it answers at all. A `match` arm added to
-//! `BackendEntry` links against a stale archive perfectly happily and then
-//! replies "unknown op" at runtime — the same shape as `nearbyLandmarks`
-//! answering `[]` for every stay while every count read as answered.
-//! A test that only checked the label could pass on a build where the arm does
-//! not exist, if the label it expected were `None`.
+//! `mineCluster` answers, and answers the gates the cron depends on. A new
+//! `BackendEntry` arm can link against a stale archive and reply "unknown op" at
+//! runtime, so a test expecting `None` must not pass without the arm.
 
 use backend::lean::{MineStay, mine_cluster};
 
-/// One landmark in the shape `lean::shape_landmarks` actually returns.
-///
-/// The distance field is `distanceM`, and it is a bit-pattern string. The
-/// Lean `shapeLandmarks` export names it `distanceMBits`; the Rust wrapper
-/// remaps it to `distanceM` because `DayEntry.parsePoi` and the trace-fed fold
-/// read that name. A helper saying `distanceMBits` passes every test here
-/// while describing a shape the producer never emits — production then refuses
-/// every landmark with "a landmark has no distanceMBits", after the cluster
-/// half has already answered correctly.
-///
-/// So: build fixtures from what the producer emits, not from what the
-/// consumer's parser happens to accept. A test that invents its own wire
-/// format tests its own copy of the wiring, and this one did.
+/// One landmark as `lean::shape_landmarks` returns it: `distanceM` as a bit
+/// string (the Rust wrapper renames Lean's `distanceMBits`, which `parsePoi`
+/// and the fold read as `distanceM`). Fixtures follow the producer, not what the
+/// consumer happens to accept.
 fn lm(name: &str, ty: &str, subtype: &str, dist: f64) -> serde_json::Value {
     serde_json::json!({
         "name": name,

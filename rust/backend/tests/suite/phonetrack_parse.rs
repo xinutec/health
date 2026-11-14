@@ -1,14 +1,8 @@
-//! The PhoneTrack wire shapes.
+//! The PhoneTrack wire shapes. The zones these points decide are written once
+//! and never revisited, so the failure that matters is a dropped or misplaced
+//! fix that still looks like a quiet day.
 //!
-//! These points decide which timezone a Fitbit wall clock is stamped with, and
-//! that decision is written to a column and never revisited. So the parser's
-//! failure mode that matters is not "throws on bad input" — it is any path where
-//! a fix is dropped or misplaced and the result still looks like a well-formed
-//! quiet day.
-//!
-//! ⚠ The coordinates below are the null island and a round number in the North
-//! Sea. Nothing here is a place anybody has been: `tests/golden/ground-truth/`
-//! is where real locations live, and it is gitignored for that reason.
+//! ⚠ The coordinates are null island and a round number in the North Sea.
 
 use backend::nextcloud::phonetrack::{parse_points, parse_sessions};
 
@@ -29,10 +23,8 @@ fn a_point_carries_every_optional_field_it_was_given() {
     assert_eq!(ps[0].battery, Some(77.0));
 }
 
-/// Every field past the position is nullable on the wire — an indoor fix has no
-/// speed, a desktop client has no battery. A missing one must not take the whole
-/// point with it, because a dropped fix is a zone the inference then has to
-/// guess at.
+/// Every field past the position is nullable; a missing one must not drop the
+/// point.
 #[test]
 fn absent_optionals_do_not_drop_the_point() {
     let explicit_null = r#"[{"timestamp":1,"lat":0.0,"lon":0.0,
@@ -48,10 +40,8 @@ fn absent_optionals_do_not_drop_the_point() {
     }
 }
 
-/// The parser does not sort, and that is asserted rather than assumed. The
-/// range fetch concatenates several devices and several chunks and sorts the
-/// whole; a sort here would be per device and would still leave the result
-/// unordered, while looking like the ordering was handled.
+/// The parser does not sort: the range fetch sorts the concatenation of all
+/// devices and chunks.
 #[test]
 fn points_come_back_in_wire_order() {
     let body = r#"[

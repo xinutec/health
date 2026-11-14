@@ -1,18 +1,10 @@
 /-!
 # `Array.ofFn` as a loop the compiler specialises
 
-Core's `Array.ofFn` is a private recursion over a closure: every element is
-one `lean_apply_1` of the `Fin n → α` argument. On the HSMM trellis — the
-forward pass over `S · maxD` cells per minute — that call was ~58% of a day's
-decode, and a hand-written loop with the cell body inlined measured ~10%
-faster on the corpus.
-
-`ofFnLoop` is that loop, once, for every `Array.ofFn` in any module that
-imports this one: `ofFnGo` is `@[specialize]`, so a call site with a known
-`f` compiles to a loop with `f`'s body in it, and the `@[csimp]` lemma makes
-the compiler substitute it. Nothing in the logic changes — `Array.ofFn` is
-still what every definition and proof says, and `ofFn_eq_loop` is why the
-substitution is sound.
+Core's `Array.ofFn` calls its closure per element, which dominated the HSMM
+forward pass. `ofFnGo` is `@[specialize]`, so a call site with a known `f`
+compiles to a loop with `f` inlined, and the `@[csimp]` lemma substitutes it.
+Definitions and proofs still say `Array.ofFn`; `ofFn_eq_loop` makes it sound.
 -/
 
 namespace Verified.ArrayLoop
@@ -22,10 +14,8 @@ namespace Verified.ArrayLoop
   if h : i < n then ofFnGo n f (i + 1) (acc.push (f ⟨i, h⟩)) else acc
 termination_by n - i
 
-/-- `Array.ofFn f`, built by `ofFnGo` from an array with the right capacity.
-    `@[inline]` is load-bearing: the specialiser only sees a known `f` if this
-    call opens at the site where the lambda is written; as a plain definition
-    the closure is handed through unchanged and every cell still pays a call. -/
+/-- `Array.ofFn f`, built by `ofFnGo` with the right capacity. `@[inline]` so
+    the specialiser sees the lambda at its call site. -/
 @[inline] def ofFnLoop {α : Type u} {n : Nat} (f : Fin n → α) : Array α :=
   ofFnGo n f 0 (Array.emptyWithCapacity n)
 

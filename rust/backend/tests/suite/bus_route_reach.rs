@@ -1,17 +1,7 @@
-//! `busRouteCache` is filtered to what the day can reach.
-//!
-//! # Why a filter here is sound, and why that has to be tested rather than argued
-//!
-//! `Verified.Geo.Bus.bestPairFor` returns `none` unless `anchorsNear` finds a
-//! stop within `BUS_STOP_ANCHOR_M` (120 m) of both the leg's board fix and its
-//! alight fix, and `Env.busFixes` is `env.points`. So a route with no stop near
-//! any fix cannot label any leg, and shipping it only costs the Lean parse —
-//! which is ~20x the text in heap (61 MiB for a 3.0 MB request, against 1 MiB
-//! for everything the fold then computes).
-//!
-//! The danger is a filter that is too tight, and it would be silent: a
-//! dropped route is not an error downstream, it is a leg that reads as
-//! `driving` with no bus label. So these tests pin the keep side hardest.
+//! `busRouteCache` is filtered to what the day can reach: `Bus.bestPairFor`
+//! needs a stop within `BUS_STOP_ANCHOR_M` (120 m) of both the board and alight
+//! fix, so other routes only cost Lean parse heap. Too tight a filter would
+//! silently turn bus legs into `driving`, so the keep side is pinned hardest.
 
 use backend::fold_payload::reachable_bus_routes;
 use serde_json::{Value, json};
@@ -54,11 +44,8 @@ fn a_route_stopping_at_the_day_keeps_and_one_far_away_goes() {
     assert_eq!(refs(&got), vec!["near"], "the far route is unreachable");
 }
 
-/// The superset property, and the one that matters. The Lean gate is 120 m;
-/// anything inside it must survive, and the grid is deliberately coarser so
-/// that a stop a little beyond 120 m survives too. A filter that trimmed to
-/// exactly 120 m would be correct only if this file and the Lean constant never
-/// drift apart, which is not a bet worth taking.
+/// The superset property: everything inside 120 m survives, and the coarser
+/// grid keeps a little beyond, so this need not track the Lean constant exactly.
 #[test]
 fn every_stop_within_the_matchers_radius_survives() {
     for m in [0.0, 50.0, 119.0, 120.0] {

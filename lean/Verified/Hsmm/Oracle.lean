@@ -3,17 +3,13 @@ import Verified.Hsmm.Spec
 /-!
 # Brute-force oracle
 
-Enumerates *every* well-formed segmentation and takes the best score. This is
-the executable form of the spec — exponential, usable only on tiny instances,
-but obviously correct. The trellis is checked against it: same best score, and
-the trellis's returned path must itself score that maximum (self-consistency),
-which pins the decoder without depending on tie-breaking order.
+Enumerates every well-formed segmentation and takes the best score:
+exponential, tiny instances only, obviously correct. The trellis is checked
+against it (same best score; its path attains it).
 
-`enum_sound` and `enum_complete` together (`enum_iff`) prove the enumeration
-is *exactly* the well-formed segmentations, so `oracleBest` is a genuine,
-attained maximum (`oracleBest_ge`, `oracleBest_attained`). The remaining
-pilot milestone is the trellis-refinement theorem — see the roadmap in
-`docs/proposals/2026-07-verified-core-lean.md`.
+`enum_iff` (`enum_sound`, `enum_complete`): the enumeration is exactly the
+well-formed segmentations, so `oracleBest` is an attained maximum
+(`oracleBest_ge`, `oracleBest_attained`).
 -/
 
 namespace Verified.Hsmm

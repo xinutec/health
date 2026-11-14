@@ -1,11 +1,6 @@
-//! Per-minute rail/road proximity across the FFI.
-//!
-//! The point of this file is the seam, not the arithmetic. `railRoadDistFromWays`,
-//! the median, the ~11 m key and the join all have `#guard`s in
-//! `Verified/Hsmm/RailRoadProximity.lean` and are not re-checked here. What only a
-//! round trip can check is that the two modes agree with each other and with
-//! `assemblesegments` about the encoding and the field order — and that is exactly
-//! the class of defect that shipped a decode-day which could never decode a day.
+//! Per-minute rail/road proximity across the FFI: the seam, not the arithmetic
+//! (pinned in `Verified/Hsmm/RailRoadProximity.lean`). The two modes and
+//! `assemblesegments` must agree on encoding and field order.
 
 use backend::fold_payload::bits;
 use backend::lean::{self, ProximityAnswer};
@@ -50,10 +45,8 @@ fn fixes_outside_the_day_produce_no_minutes() {
     assert!(plan.queries.is_empty());
 }
 
-/// The row is `[ts, road, rail]` and the struct names rail first. Swapping them
-/// compiles, decodes, and puts every fix on a road — which is precisely the
-/// evidence the decoder uses to refuse a tube line. Nothing but an exact
-/// assertion catches it.
+/// The row is `[ts, road, rail]` and the struct names rail first; swapped, every
+/// fix is on a road, the evidence against a tube line.
 #[test]
 fn the_table_is_ts_then_road_then_rail() {
     setup();
@@ -75,10 +68,8 @@ fn the_table_is_ts_then_road_then_rail() {
     );
 }
 
-/// A declined query is counted, not invented. `nearby_ways` answering `None`
-/// means the mirror could not vouch for the coordinate; sending it back as an
-/// empty way list would tell the decoder there is no railway within 300 m, which
-/// is evidence against rail rather than the absence of evidence.
+/// A declined query is counted, not sent as an empty way list, which would
+/// claim no railway within 300 m.
 #[test]
 fn a_declined_query_leaves_no_row_and_is_counted() {
     setup();
@@ -107,10 +98,8 @@ fn an_empty_neighbourhood_is_answered() {
     assert_eq!(unanswered, 0, "asked and answered, just empty");
 }
 
-/// The two modes and the decoder must agree about the encoding.
-/// `proximitytable` writes bit patterns, so a distance is the computed one
-/// rather than the one a JSON decimal survived; `assemblesegments` must read
-/// them. This is the only test that runs the real table into the real decoder.
+/// The two modes and the decoder agree on the bit-pattern encoding: the real
+/// table run into the real decoder.
 #[test]
 fn the_table_feeds_assemblesegments_unread() {
     setup();

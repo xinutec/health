@@ -5,11 +5,9 @@ import Verified.Geo.StaySplit
 /-!
 # Naming one stay from its own fixes
 
-What is left of the OSM enrichment loop:
-the stationary branch for one stay, with the window's centroid and scatter
-computed here, and the record of lookups it reads. `walkDwell` names a stop it
-carved out of a walk with it ({@link Verified.Geo.StayEnrich.enrichStay}), so a
-carved stop is elected and named by the same rules as every other stay.
+The stationary branch of the OSM enrichment for one stay, with the window's
+centroid and scatter computed here. `walkDwell` names a stop carved out of a
+walk with it ({@link Verified.Geo.StayEnrich.enrichStay}), by the same rules.
 -/
 
 namespace Verified.Geo.EnrichFold
@@ -27,10 +25,9 @@ structure Reads where
   geocode : Float → Float → Int → Option Verified.Geo.Enrich.Address
   /-- `osm.nearbyStations(lat, lon, radiusM)`. -/
   stations : Float → Float → Float → Array Verified.Geo.TubeHop.NearbyStation
-  /-- `bestPlace` composed with `placeLabel` and `extractCity`. The stay window
-  is `(startUnix, endUnix, tz)` when there is one and `none` for the two arms
-  that pass none — the resolver takes a different path on each, so they are not
-  the same question asked with a default. -/
+  /-- `bestPlace` composed with `placeLabel` and `extractCity`. The window is
+  `(startUnix, endUnix, tz)`, or `none` for the two arms without one, which the
+  resolver treats differently. -/
   place : Float → Float → Bool → Option (Int × Int × String) → Option ResolvedPlace
   /-- `tzLookup(lat, lon)`, asked at the coordinate being named rather than at
   the segment's own centroid — the snap arm names a stay at the mined place's
@@ -48,14 +45,9 @@ def nameStay (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
   let n := Float.ofNat segPoints.size
   let cLat := (segPoints.foldl (fun acc p => acc + p.lat) 0) / n
   let cLon := (segPoints.foldl (fun acc p => acc + p.lon) 0) / n
-  -- How precisely the day's fixes locate the user, which the naming coordinate
-  -- weighs against the elected place's own σ: the RMS scatter of the fixes
-  -- about their mean, inflated by how little of the stay they observed. A
-  -- six-hour stay indoors with three fixes is three moments GPS got through,
-  -- near a window or a door, not where the user sat; their scatter says
-  -- nothing about the other six hours. Dividing by √(observed fraction) leaves
-  -- a stay with a fix a minute at its scatter and sends a sparse one back to
-  -- the place.
+  -- How precisely the fixes locate the user, weighed against the place's σ: the
+  -- RMS scatter about their mean, divided by √(observed fraction), since a few
+  -- fixes through a window say nothing about the rest of a long indoor stay.
   let scatterM := Float.sqrt ((segPoints.foldl (fun acc p =>
     let d := haversineMeters cLat cLon p.lat p.lon
     acc + d * d) 0) / n)
