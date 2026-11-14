@@ -1,14 +1,7 @@
-//! The raw archive: every Google type we hold no table for, into `google_points`.
-//!
-//! The Fitbit Web API was the only other copy of this history: activity-level
-//! 1.12M points, distance 402k, active-zone-minutes 43k, swim-lengths 32k,
-//! sedentary-period 19k, respiratory-rate-sleep-summary 1.4k, nutrition-log 2,
-//! back to 2023 (2022 for nutrition).
-//!
-//! Lossless, not typed. The time is normalised into columns (both instants to
-//! the millisecond, both offsets, the wall clock) and the rest of the type's
-//! object is kept whole as `payload`. A reader that needs a typed table derives
-//! it; nothing Google serves is dropped on the way in.
+//! The raw archive: every Google type we hold no table for, into
+//! `google_points`, losslessly. Time is normalised into columns (both instants
+//! to the millisecond, both offsets, the wall clock); the rest is kept whole as
+//! `payload`. Google is the only remaining copy of this history.
 
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;
@@ -114,13 +107,10 @@ pub fn parse_point(pt: &serde_json::Value, key: &str) -> Option<PointRow> {
     })
 }
 
-/// Number the points that share a `(start, source)`: 0, 1, … in payload order.
-///
-/// Not serving order. Mid-2024 Google serves up to three activity-level points
-/// for one minute from one watch, often with different levels, with nothing in
-/// them to tell them apart (thousands of such minutes a month). Keeping all of
-/// them needs a key part; ordering by payload makes a re-fetch number them the
-/// same, so `INSERT IGNORE` stays idempotent.
+/// Number the points sharing a `(start, source)`: 0, 1, … in payload order.
+/// Google can serve several indistinguishable activity-level points for one
+/// minute; payload order numbers a re-fetch identically, keeping `INSERT IGNORE`
+/// idempotent.
 #[must_use]
 pub fn number_points(mut rows: Vec<PointRow>) -> Vec<(PointRow, i32)> {
     rows.sort_by(|a, b| {
@@ -148,17 +138,10 @@ const BATCH_ROWS: usize = 1000;
 /// ~30k points, a few pages, and a failed window costs a month.
 const WINDOW_DAYS: i64 = 31;
 
-/// Archive one type into `google_points`.
-///
-/// `archive` is `(from, until)` by UTC date, read a month at a time. Without
-/// it, the routine sync: from a day before the type's newest stored start, or a
-/// week back when none is stored. A type with no filter field is read whole.
-///
-/// Holes only (`INSERT IGNORE` on user, type, start, source, seq — see
-/// `number_points`): a stored point
-/// keeps its row. The returned pair is `(fetched, written)`; a fetched point
-/// that wrote nothing was already stored, or collided on the key — the log
-/// says how many, rather than hiding it.
+/// Archive one type into `google_points`. `archive` is a `(from, until)` UTC
+/// window read monthly; without it, from a day before the newest stored start,
+/// or a week back. A type with no filter field is read whole. Holes only
+/// (`INSERT IGNORE`); returns `(fetched, written)` so collisions show in the log.
 pub async fn archive_points(
     pool: &MySqlPool,
     http: &reqwest::Client,

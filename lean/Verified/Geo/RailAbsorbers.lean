@@ -3,28 +3,19 @@ import Verified.Geo.SegmentMerge
 # The rail-label parser
 
 `parseRailWayName` reads a rail leg's `Board → Alight · Line` label for the
-passes and the feasibility check.
+passes and the feasibility check. It deliberately differs from
+`Verified.Geo.Worldline.parseRailWayName`: it finds the arrow first, then the
+line separator in what follows, without trimming or rejecting empties:
 
-## `parseRailWayName` is deliberately not reused from `Verified.Geo.Worldline`
-
-`Board → Alight · Line` is parsed two ways, and they disagree.
-`Worldline.parseRailWayName` strips the ` · Line` suffix first, then finds the
-arrow, trimming both endpoints and rejecting either when empty. The one here
-does none of that: it finds the arrow first and looks for the line separator
-only in what follows, without trimming and without rejecting empties:
-
-| input         | rail-snap / `Worldline`    | rail-reconcile (here)          |
+| input         | `Worldline`                | here                           |
 |---------------|----------------------------|--------------------------------|
 | `"A · X → B"` | `none` (no arrow left)     | board `"A · X"`, alight `"B"`  |
 | `" → B"`      | `none` (empty board)       | board `""`, alight `"B"`       |
 | `"A → "`      | `none` (empty alight)      | board `"A"`, alight `""`       |
 | `" A → B "`   | trimmed                    | not trimmed                    |
 
-A comparison of `prevRail.alight == nextRail.board` sees the difference, and
-two of the guards below are exactly that discriminator.
-
-Wholly exact: no Float arithmetic in the parser. UNPROVEN; pinned by the
-`#guard`s.
+`prevRail.alight == nextRail.board` sees the difference; two guards pin it.
+Exact. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.RailAbsorbers
@@ -37,10 +28,8 @@ export Verified.Geo.SegmentMerge (effectiveMode)
 def RAIL_STATION_SEP : String := " → "
 def RAIL_LINE_SEP : String := " · "
 
-/-- `board`, `alight`, and the line when a ` · ` suffix is present.
-
-`line` is an `Option`, but note it is `some ""` for a label ending in a bare
-separator (`"A → B · "`), present but empty; the guards pin it. -/
+/-- `board`, `alight`, and the line when a ` · ` suffix is present: `some ""`
+for a bare trailing separator (`"A → B · "`). -/
 structure RailTriple where
   board : String
   alight : String

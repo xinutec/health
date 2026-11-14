@@ -5,28 +5,19 @@ import Verified.Geo.Prefilter
 # Cleaning passes — `dedupeConsecutive`, `removeSpurs`,
 # `despikeUnsupportedApexes`
 
-The small display passes, in the same metric-parametric style as the rest of
-the layer (`Simplify.lean`
-et al.): the pass logic is combinatorial, the primitives are parameters.
+The small display passes, metric-parametric like `Simplify.lean`:
 
-- `dedupe`: drop points `near` the last *kept* point (`< 0.5 m`, *strict*,
-  unlike the trim rebuild's `≤`; the instantiations differ accordingly).
-- `removeSpurs`: drop dead-end out-and-back excursions: an anchor from which
-  the path departs and, within `maxSpan` steps *of the current (already-spliced)
-  array*, returns to within `retM`; the farthest qualifying return wins (the
-  scan runs downward), and the near-duplicate return vertex is dropped with the
-  excursion. The recursion processes the mutated-suffix view a splice loop
-  would.
-- `despike`: drop matched vertices whose apex juts off the chord between their
-  *original* neighbours further than any raw fix in the same time window did,
-  while nearly doubling back. The three tests (apex height, turn angle, raw-fix
-  excess) arrive as the parametric `perp`/`turnOk` primitives plus the raw-fix
-  window fold; each vertex's verdict depends only on its original neighbours,
-  so this is a pure indexed filter.
+- `dedupe`: drop points `near` the last kept one (`< 0.5 m`, strict, unlike the
+  trim rebuild's `≤`).
+- `removeSpurs`: drop dead-end out-and-backs: from an anchor, a return within
+  `retM` within `maxSpan` steps of the already-spliced array, farthest return
+  winning, the near-duplicate return vertex dropped too.
+- `despike`: drop a vertex whose apex juts off the chord of its original
+  neighbours further than any raw fix in its time window, while nearly doubling
+  back. Each verdict depends only on original neighbours: an indexed filter.
 
-Theorems: every pass is drop-only (`Sublist` of its input); `dedupe`
-additionally guarantees no adjacent output pair is `near` (the same
-chain shape as `holdSpeed_chain`), and `despike` keeps both endpoints.
+Every pass is drop-only (`Sublist`); `dedupe` leaves no adjacent `near` pair,
+and `despike` keeps both endpoints.
 -/
 
 namespace Verified.Geo
@@ -178,11 +169,9 @@ theorem spurGo_sublist (pd : π → π → Nat) (retM maxSpan : Nat) :
     · simp only [List.length_drop, List.length_cons]; omega
     · simp only [List.length_cons]; omega
 
-/-- The apex verdict for one interior vertex: `a`/`b` are the *original*
-neighbours, `c` the apex; drop when the apex clears `minApex`, nearly
-doubles back (`turnOk` is the ≥140° test), and juts at least `excess`
-further than any raw fix in the neighbour time window did (no raw fix
-in the window keeps the vertex). -/
+/-- The apex verdict for interior vertex `c` between original neighbours `a`,
+`b`: drop when the apex clears `minApex`, turns ≥140° (`turnOk`), and juts at
+least `excess` beyond every raw fix in the window (no fix keeps it). -/
 def apexDrop (perp : π → π → π → Nat) (turnOk : π → π → π → Bool)
     (ts : π → Int) (minApex excess : Nat) (raw : List π)
     (a c b : π) : Bool :=

@@ -1,34 +1,21 @@
 import Verified.Rail.Dijkstra
 
 /-!
-# Binary-heap invariants — the machinery behind "settled = final"
+# Binary-heap invariants
 
-The classical Dijkstra ordering arguments — `none ⟺ disconnected` for
-the rail search (`LoopInv.lean`, done) and a settled vertex's
-`dist`/`prev` being final (`Verified/Geo/LazyDijkstra.lean`, still
-`#guard`-pinned) — start here: the `Heap` really is a binary
-min-heap.
+The `Heap` is a binary min-heap; the Dijkstra ordering arguments (`LoopInv`,
+`Verified.Geo.Lazy*`) build on it. `IsHeapA` is parent ordering, with the
+parent index `(j-1)/2` written out for `omega`:
 
-`IsHeapA` is the parent-ordering invariant (`(j-1)/2` is the parent index,
-written out everywhere so `omega` can reason about it directly). This file
-proves the invariant is established and maintained by the operations, exactly
-as written:
-
-* `root_le` — the root of a heap-ordered array is a minimum;
-* `siftUp_isHeap` — sift-up repairs the one violation `UpOK` allows (the
-  freshly-appended index), so `push_isHeap` holds;
+* `root_le` — the root is a minimum;
+* `siftUp_isHeap` — sift-up repairs the one `UpOK` violation, so `push_isHeap`;
 * `push_mem` / `push_size` — push bookkeeping;
-* `siftDown_isHeap` — sift-down repairs the one violation `DownOK` allows
-  (the index the popped root's replacement landed on), fuel permitting —
-  `pop` passes the array size, which always suffices;
-* `pop_min` / `pop_top_mem` — the popped entry is a minimum, and was in
-  the heap;
-* `pop_isHeap` / `pop_mem` / `pop_cover` / `pop_size` / `pop_none_iff` —
-  pop bookkeeping: the remainder is a heap, its entries come from the old
-  heap, every old entry is the popped one or still present, and `pop`
-  fails exactly on the empty heap.
-
-Consumers now rebuild the Dijkstra loop invariants on top.
+* `siftDown_isHeap` — sift-down repairs the one `DownOK` violation, with the
+  array size as fuel;
+* `pop_min` / `pop_top_mem` — the popped entry is a minimum and was present;
+* `pop_isHeap` / `pop_mem` / `pop_cover` / `pop_size` / `pop_none_iff` — the
+  remainder is a heap of old entries, every old entry is popped or present,
+  and `pop` fails exactly on the empty heap.
 -/
 
 namespace Verified.Rail

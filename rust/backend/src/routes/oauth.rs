@@ -1,27 +1,11 @@
-//! Signing in: Nextcloud for identity.
+//! Signing in: Nextcloud OAuth for identity only. The access token answers
+//! "who is this" once and is discarded; API access uses an app password from
+//! Login Flow v2 (`routes::nextcloud_connect`), since NC's single-use rotating
+//! refresh tokens raced between pods.
 //!
-//! Nextcloud OAuth here is identity-only. The access token it returns is used
-//! exactly once, to ask "who is this", and then discarded — API access runs on a
-//! long-lived app password obtained separately through Login Flow v2
-//! (`routes::nextcloud_connect`).
-//!
-//! That split is not tidiness. NC's OAuth refresh tokens rotate single-use, and
-//! the auth pod and the sync cron raced for them: every few hours one lost and
-//! flipped the account to `needs_reauth`. Login Flow v2 has no refresh dance.
-//! OAuth survives here only because the SPA needs a session cookie before it can
-//! drive the connect button.
-//!
-//! # ⚠ Nextcloud drops `state`, so the pending login rides in a cookie
-//!
-//! When the browser holds no NC session, `oauth2/authorize` bounces to NC's own
-//! login flow and loses every query parameter on the way — the callback arrives
-//! with `state=` empty. A server that looks the pending login up by `state`
-//! cannot sign in a cookie-less browser at all. That is not theoretical: it is
-//! what stranded the sibling fleetwatch service's Android WebView.
-//!
-//! So the pending login travels in a signed cookie of ours, which binds it to
-//! the browser that started the login — the property `state` was there to prove.
-//! `state` is still sent, and still checked whenever NC returns it.
+//! ⚠ Nextcloud drops `state` when the browser has no NC session, so the pending
+//! login rides in a signed cookie of ours, binding the callback to the browser
+//! that started it. `state` is still sent and checked when returned.
 
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -259,11 +243,9 @@ pub async fn callback(
     }
 }
 
-/// Proof that a callback's `state` equalled the nonce this server stored for
-/// the sign-in. [`finish_nextcloud_login`] takes one by value and only
-/// [`StateMatched::check`] makes one, so no code is redeemed on a path that
-/// skipped the comparison (RFC 6749 §10.12; dev-lint
-/// dl-rust-oauth-exchange-unproven checks the shape).
+/// Proof that a callback's `state` matched the stored nonce: only
+/// [`StateMatched::check`] makes one and [`finish_nextcloud_login`] requires one
+/// (RFC 6749 §10.12; dev-lint dl-rust-oauth-exchange-unproven checks the shape).
 #[derive(Debug, PartialEq, Eq)]
 pub struct StateMatched(());
 

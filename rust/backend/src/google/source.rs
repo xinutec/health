@@ -1,21 +1,9 @@
-//! Which API owns each biometric stream, and why.
+//! Which API owns each biometric stream, and why, as one table: each `why` is
+//! the measurement that moved the stream from the closed Fitbit Web API to
+//! Google Health, and the test pairs the table with `google::sync`'s writers.
 //!
-//! # Why this is a table and not a set of call sites
-//!
-//! The Fitbit Web API is closed; Google Health carries most of the
-//! same data and not all of it. The migration was per stream and staged, and
-//! each stream's `why` is the measurement that moved it — the durable record
-//! of where a column's history changes source.
-//!
-//! Spread across call sites that becomes unanswerable — a reader has to find
-//! every `if` to reconstruct it, and a stream quietly served by neither, or by
-//! both, looks exactly like one served correctly. Here it is one list, and the
-//! test pairs it with the writers `google::sync` has.
-//!
-//! ⚠ A stream must have exactly one owner. Two writers on one table is not
-//! redundancy: the tables are `ON DUPLICATE KEY UPDATE`, so the last run wins
-//! and the value flips with whichever job fired most recently. That reads as
-//! instrument noise and is nearly impossible to trace back to a source conflict.
+//! ⚠ Exactly one owner per stream: the tables upsert, so two writers make the
+//! value flip with whichever job ran last, which reads as instrument noise.
 
 /// Where a stream's rows come from today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,10 +12,8 @@ pub enum Owner {
     Google,
 }
 
-/// One biometric stream and its current owner.
-///
-/// The `why` is not decoration. A reader asking why a column's history
-/// changes shape on a date needs the measurement, not the verdict.
+/// One biometric stream and its current owner; `why` is the measurement
+/// behind the date its history changes source.
 pub struct Stream {
     pub name: &'static str,
     pub owner: Owner,
@@ -154,14 +140,8 @@ pub const STREAMS: &[Stream] = &[
     },
 ];
 
-/// The streams something in `google::sync` actually writes.
-///
-/// A stream in the roster without a writer is served by nobody, silently.
-/// The test pairing this with `STREAMS` is what makes the two inseparable.
-///
-/// Not derived from `STREAMS`. A list generated from the thing it checks
-/// agrees with it by construction and proves nothing; this is written by hand
-/// and the test compares them.
+/// The streams something in `google::sync` writes, by hand rather than derived
+/// from `STREAMS`, so the pairing test can catch a stream nobody serves.
 pub const HAS_WRITER: &[&str] = &[
     "body",
     "daily_activity",

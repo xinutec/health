@@ -3,27 +3,16 @@ import Verified.Hsmm.Spec
 /-!
 # The HSMM Viterbi trellis
 
-The explicit-duration Viterbi (Yu/Rabiner formulation): `trellis[s][τ]` rolling
-over `t`, a per-`t` precomputation of the best close-of-segment score per
-previous state, backpointers stored only at segment starts, and final-segment
-closure at `T-1`. Loop order and strict-`>` argmax comparisons fix the
-tie-breaks on identical integer scores.
+Explicit-duration Viterbi (Yu/Rabiner): `trellis[s][τ]` rolling over `t`, a
+per-`t` best close per previous state, backpointers only at segment starts,
+closure at `T-1`. Loop order and strict `>` fix tie-breaks.
 
-Two deliberate choices:
-  - degenerate input (every path scores `-∞`) returns `none` rather than a
-    silent all-`states[0]` path;
-  - a missing backpointer during backtrack returns `none` rather than leaving
-    path minutes unfilled (unreachable when the best score is finite, so it is
-    a visible signal instead of silent corruption).
+All-`-∞` input and a missing backpointer return `none`, not a silent default.
 
-The goal theorem is proved for the *specification* decoder (`Decode.lean`:
-`decode_correct`, `decode_none_iff`) and inherited by the memoised forms
-(`Memo.decodeFast`, `Ckpt.decodeCk`) and by `ByStart.sDecode`, what
-`verified_cli` runs. This array `viterbi` is not itself proved and is not
-on the production path: it is the reference loop that `Tests.lean` `#guard`-pins
-the spec decoder against, paths included, so a divergence between the loop and
-the verified spec fails the build. It exists to cross-check, not to decode in
-production.
+The proved decoders are `Decode.lean`'s specification and its memoised forms
+(`Memo.decodeFast`, `Ckpt.decodeCk`, `ByStart.sDecode`, which `verified_cli`
+runs). This loop is unproved and not served: `Tests.lean` pins the spec against
+it, paths included.
 -/
 
 namespace Verified.Hsmm
@@ -60,12 +49,8 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
   let mut backPrev : Array Nat := Array.replicate (T * S) S
   let mut backTau : Array Nat := Array.replicate (T * S) 0
 
-  -- Per state, the largest τ whose `prev` entry is finite (0: none). Every
-  -- entry above it is `−∞` by construction — `cur` starts all `−∞` and a
-  -- minute sets entries up to its own bound only — so the three τ loops run
-  -- to it instead of `maxD`, exactly: a column dies the minute its emission is
-  -- `−∞` (a place far from the fixes), and a live column reaches only as far
-  -- as its longest running segment.
+  -- Per state, the largest τ with a finite `prev` entry (0: none); everything
+  -- above is `−∞`, so the τ loops stop there instead of `maxD`.
   let mut live : Array Nat := Array.replicate S 0
 
   -- t = 0: only τ = 1 is valid.

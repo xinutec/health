@@ -1,18 +1,10 @@
-//! Auth by share token — the read-only path a forwarded link takes.
+//! Auth by share token: a forwarded link's read-only path. A matching
+//! `X-Share-Token` runs the request as the owner with a date window;
+//! `Verified.Session.mayProceed` refuses any non-GET.
 //!
-//! A recipient sends `X-Share-Token`. If it matches a row, the request runs as
-//! the owner with a date window attached, and everything downstream sees an
-//! ordinary session. What stops it being a full login is
-//! `Verified.Session.mayProceed`, which refuses any non-GET.
-//!
-//! # ⚠ Every failure here means no session, never a session with no window
-//!
-//! An absent token, an unknown token, a revoked one, a `days_back` of zero: all
-//! of them leave the request unauthenticated, and the caller's own "is there a
-//! session" gate refuses it. The shape to avoid is a session whose window failed
-//! to resolve — that is an unrestricted viewer wearing a recipient's name, and
-//! it is why [`crate::lean::shareable_date_range`] returning `None` is treated as
-//! "share disabled" rather than "no restriction".
+//! ⚠ Every failure means no session, never a session without a window, which
+//! would be an unrestricted viewer. So `lean::shareable_date_range` returning
+//! `None` means "share disabled".
 
 use anyhow::{Context, Result};
 use sqlx::{MySqlPool, Row};
@@ -51,12 +43,8 @@ pub async fn by_token(pool: &MySqlPool, token: &str) -> Result<Option<ShareRow>>
     }))
 }
 
-/// Note that a link was used. Best-effort by design: a failed bookkeeping write
-/// must not fail the read it accompanies.
-///
-/// Returns the error rather than swallowing it, so the caller decides to
-/// ignore it. A function that swallows its own failure cannot be tested for
-/// having tried.
+/// Note that a link was used. Best effort: the caller ignores the returned
+/// error rather than failing the read.
 pub async fn touch_last_accessed(pool: &MySqlPool, token: &str) -> Result<()> {
     sqlx::query("UPDATE share_tokens SET last_accessed_at = ? WHERE token = ?")
         .bind(
@@ -72,14 +60,8 @@ pub async fn touch_last_accessed(pool: &MySqlPool, token: &str) -> Result<()> {
     Ok(())
 }
 
-/// Resolve a share token to a session, or `None`.
-///
-/// `today` is the most recent date the recipient may see, already resolved in
-/// the viewer's zone — the same argument `Verified.VelocityCache` needs and for
-/// the same reason: Lean has no zone database.
-///
-/// The display name is the owner's user id. The frontend prefixes "Shared
-/// with you"; the backend does not pretend the recipient is someone else.
+/// Resolve a share token to a session, or `None`. `today` is resolved in the
+/// viewer's zone. The display name is the owner's user id.
 pub async fn resolve(pool: &MySqlPool, token: &str, today: &str) -> Result<Option<UserSession>> {
     let Some(row) = by_token(pool, token).await? else {
         return Ok(None);

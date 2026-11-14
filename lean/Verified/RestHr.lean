@@ -4,26 +4,20 @@ import Verified.FloatConst
 /-!
 # Heart rate awake and at rest, compared like with like
 
-A raw heart-rate line mixes effort, posture, food, heat and stress. This is the
-first context view: the minutes he is awake and not stepping, read as a day's
-distribution rather than a single number. Never a single reading:
+Raw heart rate mixes effort, posture, food, heat and stress. This reads the
+awake, not-stepping minutes as a day's distribution:
 
-* a sample more than `SPIKE_BPM` off the median of the samples within 30 s of
-  it is dropped (a wrist sensor spikes on movement, strap and cold);
+* a sample more than `SPIKE_BPM` off the median within 30 s is dropped (wrist
+  spikes on movement, strap and cold);
 * a minute's heart rate is the median of its kept samples;
-* a minute is at rest when it has heart rate (the watch is worn), no steps,
-  and is not inside a sleep stage other than wake;
-* runs of at least `MIN_RUN` rest minutes count, minus their first `SETTLE`
-  minutes (still settling after sitting down);
-* what is left is cut into `BLOCK`-minute blocks, each block's median taken;
-  the day is the median of its blocks, with the 25th–75th and 5th–95th
-  percentiles so a noisy day reads noisy rather than high.
+* a rest minute has heart rate, no steps, and no sleep stage but wake;
+* runs of at least `MIN_RUN` count, minus their first `SETTLE` minutes;
+* the rest is cut into `BLOCK`-minute blocks; the day is the median of block
+  medians, with 25–75 and 5–95 percentiles so a noisy day reads noisy.
 
 A day with no sleep record is not measured: its night would read as rest.
-
-The rules and constants are the prototype's (`hr_context.py` in the case file),
-with one input changed: movement is the watch's per-minute steps here, where the
-prototype had to infer stillness from location fixes.
+Rules and constants are the `hr_context.py` prototype's, with stillness from
+the watch's steps instead of location.
 -/
 
 namespace Verified.RestHr
@@ -95,13 +89,10 @@ structure Day where
   restMinutes : Nat
   deriving Repr, BEq
 
-/-- The day's awake-at-rest heart rate, or `none` when the day has no sleep
-record or no settled run long enough to measure.
-
-`samples` are `(unix seconds, bpm)` sorted by time; `stepMinutes` the minute
-indices (unix seconds ÷ 60) with steps; `sleep` the `[start, end)` spans in
-unix seconds of every sleep stage but wake; `dayStart`/`dayEnd` the local day's
-bounds in unix seconds. -/
+/-- The day's awake-at-rest heart rate, or `none` without a sleep record or a
+long enough settled run. `samples` are time-sorted `(unix s, bpm)`;
+`stepMinutes` are minute indices with steps; `sleep` the `[start, end)` spans of
+non-wake stages; `dayStart`/`dayEnd` the local day's bounds. -/
 def restDay (samples : Array (Int × Nat)) (stepMinutes : Array Int)
     (sleep : Array (Int × Int)) (dayStart dayEnd : Int) : Option Day := Id.run do
   if sleep.isEmpty then return none

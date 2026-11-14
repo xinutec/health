@@ -1,19 +1,9 @@
-//! Share management's gate.
+//! Share management's gate, before any query (the pool never answers).
 //!
-//! No database. The pool here can never answer, so nothing below tests what a
-//! share row becomes — that is what `backend rows-check` and the handlers'
-//! own queries do. What is tested is the part that must hold before any query
-//! runs, and which is now real rather than hypothetical: `/share` is the
-//! first write route in this router.
-//!
-//! A share recipient must not be able to rotate, retune or revoke the link they
-//! were given. That is enforced by `require_may_proceed`, which reads the
-//! session out of the request extensions — and `require_session` is what puts
-//! it there. Mounted the wrong way round, a recipient's POST is judged before
-//! their session exists, looks anonymous, is therefore not a share viewer, and
-//! is allowed. `tests/velocity_route.rs` has asserted that invariant against a
-//! stand-in write route since before one existed; this asserts it against the
-//! real thing.
+//! A share recipient must not rotate, retune or revoke their link:
+//! `require_may_proceed` reads the session `require_session` attaches, so the
+//! order matters. `tests/velocity_route.rs` tests the rule on a stand-in; this
+//! tests the real router.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -58,13 +48,9 @@ async fn status(app: axum::Router, method: &str, uri: &str) -> StatusCode {
     app.oneshot(req).await.expect("response").status()
 }
 
-/// The one that actually exercises the real router's layer order.
-///
-/// A 401 here says two things: `/share` is inside the authenticated group at
-/// all, and `require_session` runs first. The second only became testable once
-/// `require_may_proceed` started failing closed — before that, flipping the two
-/// layers in `routes::mod` still produced a 401 here, and measurably failed
-/// zero of the eleven tests covering this area.
+/// The real router's layer order: a 401 means `/share` is authenticated and
+/// `require_session` runs first. Misordered, `require_may_proceed` fails closed
+/// with a 500.
 #[tokio::test]
 async fn anonymous_is_refused_before_the_handler() {
     init();
@@ -80,13 +66,9 @@ async fn anonymous_is_refused_before_the_handler() {
     }
 }
 
-/// A share recipient may not rotate, retune or revoke the link they were given.
-///
-/// This tests the rule, not the wiring: reaching `require_may_proceed`
-/// through the real router needs an authenticated share session, which needs a
-/// database this test does not have. The wiring is covered by
-/// `anonymous_is_refused_before_the_handler` above, and by the fail-closed
-/// refusal that makes a misordering break every request instead of one class.
+/// A share recipient may not rotate, retune or revoke their link. The rule, not
+/// the wiring: an authenticated share session needs a database. The wiring is
+/// the test above.
 #[tokio::test]
 async fn a_share_viewer_may_not_write_to_share() {
     init();

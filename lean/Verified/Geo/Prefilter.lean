@@ -3,32 +3,20 @@ import Verified.Geo.Simplify
 /-!
 # GPS pre-filters — `holdImplausibleSpeed` and `rejectSpikes`
 
-The episode geometry's display pre-filters. Parametric over the point type and
-the per-hop predicates, like the rest of the pass layer:
+The episode geometry's display pre-filters, parametric over point type and
+per-hop predicates:
 
-- `holdSpeed` (`holdImplausibleSpeed`): keep the longest plausible-speed run
-  over all start fixes; `ok last cur` is the "`dt > 0` and implied speed within
-  `capKmh`" test. The earliest longest run wins (strict `>`), so a leading or
-  trailing straggler is excluded rather than anchoring the hold. The bypass for
-  a non-finite `capKmh` (return the input unfiltered) is the caller's branch,
-  outside this function.
-- `rejectSpikes`: drop lone geometric detours; `spike prev cur next` is the
-  "through > 3 × direct and through − direct > 500 m" test against the last
-  *kept* point.
+- `holdSpeed`: keep the longest plausible-speed run over all start fixes (`ok
+  last cur`: `dt > 0` and speed within `capKmh`); the earliest longest wins, so
+  a straggler cannot anchor it. A non-finite `capKmh` bypass is the caller's.
+- `rejectSpikes`: drop lone detours (through > 3 × direct and through − direct
+  > 500 m, against the last kept point).
 
-Theorems:
-- `holdSpeed_chain` — the kinematic honesty invariant: every
-  consecutive pair of the output satisfies `ok`. The whole point of the
-  pass (never draw an impossible sprint) holds by construction, for any
-  instantiation of `ok`.
-- `holdSpeed_sublist` / `rejectSpikes_sublist`: outputs are
-  subsequences of the input — the filters only drop, never invent or
-  reorder fixes.
-- `rejectSpikes_ends`: spike rejection always keeps both endpoints.
+- `holdSpeed_chain`: every consecutive output pair satisfies `ok`, for any `ok`.
+- `holdSpeed_sublist` / `rejectSpikes_sublist`: the filters only drop.
+- `rejectSpikes_ends`: both endpoints are kept.
 
-Not yet stated: `holdSpeed`'s longest/earliest optimality (the output
-is the earliest maximal run) — the honesty and subsequence facts are
-the load-bearing ones.
+`holdSpeed`'s earliest-maximal-run optimality is not stated.
 -/
 
 namespace Verified.Geo

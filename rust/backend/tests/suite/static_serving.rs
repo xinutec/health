@@ -1,25 +1,8 @@
-//! A missing static file is a 404, not the no-build page.
-//!
-//! This exists because the wrong answer is a 200, which is invisible:
-//! `GET /media/nope.woff2` answered 200 text/html, the "no frontend build
-//! is present in this image" page, on every host. A browser handed HTML where
-//! it asked for a font renders broken icons and reports nothing at all. The
-//! failure is silent on both sides: a 200 is not an error to the client, and
-//! not a log line on the server.
-//!
-//! The routing was already right, and the test is aimed under it.
-//! `routes/mod.rs` lists the SPA's routes by hand with a comment saying exactly
-//! why — *"a typo'd .css or .js must still 404, or a missing asset silently
-//! becomes an HTML page"*. That decision stands. What defeated it was
-//! `ServeDir`'s fallback answering 200 to any path it was reached by, so these
-//! assert the served response rather than the route table, which would have
-//! passed throughout the bug.
-//!
-//! No database, deliberately — the harness is `tests/compression.rs`'s: a
-//! lazy pool pointed at a port nothing listens on, so nothing here depends on
-//! data. It also means a build-less test environment, which is why the
-//! assertions below are about asset paths and the root, and not about
-//! `/settings`: see the dropped fifth case at the bottom.
+//! A missing static file is a 404, not the no-build page: a 200 HTML answer to
+//! a font request is an error neither side reports. These assert served
+//! responses, not the route table, since `ServeDir`'s fallback is what answered
+//! 200. No database (`tests/compression.rs`' lazy pool) and no frontend build,
+//! so SPA routes like `/settings` are not asserted here.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -115,10 +98,8 @@ async fn the_page_is_asked_for_again_every_time() {
 
 #[tokio::test]
 async fn the_root_still_explains_itself() {
-    // Not symmetry with the cases above, and not negotiable: a build-less
-    // deployment has to account for itself to whoever opens it, and
-    // `tests/compression.rs` leans on this body as the largest the router
-    // produces without a database.
+    // The root stays 200: a build-less deployment explains itself, and
+    // `tests/compression.rs` uses this body.
     let (status, content_type) = get("/").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -127,11 +108,8 @@ async fn the_root_still_explains_itself() {
     );
 }
 
-// A fifth case was written and dropped: *a declared SPA route is not a 404*.
-// With no frontend build in the test environment, `/settings` legitimately
-// 404s, so the assertion would have described the environment rather than the
-// code — and it would have failed on a correct router. The hand-listed SPA
-// routes in `routes/mod.rs` are covered by their own presence, not by this.
+// No "a declared SPA route is not a 404" case: without a frontend build
+// `/settings` correctly 404s here.
 
 #[test]
 fn only_a_content_hashed_file_is_cached_for_good() {

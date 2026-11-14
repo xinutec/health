@@ -14,13 +14,9 @@ Tie behaviour is fixed, so path identity, not just cost, is pinned:
 * the path is rebuilt by following `prev` from `dst` to the `-1` sentinel
   (here `n`).
 
-Two deliberate contract choices, both "honest `none` over nonsense": out-of-range
-`src`/`dst` returns `none` rather than reading past the arrays, and a `prev`
-cycle (impossible for a real run) exhausts fuel to `none` instead of looping.
-
-Fuel is not a semantic knob: each pop consumes a push, and pushes are
-bounded by one per directed edge (a vertex settles once) plus the seed, so
-`E + n + 2` never exhausts on a real run.
+Out-of-range `src`/`dst` and a `prev` cycle (impossible in a real run) return
+`none`. Fuel `E + n + 2` never runs out: pushes are at most one per edge plus
+the seed.
 -/
 
 namespace Verified.Rail
@@ -129,12 +125,9 @@ def pop (h : Heap) : Option ((Nat × Nat) × Heap) :=
 
 /-! ### The same functions, compiled in place
 
-Each reads what it needs before it writes, so the array has one owner when it
-is written and Lean updates it in place. The definitions above read the array
-again after writing it (`(a.set i (a.getD j)).set j (a.getD i)`, `h.a.pop` then
-`h.a.getD`), which makes every write a copy: a pop cost the whole heap, and the
-walk matcher's searches spent most of their time copying. `@[csimp]` swaps
-these in for compiled code; every proof still reads the definitions above. -/
+These read before writing, so each array has one owner and updates in place;
+the definitions above re-read after writing, copying the heap on every pop.
+`@[csimp]` swaps these in; proofs read the definitions above. -/
 
 def popFast (h : Heap) : Option ((Nat × Nat) × Heap) :=
   let a := h.a
