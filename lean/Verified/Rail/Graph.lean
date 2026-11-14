@@ -1,11 +1,9 @@
 /-!
 # Rail graph: spec substrate for the verified shortest path (V3)
 
-The meaning layer for rail-snap's `shortestPath`. The shell builds the weighted
-graph (float heuristics: fix-cloud penalties, gap bridging, vertex dedup) and
-exports it with ×2²⁰-quantised nonnegative integer weights, which fit Lean `Nat`
-scalars natively (≤ ~2^35 on real corridors), so no packed encoding is needed
-here.
+A rail graph with ×2²⁰-quantised `Nat` weights (≤ ~2^35 on real corridors).
+The served snapper (`Geo.RailSnap`) builds and searches its own float graph;
+nothing feeds this one at runtime. `Verified.Geo.Lazy*` reuse its definitions.
 
 `oracleDist` is the exhaustive spec: the minimum cost over every simple
 path. Exponential — `#guard`-scale instances only, exactly like the HSMM

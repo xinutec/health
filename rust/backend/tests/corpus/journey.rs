@@ -5,48 +5,22 @@
 //!   ground-truth/<date>.md → parse → resolve → journeys ┴→ journeyshape → floorgate
 //! ```
 //!
-//! The story-correctness of the drawn timeline: does the day read as the right
-//! sequence of trips? `tests/golden/journey-baseline.json` records the
-//! ground-truth journeys the pipeline reconstructs.
+//! Does the day read as the right sequence of trips?
+//! `tests/golden/journey-baseline.json` holds the ground-truth journeys the
+//! pipeline reconstructs. Most do not match yet: one that never worked does not
+//! fail; one that worked and stopped is a hard failure.
 //!
-//! Most journeys do not match, and that is the design. The floor is the
-//! current non-zero set of working ones, so the standing failures are a floor
-//! that can only shrink — the measurement the joint mode+position model
-//! is built against. A journey that never worked is not in the floor and does
-//! not fail; one that used to work and stopped is a hard failure.
+//! A match is shape and coverage, and many failures are coverage alone, so a
+//! failure prints `uncovered … of … (slack …)`, the match's ends, and every
+//! pipeline journey touching the window (`bestOverlap` grades one; a split
+//! trip scores its larger half).
 //!
-//! # A match is shape and coverage, and the second conjunct is the quiet one
+//! `Verified.Eval.JourneyShape` and `FloorGate` decide; this replays, resolves
+//! and prints. Shards ratchet the floor filtered to their days, so every key is
+//! checked once. `JOURNEY_DUMP=<path>` writes the `(gt, states)` pairs.
 //!
-//! A third of the corpus's unmatched journeys reconstruct their exact expected
-//! mode shape and fail on coverage instead. So this prints
-//! `uncovered … of … (slack …)` and the match's ends beside every failure, and
-//! lists every pipeline journey touching the window, because `bestOverlap`
-//! grades one journey, and a trip the pipeline split in two is scored on its
-//! larger half with the rest counted as uncovered.
-//!
-//! `JOURNEY_DUMP=<path>` writes the `(gt, states)` pairs this harness feeds
-//! Lean.
-//!
-//! The floor is the oracle: a committed count of reconstructed journeys, with
-//! nothing regressed, nothing newly held and nothing dropped.
-//!
-//! # The split
-//!
-//! `statesToJourneys`, `modeShape`, `bestOverlap` and the end-clip are
-//! `Verified.Eval.JourneyShape`; the ratchet is `Verified.Eval.FloorGate`,
-//! already built for the truth floor. This module replays, resolves and prints.
-//!
-//! Sharding is sound here and it is not obvious: the floor gate
-//! is fed `measured_baseline`, the floor filtered to the days this run actually
-//! reported, and it announces the rest as unchecked. A shard that grades
-//! half the corpus therefore ratchets half the floor and says so, and between
-//! the shards every floor key is checked exactly once.
-//!
-//! # Local-only
-//!
-//! `tests/golden/{days,ground-truth}` is gitignored. `journey-baseline`
-//! is tracked: unix timestamps and nothing else. Announces a skip rather than
-//! passing quietly, and prints modes and times, never a place.
+//! `tests/golden/{days,ground-truth}` is gitignored; the baseline is timestamps
+//! only. A missing corpus announces a skip; output never names a place.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -149,9 +123,8 @@ impl Journey {
             failures: Vec::new(),
             total: 0,
             matched_n: 0,
-            // A one-shot dump of the `(gt, states)` pairs, for checking the
-            // journey rules against another implementation. Off by default; it
-            // carries no places, but it is a corpus artefact and belongs
+            // The `(gt, states)` pairs, for checking the rules against another
+            // implementation. No places, but a corpus artefact: write it
             // outside the tree.
             dump: std::env::var("JOURNEY_DUMP").ok(),
             dumped: Vec::new(),

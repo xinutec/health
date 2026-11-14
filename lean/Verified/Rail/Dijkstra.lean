@@ -1,10 +1,9 @@
 import Verified.Rail.Graph
 
 /-!
-# Dijkstra: rail-snap's `shortestPath`
+# Dijkstra over the quantised rail graph
 
-Loop for loop, including its tie behaviour, so path identity (not just path
-cost) is pinned on identical quantised graphs:
+Tie behaviour is fixed, so path identity, not just cost, is pinned:
 
 * the binary min-heap sifts up while `parent > child` (stops on `≤`) and
   sifts down only to a strictly smaller child, left child preferred on

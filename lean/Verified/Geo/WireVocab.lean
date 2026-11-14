@@ -4,37 +4,24 @@ import Verified.Hsmm.StateSpace
 /-!
 # The closed string vocabularies the API sends and the frontend restates
 
-Two sets of strings cross to the browser and are hand-copied there: the mode of
-a day-state, and the kind of an episode's geometry. The frontend keys a
-`Record<DayStateMode, …>` on the first, so a mode it has never heard of falls
-through to a default style rather than failing, silently, in production. A
-test compares the frontend's unions against these.
+A day-state's mode and an episode geometry's kind are copied by hand into the
+frontend, which keys a `Record<DayStateMode, …>` on the first: an unknown mode
+falls through to a default style silently. A test compares the frontend's
+unions against these lists.
 
-## This file exists because that comparison lost its other side
-
-`Verified.Geo.DayState.Mode` is `abbrev Mode := String`, and its members live as
-bare literals across many files; this is the one closed list.
-
-A bare `def DAY_STATE_MODES` would be a list nothing enforces — the shape that
-passes while being wrong. So each list below is tied by `#guard` to whatever
-closed structure DOES exist for its members, and the members with no such
-structure are named as exactly that.
+Each list is tied by `#guard` to whatever closed Lean structure exists for its
+members, and the members with none are named as such.
 -/
 
 namespace Verified.Geo.WireVocab
 
--- Fully qualified, not `open`. `Mode` is ambiguous — `Hsmm.Emissions`
--- declares one too — and an `open` here would resolve to whichever the
--- elaborator preferred rather than to the one the wire actually carries.
--- `Mode` is declared in `Emissions`, not in `StateSpace` — the latter only
--- re-opens it, so `StateSpace.Mode` does not resolve.
+-- Fully qualified, not `open`: more than one `Mode` is in scope. It is declared
+-- in `Emissions`; `StateSpace` only re-opens it, so `StateSpace.Mode` fails.
 private abbrev SMode := Verified.Hsmm.Emissions.Mode
 private abbrev sName := Verified.Hsmm.StateSpace.modeName
 
-/-- Every constructor of the HSMM's generative `Mode`, listed once so the guards
-below share it. A `Mode` gains a constructor and this list does not compile
-until it is added — which is the whole reason the enumeration is written out
-rather than derived from a string set. -/
+/-- Every constructor of the HSMM's generative `Mode`, written out so a new
+constructor fails to compile until it is added here. -/
 private def ALL_GENERATIVE : List SMode :=
   -- ⚠ spelled out, not `.stationary`. Dot-notation resolves against whichever
   -- `Mode` the elaborator picks, and there are two.
@@ -46,30 +33,20 @@ private def ALL_GENERATIVE : List SMode :=
   , Verified.Hsmm.Emissions.Mode.plane
   , Verified.Hsmm.Emissions.Mode.unknown ]
 
-/-- Every `mode` a day-state can carry on the wire.
+/-- Every `mode` a day-state can carry on the wire, as a set. Sources:
 
-Order is not meaningful; membership is. The consumer builds a set.
-
-Three sources feed this, and only two of them are closed:
-
-  * the HSMM's generative modes — `Verified.Hsmm.StateSpace.modeName`, a real
-    inductive, guarded below to be a SUBSET of this list;
-  * the drawn-line modes — `EpisodeGeometry.MOVING_MODES`, likewise guarded;
-  * `sleeping`, which comes from the Fitbit sleep windows rather than from GPS
-    and so appears in no mode type at all, and `bus`, which rides on a segment
-    as `vehicleKind` and is lifted to a mode by `DayState`.
-
-The last two are the honest gap: nothing in Lean can derive them, so they are
-declared here and the guards below pin the literals that produce them. -/
+  * the HSMM's generative modes (`StateSpace.modeName`), guarded as a subset;
+  * the drawn-line modes (`EpisodeGeometry.MOVING_MODES`), likewise;
+  * `sleeping` (from the watch's sleep windows) and `bus` (a segment's
+    `vehicleKind`, lifted by `DayState`), which no Lean type derives; the guards
+    pin the literals that produce them. -/
 def DAY_STATE_MODES : List String :=
   ["sleeping", "stationary", "walking", "cycling", "driving", "vehicle",
    "bus", "train", "boat", "plane", "unknown"]
 
-/-- Every `kind` an episode's geometry can carry.
-
-`matched` and `smoothed` are produced by the walk matcher and the smoother,
-which hand the string in from outside `EpisodeGeometry` — so unlike the other
-four they cannot be guarded against a literal in that module. -/
+/-- Every `kind` an episode's geometry can carry. `matched` and `smoothed` are
+handed in by the walk matcher and smoother, so they cannot be guarded against
+an `EpisodeGeometry` literal. -/
 def EPISODE_KINDS : List String :=
   ["snapped", "raw", "anchor", "tentative", "matched", "smoothed"]
 
@@ -85,10 +62,8 @@ def EPISODE_KINDS : List String :=
 -- would be a mode that draws and cannot be styled.
 #guard Verified.Geo.EpisodeGeometry.MOVING_MODES.all DAY_STATE_MODES.contains
 
--- The two that nothing derives. Stated as guards so the claim in the
--- docstring is checked rather than asserted: these really are absent from both
--- closed sources, and if either ever gains them this guard fails and the
--- docstring above is what needs correcting.
+-- The two that nothing derives: absent from both closed sources, or the
+-- docstring above is wrong.
 #guard !(ALL_GENERATIVE.map sName).contains "sleeping"
 #guard !Verified.Geo.EpisodeGeometry.MOVING_MODES.contains "sleeping"
 

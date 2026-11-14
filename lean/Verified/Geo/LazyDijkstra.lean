@@ -2,38 +2,25 @@ import Verified.Rail.Dijkstra
 import Verified.Geo.ArrayLemmas
 
 /-!
-# Lazy-vs-eager Dijkstra — `LazyDijkstra`'s refinement comment-proof
+# Lazy-vs-eager Dijkstra — `LazyDijkstra`'s refinement proof
 
 The map matcher's search is a lazy bounded Dijkstra: it pauses when the
 requested target settles and resumes on the next `settle(target')`, memoised
-per source. That it matches the eager search's post-break state (run once,
-break at the target or the radius) is what this file proves.
+per source. This file proves it matches the eager search's post-break state.
 
-The observation that makes it a theorem: the search is a deterministic
-step sequence that never consults the target — `settle(t)` only chooses
-*where to pause*. Modelling one pop-iteration as `lstep`:
+The search is a deterministic step sequence that never consults the target;
+`settle(t)` only chooses where to pause. With `lstep` as one pop:
 
-* `lsettle_spec` / `lsettle_eq_iter` — a settle call is exactly a prefix
-  of the step trajectory, ending at the first state where its stop
-  condition (`done[t]`, exhaustion, or an empty heap) holds: the eager
-  run-to-break, verbatim;
-* `stopAt_mono` — stop conditions are monotone along the trajectory
-  (done bits are only ever set, exhaustion is absorbing, an empty heap
-  stays empty), so pausing can never *unsettle* anything;
-* `lsettle_comm` / `lsettle_idem` — settles commute and are idempotent:
-  any interleaving of settle calls lands on `iter (max of the first-hit
-  indices)`, independent of order.
+* `lsettle_spec` / `lsettle_eq_iter` — a settle is a prefix of the trajectory,
+  ending at the first state meeting its stop condition (`done[t]`, exhaustion,
+  empty heap): the eager run-to-break.
+* `stopAt_mono` — stop conditions are monotone, so pausing never unsettles.
+* `lsettle_comm` / `lsettle_idem` — settles commute and are idempotent.
 
-The classic "settled = final" fact — a settled vertex's `dist`/`prev`
-never change afterwards — is proved in `LazyInv.lean`
-(`settled_final`/`settled_final_settle`, under `WFEdges`), and the
-stop-reachability hypothesis used below (`stopAt … (iter … k …) = true`
-with `k ≤ fuel`) is discharged in `LazyFuel.lean` for any fuel ≥ `E + 1`
-(`lsettle_stops`/`all_settles_stop`), so no assumption about the lazy
-search remains unproved; the `#guard`s below stay as smoke tests.
+"Settled = final" is `LazyInv.settled_final`; stop-reachability is discharged
+in `LazyFuel` for fuel ≥ `E + 1`. The `#guard`s are smoke tests.
 
-Weights are `Nat` (the quantised substrate, as in `Verified/Rail`); the radius
-check `cur.p > maxRadiusM` is strict.
+Weights are `Nat`; the radius check `cur.p > maxRadiusM` is strict.
 -/
 
 namespace Verified.Geo
@@ -69,12 +56,10 @@ def relaxStep (u p : Nat) (s : LState) (tw : Nat × Nat) : LState :=
 
 /-! ## The step, compiled in place
 
-`relaxStep` and `lstep` read `s.dist`, `s.heap`, … while `s` still holds them,
-so each write found its array shared and copied it — `dist` and `prev` are one
-entry per graph vertex (29,000 on a long walk), copied on every relaxation.
-These twins take the state apart first, so every field has one owner when it
-is written. `@[csimp]` swaps them in for compiled code; every proof still reads
-the definitions above. -/
+`relaxStep` and `lstep` read fields while `s` still holds them, so every write
+copied a shared array (`dist`/`prev` are one entry per vertex). These twins
+destructure the state first; `@[csimp]` swaps them in for compiled code, and
+proofs read the definitions above. -/
 
 theorem Heap.pop_eq_none {h : Heap} (e : h.pop = none) : h = ⟨#[]⟩ := by
   cases h with
@@ -377,10 +362,9 @@ theorem lsettle_from_iter {g : Graph} {maxR t : Nat} {fuel m K : Nat} {s : LStat
     have hmk : Nat.max m K = K := Nat.max_eq_right (by omega : m ≤ K)
     rw [show m + (K - m) = K by omega, hmk]
 
-/-- Settles commute. Any interleaving of settle calls for targets
-whose stops are fuel-reachable lands on the same state — the trajectory
-point at the larger first-stop index. Pausing order is irrelevant, which
-is what makes the per-source memoised cache sound. -/
+/-- Settles commute: any interleaving of fuel-reachable settles lands on the
+trajectory point at the larger first-stop index, which makes the per-source
+memo sound. -/
 theorem lsettle_comm {g : Graph} {maxR t₁ t₂ : Nat} {fuel k₁ k₂ : Nat} {s : LState}
     (h₁f : k₁ ≤ fuel) (h₁ : stopAt t₁ (iter g maxR k₁ s) = true)
     (h₂f : k₂ ≤ fuel) (h₂ : stopAt t₂ (iter g maxR k₂ s) = true) :
@@ -405,12 +389,10 @@ theorem lsettle_idem {g : Graph} {maxR t : Nat} {fuel k : Nat} {s : LState}
   have hmx : Nat.max K K = K := Nat.max_self K
   rw [heq, e, hmx]
 
-/-! ## Executable pinning of the unproved halves
+/-! ## Executable cross-checks
 
-Seeded random graphs: interleavings agree (also covered by the theorems —
-a live cross-check), and the *frozen* claim the theorems deliberately do
-not prove — a settled vertex's `dist`/`prev` equal the fully-exhausted
-run's — holds on every instance, radius cutoffs included. -/
+On seeded random graphs: interleavings agree, and a settled vertex's
+`dist`/`prev` equal the fully exhausted run's, radius cutoffs included. -/
 
 private def lcg (s : Nat) : Nat := (s * 1103515245 + 12345) % 2147483648
 

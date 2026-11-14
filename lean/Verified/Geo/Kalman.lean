@@ -2,25 +2,17 @@ import Verified.FloatConst
 /-!
 # GPS Kalman filter
 
-The upstream input-pipeline stage: smooth a raw GPS track into filtered
-position + velocity fixes (`filterGpsTrack`), feeding the observation tensor.
-Two independent 1D filters (lat, lon), each `(x, v, px, pv, pxv)`, with adaptive
-process noise, innovation gating (teleport rejection), reset conditions (long
-gap / impossible speed / re-acquisition after a run of gated fixes), and a
+Smooths a raw GPS track into position + velocity fixes (`filterGpsTrack`) for
+the observation tensor. Two 1D filters (lat, lon), each `(x, v, px, pv, pxv)`,
+with adaptive process noise, innovation gating (teleport rejection), resets
+(long gap, impossible speed, re-acquisition after gated fixes) and a
 forward-look velocity seed on reset.
 
-Pure over the track. Arithmetic is exact (IEEE `+`/`-`/`*`/`÷`/`sqrt`); the only
-transcendentals are `cos` (metre↔degree scaling) and `atan2` (bearing), so lat/lon
-and the reset-path speed/bearing are ≤1-ULP close. Normal-path speed/bearing are
-quantised (`round(speed·10)/10`, `round(bearing)`), which absorbs the ULP wobble
-except at a round boundary, the accepted near-tie class. The reset path emits
-speed/bearing unrounded. UNPROVEN; pinned by the `#guard`s.
-
-`cos` comes from the platform libm, and two libms disagree by 1 ULP on a few
-percent of real latitudes. `metersToDegreesLon` calls `cos` and
-`metersToDegreesLat` does not, so `lon` can differ by 1 ULP across platforms
-and `lat` cannot. Making this filter provable rather than pinned means taking
-the metre↔degree scaling off `Float`.
+Exact except `cos` (metre↔degree) and `atan2` (bearing), ≤1 ULP. Normal-path
+speed and bearing are rounded, absorbing that except at a boundary; the reset
+path is unrounded. Platform libms differ by 1 ULP in `cos` on some latitudes,
+so `lon` can differ across platforms and `lat` cannot. UNPROVEN; pinned by the
+`#guard`s.
 -/
 
 namespace Verified.Geo.Kalman
@@ -78,12 +70,10 @@ def adaptiveProcessNoise (speedDegPerSec : Float) : Float :=
 def INNOVATION_GATE : Float := 50
 def MAX_CONSECUTIVE_REJECTS : Nat := 3
 
-/-- Velocity is only ever observed as a difference of positions, so the filter
-may smooth what its fixes show but may not claim motion they contradict. Over
-one step, motion that does not reverse averages `(v_start + v_end)/2`, so
-`v_end ≤ 2 ×` the step's average — a kinematic identity, not a tuned threshold.
-Applied to the posterior against the last two accepted measurements: a gated fix
-moved no state, so it is not evidence about velocity either. -/
+/-- Velocity is only observed as a difference of positions, so the filter may
+not claim motion its fixes contradict. Non-reversing motion averages
+`(v_start + v_end)/2` over a step, so `v_end ≤ 2 ×` the step's average: a
+kinematic identity. Checked against the last two accepted fixes. -/
 def VELOCITY_OBSERVABILITY_FACTOR : Float := 2
 /-- …with a floor, so GPS noise around a standstill (or a repeated stale fix,
 which shows zero displacement while the wearer really is moving) cannot pin the
@@ -175,13 +165,10 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint :=
           consecutiveRejects := 0
           stateLat := update1D stateLat p.lat rLat
           stateLon := update1D stateLon p.lon rLon
-          -- Velocity-observability bound: the posterior may not travel faster
-          -- than twice what the last two accepted fixes actually show.
-          -- A coordinate bit-identical to the last one is the phone restating
-          -- its previous answer, not reporting that it has stopped. Held back
-          -- rather than advanced, so the next genuine fix is measured across the
-          -- full elapsed span (a Eurostar can alternate fresh fix and stale
-          -- repeat the whole way across France).
+          -- Velocity-observability bound: at most twice what the last two
+          -- accepted fixes show. A bit-identical coordinate is the phone
+          -- restating itself, not stopping: it is held back, so the next real
+          -- fix is measured across the full span.
           let obsDtI := p.ts - lastAccepted.ts
           let restated := p.lat == lastAccepted.lat && p.lon == lastAccepted.lon
           if decide (obsDtI > 0) && !restated then
@@ -207,10 +194,8 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint :=
           let vLonMs := stateLon.v * R_EARTH * Float.cos (stateLat.x * (pi / 180)) * (pi / 180)
           let speedKmh := Float.sqrt (vLatMs ^ 2 + vLonMs ^ 2) * 3.6
           let emittedKmh := roundHalfUp (speedKmh * 10) / 10
-          -- A row published as stopped publishes no fabricated heading, as on
-          -- the init/reset path. At a standstill `atan2` over ~0/~0 velocities
-          -- returns covariance noise, and `headingChangeRate` would feed it
-          -- one-sidedly into the walking score, ending stays minutes early.
+          -- A stopped row publishes no heading, as on reset: `atan2` of ~0/~0 is
+          -- covariance noise, which `headingChangeRate` would read as walking.
           let bearing := if emittedKmh == 0 then 0.0
             else mod360 (Float.atan2 vLonMs vLatMs * 180 / pi + 360)
           result := result.push ⟨p.ts, stateLat.x, stateLon.x,
@@ -240,12 +225,10 @@ private def rowOk (f : FilteredPoint) (ts : Int) (lat lon spd brg : Float) : Boo
 #guard rowOk out[6]! 4000 51.6 (-38.2) 4.717694629017221 328.1536087263755  -- reset: unrounded
 #guard rowOk out[7]! 4010 51.6001 (-38.2001) 4.7 328
 
--- The velocity-observability bound, which `track` above never reaches. The
--- shape of a Baker Street interchange: one stale coordinate repeated while
--- underground, then the far end of the tunnel run (859 m in 22 s → 141 km/h),
--- then fixes showing the phone stopped. Row 4 is the witness: the bound holds
--- the posterior at the 5 km/h floor where the unclamped filter carried ~70 and
--- coasted the estimate ~300 m past every observation.
+-- The velocity-observability bound, which `track` above never reaches: a
+-- stale coordinate repeated underground, then the tunnel's far end at 141 km/h,
+-- then a stopped phone. Row 4 is held at the 5 km/h floor; unclamped it carried
+-- ~70 and coasted ~300 m past every fix.
 private def gpa (ts : Int) (lon acc : Float) : GpsPoint := ⟨ts, 50, lon, some acc⟩
 private def clampTrack : Array GpsPoint := #[
   gpa 0 5.0 26, gpa 13 5.0 45, gpa 26 5.0 63,
@@ -258,12 +241,9 @@ private def clampOut : Array FilteredPoint := filterGpsTrack clampTrack
 #guard rowOk clampOut[4]! 61 50 4.9879683036293940 5.0 270            -- stopped: held at the floor
 #guard rowOk clampOut[5]! 80 50 4.9875609605642586 5.6 270            -- the poor fix no longer coasts
 #guard rowOk clampOut[6]! 89 50 4.9879331921647987 1.1 90
--- The `restated` exclusion, which `clampTrack` above does not pin (its repeats
--- sit where the velocity is already zero, so dropping the rule changes nothing
--- there). A real fix, then the identical coordinate restated, then a real fix
--- ~3.9 km on, as a Eurostar does across France. Treating a restatement as an
--- observation of zero displacement pins a 250 km/h train to the 5 km/h floor
--- and drags the track kilometres behind it.
+-- The `restated` exclusion, which `clampTrack` does not pin: a fix, the same
+-- coordinate restated, then a fix ~3.9 km on, as on a high-speed train. Read
+-- as zero displacement, the restatement would pin the train to 5 km/h.
 private def gpe (ts : Int) (lat acc : Float) : GpsPoint := ⟨ts, lat, 3.0, some acc⟩
 private def restatedTrack : Array GpsPoint := #[
   gpe 0 50.0 30,

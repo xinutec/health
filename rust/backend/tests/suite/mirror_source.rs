@@ -1,41 +1,20 @@
 //! Is the mirror's pre-filter box a superset of what Lean scores?
 //!
 //! `MirrorSource` selects candidates with `MBRIntersects` against a box and
-//! hands every one of them to Lean, which does the distance, the ordering and
-//! the cap. A row the box drops is a row Lean never sees, so the box is only
-//! allowed to over-include — and the failure when it does not is silent: the
-//! answer stays well-formed and names a nearest feature that is not the nearest.
+//! Lean does distance, order and cap. A row the box drops is never scored, and
+//! the answer silently names a nearest feature that is not the nearest.
 //!
-//! # The argument, and why it is not enough on its own
+//! The box half-width `radiusM / min(111000, 111000·cos lat)` exceeds Lean's
+//! line disc (`111320` m/deg) and point circle by ~0.18%, on constants in
+//! different files; the corpus sits inside that, hence `SUPERSET_MARGIN`. With
+//! it, answers change only near a 5% shrink: re-run that ablation when changing
+//! the box.
 //!
-//! The box half-width is `radiusM / min(111000, 111000·cos lat)` in both axes.
-//! Lean's line window is a degree-space disc of radius `radiusM / (111320·cos
-//! lat)`, which is smaller because 111320 > 111000; Lean's point window is a
-//! metre circle of radius `radiusM`, and the box's half-widths work out to
-//! `radiusM · 111195/111000` in latitude and `radiusM · 111195/111000` in
-//! longitude, both above `radiusM`.
+//! The reference arm is the filtered row set: `rowset_prefilter.rs` proves its
+//! filter changes no answer, at a hundredth of the unfiltered cost. If that
+//! test is red, fix it first.
 //!
-//! That is a 0.18% margin resting on constants in different files, and the
-//! corpus sits inside it: shrinking the box by 1% drops rows, by 0.1% does not.
-//! `SUPERSET_MARGIN` exists because of that measurement. So this compares
-//! answers on the corpus's real geometry at the coordinates the days actually
-//! asked about, which is the same reason `rowset_prefilter.rs` exists.
-//!
-//! With the margin in place this test no longer fires at a 1% shrink — it
-//! takes about 5%. That is the margin working, not the test going blind; the
-//! ablation to re-run when changing the box is "scale the half-width down until
-//! answers change", and it should take roughly `SUPERSET_MARGIN` to do it.
-//!
-//! # The reference arm is the filtered row set, not the unfiltered one
-//!
-//! `rowset_prefilter.rs` already proves `RowSetSource`'s own prefilter changes
-//! no answer, and the unfiltered arm ships 157,489 coordinate pairs per
-//! question. Comparing against the filtered arm is the same claim, transitively,
-//! at a hundredth of the cost. If that test goes red this one's reference is no
-//! longer trustworthy — fix that one first.
-//!
-//! Local-only: `tests/golden/` is gitignored and holds real places. Announces a
-//! skip rather than passing quietly when it is absent.
+//! Local-only (`tests/golden/` holds real places); announces a skip when absent.
 
 use std::path::Path;
 
@@ -55,10 +34,8 @@ fn point_in_box(b: [f64; 4], lat: f64, lon: f64) -> bool {
     lat >= b[0] && lat <= b[1] && lon >= b[2] && lon <= b[3]
 }
 
-/// `MBRIntersects(geom, box)` for a LINESTRING: the way's own minimum bounding
-/// rectangle overlaps the box. Not "every vertex is inside" — a way that
-/// crosses the box with both endpoints outside it intersects, and filtering on
-/// vertices would drop exactly the long road the query point sits on.
+/// `MBRIntersects(geom, box)` for a LINESTRING: the way's bounding rectangle
+/// overlaps the box, so a road crossing the box with both ends outside counts.
 fn line_meets_box(b: [f64; 4], coords: &[Value]) -> bool {
     let (mut min_lat, mut max_lat) = (f64::INFINITY, f64::NEG_INFINITY);
     let (mut min_lon, mut max_lon) = (f64::INFINITY, f64::NEG_INFINITY);
@@ -161,10 +138,8 @@ fn the_mirrors_candidate_box_holds_everything_lean_scores() {
                 ) else {
                     continue;
                 };
-                // The radius comes from the key where the key spells one.
-                // `nearbyStations` is recorded at 400 m on this corpus and the
-                // default is 200 — testing the default would test a box the day
-                // never asked for.
+                // The radius from the key where it has one: `nearbyStations` is
+                // recorded at 400 m, not the 200 m default.
                 let radius = match p.get(2).and_then(|s| s.parse::<f64>().ok()) {
                     Some(r) => r,
                     None if table == "nearbyWays" => default_radius_m::NEARBY_WAYS,
@@ -192,11 +167,9 @@ fn the_mirrors_candidate_box_holds_everything_lean_scores() {
                     .expect("answers")
                     .expect("answerable");
 
-                // The message names the table and the day rather than the
-                // coordinate — but the assertion prints both answers, which
-                // carry street names. That is unavoidable when the comparison
-                // is the answer, and it is why this test is gated on a corpus
-                // that only exists locally: both health repos are public.
+                // The assertion prints both answers, street names included,
+                // which is why this runs only on the local corpus: both repos
+                // are public.
                 assert_eq!(
                     boxed, all,
                     "{name}: {table} — the candidate box dropped a row Lean scored"

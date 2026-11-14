@@ -2,31 +2,16 @@ import Verified.Civil
 /-!
 # What a `selectAll()` row looks like on the wire
 
-Twelve `/api` endpoints are one line of logic each — `selectFrom(t).selectAll()`,
-then `c.json(rows)`. The logic is trivial and the *shape* is not: the response
-is whatever columns the table has, rendered by whatever the MariaDB driver
-decided each SQL type becomes in JavaScript, then by `JSON.stringify`. Change
-any of those and the frontend reads a different type from the same endpoint.
+Several `/api` endpoints return a table's rows as they are, so the response
+shape is each column's SQL type as the frontend has always received it. These
+mappings were observed against production, not read off the schema:
 
-## The declared column types are not the shape
-
-A column declared `number | null` may hold DECIMAL, which comes back as a
-string. So every mapping below is what the driver was observed to produce
-against production, not what the schema says it ought to.
-
-## The four that surprise
-
-* DATE is not a date. It renders as a UTC timestamp, so a `DATE` column
-  ships as `"YYYY-MM-DDT00:00:00.000Z"`, a full timestamp, not `"YYYY-MM-DD"`.
-* DECIMAL is a string. Its exact server text, scale and all.
+* DATE ships as `"YYYY-MM-DDT00:00:00.000Z"`, a UTC timestamp, whatever the
+  process zone.
+* DECIMAL is a string, its exact server text.
 * BIGINT is a string too.
-* `TINYINT(1)` is a number, `0` or `1`, never `true`/`false`. ⚠ sqlx names
-  that column type `"BOOLEAN"`, so a host that trusts the name, decodes a Rust
-  `bool` and serialises it emits `true` and silently changes the contract.
-
-The UTC rendering above is fixed by this module, not by any process
-timezone: a renderer that used the ambient zone would ship a `DATE` under
-`TZ=Europe/London` as the previous day at 23:00Z.
+* `TINYINT(1)` is `0` or `1`, never `true`/`false`. ⚠ sqlx names it
+  `"BOOLEAN"`, so decoding a Rust `bool` would silently change the contract.
 
 Pure and total. UNPROVEN; the `#guard`s pin the shapes the frontend reads.
 -/
@@ -49,18 +34,10 @@ inductive Shape where
   | dateTimeIso
   deriving Repr, BEq, DecidableEq
 
-/-- The JSON shape of a column, by the SQL type name its driver reports.
-
-`none` means refuse. A host must fail the request rather than guess: a column
-type nobody has looked at is a column whose rendering nobody has checked, and
-the wrong guess is invisible — it produces a well-formed response of the wrong
-type. The names are sqlx's (`MySqlTypeInfo::name`), which is where the host
-reads them from.
-
-Float and DOUBLE are refused deliberately: rendering a float to JSON the way a
-JavaScript client expects means reproducing shortest-round-trip formatting
-exactly, and no table has such a column, so the choice is between a refusal and
-an unverified renderer. -/
+/-- The JSON shape of a column, by its sqlx type name (`MySqlTypeInfo::name`).
+`none` means refuse: an unchecked type would render a well-formed wrong answer.
+FLOAT and DOUBLE are refused, since no table has one and matching the client's
+shortest-round-trip formatting is unverified. -/
 def shapeOf (sqlType : String) : Option Shape :=
   match sqlType with
   -- "Boolean" is sqlx's name for TINYINT(1). The wire carries 0 or 1.
@@ -81,10 +58,7 @@ def shapeOf (sqlType : String) : Option Shape :=
   | "DATETIME" | "TIMESTAMP" => some Shape.dateTimeIso
   | _ => none
 
-/-- `YYYY-MM-DDT00:00:00.000Z`.
-
-A DATE has no time, so JS builds midnight — in the process timezone — and
-renders it in UTC. Under the UTC pod that is midnight; see the module note. -/
+/-- `YYYY-MM-DDT00:00:00.000Z`: a DATE as UTC midnight. -/
 def formatDateIso (y : Int) (m : Int) (d : Int) : String :=
   Verified.Civil.formatDate y m d ++ "T00:00:00.000Z"
 
@@ -94,10 +68,8 @@ def pad3 (n : Int) : String :=
   let s := toString n
   String.ofList (List.replicate (3 - min 3 s.length) '0') ++ s
 
-/-- `YYYY-MM-DDTHH:MM:SS.mmmZ`.
-
-`ms` is truncated to milliseconds, not rounded: a JS `Date` cannot hold
-more, so a `DATETIME(6)` loses its microseconds here exactly as it does there. -/
+/-- `YYYY-MM-DDTHH:MM:SS.mmmZ`, truncated to milliseconds, as the wire has
+always carried it. -/
 def formatDateTimeIso (y m d h mi s ms : Int) : String :=
   Verified.Civil.formatDate y m d ++ "T" ++
     Verified.Civil.pad2 h ++ ":" ++ Verified.Civil.pad2 mi ++ ":" ++

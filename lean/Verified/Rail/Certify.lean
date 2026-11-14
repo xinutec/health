@@ -3,34 +3,21 @@ import Verified.Rail.Dijkstra
 /-!
 # Certified shortest path — the V3 goal theorems
 
-`dijkstra` is a faithful port of imperative production code (binary heap,
-lazy deletion, fuel); proving the *algorithm* correct would mean invariants
-over all of that machinery. This file takes the certifying route instead:
-the search runs untrusted, then a proved O(E) checker (`certify`) validates
-what the result *claims* —
+`dijkstra` (binary heap, lazy deletion, fuel) runs untrusted, and a proved O(E)
+checker (`certify`) validates its claim:
 
-* the returned path is a valid simple `src → dst` path whose cost equals
-  the settled distance `D`, and
-* the final `done`/`dist` arrays form a feasible cut (`feasibleCut`):
-  every edge out of a settled vertex `u` either stays inside the settled
-  set without shortcutting it (`dist v ≤ dist u + w`), or crosses out of
-  it at cost already `≥ D`.
+* the path is a valid simple `src → dst` path costing the settled `D`, and
+* `done`/`dist` form a feasible cut (`feasibleCut`): each edge out of a
+  settled `u` stays inside without shortcutting (`dist v ≤ dist u + w`) or
+  leaves at cost `≥ D`.
 
-The cut condition is exactly what the textbook "Dijkstra settles vertices
-in distance order" argument leaves behind at early exit, so it holds on
-every real run — but the theorems never depend on that: `cut_bound` shows
-the condition *itself* forces `D ≤` the cost of every `src → dst` path,
-and with the enumeration lemmas (`enum_sound`, `enum_complete`) that pins
-`oracleDist = some D`.
+`cut_bound` shows the cut forces `D ≤` every path's cost, and with
+`enum_sound`/`enum_complete` that pins `oracleDist = some D`.
 
-`dijkstraC` wraps the search in the checker. `dijkstraC_correct` — any
-returned path is valid and attains `oracleDist` — and
-`dijkstraC_disconnected` — disconnected endpoints yield `none` — are the
-null-over-wrong contract: a certification failure degrades to `none`
-(draw raw GPS), never to a wrong line. The converse ("the checker never
-fires on a real run") is proved in `LoopInv.lean`
-(`dijkstraC_eq_dijkstra`, `dijkstra_none_iff` — given in-range
-adjacency), with `Tests.lean` and `pnpm run compare-rail` as smoke tests.
+`dijkstraC_correct` (a returned path is valid and optimal) and
+`dijkstraC_disconnected` (disconnected gives `none`) are the null-over-wrong
+contract. That the checker never fires on a real run is `LoopInv.lean`'s
+`dijkstraC_eq_dijkstra` / `dijkstra_none_iff`, given in-range adjacency.
 -/
 
 namespace Verified.Rail
@@ -74,14 +61,11 @@ def certify (g : Graph) (src dst : Nat) (done : Array Bool) (dist : Array (Optio
   done.getD src false &&
   feasibleCut g done dist D
 
-/-- `dijkstra` with the proved checker behind it: a returned path carries
-the `dijkstraC_correct` guarantee; a certification failure returns `none`
-(honest refusal, same contract as the other `none`s).
+/-- `dijkstra` with the proved checker behind it: a returned path carries the
+`dijkstraC_correct` guarantee; a failed certificate returns `none`.
 
-This is the served `shortestPath`: `Main`'s `path` verb calls it. The name is
-declared here because `Geo.RailSnap.shortestPath` is a separate, uncalled copy
-of the same function, and a name-matching coverage scan would bind to that one,
-find it unreachable, and report this one as missing. -/
+No entry point calls this. The rail snapper serves
+`Geo.RailSnap.shortestPath`, a separate search over its own `RailGraph`. -/
 def dijkstraC (g : Graph) (src dst : Nat) : Option (List Nat) :=
   if src ≥ g.n ∨ dst ≥ g.n then none
   else
@@ -282,10 +266,9 @@ private theorem feasibleCut_spec {g : Graph} {done : Array Bool}
   · rw [if_neg hd] at hbranch ⊢
     exact of_decide_eq_true hbranch
 
-/-- The heart of the correctness argument: a feasible cut forces `D` to
-lower-bound the cost of every path from a settled, correctly-priced
-vertex to `dst` — walk the path while it stays settled (chaining the
-no-shortcut inequality), and the first crossing edge already costs `≥ D`. -/
+/-- The heart of the correctness argument: a feasible cut makes `D` a lower
+bound on every path from a settled, correctly priced vertex to `dst`. Walk the
+path while it stays settled; the first crossing edge already costs `≥ D`. -/
 theorem cut_bound {g : Graph} {done : Array Bool} {dist : Array (Option Nat)}
     {D : Nat} {dst : Nat} (hfeas : feasibleCut g done dist D = true)
     (hdst : dist.getD dst none = some D) :
@@ -433,12 +416,9 @@ theorem enum_complete {g : Graph} {dst : Nat} :
             rw [if_neg hvc]
             exact List.mem_map.mpr ⟨c', hc'mem, rfl⟩
 
-/-- The running minimum of the simple-path enumeration is pinned to `D` by
-two facts: `D` lower-bounds every enumerated cost, and `D` is itself an
-enumerated cost. Factored out so both the full-cut certificate
-(`certify_oracle`) and the radius-honest lazy bridge
-(`Verified.Geo.iter_route_oracle`) share one assembly — they differ only in
-how they establish the lower bound (`cut_bound` vs `iter_lower_bound`). -/
+/-- The running minimum of the simple-path enumeration is `D`: `D` bounds every
+enumerated cost and is one. Shared by `certify_oracle` and the lazy bridge
+`Verified.Geo.iter_route_oracle`, which differ only in the lower bound. -/
 theorem oracleDist_eq {g : Graph} {src dst D : Nat}
     (hlow : ∀ c ∈ simplePathCosts g dst (g.n + 1) src [src], D ≤ c)
     (hmem : D ∈ simplePathCosts g dst (g.n + 1) src [src]) :

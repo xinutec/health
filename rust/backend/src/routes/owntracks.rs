@@ -1,36 +1,21 @@
 //! The Owntracks → PhoneTrack proxy, and the remote-config decision.
 //!
-//! The phone posts every fix here on its way to PhoneTrack, and the response
-//! carries a configuration patch telling it how hard to look for itself next
-//! time. PhoneTrack stays the source of truth for location history — nothing is
-//! duplicated here — but sitting in the path lets the decision use context the
-//! phone cannot have: the user's recent trajectory, and the local hour.
+//! Each fix passes through here to PhoneTrack, which stays the location
+//! record, and the response carries a config patch decided from context the
+//! phone lacks (recent trajectory, local hour). It never takes the phone out of
+//! Move mode; it picks how often it locates.
 //!
-//! It never demotes. The phone stays in Move mode; this chooses how often it
-//! locates (hourly at night when still, every 30 s by day, faster in a vehicle)
-//! and must never take it out.
+//! Every decision goes to `owntracks_decisions` as well as the log, since a
+//! rollout loses stdout (`backend owntracks-log <user>`).
 //!
-//! Every decision is written to `owntracks_decisions` as well as logged:
-//! a rollout replaces the pod and its stdout with it, and the one
-//! line that says why the phone was told something is the line a diagnosis
-//! needs. `backend owntracks-log <user>` reads it back.
+//! ⚠ The forward happens first and its failure fails the request: a lost fix
+//! is lost for good, a wrong patch costs battery until the next fix.
 //!
-//! ⚠ the forward happens first, and its failure is fatal to the request. Losing
-//! a fix loses a piece of the timeline permanently; getting the config patch
-//! wrong costs battery until the next fix, seconds later. So the proxy refuses
-//! rather than answering with a patch it could not store the fix for.
+//! Auth (URL token plus Basic auth present) is checked before anything
+//! upstream, protecting Nextcloud's brute-force counters and the state maps.
 //!
-//! Auth is the URL token plus the presence of Basic auth, checked before
-//! anything upstream is touched. That protects Nextcloud's brute-force counters
-//! and this process's own state maps from attacker-controlled growth.
-//!
-//! # Every response carries the full config, always
-//!
-//! There is no anti-flap timer, no per-device push memory, no "did this change"
-//! dedup. The phone treats `setConfiguration` as idempotent, so pushing it every
-//! time costs a few hundred bytes and means a state loss on either side
-//! recovers on the very next fix. State that can be lost is state that has to be
-//! reasoned about; this design removes the question.
+//! Every response carries the full config: `setConfiguration` is idempotent, so
+//! there is no anti-flap or push memory, and a lost state recovers next fix.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -50,10 +35,8 @@ use crate::state::AppState;
 /// so a misconfigured client cannot stream megabytes into the proxy.
 const MAX_BODY_BYTES: usize = 32 * 1024;
 
-/// Most distinct `(token, device)` keys retained.
-///
-/// A cap, not a capacity estimate. One user populates one to three; a client
-/// cycling device names would otherwise grow these maps without bound.
+/// Most distinct `(token, device)` keys retained: a user has one to three; a
+/// client cycling device names must not grow the maps without bound.
 const MAX_STATE_KEYS: usize = 32;
 
 #[derive(Deserialize, Debug)]
@@ -125,11 +108,8 @@ impl ProxyState {
     }
 }
 
-/// ⚠ Constant-time, and a length check first. These tokens are secrets — a
-/// PhoneTrack session token is write access to someone's location history — and
-/// an unauthenticated endpoint that leaks a prefix through timing invites
-/// exactly the retry loop that exploits it. `contains` would be shorter and
-/// would compare byte-by-byte with an early exit.
+/// ⚠ Constant-time, after a length check: a PhoneTrack token is write access to
+/// location history, and an early-exit compare leaks a prefix through timing.
 fn token_permitted(st: &AppState, given: &str) -> bool {
     use subtle::ConstantTimeEq;
     st.cfg
@@ -198,14 +178,10 @@ pub async fn proxy(
         return err(StatusCode::BAD_GATEWAY, "upstream rejected");
     }
 
-    // Only messages with a full position contribute. A ping without
-    // coordinates tells the decision nothing and would otherwise land in the
-    // history as a fix at (0, 0).
-    // Every message that fails to parse is counted and logged, not quietly
-    // skipped. The fix is already stored upstream at this point, so a silent
-    // drop here would leave the decision reading a shorter history than the
-    // phone actually reported — which looks exactly like a phone that went
-    // quiet, and would demote it.
+    // Only messages with a full position count; a ping without coordinates
+    // would be a fix at (0, 0). Parse failures are counted and logged: the fix
+    // is already stored upstream, and a silently shorter history looks like a
+    // phone gone quiet.
     let mut unparsed = 0usize;
     let messages: Vec<Location> = match &payload {
         Value::Array(a) => a
