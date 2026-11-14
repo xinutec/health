@@ -5,18 +5,17 @@ import Verified.Fix
 /-!
 # Re-cutting segments on evidence
 
-Three passes of `PassFold`'s tail that move a boundary where the track alone
-put it wrong, each in its own namespace, over the fix helpers in `Shed`:
+Three passes of `PassFold`'s tail that move a boundary the track alone put
+wrong, over the fix helpers in `Shed`:
 
-* `FootArrival` — `claimStayArrivalFromWalk` (`stayArrivalClaim`), a walk's
-  tail that is already the stay after it;
-* `Dwell` — `splitWalksOnDwell` (`walkDwell`), the stops carved out of a walk by
-  held position and steps;
-* `StepDeparture` — `claimSteplessDepartures` (`staySteplessDeparture`), a walk's
-  stepless head that is still the stay before it.
+* `FootArrival` (`stayArrivalClaim`): a walk's tail that is already the stay
+  after it;
+* `Dwell` (`walkDwell`): stops carved out of a walk by held position and steps;
+* `StepDeparture` (`staySteplessDeparture`): a walk's stepless head that is
+  still the stay before it.
 
-All discrete branches + arithmetic, no transcendentals ⇒ exact. UNPROVEN;
-pinned by the `#guard`s.
+Discrete branches and arithmetic only, so exact. UNPROVEN; pinned by the
+`#guard`s.
 -/
 
 /-! ## `Shed` — the fix type and the helpers the passes share -/
@@ -46,16 +45,10 @@ def sortedIn (points : Array PointF) (startTs endTs : Int) : Array PointF :=
     fun a b => a.ts ≤ b.ts).toArray
 
 /--
-Rebuild a walk over a new window from its own fixes.
-
-`ridePrecedes` is true for the remainder that begins where a ride ends. The ride
-owns its boundary fixes — the fix *at* the boundary is the one the vehicle
-arrived on and its speed reading is the vehicle's — so the walk must not take
-it. Without this the trailing walk inherits the ride's arrival speed and is
-right back to claiming 34 km/h on foot.
-
-Enrichment computed over the parent's window is not evidence about this stretch,
-so the labels are cleared and `needsReenrich` set.
+Rebuild a walk over a new window from its own fixes. `ridePrecedes` gives the
+boundary fix to the ride ending there (its speed is the vehicle's), or the walk
+inherits the arrival speed. Labels from the parent's window are cleared and
+`needsReenrich` set.
 -/
 def walkRemainder (seg : Seg) (startTs endTs : Int) (points : Array PointF)
     (ridePrecedes : Bool := false) : Seg :=
@@ -153,20 +146,12 @@ private def footArrival (cur next : Seg) (points : Array PointF) : Option (Seg �
       -- and `s!` renders it "3.000000" where "3" is wanted. The reason string
       -- is compared field for field by the day gate.
       let reason := s!"arrival boundary moved back {movedS} s: the walk's tail held position within {toString (jsRound spreadM).toInt64.toInt} m for {durS} s"
-      -- `walkRemainder` recomputes the kinematics over the new window, which is
-      -- what this pass wants: the seconds it removes are the standing ones that
-      -- dragged the average down. But it also clears the enrichment and flags
-      -- `needsReenrich`, and that is wrong here: its own callers carve a
-      -- remainder whose mode is genuinely in question, while trimming an
-      -- arrival changes the window and never what the segment is. Forcing the
-      -- re-derivation makes a shortened leg come back `cycling` on 04-29, and
-      -- `repairVehicleHandoff` absorbs 27 minutes of it into the adjacent train
-      -- as an impossible vehicle hand-off.
-      --
-      -- The name is a different matter: the shorter walk is a shorter stretch
-      -- of street, and the name it carries was derived from a line drawn
-      -- through the part it overran onto. `needsRename` asks `reenrich` for
-      -- that and for nothing else.
+      -- `walkRemainder` recomputes the kinematics, which is wanted: the removed
+      -- seconds were the standing ones. Its enrichment reset is not: trimming an
+      -- arrival changes the window, not what the segment is, and re-derivation
+      -- turned a shortened leg into `cycling` that a later pass then absorbed into
+      -- a train. Only the name is re-asked (`needsRename`), the street the
+      -- shorter walk covers.
       let rebuilt := walkRemainder cur cur.startTs arrivalTs points
       let walk := { rebuilt with refinedMode := cur.refinedMode, wayName := cur.wayName, needsReenrich := false, needsRename := true, refinedReason := some reason }
       -- The stay keeps its enrichment (same place, entered earlier) but its
@@ -268,34 +253,20 @@ end FootArrival
 
 /-! ## `splitWalksOnDwell`
 
-A walk that stops for a few minutes — a shop, a queue, a bench — and carries on
-is one walking segment, because the tumbling grid finds a dwell shorter than
-about two windows only when it happens to dominate one. Re-phasing the
-grid was measured four ways and lost confirmed rows every time; the dwell is
-found from the walk's own fixes instead.
+A walk that stops for a few minutes (a shop, a queue) and carries on is one
+segment, because the tumbling grid finds a short dwell only by luck; re-phasing
+the grid lost confirmed rows four ways, so the dwell is found from the walk's
+own fixes. A run holding within `DWELL_RADIUS_M` of its running mean for
+`DWELL_MIN_S`, with `DWELL_MIN_REMAINDER_S` of walk either side, becomes a stay.
+Steps are the veto: cadence at `DWELL_WALKING_CADENCE` is a frozen GPS on a
+walking wearer; no step data lets the GPS decide.
 
-A run of fixes that holds position — every fix within `DWELL_RADIUS_M` of the
-run's running mean — for at least `DWELL_MIN_S`, with a walk of at least
-`DWELL_MIN_REMAINDER_S` left on both sides, becomes a stay of its own. The
-step counter is the veto, not the evidence: a run whose cadence reads
-`DWELL_WALKING_CADENCE` or more is a GPS that froze while the wearer walked
-on, and is left alone; no step data at all lets the GPS decide.
-
-Runs late in the cascade, after every rail and vehicle carver: in the split
-stage a held position next to a train is the platform wait, and carving it moves
-the train's edge and loses four confirmed rail rows. A walk with a train on
-either side is left alone.
-
-The stay is named the way the enrichment stage names every stay — a mined
-place elected from the run's own fixes, then the venue resolver at the naming
-coordinate; the remainders are `walkRemainder`s, rebuilt
-over their own windows but keeping the walk's name and refinement — a stop
-taken out of a walk does not change which street it was. A boundary fix
-belongs to the stay on both sides. The second remainder is
-searched again, so a walk with two stops yields two.
-
-Entry is on the effective mode (`segMode`): by this point refinements are the
-truth about a leg. -/
+Late in the cascade, after the rail and vehicle carvers, since a held position
+beside a train is its platform wait. The stay is named as enrichment names any
+stay; the remainders keep the walk's name and refinement. A boundary fix belongs
+to both sides, and the second remainder is searched again. Entry is on the
+effective mode.
+-/
 
 namespace Dwell
 
@@ -305,32 +276,25 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 open Shed (PointF segMode sortedIn walkRemainder)
 open Verified.JsNum (jsRound)
 
-/-- Names a carved stop: the segment goes in with its window, centroid and
-kinematics and comes back with `place`, `city` and `focusPlaceId` — the
-enrichment stage's own stationary branch, so the stop is elected and named
-like any other stay. -/
+/-- Names a carved stop with the enrichment stage's own stationary branch:
+window, centroid and kinematics in; `place`, `city`, `focusPlaceId` out. -/
 abbrev Namer := Seg → Seg
 
 /-- A held position must last this long to be a stop rather than a crossing. -/
 def DWELL_MIN_S : Int := 240
-/-- How far a fix may sit from the run's mean and still be "here". Observed
-    foot arrivals hold within 1–9 m; a shop's aisles are wider than a kerb.
-    ⚠ Both thresholds were swept on the corpus. 40 m is inert (it moves one
-    stop's start by a minute on a day with no narrative and clears no confirmed
-    row), so 30 stands. 180 s is not free: with either radius it turns a
-    confirmed walk into a shop stop (06-22 10:34Z) and breaks 07-06's Work stay,
-    whose GPS wander a later pass absorbs as a walk and no longer can once a
-    stop is carved out of it. Four minutes stands. -/
+/-- How far a fix may sit from the run's mean and still be "here" (foot
+    arrivals hold within 1–9 m; a shop's aisles are wider). Swept on the corpus:
+    40 m changes nothing confirmed, so 30 stands; a 180 s minimum turned a
+    confirmed walk into a shop stop and broke a Work stay, so four minutes
+    stands. -/
 def DWELL_RADIUS_M : Float := 30
 /-- A dwell at a walk's edge is the arrival and departure passes' business. -/
 def DWELL_MIN_REMAINDER_S : Int := 60
 /-- Cadence at or above which the run was walked through, not stood in. -/
 def DWELL_WALKING_CADENCE : Float := 40
-/-- Next to a train, a stop is carved only when the stretch between it and the
-    train was itself WALKED — at least this long, at `PEDESTRIAN_MIN_CADENCE_SPM`.
-    A platform wait sits against its train; a shop is reached on foot. 05-12's
-    Lidl stop came after four minutes at ~100 steps/min from
-    the Wembley Park train and was refused by the old blanket rule. -/
+/-- Next to a train, a stop is carved only when the stretch between them was
+    walked: at least this long at `PEDESTRIAN_MIN_CADENCE_SPM`. A platform wait
+    sits against its train; a shop is reached on foot. -/
 def DWELL_TRAIN_SIDE_WALK_S : Int := 120
 
 /-- End (exclusive) of the longest run from `i` whose fixes all stay within
@@ -375,21 +339,16 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
   | 0 => #[seg]
   | fuel + 1 =>
     let fixes := sortedIn points seg.startTs seg.endTs
-    -- The stretch between a train and the stop must have been walked: at
-    -- least `DWELL_TRAIN_SIDE_WALK_S` long, and its `DWELL_TRAIN_SIDE_WALK_S`
-    -- next to the STOP at pedestrian cadence. Not the whole stretch's mean: its
-    -- train end is the exit (escalators, a barrier, steps barely counted), and
-    -- 06-16's pharmacy, reached after four brisk minutes, averaged 53 spm with
-    -- the minute and a half out of Wembley Park in it.
+    -- The stretch between train and stop must be walked: its last
+    -- `DWELL_TRAIN_SIDE_WALK_S` before the stop at pedestrian cadence, not the
+    -- whole stretch's mean, since the station exit (escalators, barriers) barely
+    -- counts steps.
     let walkedSide := fun (a b : Int) (stopAtEnd : Bool) =>
       let (wa, wb) := if stopAtEnd then (b - DWELL_TRAIN_SIDE_WALK_S, b) else (a, a + DWELL_TRAIN_SIDE_WALK_S)
       decide (b - a ≥ DWELL_TRAIN_SIDE_WALK_S) &&
         (meanCadenceSpm steps wa wb).any (fun c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM))
-    -- Only the last stop before a train can be its platform wait. One with a
-    -- later stop between it and the train is not against the train at all,
-    -- and, read to the train, the later sits pull the cadence under the bar:
-    -- an hour in Gare Montparnasse comes out one 46-minute walk with no stop in
-    -- it.
+    -- Only the last stop before a train can be its platform wait; read to the
+    -- train, the later stops would pull the cadence under the bar.
     let anotherStopAfter := fun (de : Int) =>
       (findDwell (fixes.filter (·.ts > de)) steps de seg.endTs (fun _ _ => true)).isSome
     let admit := fun (ds de : Int) =>
@@ -412,11 +371,9 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
           displayTz := seg.displayTz
           refinedReason := some s!"stop inside a walk: held position within {toString (jsRound spreadM).toInt64.toInt} m for {de - ds} s"
           refinedKinds := #["walk-dwell"] }
-      -- The remainders keep the walk's name and refinement: a stop taken out
-      -- of a walk changes its window and never which street it was, and a name
-      -- re-derived over the shorter window picks the neighbouring street on
-      -- 06-24 and loses a confirmed row. Only the kinematics are rebuilt, as the
-      -- foot-arrival trim does.
+      -- The remainders keep the walk's name and refinement (a name re-derived
+      -- over the shorter window picked the neighbouring street); only the
+      -- kinematics are rebuilt.
       let keep (r : Seg) : Seg :=
         { r with wayName := seg.wayName, refinedMode := seg.refinedMode, place := seg.place
                  needsReenrich := false, needsRename := false }
@@ -425,9 +382,8 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
       #[before, stay] ++ cutWalk after points steps name false trainAfter fuel
 
 /-- Carve every held position of `DWELL_MIN_S` or more out of each walking
-    segment as a stay of its own. Next to a train only a stop REACHED ON FOOT
-    from it is carved (`DWELL_TRAIN_SIDE_WALK_S`): a held position against the
-    train is its platform wait, which the rail passes own. -/
+    segment as a stay. Next to a train only a stop reached on foot is carved;
+    one against the train is its platform wait. -/
 def splitWalksOnDwell (segments : Array Seg) (points : Array PointF)
     (steps : List FeasibilityStepPoint) (name : Namer) : Array Seg := Id.run do
   let mut out : Array Seg := #[]
@@ -443,14 +399,12 @@ end Dwell
 
 /-! ## `claimSteplessDepartures`
 
-A walk that leaves a stay begins at its first stepped minute. Where the walk's
-head carries no minute of `STEPLESS_MAX_SPM` steps or more, and the stay before
-it had step data so the watch was counting, the head is still the stay: GPS
-wander out of a building reads as a slow walk the watch never saw (07-15: zero
-steps 12:43–12:50 after the hospital, then a walk from 12:53, served as a walk
-from 12:45). The stay is extended to that minute; the walk keeps its name.
-Absent steps inside the walk nothing moves: no stepped minute is no evidence of
-where walking began. -/
+A walk leaving a stay begins at its first stepped minute. Where the walk's head
+has no minute of `STEPLESS_MAX_SPM` steps and the stay before had step data,
+the head is still the stay (GPS wander out of a building). The stay extends to
+that minute and the walk keeps its name. Without steps in the walk nothing
+moves.
+-/
 
 namespace StepDeparture
 
@@ -544,10 +498,9 @@ private def shopAlpha : Namer := fun s =>
 private def TRAIN : Seg := { startTs := 1200, endTs := 2400, mode := "train" }
 #guard (splitWalksOnDwell #[WALK, TRAIN] STOP [] unnamed).size == 2
 
--- Two stops before a train (Gare Montparnasse): the first has the second
--- between it and the train, so it is no platform wait and is carved however
--- slow the walk on; the second is the last before the train and needs the
--- stretch to it walked.
+-- Two stops before a train: the first has the second between it and the
+-- train, so it is carved however slow the walk; the second needs the stretch
+-- to the train walked.
 private def TWO_STOPS : Array PointF :=
   (Array.range 10).map (fun i => dfx (Int.ofNat i * 30) (Float.ofNat i * 45)) ++
   (Array.range 11).map (fun i => dfx (300 + Int.ofNat i * 30) (450 + (if i % 2 == 0 then 0 else 3)) 0.5) ++

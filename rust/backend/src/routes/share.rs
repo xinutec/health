@@ -73,22 +73,10 @@ fn days_back_of(body: Option<&Body>) -> Option<i64> {
     n.is_finite().then(|| n.floor() as i64)
 }
 
-/// One share row, as the client reads it.
-///
-/// `createdAt` is `Date.toISOString()`, which is the same string
-/// `JSON.stringify` produces for a Date — so this reuses the row renderer's
-/// formatter rather than inventing a second one.
-/// `GET`/`POST`/`PATCH /share`'s answer, in both of its shapes.
-///
-/// One struct for a tagged pair, and the tag is `active`. With no link the
-/// other keys are absent, not null — the settings page renders the create
-/// button off `active: false` alone — so every optional carries
-/// `skip_serializing_if`.
-///
-/// `last_accessed_at` is `Option<Option<_>>` and that is not a typo. The
-/// outer absence means "there is no link"; `Some(None)` means "a link nobody
-/// has opened yet" and must serialize as an explicit `null`. Collapsing the two
-/// would make an unopened link indistinguishable from no link at all.
+/// `GET`/`POST`/`PATCH /share`'s answer, tagged by `active`. With no link the
+/// other keys are absent, not null, so every optional skips serializing.
+/// `last_accessed_at` is `Option<Option<_>>`: absent is no link, `Some(None)`
+/// an unopened one, serialized as an explicit `null`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShareStatus {
@@ -122,6 +110,8 @@ impl ShareStatus {
     }
 }
 
+/// One share row as the client reads it. `createdAt` uses the row renderer's
+/// ISO formatter, the client's `Date` string.
 fn share_json(st: &AppState, row: &MySqlRow) -> anyhow::Result<ShareStatus> {
     let token: String = row.try_get("token")?;
     let days_back: i64 = row.try_get("days_back")?;

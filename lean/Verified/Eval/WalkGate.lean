@@ -1,46 +1,25 @@
 /-!
 # Walk-geometry ratchet
 
-The gate asks one question: did any drawn walk get worse than its blessed
-floor? The floor is `tests/golden/walk-baseline.json` — gitignored, beside the
-fixtures it describes, because it carries real walk timestamps.
+Did any drawn walk get worse than its blessed floor,
+`tests/golden/walk-baseline.json` (gitignored beside its fixtures: it carries
+real walk timestamps)? A standing defect is recorded in the floor and can only
+shrink, so the gate is green on a healthy tree; improvements are surfaced for
+re-bless. The oracle is a frozen file, so the code under it can change.
 
-## Why this is a ratchet and not a comparison
-
-`score-walk-match`'s own A/B exit (matcher vs smoother) carries standing
-failures, so it can never be a deploy gate as-is: it is red on a healthy
-tree. The ratchet inverts that — a standing defect is recorded in the floor and
-can only shrink. Improvements are surfaced for re-bless rather than failing.
-
-## This is group B: the oracle is a file, so porting loses nothing
-
-The oracle is `walk-baseline.json`, a frozen file, so the code under it can
-change and the question stays intact.
-
-The metric producer (the referee that measures a drawn line) is not here; this
-module is only the verdict, which is pure and total. The producer is Rust glue
-over the fixture replay, per the standing Lean-logic/Rust-IO split.
-
-## Exactness
-
-Every decision in this file is exact. `startTs` pairing is `Int` arithmetic;
-the metric comparisons are `Float` subtractions against literal epsilons, the
-same subtractions the baseline was blessed with, so a value on an epsilon
-boundary stays on it. No transcendental function is reached.
-
-Ordering matches JS in the two places it is observable: `mergeSort` is stable
-and left-biased on `≤`, as `Array.prototype.sort` has been since ES2019, and the
-date sort is lexicographic — identical to JS's UTF-16 comparison over ISO dates,
-which are ASCII.
+This module is the verdict, pure and total; the metric producer is Rust glue
+over the fixture replay. Every decision is exact: `startTs` pairing is `Int`,
+and metric comparisons are the same `Float` subtractions the baseline was
+blessed with. Sorting is stable (`mergeSort`, left-biased on `≤`) and dates
+compare as ASCII.
 -/
 
 namespace Verified.Eval.WalkGate
 
 /-! ## Thresholds
 
-Each is the tolerance for one metric, and none is a budget: they exist because
-a metric moves slightly under an irrelevant upstream change, not because that
-much regression is acceptable. -/
+Tolerances, not budgets: a metric moves slightly under an irrelevant upstream
+change. -/
 
 /-- Over-route may rise this much (m). -/
 def STALL_EPS_M : Float := 15
@@ -49,14 +28,10 @@ def STALL_EPS_M : Float := 15
 much. -/
 def BUDGET_EPS_M : Float := 30
 
-/-- The same slack the reconstruction grants before its step factor acts — the
-gate must not flag what the model deliberately tolerates.
-
-Mirrors `MapSmoothProfile.stepSlackRatio` in `Verified.Geo.WalkSmooth`
-(1.4). It is restated rather than imported because this module is the referee
-and must not silently follow the subject it judges: if the reconstruction
-loosens its slack, the gate should go red and be re-blessed deliberately, not
-widen its own tolerance in the same commit. -/
+/-- The slack the reconstruction grants before its step factor acts
+(`MapSmoothProfile.stepSlackRatio`, 1.4), restated rather than imported so the
+referee does not silently follow its subject: if the reconstruction loosens,
+the gate goes red and is re-blessed deliberately. -/
 def BUDGET_SLACK_RATIO : Float := 1.4
 
 /-- Route-correctness may fall this much (fraction). -/
@@ -74,19 +49,13 @@ def START_TS_TOLERANCE_S : Nat := 120
 
 /-! ## Shapes -/
 
-/-- Referee metrics recorded per walk.
-
-`none` means honestly unmeasured (no building data in the fixture, no
-named-street truth over the leg) — never zero. The distinction is the whole
-reason these are `Option`: a lost measurement must not read as a perfect score.
--/
+/-- Referee metrics recorded per walk. `none` is unmeasured (no building data,
+no named-street truth), never zero. -/
 structure WalkEntry where
   /-- Episode start (unix seconds) — the walk's identity within its day. -/
   startTs : Int
-  /-- Off-walkable p90 of the drawn line (m). Recorded but not gated: the
-  metric is snapper-biased — a phantom that hugs mapped ways scores well, and a
-  reconstruction that rightly dissolves it scores worse. Kept as a display
-  column and for history. -/
+  /-- Off-walkable p90 of the drawn line (m), recorded but not gated: it favours
+  a phantom hugging mapped ways. -/
   p90M : Option Float
   /-- Corridor over-route (m). -/
   stallM : Float
@@ -100,40 +69,22 @@ structure WalkEntry where
   lenM : Float
   /-- Pedometer displacement budget (steps × stride, m); `none` = no step data. -/
   budgetM : Option Float
-  /-- A diagnostic column, not an axis. The matcher's identity
-  report for this leg: named ways and their metres, longest first.
-
-  It is not in `Metric` and must not be. Every other field here is scored
-  against a blessed floor; this one is carried so `WALK_GATE_DUMP` can print
-  where the route ran beside the numbers. Gating it would bless a route shape
-  nobody has adjudicated, and route-dominant naming breaks more truth rows than
-  it fixes.
-
-  Defaulted, because the blessed floor file predates it — `parseEntry` reads
-  a baseline that has no such column, and an absent one means "not recorded",
-  exactly as it does for the `Option` axes above. -/
+  /-- A diagnostic column, not an axis: the matcher's identity report (named
+  ways and metres, longest first) for `WALK_GATE_DUMP`. Gating it would bless an
+  unadjudicated route shape. Defaulted, as the blessed floor predates it. -/
   wayUm : Array (String × Nat) := #[]
-  /-- Coverage — diagnostic columns, not axes. Length of the raw GPS
-  track, the farthest a raw fix falls from the drawn line, and the gaps between
-  the two tracks' ends.
-
-  Not in `Metric`, and not yet a bar anywhere. They exist so the question
-  *does the matched line still get from where the fixes started to where they
-  ended?* can be asked of the corpus at all; four candidate discriminators
-  found no band separating a disputed walk from blessed ones. Place a bar only
-  from a distribution over the blessed set, never from the one walk that
-  prompted it.
-
-  Defaulted for `wayUm`'s reason: the blessed floor predates them, and an
-  absent column means "not recorded". -/
+  /-- Coverage, diagnostic only: the raw track's length, the farthest raw fix
+  from the drawn line, and the gaps between the tracks' ends. Not a bar: four
+  candidate discriminators found no band separating a disputed walk from the
+  blessed ones, and a bar must come from that distribution. Defaulted, as the
+  floor predates them. -/
   rawLenM : Float := 0
   coverMaxM : Float := 0
   headGapM : Float := 0
   tailGapM : Float := 0
-  /-- p90 of the fixes' distance to the drawn line, and the share of fixes more
-  than 30 m from it. Both, because measured over this corpus `coverMaxM` is
-  useless on its own: its p95 is 932.8 m and its max 3026.9 m, so one GPS spike
-  scores like an abandoned half. See `Eval.WalkMetrics.fixCoverage`. -/
+  /-- p90 of the fixes' distance to the drawn line, and the share beyond 30 m:
+  the maximum alone scores one spike like an abandoned half (see
+  `Eval.WalkMetrics.fixCoverage`). -/
   cover90M : Float := 0
   uncoveredFrac : Float := 0
   deriving Inhabited, BEq, Repr
@@ -202,13 +153,9 @@ structure Pairing where
   newCur : Array WalkEntry
   deriving Inhabited
 
-/-- Pair baseline walks with current walks of the same day, nearest `startTs`
-first, one-to-one, within `START_TS_TOLERANCE_S`.
-
-Greedy on a stably-sorted candidate list: nearest pair wins, both sides are
-consumed, and the scan continues. That is not a minimum-cost matching and does
-not try to be — the tolerance is 120 s and walks within 120 s of each other are
-the segmentation move this exists to absorb, not a competition. -/
+/-- Pair baseline and current walks of one day one-to-one, nearest `startTs`
+first, within `START_TS_TOLERANCE_S`: greedy on a stable sort, which suffices
+since walks that close are the segmentation move this absorbs. -/
 def pairWalks (base cur : Array WalkEntry) : Pairing := Id.run do
   let mut candidates : Array (Nat × Nat × Nat) := #[]
   for hm_b : b in [0:base.size] do
@@ -236,20 +183,15 @@ def pairWalks (base cur : Array WalkEntry) : Pairing := Id.run do
 
 /-! ## The verdict -/
 
-/-- How far the drawn length runs beyond what the pedometer allows, with the
-reconstruction's own slack. `none` budget = no step data = honestly unmeasured.
-
-This is the witness a coherent smear cannot fool: a reconstruction can draw a
-plausible-looking line anywhere, but it cannot draw more metres than the steps
-account for. -/
+/-- How far the drawn length exceeds what the pedometer allows, with the
+reconstruction's slack; `none` without step data. A smear can draw a plausible
+line anywhere but not more metres than the steps account for. -/
 def excess (w : WalkEntry) : Option Float :=
   w.budgetM.map (fun bm => max 0 (w.lenM - bm * BUDGET_SLACK_RATIO))
 
-/-- Compare a run against the recorded floor.
-
-Only dates present in `current` are compared — a single-day invocation must not
-read the other days' floors as vanished. Pass `onlyDates` to make that scope
-explicit. -/
+/-- Compare a run against the floor, for the dates in `current` only (a
+single-day run must not read the other days as vanished); `onlyDates` makes
+that explicit. -/
 def gateWalks (baseline current : WalkBaseline)
     (onlyDates : Option (Array String) := none) : GateResult := Id.run do
   let dates := onlyDates.getD (current.map Prod.fst)
@@ -262,10 +204,9 @@ def gateWalks (baseline current : WalkBaseline)
     for w in p.newCur do
       out := { out with added := out.added.push ⟨date, w.startTs⟩ }
     for (b, c) in p.pairs do
-      -- Higher-is-worse metrics with an epsilon, except `route` where the
-      -- fraction falling is the regression. `none` on either side never
-      -- compares: newly measured is not a regression, and a lost measurement
-      -- is surfaced separately rather than scored.
+      -- Higher is worse with an epsilon, except `route`, where falling is the
+      -- regression. `none` on either side never compares; a lost measurement
+      -- is surfaced separately.
       let axes : Array (Metric × Option Float × Option Float × Float × Bool) := #[
         (.stall, some b.stallM, some c.stallM, STALL_EPS_M, true),
         (.route, b.routeCorr, c.routeCorr, ROUTE_EPS, false),
@@ -296,13 +237,8 @@ def passes (r : GateResult) : Bool := r.regressed.isEmpty
 
 /-! ## Witnesses
 
-Every `#guard` below was ablated — the thing it guards was broken and the guard
-was watched to fail, then restored. A guard that has never failed is a guess
-about what the code does.
-
-The fixtures are synthetic: this is the referee's arithmetic, and it has no
-opinion about real coordinates. The metric producer is where real days are
-needed, and that is Rust glue over the gitignored fixtures. -/
+Every `#guard` was ablated: the guarded thing broken and the guard seen to
+fail. Synthetic fixtures; real days are the Rust producer's. -/
 
 section Witnesses
 
@@ -364,9 +300,8 @@ private def day (ws : Array WalkEntry) : WalkBaseline := #[("2026-05-15", ws)]
 
 /-! ### The step budget
 
-`excess` is not the raw length: it is what the line draws beyond what the
-pedometer allows, and it is clamped at zero so a walk comfortably inside its
-budget cannot bank credit against a later regression. -/
+`excess` is the length beyond the allowance, clamped at zero, so a walk inside
+its budget cannot bank credit against a later regression. -/
 
 -- Base draws 100 m against a 140 m allowance (excess 0); now draws 200 m
 -- against the same allowance (excess 60). 60 > `BUDGET_EPS_M`.

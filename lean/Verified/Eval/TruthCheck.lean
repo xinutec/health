@@ -3,40 +3,22 @@ import Verified.Eval.Journeys
 /-!
 # Three-way truth check
 
-The golden harness diffs pipeline output against the last blessed snapshot,
-which conflates three different things into one must-not-change blob: lines we
-have confirmed true, lines we know are wrong but tolerate, and lines nobody ever
-checked. So fixing a known error trips the harness exactly like causing a
-regression, and an unverified line is treated as gospel.
+A blessed snapshot conflates rows confirmed true, rows known wrong and rows
+never checked, so fixing a known error trips it like a regression. This module
+gives each ground-truth row one of five verdicts from its cell (the truth), its
+status, its provenance (`isEnforceable`) and the live comparison:
 
-This module classifies each ground-truth row into one of five verdicts. The
-row's cell states the truth (`GroundTruth.lean`); its status says how the
-pipeline relates to that truth; its provenance says how much to trust the
-claim (`isEnforceable`); and the live comparison says whether the pipeline
-currently matches it.
+* `verified`: enforceable `correct` row, pipeline matches. Locked.
+* `regressed`: enforceable `correct` row, pipeline no longer matches.
+* `known-error`: enforceable `wrong` row, pipeline still deviates. Counted
+  debt, not a failure.
+* `cleared`: enforceable `wrong` row, pipeline now matches.
+* `unverified`: no enforceable truth.
 
-* `verified`    — enforceable `correct` row, pipeline matches. Locked: a later
-                  change away from this is a real regression.
-* `regressed`   — enforceable `correct` row, pipeline no longer matches.
-* `known-error` — enforceable `wrong` row, pipeline still deviates. Tolerated
-                  debt: counted, never invisible, not a failure.
-* `cleared`     — enforceable `wrong` row, pipeline now matches the truth.
-* `unverified`  — no enforceable truth (partial/unclear verdict, or
-                  inferred/unspecified provenance).
-
-## The live mode stays a string
-
-`Truth.mode` is a `Mode`, but the pipeline's mode is whatever the serving path
-emitted, compared as a canonical string, so an unrecognised mode compares
-unequal to everything rather than being dropped. Parsing it to `Option Mode`
-would turn that into "no live state", a different verdict for a `wrong` row if
-the mode table ever grows on one side only. So `Live.mode` is a `String`.
-
-## No regex, and one deliberate divergence
-
-`parsePipelineState`'s route pattern is explicit walking. A route whose alight
-is only whitespace (`"A →  · Line"`) is "no route" and falls through to the
-bare-line branch: such a row would be a narrative typo rather than a claim.
+`Live.mode` stays a `String`: parsed to `Option Mode`, an unrecognised mode would
+become "no live state", a different verdict for a `wrong` row. The route
+pattern is explicit walking; an alight of only whitespace is "no route" and
+falls to the bare-line branch (a narrative typo).
 -/
 
 namespace Verified.Eval.TruthCheck
@@ -81,12 +63,8 @@ structure StateWindow where
 
 /-! ## String helpers -/
 
-/-- ASCII + Latin-1 lowercase.
-
-JS `toLowerCase()` is fully Unicode-aware; `Char.toLower` is ASCII only. The
-Latin-1 supplement is added because European place names live there ("Café",
-"Ménière"), so a truth cell shouting a name would otherwise stop matching. Above
-U+00FF this still diverges from JS, which no corpus row reaches. -/
+/-- ASCII + Latin-1 lowercase, so a truth cell shouting "CAFÉ" still matches;
+above U+00FF no corpus row reaches. -/
 private def lowerChar (c : Char) : Char :=
   if c.isUpper then c.toLower
   else if c.val ≥ 0xC0 && c.val ≤ 0xDE && c.val != 0xD7 then
@@ -105,13 +83,9 @@ def normOpt : Option String → Option String
 private def nonEmpty (s : String) : Option String :=
   if s.isEmpty then none else some s
 
-/-- `/^(.+?)\s+→\s+([^·]+?)(?:\s*·\s*(.+))?$/` — a transit label's
-`From → To · Line`. Returns `(from, to, line?)`.
-
-The arrow must carry whitespace on both sides and have at least one character
-before it, which is what stops a bare "→" glyph inside a name from splitting the
-label. The line is everything after the first `·`; the alight cannot contain
-one. -/
+/-- `/^(.+?)\s+→\s+([^·]+?)(?:\s*·\s*(.+))?$/`: a transit label's
+`From → To · Line` as `(from, to, line?)`. The arrow needs whitespace either
+side and something before it, so a "→" inside a name does not split it. -/
 def splitTransitRoute (s : String) : Option (String × String × Option String) := Id.run do
   let cs := s.toList
   let n := cs.length
@@ -147,16 +121,10 @@ def splitTransitRoute (s : String) : Option (String × String × Option String) 
 
 /-! ## Rendering the live side -/
 
-/-- Render a live pipeline state into the comparison form, so one comparator
-works on both sides. Mirrors the shapes the truth cells use:
-
-* stationary/sleeping → `@ Place (qualifier)`: the trailing parenthetical splits
-  off the place name;
-* walking/driving/cycling → `on Way`: the way label as-is;
-* train/bus → `From → To · Line` or a bare line name. A transit state's
-  `wayName` renders as either an `A → B` route (optionally `· Line`) or just the
-  line (train) / the road names (bus), so parse whichever is present: transit
-  rows compare on board/alight when available and fall back otherwise. -/
+/-- Render a live pipeline state in the truth cells' shapes, so one comparator
+serves both: stationary/sleeping → `@ Place (qualifier)`; walking/driving/cycling
+→ `on Way`; train/bus → `From → To · Line` or a bare line or road name, compared
+on board/alight when present. -/
 def parsePipelineState : Option StateWindow → Option Live
   | none => none
   | some st =>
@@ -182,22 +150,10 @@ def parsePipelineState : Option StateWindow → Option Live
 
 /-! ## The comparator -/
 
-/-- Does the live way label carry the road the truth names?
-
-A live `wayName` is not a road, it is a display label: `composeWayName` emits up
-to three road names joined by ", " for one merged moving leg, duration-weighted,
-each covering at least 15% of it, capped at 30 characters so the timeline stays
-one line. A walk crossing two roads is labelled "Example Rise, <second road>".
-
-String equality against that label contradicts this module's own rule (extra
-attribution on the live side is not a contradiction), and it fails a real row:
-a confirmed "walking on Example Rise" against a live leg with identical bounds
-labelled "Example Rise" plus one more road, the confirmed road right there as
-its first component.
-
-So ask membership, not equality. Still a real test in the direction that
-matters: a truth naming a road the leg never touched finds no component, as a
-confirmed footpath against a live road label does. -/
+/-- Does the live way label carry the road the truth names? A live `wayName` is
+a display label of up to three roads joined by ", " (`composeWayName`), so this
+asks membership, not equality: equality failed a confirmed walk whose label
+added a second road. A road the leg never touched still finds no component. -/
 def wayNameCovers (truthWay : String) (liveWay : Option String) : Bool :=
   match liveWay with
   | none => false
@@ -206,30 +162,20 @@ def wayNameCovers (truthWay : String) (liveWay : Option String) : Bool :=
 /-- What separates a truth place's alternative names. -/
 def PLACE_ALTERNATIVES : String := " / "
 
-/-- Does the live state match the truth cell?
-
-Deliberately asymmetric: the truth cell asserts only what it names, so extra
-attribution on the live side is not a contradiction — a truth of plain "walking"
-is satisfied by "walking on Example Rise" (the narrative only vetted the mode), and
-a truth of "train A → B" without a `· Line` is satisfied by any line. But every
-assertion the truth does make must hold. The trailing `(qualifier)` is ignored:
-"Hospital W (hospital)" and "Hospital W" are the same place, and a wrong
-qualifier on a right place is a separate, weaker signal. A null truth (unparsed
-cell) or an absent live state never matches.
-
-A truth place may name one place under several names, ` / ` between them
-("London St Pancras / St Pancras International": the map gives the station
-both); the live place matches any one. -/
+/-- Does the live state match the truth cell? Asymmetric: the truth asserts only
+what it names (plain "walking" is satisfied by "walking on X", a train without
+`· Line` by any line), and everything it names must hold. The trailing
+`(qualifier)` is ignored, and ` / ` separates alternative names for one place.
+A null truth or an absent live state never matches. -/
 def truthMatches : Option Truth → Option Live → Bool
   | none, _ => false
   | _, none => false
   | some t, some l => Id.run do
     if canonicalMode t.mode != canonicalMode' l.mode then return false
     if t.mode == .train || t.mode == .bus then
-      -- A station may be named under several names, ` / ` between them, like
-      -- a place: the live end matches any one. The narrative parser drops a
-      -- station's trailing "(qualifier)"; the live label keeps its own
-      -- ("Gare du Nord (Métro)"), so it is dropped here before comparing.
+      -- A station may have alternative names (` / `), like a place. The live
+      -- label's own "(qualifier)" is dropped, as the narrative parser drops
+      -- the truth's.
       let stationIs := fun (truthName live : String) =>
         let liveBody := (splitTrailingParen live.trimAscii.toString).1
         (truthName.splitOn PLACE_ALTERNATIVES).any fun alt => norm alt == norm liveBody
@@ -281,12 +227,9 @@ structure TRow where
   truth : Option Truth
   deriving BEq, Repr, Inhabited
 
-/-- The state covering a row's window, sampled at the window midpoint.
-
-The midpoint, not the overlap: a row is a claim about what was happening then,
-and a leg that merely clips the window's edge did not answer it. That is why
-06-16's row 1 fails by 9 seconds: `vehicleSplit` ends the walk at its last fix
-rather than its last trustworthy one, and the midpoint lands past it. -/
+/-- The state covering a row's window, sampled at its midpoint: a row claims
+what was happening then, and a leg clipping the window's edge did not answer
+it. -/
 def stateIdxAt (states : Array StateWindow) (startTs endTs : Int) : Option Nat :=
   -- `(startTs + endTs) / 2` in JS is a float midpoint; an odd sum lands on .5.
   -- Doubling the bounds instead keeps it exact and orders identically.
@@ -306,13 +249,9 @@ structure DayResult where
   /-- True iff any enforceable `correct` row no longer matches — the only
   verdict class that should fail a check. -/
   hasRegression : Bool
-  /-- Which state covered each row, positionally, or `-1` for none.
-
-  For diagnosis, and it exists because a regressed row names what broke and
-  never what the pipeline said instead — so every one of them had to be
-  re-diagnosed by hand before it could be attributed. The windowing stays here
-  rather than being re-derived by the caller: a debug view that finds the state
-  by its own rule can disagree with the verdict it is explaining. -/
+  /-- Which state covered each row, positionally, or `-1`: a regressed row
+  names what broke, not what the pipeline said. Computed here so a debug view
+  cannot disagree with the verdict it explains. -/
   covering : Array Int
   deriving Inhabited
 
@@ -335,18 +274,12 @@ def classifyDay (rows : Array TRow) (states : Array StateWindow) : DayResult :=
 
 /-! ## Witnesses
 
-⚠ synthetic names only. The shapes are drawn from the real corpus — 395
-rows over 32 narratives, whose truth cells occupy exactly 12 shapes — but the
-names are invented, because this file is tracked and the repo is public.
+⚠ Synthetic names only: the shapes are drawn from the real corpus, but this
+file is tracked and the repo is public.
 
-The corpus exercises the comparator thoroughly; two branches cannot be reached
-that way and live only here:
-
-* `splitTransitRoute`'s empty-`from` guard — no narrative cell yields an empty
-  board station, and with one the verdict comes out the same either way;
-* `nonEmpty` on an empty transit label — needs a train cell asserting a line
-  with no route, a shape the corpus has zero of (61 rows have route+line, 19
-  route-only, none line-only).
+Two branches no corpus row reaches live only here: `splitTransitRoute`'s
+empty-`from` guard, and `nonEmpty` on an empty transit label (a train cell with
+a line but no route, of which there are none).
 -/
 
 section Witnesses

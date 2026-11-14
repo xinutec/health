@@ -28,9 +28,6 @@ pub struct AppState {
     /// answer would key on it and defeat the point.
     pub tail_points:
         Arc<crate::location_cache::LocationCache<Vec<crate::location_cache::TailPoint>>>,
-    /// One client, reused. Every outbound call is bounded — a hung Nextcloud
-    /// must not tie up a pod, and a per-call client would also throw away the
-    /// connection pool on every request.
     /// In-flight Nextcloud Login Flow v2 handshakes, one per user.
     ///
     /// Process-local and deliberately not persisted: a flow is meaningless
@@ -46,6 +43,8 @@ pub struct AppState {
     /// inside the same pod, and the one that explains "why did my session
     /// vanish" is this one.
     pub started: std::time::Instant,
+    /// One client, reused: every outbound call is bounded, so a hung Nextcloud
+    /// cannot tie up the pod, and the connection pool survives across requests.
     pub http: reqwest::Client,
 }
 

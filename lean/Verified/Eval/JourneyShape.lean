@@ -2,61 +2,31 @@ import Verified.Eval.Journeys
 /-!
 # Journey reconstruction scoring
 
-The gate's referee for the drawn timeline: does the day read as the right
-sequence of trips? `Verified.Eval.Journeys.groundTruthJourneys` builds the
-narrative side; this builds the pipeline side from the drawn state legs and
-compares the two.
-
-Together with `Verified.Eval.FloorGate` this is everything the journey floor
-(`tests/golden/journey-baseline.json`) needs.
+Does the day read as the right sequence of trips? This builds the pipeline's
+journeys from the drawn legs and compares them with the narrative's
+(`Verified.Eval.Journeys.groundTruthJourneys`); with `Verified.Eval.FloorGate` it
+is the journey floor (`tests/golden/journey-baseline.json`).
 
 ## ⚠ A match is shape and coverage, and the second conjunct is the quiet one
 
-Echoing the deduped mode shape is not enough. When a journey fragments (a
-dark-tube ride drawn as walk + stay + walk + short train) the first fragment
-can carry the identical shape `[walking, train, walking]` while spanning a third
-of the trip; in the corpus, a third of the unmatched journeys reconstruct their
-exact expected shape and fail on coverage instead. So `uncoveredS` and `slackS`
-come back beside the verdict rather than being recomputed by whoever reads it.
+A fragmented journey's first piece can carry the exact shape while spanning a
+third of the trip; a third of the corpus's unmatched journeys do. So
+`uncoveredS` and `slackS` come back beside the verdict.
 
 ## The end-clip is one minute, and only at the ends
 
-A leg crossing the audited boundary, kept whole however little of it falls
-inside, can add an element to the shape: 06-24's walk out of the station puts
-thirty-six seconds into a 21-minute window, against a ground truth with no row
-for it at all.
+A leg crossing the audited boundary can add an element to the shape (36 s of a
+walk out of a station). Only ends are trimmed, since dropping an interior leg
+merges its neighbours (`[walking, train, walking]` collapses to `[walking]`).
+One minute, not a fraction of the window, which would swallow a real
+disagreement (a 146 s walk where the pipeline ends the train early).
 
-Trimming only at the ends is load-bearing. Dropping an interior leg merges its
-neighbours, because `modeShape` dedupes consecutive modes: on 06-22 a sub-minute
-train between two walks is the difference between `[walking, train, walking]`
-and a collapsed `[walking]`. Trimming an end can never join two legs.
+## Three rules the corpus cannot check
 
-And the bound stays at one minute rather than a fraction of the window or the
-coverage slack: either would also swallow 04-29's 146 s walk, where the pipeline
-genuinely ends the train a quarter of the way into the audited span, a real
-disagreement that must keep failing.
-
-## The evidence, and the three rules the corpus cannot check
-
-`rust/backend/tests/journey_corpus.rs` runs it over the real corpus.
-
-Three are silent on the corpus, and each is silent for a measured reason
-rather than an assumed one — a silent ablation is a question, not a pass
-(see the `#guard`s, which catch all three):
-
-* The one-second merge tolerance. Of 411 consecutive state pairs, 221 abut
-  exactly and the rest leave 8 s or more. A gap of exactly 1 occurs zero
-  times, so `≤ last.endTs + 1` and `≤ last.endTs` cannot be told apart here.
-* The pause split being strict. Of 216 consecutive leg pairs, none has a
-  gap within 24 s of the 300 s boundary (the nearest is 324), so `>` and `≥`
-  agree on every one.
-* `bestOverlap`'s tie-break. Of the 92 graded journeys, 89 are touched by
-  exactly one pipeline journey and 3 by two — and no two ever tie, so
-  first-wins and last-wins agree.
-
-Not structurally unreachable, just absent from these 42 days: a fixture with a
-one-second seam or a 300 s gap would exercise them. Until one exists the
-witnesses are the only thing holding those three rules.
+The one-second merge tolerance (no gap of exactly 1 s), the strict pause split
+(no gap within 24 s of 300 s) and `bestOverlap`'s tie-break (no two journeys
+tie) are silent on the corpus, so the `#guard`s are their only check.
+`tests/corpus/journey.rs` runs the rest over the real corpus.
 -/
 
 namespace Verified.Eval.JourneyShape
@@ -65,14 +35,10 @@ open Verified.Eval.Journeys
 
 /-! ## The pipeline's mode is a string
 
-`Journeys.canonicalMode` and `isMovementMode` take a `Mode`, because the
-narrative side comes from a parser that already decided which of eight words a
-cell used. The pipeline side did not: `statesToJourneys` receives whatever the
-serving path emitted and compares canonical strings (`sleeping` reads as
-`stationary`). Parsing to `Option Mode` here would drop an unrecognised mode
-rather than fail to match it, which changes journey boundaries, not just a
-comparison. So these two work on strings, and the `Mode` versions stay for the
-narrative side. -/
+The narrative side is parsed to a `Mode`; the pipeline side is whatever the
+serving path emitted, compared as canonical strings (`sleeping` reads as
+`stationary`). Parsed, an unrecognised mode would be dropped, changing journey
+boundaries, so these work on strings. -/
 
 /-- `sleeping` folds to `stationary`; every other string keeps its name,
 recognised or not. -/
@@ -92,19 +58,14 @@ def isRideModeStr (m : String) : Bool :=
 /-! ## The coverage allowance, without floats
 
 The allowance is `max(COVERAGE_SLACK_FRAC * span, COVERAGE_SLACK_MIN_S)` with
-`COVERAGE_SLACK_FRAC = 0.2`, compared against an integer `uncovered` and rounded
-for the report. Both are exact in `Int`, and the reasoning is written down
-because a Float version would differ at the boundary.
+`COVERAGE_SLACK_FRAC = 0.2`, exact in `Int`:
 
-* The test. `u ≤ 0.2 * span` for integer `u` is `u ≤ ⌊0.2 * span⌋`. The
-  double `0.2` is slightly above one fifth, so `0.2 * n ≥ n / 5` always and
-  `⌊0.2 * n⌋ = n / 5` exactly. The fraction wins over the 240 s floor iff
-  `span ≥ 1200`, and that boundary is safe in floats too: `0.2 * 1200` evaluates
-  to `240.00000000000003`, above the floor rather than below it.
-* The report. `Math.round` is not the floor. `Math.round(span / 5)` is
-  `(2 * span + 5) / 10` in integers for positive spans, which is where the two
-  differ — a span of 1203 reports 241 and floors to 240. Reported and tested
-  values are therefore computed separately, and the verdict uses the floor.
+* The test: `u ≤ 0.2 * span` is `u ≤ span / 5`, since the double `0.2` is
+  slightly above one fifth. The fraction overtakes the 240 s floor at
+  `span ≥ 1200`, safe in floats too (`0.2 * 1200` is `240.00000000000003`).
+* The report rounds (`(2 * span + 5) / 10`), which differs from the floor (1203
+  reports 241, floors to 240), so the two are computed apart and the verdict
+  uses the floor.
 -/
 
 /-- The span at which the fractional allowance overtakes the absolute one —
@@ -113,12 +74,8 @@ def COVERAGE_FRAC_FLOOR_S : Int := 1200
 def COVERAGE_SLACK_MIN_S : Int := 240
 
 /-- How much of a leg must fall inside the audited span to count toward the
-reconstructed shape.
-
-One minute, because that is the resolution this scorer works at: the minute
-expansion emits one entry per top-of-minute, so a leg contributing less is below
-what the comparison can see. Counting it reads structure out of rounding. This
-is a floor on visibility, not a tolerance — see the module header. -/
+shape: one minute, the scorer's resolution, since the minute expansion emits one
+entry per top-of-minute. -/
 def SHAPE_MIN_LEG_OVERLAP_S : Int := 60
 
 /-- A drawn state as the referee sees it: its window and its mode, never its
@@ -129,12 +86,10 @@ structure Drawn where
   mode : String
   deriving BEq, Repr, Inhabited
 
-/-- Merge the drawn state legs into journeys, by `groundTruthJourneys`'s rules.
-
-Consecutive states of the same canonical movement mode join when they touch
-(`start ≤ prevEnd + 1`). A stay — or a gap no state covers beyond the rows'
-minute — the day boards a ride from is its wait, a pause however long; a stay
-the day walks or drives away from ends the journey; a sleep ends it. -/
+/-- Merge the drawn legs into journeys by `groundTruthJourneys`'s rules:
+same-mode movement states join when they touch (`start ≤ prevEnd + 1`); a stay
+or gap the day boards a ride from is its wait, however long; a stay walked or
+driven away from ends the journey, as does a sleep. -/
 def statesToJourneys (states : Array Drawn) : Array Journey := Id.run do
   let mut journeys : Array Journey := #[]
   let mut current : Array Leg := #[]
@@ -171,11 +126,8 @@ def statesToJourneys (states : Array Drawn) : Array Journey := Id.run do
       current := current.push { startTs := s.startTs, endTs := s.endTs, mode, line := none, board := none, alight := none }
   return close current journeys
 
-/-- The trip's deduped mode shape.
-
-An interchange walk — a walk between two legs of the same vehicle kind — is
-smoothed away first, then consecutive identical modes collapse (including the
-two vehicle legs the dropped walk now leaves adjacent). -/
+/-- The trip's deduped mode shape: an interchange walk between two legs of one
+vehicle kind is dropped first, then consecutive identical modes collapse. -/
 def modeShape (j : Journey) : Array String := Id.run do
   let legs := j.legs
   let mut kept : Array String := #[]
@@ -193,12 +145,9 @@ def modeShape (j : Journey) : Array String := Id.run do
     if (shape.back?.map (· != m)).getD true then shape := shape.push m
   return shape
 
-/-- The pipeline journey with the most temporal overlap, or none.
-
-One journey, which is a real limitation of the comparison rather than of the
-pipeline: if a trip was split in two, this grades the larger half and calls the
-other half uncovered. A caller reporting a coverage failure should say how many
-pipeline journeys touched the window. -/
+/-- The pipeline journey with the most temporal overlap, or none. One journey:
+a trip split in two is graded on its larger half, so a coverage failure report
+should say how many journeys touched the window. -/
 def bestOverlap (gt : Journey) (pipeline : Array Journey) : Option Journey := Id.run do
   let mut best : Option Journey := none
   let mut bestOv : Int := 0
@@ -225,10 +174,8 @@ structure Result where
   matched : Bool
   uncoveredS : Int
   slackS : Int
-  /-- Where the best-overlapping journey actually starts and ends.
-  `uncoveredS` says a journey is short and cannot say at which end, and the two
-  readings need opposite fixes: a pipeline that under-reconstructs, or a
-  narrative window including dwell the pipeline rightly excludes. -/
+  /-- Where the best-overlapping journey starts and ends: `uncoveredS` cannot
+  say which end is short, and the two need opposite fixes. -/
   matchStartTs : Option Int
   matchEndTs : Option Int
   clippedLegs : Array ClippedLeg
@@ -281,12 +228,8 @@ def journeyShapeResults (gtJourneys pipelineJourneys : Array Journey) : Array Re
 
 /-! ## Witnesses
 
-⚠ synthetic only: times are small integers and modes are the eight mode
-words, so nothing here carries a real day. The shapes come from the corpus
-incidents named in the module header.
-
-`rust/backend/tests/journey_corpus.rs` runs these over the real corpus; the
-guards below pin the branches by hand so a failure names the rule, not a day.
+⚠ Synthetic only: small integer times and the eight mode words, nothing from a
+real day. They pin the branches by hand, so a failure names the rule.
 -/
 
 section Witnesses
