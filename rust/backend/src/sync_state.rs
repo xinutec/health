@@ -1,14 +1,7 @@
-//! Per-user key/value persistence in the `sync_state` table.
-//!
-//! The high-water marks and small per-user settings the scheduled work carries
-//! between invocations (the OwnTracks proxy's, the velocity cache's, the
-//! resting heart rate's, the residence zone).
-//!
-//! # Runtime queries, never the checked macros
-//!
-//! `sqlx::query(…)` with bind parameters. The `query!` forms would validate
-//! these against a live schema at compile time, which is exactly why they are
-//! not used — see the note in `Cargo.toml`.
+//! Per-user key/value persistence in `sync_state`: high-water marks and small
+//! settings the scheduled work carries (the OwnTracks proxy's, the velocity
+//! cache's, resting heart rate's, the residence zone). Runtime `sqlx::query`,
+//! not the checked macros (see `Cargo.toml`).
 
 use anyhow::{Context, Result};
 use sqlx::{MySqlPool, Row};
@@ -25,12 +18,8 @@ pub async fn home_tz(pool: &MySqlPool, user_id: &str) -> Result<String> {
         .unwrap_or_else(|| DEFAULT_HOME_TZ.into()))
 }
 
-/// Read one key. `None` when the row is absent.
-///
-/// ⚠ Absent and empty are different and both are preserved. A cursor stored as
-/// `""` is not the same as no cursor: an empty string comes back as an empty
-/// string, and a backfill that treats it as "never ran" would restart from the
-/// floor date and re-fetch years of data.
+/// Read one key; `None` when absent. ⚠ An empty string comes back as one: a
+/// backfill reading `""` as "never ran" would re-fetch years.
 pub async fn get(pool: &MySqlPool, user_id: &str, key: &str) -> Result<Option<String>> {
     let row = sqlx::query("SELECT value FROM sync_state WHERE user_id = ? AND key_name = ?")
         .bind(user_id)
@@ -43,21 +32,13 @@ pub async fn get(pool: &MySqlPool, user_id: &str, key: &str) -> Result<Option<St
         .with_context(|| format!("decoding sync_state {key} for {user_id}"))
 }
 
-/// Upsert one key.
-///
-/// `ON DUPLICATE KEY UPDATE` rather than a read-then-write. Two sync runs
-/// overlapping is not supposed to happen, but the statement is the thing that
-/// makes it safe rather than a comment saying it does not.
+/// Upsert one key with `ON DUPLICATE KEY UPDATE`, safe even if two runs overlap.
 pub async fn set(pool: &MySqlPool, user_id: &str, key: &str, value: &str) -> Result<()> {
     set_with(pool, user_id, key, value).await
 }
 
-/// The same upsert against any executor, so it can join a caller's transaction.
-///
-/// Exists for `refresh-focus-places`. It derives `home_tz` from the Home
-/// cluster and writes it alongside the `focus_places` rows; through the pool
-/// that write would land outside the transaction, so a half-failed refresh
-/// would leave a residence zone derived from rows that were rolled back.
+/// The same upsert against any executor, so `refresh-focus-places` can write
+/// `home_tz` inside the transaction of the rows it derives from.
 pub async fn set_with<'e, E>(exec: E, user_id: &str, key: &str, value: &str) -> Result<()>
 where
     E: sqlx::Executor<'e, Database = sqlx::MySql>,

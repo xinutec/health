@@ -3,19 +3,14 @@ import Verified.Hsmm.FloatScore
 /-!
 # Train-window detection
 
-The observation-only core of the train-candidate generator: from the per-minute
-GPS speeds and the bracketing fixes, find the disjoint `[start, end]` windows the
-user was plausibly on a train — via observed train speed or a bracketed GPS-null
-displacement implying train velocity. Pure over the observation tensor; the
-station/line matching (`enumerateTrainCandidates`) is the graph-dependent
-follow-on that consumes these windows.
+From per-minute GPS speeds and bracketing fixes, the disjoint `[start, end]`
+windows the user was plausibly on a train: observed train speed, or a
+bracketed GPS-null displacement implying it. Station and line matching
+(`enumerateTrainCandidates`) consumes these.
 
-The passes are imperative (a tag array, an in-place bracketed-displacement pass,
-window extraction), so this uses `Id.run do` (mutable arrays, `for`). The scans
-are total: each one walks towards an edge of the tensor and Lean checks that the
-distance to that edge shrinks. `haversine` makes the velocity tests ULP-close,
-but they compare against thresholds far from the boundary in the tested cases,
-so the windows are exact. Correctness UNPROVEN; pinned by the `#guard`s.
+Each scan walks toward a tensor edge with a shrinking distance, so all are
+total. `haversine` makes the velocity tests ULP-close, far from the thresholds
+in the tested cases. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.TrainWindows
@@ -61,10 +56,9 @@ def scanBack (obs : Array ObsRow) (t : Nat) : Option (Float × Float × Int) :=
   else none
 termination_by t
 
-/-- Last/first observed fix at/beyond `idx` on `side`, falling back to the
-    prev/next-fix bookend recorded on the (clamped) edge minute. `idx` is an
-    `Int` because a window at the tensor's start asks for minute `-1`, which
-    scans nothing and goes straight to the bookend. -/
+/-- Last/first observed fix at/beyond `idx` on `side`, else the bookend recorded
+    on the clamped edge minute. `idx` is an `Int`: a window at the start asks
+    for minute `-1`. -/
 def boundaryFix (obs : Array ObsRow) (idx : Int) (side : Side) : Option (Float × Float × Int) :=
   let scanned := if decide (idx < 0) then none else
     match side with
@@ -92,10 +86,8 @@ def bracketedStationHop (obs : Array ObsRow) (start endN : Nat) : Bool :=
       fge (distM / 1000 / max hrs (1.0 / 3600)) V_TRAIN_AVG_KMH
   | _, _ => false
 
-/-- Length of the run of not-`notTrain` minutes starting at `i` (`0` at the end
-    of the tensor). `i + runLen tag i` is the first `notTrain` index at or after
-    `i`, or `tag.size`; it is written as a length so a caller stepping past the
-    run can show its index grew. -/
+/-- Length of the run of not-`notTrain` minutes from `i` (`0` at the end), as a
+    length so a caller stepping past it can show the index grew. -/
 def runLen (tag : Array Tag) (i : Nat) : Nat :=
   if h : i < tag.size then
     if tag[i] == Tag.notTrain then 0 else runLen tag (i + 1) + 1

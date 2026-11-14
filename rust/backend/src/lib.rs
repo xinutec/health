@@ -1,30 +1,13 @@
-//! The backend: IO glue around the verified Lean core.
+//! The backend: IO glue around the verified Lean core: configuration, the
+//! pool, the cursor store, HTTP routes, ingestion and the entrypoint.
 //!
-//! # What this is, and what it is not
+//! Nothing here decides anything. The user's rule: *"Logic should be in Lean.
+//! A bit of IO glue needs to be in Rust."* A rule about what a day means or when
+//! a segment is a walk belongs in Lean, even at three lines.
 //!
-//! The user's rule: *"We want no TS backend. Logic should be in Lean. A bit of
-//! IO glue needs to be in Rust."* This crate is the IO glue: configuration, a
-//! connection pool, the cursor store, the HTTP routes, the ingestion, and the
-//! entrypoint that ties them together. Nothing here decides anything. If a
-//! module in this crate grows a rule about what a day means or when a segment
-//! is a walk, that rule belongs in Lean and its presence here is the bug.
-//!
-//! # The Lean/Rust line, drawn by example
-//!
-//! *"Anything that can be in Lean should be in Lean."* Share links are the
-//! worked example and the shape to copy; the split is not 50/50 and was not a
-//! judgement call:
-//!
-//!   * generating a share token reads the CSPRNG → Rust. There is nothing
-//!     to prove about 32 random bytes beyond that they were asked for, and a
-//!     Lean model of them would be fiction.
-//!   * building the share URL, the shareable date range and the clamp on days
-//!     back are total functions of their arguments → **Lean**
-//!     (`Verified/Share.lean`), on top of `Verified/Civil.lean`.
-//!
-//! The test to apply at each module: *does this decide anything, or does it
-//! only move bytes?* Deciding goes to Lean even when it is three lines, because
-//! three lines is exactly the size at which a wrong clamp survives review.
+//! Share links are the example: minting a token reads the CSPRNG (Rust); the
+//! URL, the date range and the days-back clamp are total functions
+//! (`Verified/Share.lean`).
 
 pub mod argv;
 pub mod auth;

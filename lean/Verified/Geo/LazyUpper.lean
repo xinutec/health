@@ -1,27 +1,17 @@
 import Verified.Geo.LazyLive
 
 /-!
-# Lazy Dijkstra: the edge upper-bound invariant (weight-optimality, half 1 of 2)
+# Lazy Dijkstra: the edge upper-bound invariant
 
-The route reconstruction turns the `prev`-chain into a real costed walk
-(`LazyEdge`), and `settle_price` (`LazyLive`) pins each vertex's settle price to
-its `dist`. What is still missing for weight-optimality is the *value* half —
-that a settled vertex's `dist` is the length of the reconstructed route. That
-splits into two bounds, and this file supplies the upper one:
+The upper half of `dist[v] = dist[u] + edgeMinW(u, v)` along the route:
 
-> `UInv`: for every edge `(v, w)` out of a done vertex `u` whose distance is
-> within the radius (`dist[u] ≤ maxR`), `dist[v] ≤ dist[u] + w`.
+> `UInv`: for every edge `(v, w)` out of a done `u` with `dist[u] ≤ maxR`,
+> `dist[v] ≤ dist[u] + w`.
 
-It is the "relaxation reached everyone it could" fact: once `u` is settled *by
-relaxation* its whole adjacency has been relaxed, so every out-neighbour's
-`dist` was pushed at or below `dist[u] + w`, and `dist` only ever decreases
-afterwards. The `dist[u] ≤ maxR` gate is what excludes the single
-radius-exhausted vertex (settled at price `> maxR` with its edges deliberately
-*not* relaxed, the radius cutoff); that vertex is never any vertex's `prev`, so the
-gate costs the route reconstruction nothing. `iter_uinv` carries it from
-`linit`; the companion lower bound (`LazyWeight`'s `WInv`, the recorded-edge
-provenance) closes the gap to the exact equality
-`dist[v] = dist[u] + edgeMinW(u, v)`.
+A vertex settled by relaxation has had its whole adjacency relaxed, and `dist`
+only decreases. The `dist[u] ≤ maxR` gate excludes the radius-exhausted vertex,
+which is nobody's `prev`. `iter_uinv` carries it from `linit`; `LazyWeight`'s
+`WInv` is the lower half.
 -/
 
 namespace Verified.Geo
@@ -155,11 +145,9 @@ def UInv (g : Graph) (maxR : Nat) (s : LState) : Prop :=
 
 /-! ## Preservation along the trajectory -/
 
-/-- One settle step preserves `UInv`. The newly-settled vertex's edge bounds
-come from the relaxation pass (`relaxL_edge_ub`, with `dist[u] = p` by
-`settle_price`); the already-done vertices' bounds survive because `dist` only
-decreases and their own `dist` is frozen; and a radius-exhausted settle is ruled
-out of the invariant by the `dist[u] ≤ maxR` gate. -/
+/-- One settle step preserves `UInv`: the new vertex's bounds come from its
+relaxation (`relaxL_edge_ub`, `settle_price`), done vertices keep theirs as
+`dist` only decreases, and the gate excludes a radius-exhausted settle. -/
 theorem lstep_uinv {g : Graph} {maxR L : Nat} {s : LState}
     (hwf : WFEdges g) (hL : LInv g L s) (hH : HInv g s)
     (hU : UInv g maxR s) : UInv g maxR (lstep g maxR s) := by

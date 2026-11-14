@@ -1,20 +1,8 @@
-//! `lean::rail_snap` — the `railsnap` mode's production caller.
+//! `lean::rail_snap`, the `railsnap` mode, as `rail_route.rs`'s fill calls it.
 //!
-//! # Why this exists
-//!
-//! `rail_snap` is called from one place, `main.rs`'s train-leg snapper. A
-//! production path no gate can see is a worse defect than an unused one, so
-//! what this wants is a test, not another caller.
-//!
-//! # The geography is invented, and has to be
-//!
-//! No tracked test may carry real coordinates or place names. A straight
-//! synthetic corridor is also the better instrument here: it makes the two
-//! refusals below unambiguous, where a real corridor would leave "did it
-//! refuse, or did my fixture just not resolve" open.
-//!
-//! One `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
-//! starts a runtime and several tests racing on it would flake.
+//! The corridor is synthetic: no tracked test carries real places, and a
+//! straight corridor makes the refusals unambiguous. One `#[test]`, since
+//! `lean::init()` starts a runtime that parallel tests would race on.
 
 use backend::fold_payload::bits;
 use serde_json::json;
@@ -89,10 +77,8 @@ fn rail_snap_routes_a_leg_and_refuses_the_two_ways_it_should() {
     }
 
     // ── 2. A thin cloud refuses, and a refusal is not an error ───────────────
-    // `minCloudFixes` is 12 and its comment is the contract: a thin cloud cannot
-    // evidence a corridor. `Ok(None)` distinguishes that from a malformed
-    // request, which `rail_snap` turns into `Err` — so this asserts the
-    // distinction, not merely the absence of a path.
+    // Under `minCloudFixes` (12) there is no corridor evidence: `Ok(None)`, not
+    // the `Err` a malformed request gets.
     let thin = backend::lean::rail_snap(
         "Alpha Halt → Beta Halt",
         1_000.0,
@@ -106,9 +92,8 @@ fn rail_snap_routes_a_leg_and_refuses_the_two_ways_it_should() {
     assert!(thin.is_none(), "11 fixes is below the floor, got {thin:?}");
 
     // ── 3. The two entry points are not interchangeable ──────────────────────
-    // `snapTrainSegmentOnLine` takes no cloud at all and leans on the line name
-    // instead, so it answers where the corridor form just refused — with zero
-    // fixes. Without a ` · Line` suffix it has nothing to lean on and refuses.
+    // `snapTrainSegmentOnLine` uses the line name, not a cloud, so it answers
+    // with zero fixes; without a ` · Line` suffix it refuses.
     let on_line = backend::lean::rail_snap(
         "Alpha Halt → Beta Halt · Test Line",
         1_000.0,

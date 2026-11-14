@@ -1,27 +1,12 @@
-//! Service-to-service endpoints for the coach app.
+//! Service-to-service endpoints for coach, outside `/api`: no session; the
+//! caller names `?user=` and proves itself with `X-Service-Token`.
 //!
-//! Not part of `/api`: no session, no cookie. The caller passes the target
-//! `?user=` and proves itself with a shared secret in `X-Service-Token`.
+//! ⚠ An empty token list rejects everything, the default: this hands out mined
+//! places and recovery history.
 //!
-//! ⚠ an empty token list rejects everything, and that is the default. This
-//! surface hands out another person's mined places and their recovery history,
-//! so "no secret configured" must mean off rather than open.
-//!
-//! # What this deliberately does not answer
-//!
-//! There is no readiness score here and there must not be. health does not
-//! know what readiness means; coach composes it from these raw numbers. If both
-//! scored it they would drift on what a bad day is, and the athlete would be
-//! told two different things by two apps reading the same nights.
-//!
-//! # Why a past morning is anyone's business
-//!
-//! Coach's prediction-error ledger judges each logged session against what it
-//! asked that day, and it asks for less when the athlete was under-recovered.
-//! Without that, full compliance with an eased ask reads as falling short — a
-//! badly slept night recorded as the athlete failing, which then holds their
-//! progression back. `/recovery/history` is `/recovery` projected over a range,
-//! not a new measurement.
+//! No readiness score: coach composes it from these raw numbers.
+//! `/recovery/history` is `/recovery` over a range, for coach's ledger to judge a
+//! past session against what that morning showed.
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -124,10 +109,8 @@ async fn load_places(st: &AppState, user_id: &str) -> anyhow::Result<Vec<Place>>
         let total_dwell: i64 = r.try_get("total_dwell_sec")?;
         let visits: i64 = r.try_get("visit_count")?;
         out.push(Place {
-            // UNSIGNED is a distinct sqlx type — an unsigned column decoded
-            // as i64 is rejected by `Type::compatible` at runtime, not coerced.
-            // The try-then-fallback this replaced would have worked and hidden
-            // the fact that the first attempt always failed.
+            // UNSIGNED is its own sqlx type: decoding as i64 is rejected at
+            // runtime, so decode `u64` directly.
             id: r.try_get::<u64, _>("id")? as i64,
             display_name: r.try_get("display_name")?,
             amenity_label: r.try_get("amenity_label")?,

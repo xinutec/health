@@ -3,29 +3,18 @@ import Verified.Hsmm.Memo
 /-!
 # Allocation-light, checkpointed verified decoder
 
-`decodeFast` (Memo.lean) is theorem-backed but expensive at day scale: its
-column functions build a `List` per cell (`List.range`/`map`/`flatMap`
-feeding `listMax`), re-enter the `Problem` closures per cell, and
-`buildCols` retains all `T` columns (~54M boxed cells on a real day).
+`decodeFast` (Memo.lean) builds a `List` per cell and keeps all `T` columns
+(~54M boxed cells a day). This keeps its theorems and swaps the machinery:
 
-This file keeps the theorems and swaps the machinery, in two layers:
+* Fold-based columns: `rangeMax` takes a maximum without allocating;
+  `closeRowF`/`colStepF` use it with `emit`/`entry` hoisted, proved equal to
+  `closeRow`/`colStep` (`closeRowF_eq`, `colStepF_eq`).
+* Checkpoints: `buildCkpt` keeps every `K`-th column plus the last, and the
+  walk recomputes from the nearest (`findCk`/`colFrom`/`colAt`). The invariant
+  is only "each stored entry equals `col` at its time".
 
-* Fold-based columns — `rangeMax` accumulates a maximum over `0..n-1`
-  with no list allocation; `closeRowF`/`colStepF` use it and hoist the
-  per-column `emit`/`entry` reads into rows. `closeRowF_eq`/`colStepF_eq`
-  prove them *equal* to `closeRow`/`colStep`, so every pointwise fact
-  (`colStep_get`) transfers by rewriting.
-* Checkpointed storage — `buildCkpt` runs the same recurrence but
-  retains only every `K`-th column (as `(time, column)` entries) plus the
-  final column. The walk recomputes a queried column from the nearest
-  stored checkpoint (`findCk`/`colFrom`/`colAt`). Correctness never
-  reasons about *which* columns were stored: the invariant is just "every
-  stored entry equals `col` at its own time", so no division arithmetic
-  enters the proofs.
-
-`decodeCk` is `decodeFast` on this machinery; `decodeCk_eq` proves
-`decodeCk P K = decode P` for every stride `K`, so `decodeCk_correct`
-and `decodeCk_none_iff` are inherited outright.
+`decodeCk_eq`: `decodeCk P K = decode P` for every `K`, so `decodeCk_correct`
+and `decodeCk_none_iff` are inherited.
 -/
 
 namespace Verified.Hsmm

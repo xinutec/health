@@ -1,15 +1,8 @@
-//! A source that cannot vouch for an area must make the answerer decline.
-//!
-//! This is why [`backend::rowset_answerer::RowSource`] returns an `Option`
-//! rather than a `Vec`. A fixture's row set is complete by construction, so it
-//! never exercises the path; a live mirror is filled lazily and will, on the
-//! first day that reaches an unfetched area.
-//!
-//! The failure this guards is silent and looks like success. An answerer that
-//! turned "cannot vouch" into an empty row list would answer `nearbyWays` with
-//! "no roads near here", a claim about the world, and the fold would build a
-//! day on it without one error. The fold counts a decline; it cannot count a
-//! lie.
+//! A source that cannot vouch for an area must make the answerer decline, hence
+//! [`backend::rowset_answerer::RowSource`] returns an `Option`. A fixture is
+//! complete, so only a lazily filled live mirror reaches this path. An empty
+//! list instead would claim "no roads near here"; the fold counts a decline,
+//! not a lie.
 
 use backend::lean::Answerer;
 use backend::lean::Ask;
@@ -58,14 +51,8 @@ impl RowSource for NeverCovered {
     }
 }
 
-/// Vouches for lines only. Exists because `nearbyWays` is five queries — four
-/// line buckets and an aeroway point query — and a test that only checks the
-/// table declines cannot say which of the five did it.
-///
-/// This is not hypothetical tidiness: with the line path swallowing a decline
-/// into an empty list, a weaker version of this test still passed, because the
-/// aeroway point query declined a moment later. It was right about the table
-/// and blind about the reason.
+/// Vouches for lines only, so the test can tell which of `nearbyWays`'s five
+/// queries (four line buckets, one aeroway point query) declined.
 struct LinesOnly;
 
 impl RowSource for LinesOnly {
@@ -173,11 +160,8 @@ fn a_source_that_cannot_vouch_declines_every_row_backed_table() {
 
 #[test]
 fn nearby_ways_declines_on_either_half_of_its_fan_out() {
-    // Each half separately. `nearbyWays` is one table built from five
-    // queries; answering with four of them would report the aerodrome-free
-    // version of a coordinate as if it were complete. Checking only that the
-    // table declines cannot tell the two paths apart, and the point path
-    // covered for the line path when this was first written.
+    // Each half separately: answering four of five queries would pass off a
+    // partial `nearbyWays` as complete.
     let mut lines_only = OsmAnswerer::with_source(LinesOnly);
     assert!(
         lines_only

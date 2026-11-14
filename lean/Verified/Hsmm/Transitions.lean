@@ -2,17 +2,13 @@ import Verified.Hsmm.Emissions
 /-!
 # Transition log-probabilities
 
-The row-normalised static-prior transition matrix, in Lean `Float`. For each
-`src` state: the self-loop holds `exp(selfLoop)` of the mass; the rest is split
-across the valid (non-hard-zero) cross destinations in proportion to
-`transitionWeight`. This is the base path — the station-graph hard-zero
-(`placeNearLine`) needs the place↔line adjacency this pure module doesn't carry,
-so it's a follow-on brick, exactly as `buildTransitionMatrix` behaves with no
-`placeNearLine` provided.
+The row-normalised static-prior transition matrix: each `src` keeps
+`exp(selfLoop)` on the self-loop and splits the rest over valid (non-hard-zero)
+destinations in proportion to `transitionWeight`. The station-graph hard zero
+is `isHardZeroP` with a `placeNear` relation.
 
-UNPROVEN. `crossMass = 1 - exp(selfLoop)` is computed, not the literal `0.05`,
-so the values are bit-for-bit fixed, pinned by the `#guard`s against reference
-values.
+UNPROVEN. `crossMass = 1 - exp(selfLoop)` is computed, not a literal, so values
+are fixed bit for bit; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Transitions
@@ -65,11 +61,10 @@ def transitionLogProb (states : List State) (selfLoop : Float) (src dst : State)
     if weightSum <= 0.0 then negInf
     else Float.log (crossMass * transitionWeight src dst / weightSum)
 
-/-- `isHardZero` with the station-graph rule: a `train @ L ↔ stationary @ P`
-    transition (either direction, `L` a named line) is impossible when `L` does
-    not serve a station near `P` (`placeNear P L` false). `placeNear` is the
-    served path's `${placeId}|${lineName}` membership; the base (no-`placeNearLine`)
-    path is `isHardZeroP (fun _ _ => true)`. -/
+/-- `isHardZero` with the station-graph rule: `train @ L ↔ stationary @ P`
+    (either way, `L` named) is impossible when `placeNear P L` is false, the
+    served `${placeId}|${lineName}` membership. Without the relation it is
+    `isHardZeroP (fun _ _ => true)`. -/
 def isHardZeroP (placeNear : Int → String → Bool) (src dst : State) : Bool :=
   isHardZero src dst
   || (match src.mode, dst.mode, src.lineName, dst.placeId with
@@ -98,11 +93,9 @@ def transitionLogProbP (placeNear : Int → String → Bool) (states : List Stat
     if weightSum <= 0.0 then negInf
     else Float.log (crossMass * weight src dst / weightSum)
 
-/-- A fitted mode-to-mode matrix as a transition weight: `src → dst` weighs
-    `P(dst's mode | src's mode)` split evenly over the states of that mode `src`
-    may move to, so a row normalises to the matrix over the modes it can reach.
-    `count src m` is that number of states. A pair the matrix does not name
-    weighs `0`. -/
+/-- A fitted mode-to-mode matrix as a transition weight: `P(dst's mode | src's
+    mode)` split evenly over the `count src m` states of that mode `src` may
+    reach, so a row normalises to the matrix. An unnamed pair weighs `0`. -/
 private def NO_WEIGHT : Float := 0
 
 def fittedWeight (matrix : Mode → Mode → Option Float) (count : State → Mode → Nat)
@@ -113,10 +106,8 @@ def fittedWeight (matrix : Mode → Mode → Option Float) (count : State → Mo
     if n == 0 then NO_WEIGHT else p / Verified.FloatConst.natToFloat n
   | none => NO_WEIGHT
 
-/-- `transitionLogProbP` with the per-`src` cross-weight sum precomputed. Building
-    the whole matrix as `transitionLogProbPre placeNear sl (weightSum a) a b` after
-    one O(S²) `crossWeightSumP` pass is O(S²) total, vs O(S³) recomputing the sum
-    per cell (`transAt` does). Identical value — pinned below. -/
+/-- `transitionLogProbP` with the per-`src` cross-weight sum precomputed, so the
+    whole matrix is O(S²), not O(S³). Identical values, pinned below. -/
 def transitionLogProbPre (placeNear : Int → String → Bool) (selfLoop weightSum : Float)
     (src dst : State) (weight : State → State → Float := transitionWeight) : Float :=
   if sameState src dst then selfLoop

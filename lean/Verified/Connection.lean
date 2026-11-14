@@ -1,17 +1,11 @@
 /-!
 # Whether an account is linked
 
-`/api/me` reports two connection statuses, both computed the same way from one
-nullable column, so there is one rule here rather than two.
+`/api/me`'s two connection statuses, from one nullable column. No row is
+`not_linked` (the "connect your account" prompt).
 
-⚠ The fall-through is to `active`, not to an error. Only the exact string
-`needs_reauth` is treated as broken; every other value a row might carry,
-including one a future migration adds and an empty string, reads as a working
-connection. So the answer is only as good as the writer's discipline: a status
-nobody taught it about is reported to the user as fine.
-
-The one thing it does refuse is absence: no row is `not_linked`, which is what
-the frontend turns into its "connect your account" prompt.
+⚠ Only the exact string `needs_reauth` is broken; every other value, including
+"" or one a future migration adds, reads as `active`.
 
 Pure and total. UNPROVEN; the `#guard`s pin its answers.
 -/
@@ -34,21 +28,15 @@ def Status.toString : Status → String
   | .needsReauth => "needs_reauth"
   | .notLinked => "not_linked"
 
-/-- Read a status from the stored column. `none` means no row.
-
-`some ""`, `some "revoked"` and `some "anything"` are all `active`. See the
-module note: this is a fall-through, not a validation. -/
+/-- Read a status from the stored column; `none` is no row, and anything but
+`needs_reauth` is `active`. -/
 def statusOf (stored : Option String) : Status :=
   match stored with
   | none => .notLinked
   | some s => if s == "needs_reauth" then .needsReauth else .active
 
-/-- The legacy boolean `/api/me` still sends alongside the typed status.
-
-`needs_reauth` counts as linked. The old SPA builds that read this flag show
-"connected" for an account whose credential has been revoked; the typed
-`connections` object is what carries the distinction. Narrowing this to
-`active` would be more truthful and would change what those builds render. -/
+/-- The legacy boolean `/api/me` still sends: `needs_reauth` counts as linked,
+as older SPA builds expect; the typed `connections` carries the distinction. -/
 def isLinked (s : Status) : Bool := s != Status.notLinked
 
 /-! ## Guards -/

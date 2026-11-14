@@ -1,17 +1,7 @@
-//! Google OAuth 2.0: a stored refresh token for a short-lived access token.
-//!
-//! The Google OAuth token exchange and refresh.
-//!
-//! The refresh token is obtained once through user consent and stored as a
-//! secret; this mints access tokens server-side with no phone in the loop.
-//!
-//! # ⚠ Google does not rotate the refresh token, and Fitbit did
-//!
-//! So this needs none of the machinery the Fitbit token store had — no per-user
-//! mutex, no cached expiry, no persistence. Two concurrent refreshes here are
-//! merely wasteful; the same two against Fitbit left one caller holding a token
-//! that was already dead. Copying that structure over would suggest a hazard
-//! that does not exist here.
+//! Google OAuth 2.0: a stored refresh token, obtained once by consent, mints
+//! short-lived access tokens server-side. Google does not rotate the refresh
+//! token, so concurrent refreshes are merely wasteful: no lock, cache or
+//! persistence.
 
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
@@ -25,13 +15,9 @@ pub struct GoogleCreds {
 }
 
 impl GoogleCreds {
-    /// Read the credentials, or `None` when Google is not configured.
-    ///
-    /// `None` rather than an error, and all three are required together. The
-    /// weight sync is inert without them by design — the sync job runs on hosts
-    /// where Google is not set up — but a partial set is a misconfiguration
-    /// rather than a choice, and returning `Some` with an empty secret would
-    /// turn it into a 400 from Google that reads like a revoked grant.
+    /// Read the credentials, or `None` unless all three are set and non-empty:
+    /// the weight sync is inert without Google, and an empty secret would come
+    /// back as a 400 that reads like a revoked grant.
     pub fn from_env() -> Option<Self> {
         let get = |k: &str| match std::env::var(k) {
             Ok(v) if !v.is_empty() => Some(v),
@@ -71,10 +57,8 @@ pub async fn access_token(http: &reqwest::Client, creds: &GoogleCreds) -> Result
     let parsed: TokenResponse =
         serde_json::from_str(&body).context("decoding the token response")?;
 
-    // Both conditions. Google can answer 200 with no `access_token` on some
-    // error shapes, and taking the status alone would hand an empty bearer to
-    // the next request, which fails as a 401 and reads like a revoked grant
-    // rather than a malformed token response.
+    // Both conditions: Google can answer 200 without `access_token`, and an
+    // empty bearer would fail later as a 401 that reads like a revoked grant.
     match parsed.access_token {
         Some(t) if status.is_success() && !t.is_empty() => Ok(t),
         _ => Err(anyhow!(

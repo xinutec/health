@@ -4,22 +4,16 @@ import Verified.Eval.Journeys
 /-!
 # Decoder scoreboard — the ten per-day journey-structure counts
 
-The scoring half of the journey scorer (`decoderJourneys`, `scoreJourneys`'s
-counters) and the decoder scoreboard (`scoreStations`, `countPhantomRides`).
-The oracle is `tests/golden/decoder-scoreboard.json`: dates and counts a human
-blessed.
+The decoder side of the journey scorer (`decoderJourneys`, `scoreJourneys`'s
+counters) and the scoreboard (`scoreStations`, `countPhantomRides`), against
+`tests/golden/decoder-scoreboard.json`, human-blessed. The ground-truth side
+is `Verified.Eval.Journeys`.
 
-The GT journey builder and its leg/journey types are `Verified.Eval.Journeys`;
-this module adds the decoder side and the counters that compare the two.
+`modeShape` and `bestOverlap` are copied from `Verified.Eval.JourneyShape` for
+`Journeys.Journey`, the type this board was blessed against: two small copies
+keep one gate's semantics from drifting the other's.
 
-`modeShape` and `bestOverlap` exist in `Verified.Eval.JourneyShape` over its
-journey type (the pipeline referee's). The pair below operates on
-`Verified.Eval.Journeys.Journey`, the type the scoreboard was blessed against.
-Two small copies beat one shared abstraction that would let one gate's
-semantics drift the other's.
-
-Station equality is ASCII-case-insensitive (`String.toLower`). Every station
-name in the corpus is ASCII; a non-ASCII one would compare case-sensitively.
+Station equality is ASCII-case-insensitive; every corpus name is ASCII.
 -/
 
 namespace Verified.Eval.DecoderScore
@@ -76,13 +70,11 @@ def segmentsToMinutes (segs : Array Seg) : Array DecoderMinute := Id.run do
       t := t + 60
   return out
 
-/-- Decoder minutes to journeys, the mirror of `groundTruthJourneys`'s rules:
-movement minutes collapse into legs (same canonical mode + same line,
-contiguous-or-overlapping); a stay, or unobserved time, the day boards a ride
-from is its wait, a pause however long; a stay the day walks or drives away from
-ends the journey; a sleep ends it. A merged leg boards where its first minute
-boards and alights where its last minute alights, overwriting `alight` on every
-merged minute, including to null. -/
+/-- Decoder minutes to journeys, mirroring `groundTruthJourneys`: movement
+minutes with the same canonical mode and line join into legs; a stay or gap
+boarded from is a wait; a stay left on foot or by car, or a sleep, ends the
+journey. A merged leg takes its first minute's board and its last minute's
+alight, even null. -/
 def decoderJourneys (minutes : Array DecoderMinute) : Array Journey := Id.run do
   let sorted := minutes.qsort (fun a b => a.ts < b.ts)
   let mut journeys : Array Journey := #[]

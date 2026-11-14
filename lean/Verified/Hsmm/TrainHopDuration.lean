@@ -3,19 +3,11 @@ import Verified.Hsmm.Emissions
 /-!
 # Train one-stop-hop duration prior
 
-The per-mode duration prior floors every sub-`minDuration` movement segment at
-`HARD_FLOOR_LOG_PROB` — a 1-minute `train` is normally a bridge artifact. But a
-one-stop underground hop is a genuine sub-floor ride (GPS occluded from boarding
-until a single reacquisition fix), so when the train generator vouches that
-minute the floor must not apply: such a covered, sub-floor, named-line train
-segment takes a flat 0-nat prior. Every other case is exactly the per-mode
-`logDurationProb`.
-
-The mode-indexed fit / floor lookups and the `tsAt`+`isTrainCovered` resolution
-are caller-side; this module is the pure decision over the resolved `covered`
-boolean and the resolved `fit` / floors. It reuses the `logDurationProb`
-kernel, so its exactness is that kernel's. UNPROVEN;
-pinned by the `#guard`s.
+The duration prior floors sub-`minDuration` movement at `HARD_FLOOR_LOG_PROB`
+(a 1-minute `train` is usually an artifact). A one-stop underground hop is a
+real sub-floor ride, so a covered, sub-floor, named-line train segment takes a
+flat 0-nat prior; everything else is `logDurationProb`. The caller resolves
+`covered`, the fit and floors. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.TrainHopDuration
@@ -29,21 +21,17 @@ def lineIsNamed : Option String → Bool
   | none => false
   | some l => !Verified.Hsmm.Emissions.isPlaceholderLine l
 
-/-- `buildDurationLogProb`'s per-segment verdict. `covered` folds the caller's
-    `tsAt(segEndIndex)` defined ∧ `isTrainCovered(ts)`; `fit`/`minForMode` are
-    the state-mode's fit and floor; `trainMin` is the train floor used for the
-    sub-floor threshold. -/
+/-- The per-segment duration verdict. `covered` is the caller's "segment end has
+    a timestamp and the generator covers it"; `fit`/`minForMode` are the mode's
+    fit and floor; `trainMin` the train floor. -/
 def trainHopDurationLogProb (s : State) (d : Float) (covered : Bool)
     (fit : GammaFit) (minForMode trainMin : Float) : Float :=
   if s.mode == .train && lineIsNamed s.lineName && d < trainMin && covered then 0.0
   else logDurationProb d fit minForMode
 
-/-- `trainHopDurationLogProb` with the per-mode prior handed in. Everything but
-    the relaxation is independent of the segment end, so a caller walking `e`
-    computes `base = logDurationProb d fit minForMode` once per `(s, d)` and
-    finishes each `e` from it (the duration tensor dominates the model build,
-    one gamma log-pdf per cell). `trainHopDurationLogProb_eq` is the exactness:
-    the two are the same term. -/
+/-- `trainHopDurationLogProb` with the per-mode prior handed in, so a caller
+    walking `e` computes `logDurationProb` once per `(s, d)`: the duration
+    tensor dominates the model build. `trainHopDurationLogProb_eq`: same term. -/
 def trainHopDurationLogProbFrom (s : State) (d : Float) (covered : Bool)
     (trainMin base : Float) : Float :=
   if s.mode == .train && lineIsNamed s.lineName && d < trainMin && covered then 0.0

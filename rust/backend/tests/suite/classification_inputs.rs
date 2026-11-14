@@ -1,12 +1,6 @@
-//! The day-input loaders' parsing decisions.
-//!
-//! Nothing here touches a database, and that is a limit worth stating rather
-//! than hiding: the queries are proven by `backend check` against production,
-//! because no test in this crate executes SQL and "it compiles" says nothing
-//! about a column name, a bind order, or the decode of a DECIMAL.
-//!
-//! What is testable off a database is what the loader does with a blob it
-//! cannot read — which is where a masking fallback would live.
+//! The day-input loaders' parsing decisions, off a database: what a loader does
+//! with a blob it cannot read. The queries themselves are checked by
+//! `backend check` against production.
 
 use backend::classification_inputs::{js_num, next_date_string, parse_hour_profile, parse_stops};
 use serde_json::Value;
@@ -23,11 +17,8 @@ fn an_absent_hour_profile_is_null_not_empty() {
 
 #[test]
 fn a_real_hour_profile_is_comma_separated_per_mille_integers() {
-    // The format: `round(f * 1000)` joined by commas into a VARCHAR. Read as
-    // JSON, every profile decodes to empty and the loader still reports success.
-    //
-    // Taken from a real stored value rather than invented, because inventing
-    // one is what produced the JSON tests this replaces.
+    // The format: `round(f * 1000)` joined by commas. Read as JSON, every
+    // profile would decode empty and still report success. A real stored value.
     let stored = "59,58,56,55,53,52,49,44,32,25,22,21,22,24,27,29,31,32,36,45,52,57,58,61";
     let got = parse_hour_profile(Some(stored));
     let arr = got.as_array().expect("a 24-bucket profile");
@@ -58,10 +49,8 @@ fn a_non_numeric_bucket_voids_the_profile_rather_than_zeroing_it() {
 
 #[test]
 fn an_empty_bucket_is_zero_because_that_is_what_number_does() {
-    // Not a Rust decision. JS `Number("")` is 0, so `parseHourProfile` reads
-    // `1,,1,…` as a zero bucket rather than voiding the row, and this has to
-    // agree with the reader the writer was built against. `str::parse` errors
-    // on "", so the case is handled before parsing.
+    // An empty bucket reads as 0, as the profile's original reader did, not
+    // as a void row; `str::parse` errors on "", so it is handled first.
     let mut buckets = vec!["1"; 24];
     buckets[3] = "";
     let got = parse_hour_profile(Some(&buckets.join(",")));
@@ -76,10 +65,8 @@ fn an_empty_bucket_is_zero_because_that_is_what_number_does() {
 
 #[test]
 fn a_route_with_fewer_than_two_stops_is_no_answer() {
-    // This is the rule, not a size guard. The matcher anchors a leg's first
-    // and last fix to a route's stops, so a one-stop route cannot be matched
-    // against at all — keeping it would put a row in the candidate set that no
-    // input can ever select, which reads as "considered and rejected".
+    // The rule, not a size guard: the matcher anchors a leg's ends to stops, so
+    // a one-stop route could never be selected.
     assert_eq!(parse_stops("[]"), None);
     assert_eq!(parse_stops(r#"[{"name":"only"}]"#), None);
     assert!(parse_stops(r#"[{"name":"a"},{"name":"b"}]"#).is_some());
@@ -140,10 +127,7 @@ fn a_date_that_is_not_a_date_is_an_error_not_a_guess() {
 
 #[test]
 fn an_integral_double_renders_without_a_fraction() {
-    // The point is the byte string, not the value. JavaScript has one number
-    // type, so `JSON.stringify(25)` is `25`; serde_json keeps the f64-ness and
-    // writes `25.0`, so a 25 m radius would render differently to a client while
-    // being the same number.
+    // The byte string: the client renders `25`, serde_json `25.0`.
     assert_eq!(js_num(25.0).to_string(), "25");
     assert_eq!(js_num(0.0).to_string(), "0");
     assert_eq!(js_num(998.0).to_string(), "998");

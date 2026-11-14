@@ -3,20 +3,15 @@ import Verified.Hsmm.Bellman
 /-!
 # The forward (Viterbi-principle) recurrence
 
-The trellis processes the day forward, so its provable functional form is a
-*prefix* DP: `bestEnd P s m` = the best score over well-formed segmentations of
-`[0, m)` whose last segment has state exactly `s`. Parameterising by the exact
-last state is what lets the transition into a new segment be paid at the
-segment's start — precisely the trellis's `closeBest`-then-transition step.
+The trellis's provable form is a prefix DP: `bestEnd P s m` is the best score
+over segmentations of `[0, m)` whose last segment has state exactly `s`, so the
+transition into a segment is paid at its start, as the trellis does.
 
-Segmentations here are manipulated in *reverse* order (most recent segment
-first), which makes the prefix DP structurally recursive; `scoreRev` scores
-that representation and `scoreRev_eq` bridges it to the spec's `score` via the
-snoc lemma `scoreAux_append_single`.
+Segmentations are handled most recent first, making the DP structurally
+recursive; `scoreRev_eq` bridges to the spec's `score` via
+`scoreAux_append_single`.
 
-Main result: `forwardBest_eq_oracleBest` — the forward DP computes exactly
-`oracleBest`. The remaining V1 step is the array-refinement: the trellis's
-τ-indexed columns compute `bestEnd` (see the roadmap).
+Main result: `forwardBest_eq_oracleBest`.
 -/
 
 namespace Verified.Hsmm
@@ -125,9 +120,8 @@ def enumEnd (P : Problem) (s : Nat) : (m : Nat) → List (List Seg)
   decreasing_by omega
 
 /-- The forward DP: best score over segmentations of `[0, m)` ending in state
-exactly `s`. Mirrors `enumEnd` choice-for-choice; the transition into the last
-segment is paid here, where the predecessor state `sp` is the recursion
-parameter — the trellis's segment-start bookkeeping. -/
+`s`, mirroring `enumEnd`; the transition into the last segment is paid here,
+with the predecessor `sp` as the recursion parameter. -/
 def bestEnd (P : Problem) (s : Nat) : (m : Nat) → Score
   | 0 => Score.negInf
   | m + 1 =>
