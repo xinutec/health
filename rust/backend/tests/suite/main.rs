@@ -1,49 +1,23 @@
 //! Every integration test that does not need a binary of its own.
 //!
-//! One binary, and the reason is build time. Cargo gives every file in
-//! `tests/` its own crate and its own executable, and each of ours statically
-//! links the Lean runtime: a mean of 58 MB across 115 of them, 6.5 GB of
-//! `target/`. Touching one line in `backend` relinks the lot. On a warm tree,
-//! one `touch` of `backend/src/lib.rs`:
+//! One binary for build time: each test binary statically links the Lean
+//! runtime (~58 MB), and a change to `backend` relinks every one, ~4.3 s each.
+//! The tests themselves are cheap. `nextest` runs one process per test, so
+//! isolation is unchanged; `cargo test` would share a process, which is why the
+//! corpus shards stay out.
 //!
-//! ```text
-//! lib + 1 test binary      16 s
-//! lib + 112 test binaries  490 s      -> ~4.3 s per binary, all of it link
-//! ```
+//! ⚠ These binaries stay separate because something selects them by name and
+//! would silently stop if they moved:
 //!
-//! The tests themselves are not the cost: 378 of them total 214 s of CPU and
-//! 351 finish inside a second. The row was ~90% compilation.
-//!
-//! Isolation is unchanged. `nextest` runs one process per test, not per
-//! binary, so sharing a binary does not share process state. `cargo test` would
-//! thread them together, and that is exactly why the corpus shards below stay
-//! out of here.
-//!
-//! ⚠ six binaries are deliberately not in here, because something names
-//! each by binary and would silently stop selecting it:
-//!
-//! * `corpus_gate`, `hsmm_decode_corpus` — the release row's
-//!   `--test` arguments, `scripts/deploy.sh`, `scripts/venue-prior-drift.sh`
+//! * `corpus_gate`, `hsmm_decode_corpus` — the release row's `--test`
+//!   arguments, `scripts/deploy.sh`, `scripts/venue-prior-drift.sh`
 //! * `frontend_unions` — its own gate row
 //! * `decoder_scoreboard` — `scripts/deploy.sh`
-//! * `lean_serve` — `examples/mode_reachability.rs`'s `PROBES`
+//! * `lean_serve` — `examples/mode_reachability.rs`'s `PROBES`, which
+//!   attributes mode calls by `current_exe()`
 //!
-//! `lean_serve` is the one that caught me, and it is the instructive one.
-//! The other five are named in a gate row or a shell script, which is where
-//! anybody would think to look. This one is named in Rust source:
-//! `mode_reachability` excuses the modes `lean_serve` asks for, because that
-//! file exists to probe that dispatch still routes and is indifferent to the
-//! answers — it also asks for `nope`, which is not a mode at all. Attribution
-//! is by binary, since the trace records `current_exe()`, so folding it in here
-//! made its probes read as real use and the gate failed with "1 mode(s) were
-//! executed but are in no arm this reads: nope".
-//!
-//! The rule for the next merge: grep the binary's name across the whole repo,
-//! not just `gate.dhall` and `scripts/`. A filter keyed on a name fails by
-//! selecting the wrong set, never by erroring.
-//!
-//! Adding a test file here is free; adding one as a sibling costs ~4.3 s on
-//! every Rust change in the repo, so do that only when a caller must name it.
+//! Before merging another, grep its name across the whole repo, Rust included.
+//! Adding a file here is free; a sibling binary costs ~4.3 s per Rust change.
 
 mod api_window;
 mod assemble_observation;

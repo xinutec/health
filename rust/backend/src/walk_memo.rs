@@ -1,45 +1,23 @@
 //! A walk's drawn result, remembered across folds.
 //!
-//! Drawing a walk — the matcher, the building corrector, the reconstruction —
-//! was most of a fold, and a page load drew every walk of the day again: the
-//! morning's walks on every evening load. Lean keys each walk's result by a
-//! hash of everything its drawing reads (`WalkAnnotate.walkMemoKey`) and asks
-//! here first (`memo.walkGet`); a walk it drew it hands over (`memo.walkPut`).
-//! This side adds the code version — a hash of the `verified_cli` binary — so
-//! a new build never reads an old build's lines.
+//! Drawing walks is most of a fold, and every page load redrew the day's walks.
+//! Lean keys each result by a hash of everything the drawing reads
+//! (`WalkAnnotate.walkMemoKey`), asks here first (`memo.walkGet`) and hands
+//! over what it drew (`memo.walkPut`). This side adds the code version, a hash
+//! of the `verified_cli` binary.
 //!
-//! # Why a remembered line cannot be a stale one
+//! A remembered line cannot be stale: the code and the data (fixes, roads,
+//! buildings, by content) are in the key, and `WalkAnnotate.drawWalk` takes
+//! exactly the arguments `walkMemoKey` hashes. `tests/suite/walk_memo.rs`
+//! checks that a remembered day equals the drawn one.
 //!
-//! * The code is in the key. A change to anything that draws a walk changes
-//!   the `verified_cli` binary, so an old build's rows are never read, and a
-//!   start clears them.
-//! * The data is in the key: the walk's fixes and the roads and buildings
-//!   answered for it, by content. A changed map changes the key.
-//! * The key cannot miss an input. `WalkAnnotate.drawWalk` takes exactly the
-//!   arguments `walkMemoKey` hashes, so the drawing has no way to read anything
-//!   the key leaves out; a new input has to become an argument of both.
+//! A deploy empties the memo; `routes::velocity::warm_recent` refolds in the
+//! background. Drawing walks in parallel could make this module unnecessary;
+//! nothing else depends on it.
 //!
-//! `tests/suite/walk_memo.rs` replays three days twice and requires the day
-//! with remembered walks to be the day that drew them.
-//!
-//! # The alternative, for when it is worth more than this
-//!
-//! A deploy changes the code version and empties the memo, and the first fold
-//! after it draws every walk again; `routes::velocity::warm_recent` does that
-//! fold in the background so a person does not. The other way to the same
-//! speed is a drawing fast enough to need no memory at all: the walks of a day
-//! are independent and could be drawn in parallel, a day then costing its
-//! longest walk rather than their sum (roughly 2–3×); and the drawing itself
-//! has room left (the matcher's two graph builds, the corrector's
-//! whole-network walk graph). If that lands, this module and its table can go;
-//! nothing else depends on them.
-//!
-//! Only the serving process keeps anything. [`init`] is called where the
-//! server starts; everywhere else (gates, captures, the CLI) the store is unset,
-//! every `memo.walkGet` answers nothing and every walk is drawn, which is what a
-//! test of the drawing has to do. The asks are answered in the worker's loop and
-//! never recorded among the fold's asks, so no count, capture or fetch queue
-//! sees them.
+//! Only the serving process keeps anything ([`init`]); elsewhere every walk is
+//! drawn. The asks are answered in the worker loop and never recorded among the
+//! fold's asks.
 
 use std::sync::OnceLock;
 
@@ -74,10 +52,8 @@ thread_local! {
     }) };
 }
 
-/// What the in-memory store has been asked, for the test that proves the
-/// second replay read it: `memo.walkGet`s served, `memo.walkGet`s missed,
-/// `memo.walkPut`s. A clock cannot say that — once drawing is fast, "four
-/// times faster when remembered" is noise.
+/// What the in-memory store has been asked (gets served, gets missed, puts), so
+/// a test can prove the second replay read it without timing.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MemStats {
     pub served: u64,

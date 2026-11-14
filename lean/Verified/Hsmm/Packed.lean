@@ -5,34 +5,23 @@ import Std.Data.HashMap
 /-!
 # Packed scores: trellis cells as unboxed `Nat` scalars
 
-`decodeCk` fixed the memory profile but not the arithmetic: Lean's runtime
-boxes any `Int` outside 32-bit, and this model's quantised scores live far
-outside it (soft `-∞` penalty cells reach ~-8·10¹³; even ordinary path sums
-pass -10¹⁰), so nearly every `Score.add`/`max` in the `O(T·S·(S+maxD))`
-forward pass is a GMP allocation.
+Lean boxes any `Int` outside 32 bits, and quantised scores reach ~-8·10¹³, so
+nearly every `Score.add`/`max` in the forward pass was a GMP allocation.
 
-The fix is a second, *exact* representation: a score `v` is stored as the
-`Nat` `v + pOff` (and `-∞` as `0`), which stays below `2^63` — Lean `Nat`
-scalars — for every value this decoder can produce, provided the inputs are
-bounded (`|v| ≤ pEB` for emissions, `≤ pOB` for the other tensors) and the
-day is bounded (`T ≤ pTMax`). Both are checked
-by the CLI, which refuses rather than decode outside the proven envelope.
-There is no approximation: `pAdd`/`Nat.max` are proved to *be* score
-addition and maximum through the encoding (`enc_add`, `enc_max`), given the
-magnitude bound that `col_bounded` establishes for every trellis cell by
-induction on the recurrence.
+A score `v` is stored exactly as the `Nat` `v + pOff` (`-∞` as `0`), below
+`2^63` for every value this decoder produces given bounded inputs (`|v| ≤ pEB`
+for emissions, `≤ pOB` otherwise) and `T ≤ pTMax`; the CLI refuses outside
+that envelope. `pAdd`/`Nat.max` are proved to be addition and maximum through
+the encoding (`enc_add`, `enc_max`), with `col_bounded` bounding every cell.
 
-The decoder over this encoding is `ByStart.sDecode`, proved equal to `decode`
-under the envelope hypotheses (`sDecode_eq`), so `decode_correct` transfers
-as `sDecode_correct`.
+`ByStart.sDecode` decodes over this encoding and is proved equal to `decode`
+(`sDecode_eq`), so `decode_correct` transfers as `sDecode_correct`.
 -/
 
 namespace Verified.Hsmm
 
-/-- The encoding offset, `2^61`. A numeral so `omega` can compute with it.
-`@[noinline]` keeps the compiler from inlining the literal into `pAdd`/`dec`,
-where its per-call rematerialisation (`lean_cstr_to_nat` — a GMP *string
-parse*) would dominate the whole decode. -/
+/-- The encoding offset, `2^61`, a numeral so `omega` can compute with it.
+`@[noinline]`, or each use re-parses the literal through GMP. -/
 @[noinline] def pOff : Nat := 2305843009213693952
 #guard pOff = 2 ^ 61
 
@@ -214,10 +203,8 @@ runs 50M+ times per day-scale decode. -/
   | 0 => 0
   | n + 1 => max (pRangeMax f n) (f n)
 
-/-- `pRangeMax` as a loop: the maximum so far travels in the accumulator, so
-the fold is one tail call per element where `pRangeMax` is one stack frame per
-element, `maxD` deep, for every state at every minute (the decode phase's
-hottest symbol). `pRangeMaxL_eq` is the exactness: the same maximum. -/
+/-- `pRangeMax` as a tail-recursive loop (the decode's hottest symbol);
+`pRangeMaxL_eq` proves the same maximum. -/
 @[specialize] def pRangeMaxGo (f : Nat → Nat) (n : Nat) (i acc : Nat) : Nat :=
   if h : i < n then pRangeMaxGo f n (i + 1) (max acc (f i)) else acc
 termination_by n - i
@@ -276,11 +263,9 @@ structure Agrees (m : PModel) (P : Problem) : Prop where
 
 /-! ## Two models that agree up to a minute
 
-The decoder's rows up to minute `f` read the emissions, entries and transitions
-at `f` or before and the duration cells ending before `f`, and nothing later.
-So two models that agree up to `f` build the same rows up to `f`
-(`ByStart.sBuild_agree`): what an incremental decode of a day whose inputs
-changed from `f` on reuses (docs/proposals/2026-11-incremental-today.md). -/
+Rows up to minute `f` read only inputs at or before `f`, so models agreeing up
+to `f` build the same rows (`ByStart.sBuild_agree`): what an incremental decode
+reuses (`docs/proposals/2026-11-incremental-today.md`). -/
 
 /-- `m₁` and `m₂` agree on everything the rows up to `f` read. -/
 structure AgreeTo (m₁ m₂ : PModel) (f : Nat) : Prop where
@@ -300,11 +285,9 @@ theorem pRangeMax_congr {f g : Nat → Nat} : ∀ n, (∀ i, i < n → f i = g i
 
 /-! ## Fast path: flat-array data model
 
-`PModel` stores its tensors as `Nat → … → Nat` *closure fields*, which the
-compiler cannot inline. `PData` stores the same pre-encoded tensors as flat
-`Array Nat`s read through monomorphic top-level accessors — so the hot loop is
-direct, inlinable calls. `toModel` is the `PModel` a `PData` denotes (its
-accessors wrapped as fields), which the theorems are stated about. -/
+`PModel`'s tensors are closure fields the compiler cannot inline; `PData` holds
+them as flat `Array Nat`s behind monomorphic accessors. `toModel` is the
+`PModel` a `PData` denotes, which the theorems are stated about. -/
 
 structure PData where
   T : Nat

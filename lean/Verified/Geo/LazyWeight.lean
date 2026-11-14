@@ -5,32 +5,21 @@ import Verified.Geo.LazyEdge
 /-!
 # Lazy Dijkstra: weight-optimality, `pathCost(route) = dist[tgt]`
 
-`LazyEdge` proved the reconstructed route is a *real costed walk* of `g`;
-`LazyUpper`'s `UInv` bounds a done vertex's distance from *above* by every
-outgoing edge. This file supplies the matching lower bound and telescopes the
-two into the value half of weight-optimality:
+`LazyEdge` makes the route a real costed walk; `LazyUpper`'s `UInv` gives the
+upper bound along every edge out of a done vertex. This adds the lower bound:
 
-> `WInv`: every relaxed vertex `v` was written by a real edge out of its `prev`,
-> at exactly `dist[prev[v]] + w` — and `dist[prev[v]] ≤ maxR`.
+> `WInv`: every relaxed `v` was written at exactly `dist[prev[v]] + w` by a real
+> edge, with `dist[prev[v]] ≤ maxR`.
 
-`WInv` is the recorded-edge provenance with arithmetic: `relaxStep` writes
-`dist[v] := p + w` and `prev[v] := u` together, and `settle_price` makes
-`p = dist[u]`, so the equality is literal. Combining `WInv`'s lower bound
-(`dist[v] = dist[u] + w ≥ dist[u] + edgeMinW`) with `UInv`'s upper bound
-(`dist[v] ≤ dist[u] + edgeMinW`) pins each settled step to the cheapest edge:
+Literal, since `relaxStep` writes `dist[v] := p + w` and `prev[v] := u` together
+and `settle_price` makes `p = dist[u]`. With `UInv` it pins each settled step to
+the cheapest edge (`done_dist_step`), and telescoped along `chainList` (`PInv`
+keeps it in done vertices, `SInv` gives `dist[src] = 0`):
 
-> `done_dist_step`: `dist[v] = dist[prev[v]] + edgeMinW(prev[v], v)`.
+> `chainList_pathCost_eq`: the route's `pathCost` in `Verified.Rail.Graph`
+> equals `dist[tgt]`.
 
-Telescoped along the `prev`-chain (`chainList`, `PInv` keeps it inside done
-vertices, `SInv` gives the `dist[src] = 0` base) this yields the payoff:
-
-> `chainList_pathCost_eq`: the reconstructed route's `pathCost` in the shared
-> `Verified.Rail.Graph` spec equals `dist[tgt]`.
-
-This is the exact-cost half of the matcher's null-over-wrong routing contract:
-not just "a real path" (`LazyEdge`) but "a path whose cost is the search's
-answer". The remaining half — `dist[tgt] = oracleDist` (the search's answer is
-*the* shortest) — is the next brick.
+The lower bound against every path is `LazyLower`.
 -/
 
 namespace Verified.Geo
@@ -441,11 +430,9 @@ theorem pathCost_snoc_eq {g : Graph} :
           show some (wab + (crest + ew)) = some (c + ew)
           exact congrArg some (by omega)
 
-/-- The route cost equals the target distance. Under the settle bundle, the
-reversed `prev`-chain from a done vertex `v` (once it has enough fuel to reach
-the sentinel) has `pathCost` exactly `dist[v]`: each step contributes its
-cheapest edge (`done_dist_step`), the chain stays inside done vertices (`PInv`),
-and the source anchors the base at `dist = 0` (`SInv`). -/
+/-- The route cost equals the target distance: the reversed `prev` chain from a
+done `v`, given fuel to reach the sentinel, costs exactly `dist[v]`
+(`done_dist_step` per step, `PInv`, `SInv` at the base). -/
 theorem chainList_pathCost_eq {g : Graph} {maxR src L : Nat} {s : LState}
     (hW : WInv g maxR s) (hU : UInv g maxR s) (hP : PInv g src s)
     (hS : SInv src s) (hL : LInv g L s) (hds : s.done.size = g.n) :
@@ -519,11 +506,8 @@ theorem chainList_pathCost_eq {g : Graph} {maxR src L : Nat} {s : LState}
 
 /-! ## The payoff at a search state -/
 
-/-- Weight-optimality, value half. At any trajectory point of a per-source
-lazy search, the reconstructed route (`chainList` over `prev`, reversed) from a
-done target `tgt` whose chain has completed has `pathCost` exactly `dist[tgt]` —
-the search's own answer for that vertex, expressed in the shared
-`Verified.Rail.Graph` spec. -/
+/-- Weight-optimality, value half: from a done target whose chain completed, the
+reconstructed route's `pathCost` is exactly `dist[tgt]`. -/
 theorem iter_route_pathCost_eq {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
     (hsrc : src < g.n) (k : Nat) {tgt dt : Nat}
     (htgt : (iter g maxR k (linit g.n src)).done.getD tgt false = true)
@@ -549,11 +533,9 @@ theorem iter_route_pathCost_eq {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
 
 /-! ## The chain terminates at the source
 
-`chainList_pathCost_eq` gives the route's *cost*; the enumeration bridge
-(`oracleDist`) also needs its *far endpoint*. `PInv` says a done vertex's
-`prev` is either the sentinel (and the vertex is `src`) or another done
-vertex, so walking `prev` back from a done target can only stop at `src` —
-i.e. the chain's last element (the route's head, once reversed) is `src`. -/
+The oracle bridge also needs the route's far end. By `PInv` a done vertex's
+`prev` is the sentinel (and it is `src`) or another done vertex, so the walk
+back from a done target stops only at `src`. -/
 
 /-- The completed `prev`-chain from a done vertex ends at `src`. -/
 theorem chainList_getLast?_src {g : Graph} {src L : Nat} {s : LState}

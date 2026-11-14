@@ -2,29 +2,14 @@ import Verified.Civil
 /-!
 # How far back an API read may see
 
-Two rules in front of every multi-day read. One is a convenience and one is a
-security boundary, and they are here together because the second is three lines.
+`days` is an integer in `[1, 365]`, default 30, rejected out of range, never
+clamped: `days=400` is an error, not a year. Only an absent parameter defaults;
+`""` reads as `0` and fails, so a host treating empty as absent would turn a
+rejection into a 30-day read.
 
-## `days` is validated, not clamped
-
-An integer in `[1, 365]`, default 30. Out of range is rejected, not narrowed,
-so `days=400` is an error, not a year: a clamp would answer a bad request with
-a plausible window, and the caller would never learn it asked for the
-impossible.
-
-Absent is the only input that becomes the default. `""` is not absent: it
-reads as `0` and fails the minimum. A host mapping an empty parameter to "no
-parameter" turns a rejection into a 30-day read.
-parameter to "no parameter" turns a rejection into a 30-day read.
-
-## The share window caps the read, whatever `days` says
-
-`sinceDateForSession` takes the later of `today - days` and the share's `from`.
-A recipient asking for 365 days gets their window and nothing more.
-
-⚠ Getting this comparison backwards hands a recipient the owner's whole
-history, and the response looks entirely normal — same shape, same columns,
-just more of them. There is no error to notice.
+⚠ The share window caps the read: `sinceDateForSession` takes the later of
+`today - days` and the share's `from`. Backwards, a recipient gets the owner's
+whole history in a normal-looking response.
 
 Pure and total. UNPROVEN; the `#guard`s pin its answers.
 -/
@@ -34,13 +19,9 @@ def DAYS_MIN : Int := 1
 def DAYS_MAX : Int := 365
 def DAYS_DEFAULT : Int := 30
 
-/-- Validate the `days` query parameter.
-
-The argument is what JS `Number(...)` made of it: `none` only when the parameter
-was absent, `NaN` when it was present and not a number. `none` out means reject.
-
-The host must reproduce `Number`'s coercion, including `Number("") == 0`. See
-the module note for what mapping `""` to absent would do. -/
+/-- Validate the `days` query parameter, given as the host's numeric coercion:
+`none` only when absent, `NaN` when not a number, and `""` as `0`. `none` out
+means reject. -/
 def validateDays (v : Option Float) : Option Int :=
   match v with
   | none => some DAYS_DEFAULT
@@ -52,10 +33,8 @@ def validateDays (v : Option Float) : Option Int :=
       let n := x.toInt64.toInt
       if n < DAYS_MIN || n > DAYS_MAX then none else some n
 
-/-- `today - days`, as a civil date. `none` when `today` does not parse.
-
-Counted in days through the civil calendar, so it rolls months and years and
-handles a leap day; the guards pin exactly those cases. -/
+/-- `today - days` through the civil calendar (months, years, leap days), or
+`none` when `today` does not parse. -/
 def sinceDate (today : String) (days : Int) : Option String :=
   match Verified.Civil.parseDate today with
   | none => none
@@ -64,14 +43,9 @@ def sinceDate (today : String) (days : Int) : Option String :=
     let (y', m', d') := Verified.Civil.civilFromDays (z - days)
     some (Verified.Civil.formatDate y' m' d')
 
-/-- The earliest date this request may see.
-
-`shareFrom` is the share window's start, or `none` for the owner. The answer is
-the later of the two bounds, so a share strictly caps the read.
-
-String comparison is correct here and only because `YYYY-MM-DD` orders
-lexicographically as it orders chronologically — the same reason
-`Verified.Share.dateInShareWindow` compares that way. -/
+/-- The earliest date this request may see: the later of `today - days` and the
+share's start (`none` for the owner). String comparison is chronological for
+`YYYY-MM-DD`, as in `Verified.Share.dateInShareWindow`. -/
 def earliestVisible (today : String) (days : Int) (shareFrom : Option String) : Option String :=
   match sinceDate today days with
   | none => none

@@ -1,19 +1,12 @@
 //! The watch's battery trace for one day, read back from `device_battery_log`.
-//!
-//! Plotted alongside the phone series on the day view. The shaping — which rows
-//! count, the window, the collapse — is `Verified.Geo.Velocity.watchBatterySeries`.
-//! What is here is the query and the one conversion Lean cannot do.
+//! Lean shapes it (`Verified.Geo.Velocity.watchBatterySeries`); this is the
+//! query and the one conversion Lean cannot do.
 //!
 //! Google rows carry their instant in `ts_utc`; the legacy Fitbit rows only a
 //! local `last_sync_time`, resolved in the user's zone. So the query
 //! pre-filters with a day's margin and Lean applies the exact window.
 //!
-//! # No `ORDER BY`, and that is deliberate
-//!
-//! Two devices reporting at the same instant keep the row that came later in the
-//! result set. Adding an `ORDER BY` here would change which level is drawn
-//! without changing anything that looks like a decision. Lean sorts by time
-//! itself, stably, which is the only ordering the shaping wants.
+//! No `ORDER BY`: same-instant rows keep result order, and Lean sorts stably.
 
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -33,11 +26,8 @@ fn sql_datetime(unix_s: i64) -> Result<String> {
         .to_string())
 }
 
-/// The day's watch-battery readings as `(ts, level)`.
-///
-/// The caller treats a failure as no series rather than a failed request: this
-/// is a display-only chart beside the timeline, and a database hiccup should
-/// cost the second line on a graph, not the day.
+/// The day's watch-battery readings as `(ts, level)`. The caller treats a
+/// failure as no series: a display-only chart must not cost the day.
 pub async fn load(
     pool: &MySqlPool,
     user_id: &str,
@@ -45,11 +35,9 @@ pub async fn load(
     start_utc: i64,
     end_utc: i64,
 ) -> Result<Vec<(i64, i64)>> {
-    // ⚠ `CAST(battery_level AS SIGNED)`. The column is `TINYINT UNSIGNED`, and
-    // sqlx decodes an unsigned MySQL integer into its own exact width — a
-    // mismatch compiles and fails only on real rows. The cast is exact for an
-    // integer (unlike the `AS CHAR` a DECIMAL needs) and makes the Rust type
-    // obvious rather than a fact about the column's declaration.
+    // ⚠ `CAST(battery_level AS SIGNED)`: the column is `TINYINT UNSIGNED`, and
+    // sqlx decodes unsigned integers at their exact width, failing only on
+    // real rows.
     let rows = sqlx::query(
         "SELECT last_sync_time, ts_utc, CAST(battery_level AS SIGNED) AS battery_level, \
          device_version FROM device_battery_log \
@@ -62,18 +50,12 @@ pub async fn load(
     .await
     .with_context(|| format!("reading device_battery_log for {user_id}"))?;
 
-    // Every decode errors rather than defaulting: `unwrap_or(0)` would turn a
-    // column-width mismatch into a watch that reports empty at every sync, a
-    // well-formed chart of a dead battery indistinguishable from a real one.
-    //
-    // The caller may treat a failure here as "no watch series". It must not be
-    // this function's job to decide that a broken read looks like a flat line.
+    // Every decode errors rather than defaulting: `unwrap_or(0)` would draw a
+    // dead battery at every sync. The caller decides what a failure shows.
     let mut wire: Vec<serde_json::Value> = Vec::with_capacity(rows.len());
     for r in rows {
-        // Decoded as a `NaiveDateTime` and re-rendered, not read as text: the
-        // column is a `DATETIME` and sqlx will not hand a temporal type back as
-        // a string. The wall clock survives either way — no zone is applied on
-        // the way out because none was applied on the way in.
+        // Decoded as a `NaiveDateTime`: sqlx will not return a `DATETIME` as
+        // text. No zone is applied either way.
         let wall: chrono::NaiveDateTime = r
             .try_get("last_sync_time")
             .context("device_battery_log.last_sync_time does not decode")?;
