@@ -2,17 +2,14 @@ import Verified.Hsmm.Emissions
 /-!
 # Presence-continuity emission bonus
 
-Phase 3 of presence-continuity: a per-no-fix-minute log-bonus to the stationary state matching the
-prior day's end-of-day place, decaying with hours-since-last-fix and scaled by the
-prior posterior — silenced once today's most-recent fix contradicts the prior
-place (>`CONTRADICTION_RADIUS_M`). This carries a multi-day no-data stay (e.g. a
-hospital) to the prior place with decaying confidence.
+For each no-fix minute, a log-bonus to the stationary state at the prior day's
+end place, decaying with hours since the last fix and scaled by the prior
+posterior, silenced once a fix today lies beyond `CONTRADICTION_RADIUS_M`. It
+carries a multi-day dark stay (a hospital) at the prior place. Always on: the
+decode request always carries the seed.
 
-No flag gates this: the Rust that builds the decode request calls
-`load_continuity` unconditionally, so the seed is sent on every decode.
-
-Pure factor; `haversine`/`exp`/`log` make the fired bonus ULP-close (`approx`),
-the gated-zero branches exact. UNPROVEN; pinned by the `#guard`s.
+`haversine`/`exp`/`log` make a fired bonus ULP-close; zero branches are exact.
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Continuity

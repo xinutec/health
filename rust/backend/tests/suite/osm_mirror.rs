@@ -1,8 +1,5 @@
-//! The base mirror's write half — bucketing, box sizing and the query.
-//!
-//! The rows these queries write sit beside rows already in the mirror, so the
-//! shapes are pinned rather than trusted. A bucket that disagrees with its
-//! neighbours does not fail: it fills the mirror with rows the reader's
+//! The base mirror's write half: bucketing, box sizing and the query. A bucket
+//! disagreeing with existing rows fills the mirror with rows the reader's
 //! `feature_type` filter never selects.
 
 use backend::osm_mirror::{
@@ -59,10 +56,9 @@ fn a_shop_with_a_footprint_stays_a_landmark() {
     assert_eq!(parse(&plain).expect("plain").feature_type, "building");
 }
 
-/// A named hotel building is a venue even with no venue tag: a hotel mapped as
-/// `building=hotel` + `name` and nothing else would otherwise name the stay
-/// inside it after the supermarket next door. Unnamed, or a named block of
-/// flats, it stays a footprint.
+/// A named `building=hotel` is a venue even without a venue tag, or the stay
+/// inside is named after its neighbour. Unnamed, or a named block of flats, it
+/// stays a footprint.
 #[test]
 fn a_named_hotel_building_is_a_landmark() {
     let outline = [
@@ -216,10 +212,9 @@ fn an_unknown_bucket_has_no_query_rather_than_an_empty_one() {
     }
 }
 
-/// The reason the box is sized to the question. `osm_covered` asks whether
-/// the search disc lies inside some single box, so a fetch narrower than the
-/// question leaves it uncovered and re-queued on the next fold — forever.
-/// Measured over the 44 golden days, the walk disc reaches 1832 m.
+/// The box is sized to the question: `osm_covered` needs the search disc inside
+/// one box, or the area is re-queued forever. The golden days' walk disc
+/// reaches 1832 m.
 #[test]
 fn a_box_is_never_narrower_than_the_question_that_provoked_it() {
     for radius in [50.0, 369.0, 940.0, 1832.0] {

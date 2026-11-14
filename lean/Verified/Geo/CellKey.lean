@@ -10,12 +10,9 @@ longitude range stays under `2^21` cells.
 
 namespace Verified.Geo
 
-/-- The pairing as a `Nat`, with both coordinates biased into the non-negative
-range first. Lean's `Int` is a GMP bignum past `2^31`
-(`LEAN_MAX_SMALL_INT = INT_MAX`) whereas `Nat` is an unboxed scalar to `2^63`,
-and a cell key is `≈ cy · 2^22` — comfortably over `2^31`, so an `Int` key
-would allocate on every hash and comparison. Here the bias is an `Int` add on a
-`|·| < 2^21` coordinate, and the pairing itself is `Nat`. -/
+/-- The pairing as a `Nat`, coordinates biased non-negative first: a key is
+≈ `cy · 2^22`, past the `2^31` where Lean's `Int` becomes a GMP bignum, while
+`Nat` stays an unboxed scalar to `2^63`. -/
 def cellKeyN (cy cx : Int) : Nat :=
   (cy + 2097152).toNat * 4194304 + (cx + 2097152).toNat
 

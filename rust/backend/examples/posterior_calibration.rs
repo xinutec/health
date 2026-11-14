@@ -1,12 +1,10 @@
 //! How well the decoder's confidence predicts whether it is right.
 //!
-//! Each narrated day decodes with `flags.posterior` on, so every segment carries
-//! its mode's posterior mass (`Verified.Hsmm.Posterior`). Every minute inside a
-//! confirmed narrative row (`user`, `derived` or `corroborated`) is a labelled
-//! minute: the decoded segment's mode is right or wrong against it, and its
-//! confidence is the prediction. Printed: a reliability table by confidence
-//! band, the Brier score, and for every decoded ride inside narrated time
-//! whether a narrated ride overlaps it (a phantom if none) and its confidence.
+//! Each narrated day decodes with `flags.posterior`, so every segment carries
+//! its mode's posterior (`Verified.Hsmm.Posterior`). Each minute inside a
+//! confirmed narrative row is right or wrong, predicted by that confidence.
+//! Prints a reliability table, the Brier score, and per decoded ride whether a
+//! narrated ride overlaps it (else a phantom) with its confidence.
 //!
 //! ```text
 //! cargo run --release --example posterior_calibration [-- <YYYY-MM-DD>...]

@@ -1,17 +1,8 @@
-//! `/api/share` answers one of two shapes, and the difference is absence.
-//!
-//! Why this is a test and not a comment. The two shapes are spelled with
-//! `Option<T>` + `skip_serializing_if = "Option::is_none"`, and what that pair
-//! does is invisible in the struct: a reader sees `Option` and reasonably
-//! expects `null` (dev-lint's wire extractor once reported four false drifts
-//! against this handler for that reason). Serialising it is the only thing
-//! that settles it, so the serialisation is pinned here.
-//!
-//! The property both halves depend on: with no link the conditional keys are
-//! absent — the settings page renders its create button off `active: false`
-//! alone — while a link nobody has opened yet carries an explicit
-//! `lastAccessedAt: null`. Collapsing those two would make "no share" and
-//! "unopened share" indistinguishable to the SPA.
+//! `/api/share` answers one of two shapes, and the difference is absence: with
+//! no link the conditional keys are absent (the page renders off
+//! `active: false`), while an unopened link has an explicit
+//! `lastAccessedAt: null`. `Option` with `skip_serializing_if` reads like
+//! `null` in the struct, so serialisation is pinned here.
 
 use backend::routes::share::ShareStatus;
 use serde_json::{Value, json};

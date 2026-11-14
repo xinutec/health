@@ -3,17 +3,11 @@ import Verified.Hsmm.Decode
 /-!
 # Memoising the verified decoder
 
-`decode` (proved correct in `Decode.lean`) recomputes `col` exponentially.
-This file computes the columns once — `buildCols` produces column `t` as a
-flat `Array Score` indexed by `s * maxD + (τ - 1)`, exactly the imperative
-trellis's layout — and proves every cell pointwise equal to `col`
-(`buildCols_get`). `decodeFast` is `decode` with array lookups in place of
-`col` calls; `decodeFast_eq` shows the two are *equal as functions of the
-problem* (via `pickBest_congr`), so `decodeFast_correct` and
-`decodeFast_none_iff` are inherited outright.
-
-`decodeFast` runs in `O(T·S·(S + maxD))`: the production-grade verified
-decoder.
+`buildCols` computes each column once, as a flat `Array Score` indexed by
+`s * maxD + (τ - 1)`, proved pointwise equal to `col` (`buildCols_get`).
+`decodeFast` is `decode` with lookups for `col`, equal as a function
+(`decodeFast_eq`), so it inherits `decodeFast_correct` and
+`decodeFast_none_iff`. `O(T·S·(S + maxD))`.
 -/
 
 namespace Verified.Hsmm

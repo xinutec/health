@@ -1,12 +1,9 @@
 //! The application error type, with an axum `IntoResponse` so handlers can `?`.
+//! The status shapes are a client contract (the frontend branches on them),
+//! shared with the sibling repos.
 //!
-//! These status shapes are a contract: the frontend branches on them, so an
-//! edit here is a client-visible API change even though nothing in this file
-//! mentions a client. They match the sibling repos'.
-//!
-//! ⚠ `Other` is the only variant whose text is not shown. Everything else names
-//! something the caller can act on; an unexpected failure names nothing useful
-//! and its detail belongs in the log, not in a response body a browser renders.
+//! ⚠ `Other`'s text is never shown: an unexpected failure's detail goes to the
+//! log, not a body a browser renders.
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -50,12 +47,8 @@ impl From<sqlx::Error> for AppError {
     }
 }
 
-/// Every error answer's body, and the only shape a caller sees on a failure.
-///
-/// A struct rather than a `json!` because a handler that hand-builds JSON has no
-/// wire type at all, and rustc checks nothing (dl-wire-untyped-response). One
-/// type here covers every route that returns `AppError`, which is the reason to
-/// put it here rather than per handler.
+/// Every error answer's body, as a struct so the wire has a type
+/// (dl-wire-untyped-response), shared by every route returning `AppError`.
 #[derive(Serialize)]
 pub struct ErrorBody {
     pub error: String,

@@ -1,17 +1,6 @@
-//! `/velocity`'s cache policy and the share window, asked through the linked
-//! Lean host.
-//!
-//! # Why this exists as well as the `#guard`s
-//!
-//! `Verified.VelocityCache` pins its own arithmetic at build time, and that
-//! settles whether the rule is right. It says nothing about whether this
-//! process can reach it: the Rust crate links a prebuilt static library, so an
-//! op added to `BackendEntry.lean` is invisible until `lake build
-//! BackendEntry:static` has run, and the symptom is an honest-looking
-//! `unknown op` that reads as a broken op rather than an absent one.
-//!
-//! So these re-ask a few of the guard cases across the wire. A failure here is
-//! about the link or the JSON, never about the decision.
+//! `/velocity`'s cache policy and the share window, asked through the Lean
+//! worker. `Verified.VelocityCache`'s `#guard`s settle the rule; these re-ask a
+//! few cases across the wire, so a failure here is the wire or the JSON.
 
 use backend::lean;
 use backend::timezone::local_date_at;

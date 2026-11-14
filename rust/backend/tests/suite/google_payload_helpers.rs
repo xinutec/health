@@ -1,8 +1,5 @@
-//! The pure readers for a Google Health point, against the public API.
-//!
-//! Each test below pins a way to get a payload wrong that has cost something,
-//! and none of them touches the network — these are total functions of a JSON
-//! value, which is why they can be tested at all.
+//! The pure readers for a Google Health point, as total functions of JSON. Each
+//! test pins a way to get a payload wrong.
 
 use serde_json::json;
 
@@ -42,11 +39,8 @@ fn a_civil_time_missing_its_date_is_unreadable_rather_than_defaulted() {
     assert_eq!(civil_datetime(None), None);
 }
 
-/// The whole reason `physicalTime` is parsed rather than sliced.
-///
-/// Taking the first 19 characters off an offset timestamp stores a local clock
-/// in the UTC column. Every summer reading would be an hour out, in a column
-/// whose entire purpose is to be the instant.
+/// `physicalTime` is parsed, not sliced: the first 19 characters of an offset
+/// timestamp are local time, an hour out in the UTC column every summer.
 #[test]
 fn physical_time_is_converted_to_utc_not_truncated() {
     assert_eq!(
@@ -61,10 +55,8 @@ fn physical_time_is_converted_to_utc_not_truncated() {
     assert_eq!(rfc3339_to_utc_datetime("not a time"), None);
 }
 
-/// `heartRate.beatsPerMinute` is a quoted number — the shape that once
-/// discarded 1258 `dailyRestingHeartRate` points in silence while
-/// `google-compare` printed `google 0 days`, which reads as "Google does not
-/// carry this".
+/// `heartRate.beatsPerMinute` is a quoted number, which a numeric read drops
+/// silently.
 #[test]
 fn a_quoted_number_reads_and_a_non_numeric_string_still_does_not() {
     assert_eq!(numeric(&json!("62")), Some(62.0));

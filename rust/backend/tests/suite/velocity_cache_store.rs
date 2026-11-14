@@ -1,12 +1,6 @@
-//! The `/velocity` cache's mechanics.
-//!
-//! `tests/velocity_cache.rs` covers the policy — Lean's TTL, freshness and
-//! window. This covers the parts the host owns: the LRU order, eviction, and
-//! the single-flight that stops two tabs firing two OSM enrichment runs over
-//! the same rows.
-//!
-//! These call Lean for freshness, because the cache does. So they need the
-//! runtime up even though nothing here is a decision.
+//! The `/velocity` cache's mechanics the host owns (LRU order, eviction,
+//! single-flight); the policy is `tests/velocity_cache.rs`. Freshness is asked
+//! of Lean, so the runtime must be up.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -169,11 +163,9 @@ async fn different_keys_do_not_block_each_other() {
     backend::lean::init().expect("the Lean runtime must start");
     let c = Arc::new(VelocityCache::new());
 
-    // By construction, not by the clock: x's compute waits for a signal that
-    // only y's compute sends. If a per-key lock serialised different days, y
-    // could not start until x returned, x could not return until y ran, and
-    // the join below would time out. The bound is a hang guard, not a latency
-    // figure — a loaded machine cannot make it red.
+    // By construction, not the clock: x waits for a signal only y sends, so a
+    // per-key lock serialising different days would hang. The timeout is a
+    // hang guard, not a latency bound.
     let gate = Arc::new(tokio::sync::Notify::new());
     let x = {
         let (c, gate) = (Arc::clone(&c), Arc::clone(&gate));

@@ -2,12 +2,11 @@ import Verified.Hsmm.Emissions
 /-!
 # Entry / initial priors
 
-`initialLogProb` is uniform `0` today. `entryLogProb` fires once per segment
-(not per minute): for a `stationary @ knownPlace` it adds the hour-of-day arrival
-rate `log(24 · hourProfile[hourLocal])` (floored) and the visit-frequency weight
-`log(nPlaces · weight)` (with a `1/(10·nPlaces)` fallback). Per-place data is
-passed resolved (profile for the state's place, weight lookup); the caller owns
-the maps. UNPROVEN; bit-exact, pinned by the `#guard`s.
+`initialLogProb` is uniform `0`. `entryLogProb` fires once per segment: for
+`stationary @ knownPlace`, the hour-of-day arrival rate
+`log(24 · hourProfile[hourLocal])` (floored) plus the visit weight
+`log(nPlaces · weight)` (fallback `1/(10·nPlaces)`). The caller resolves the
+per-place data. UNPROVEN; bit-exact, pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Entry
@@ -27,11 +26,9 @@ private def HOURS : Float := 24
 /-- `buildInitialStatePrior`: uniform `0` today. -/
 def initialStateLogProb (_s : State) : Float := 0.0
 
-/-- `buildEntryPrior`'s per-segment-entry log-prior.
-    `profile` = the hour profile resolved for `s.placeId` (`none` if absent or
-    the feature is off); `visitWeight` = the raw weight lookup for `s.placeId`
-    (`none` → the `1/(10·nPlaces)` fallback). `nPlaces > 0` gates the visit term
-    (it is `0` exactly when the weights map is absent). -/
+/-- The per-segment-entry log-prior. `profile` is `s.placeId`'s hour profile
+    (`none` if absent or off); `visitWeight` its raw weight (`none` → the
+    fallback). The visit term needs `nPlaces > 0` (a weights map). -/
 def entryLogProb (s : State) (hourLocal : Nat) (useHourProfiles : Bool)
     (profile : Option (Array Float)) (nPlaces : Nat) (visitWeight : Option Float) : Float :=
   if s.mode != .stationary || s.placeId.isNone then ZERO
