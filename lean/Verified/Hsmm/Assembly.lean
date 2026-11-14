@@ -5,29 +5,20 @@ import Verified.Hsmm.Quantize
 /-!
 # Model assembly — factor composition + quantised tensor build
 
-The last structural layer before `Main.lean`: compose the per-cell scoring
-callbacks from the factors, then quantise them into the integer tensors the
-verified trellis reads. Together with
-`EmissionFull.emissionLogProbFull` (the composed emission) this is the full
-`{emission, entry, initial, duration, transition}` model surface.
+Composes the per-cell callbacks from the factors and quantises them into the
+integer tensors the trellis reads. With `EmissionFull.emissionLogProbFull`
+this is the whole model surface:
 
-`buildHsmmModel`'s composition (decode.ts):
 * `emission   = base + geometric + routeRail + lineProximity`  — `EmissionFull`.
 * `entry      = entryPrior`                                    — `entryLogProbFull`.
 * `initial    = 0`                                              — `Entry.initialStateLogProb`.
 * `duration   = trainHopDuration`                              — `durationLogProbFull`.
 * `transition = transition (+ chainContext, −∞ short-circuit)` — `transitionLogProbFull`.
 
-The composition is `a + b` (and one `−∞` short-circuit / one flag gate), so what
-the `#guard`s pin is the wiring — the right summands, the right gate, the
-short-circuit — over sub-values already pinned bit-for-bit in their own modules.
-Chain-context's per-transition penalty stays caller-resolved, as that module
-declares (the geometry it needs is the parity boundary); everything the
-callbacks themselves do is here.
-
-The tensors are assembled in-process, so the Lean build is the dense map of
-`quantize` over the grid (`buildCellTensor` / `buildVector`), with no sparse
-export machinery. UNPROVEN; pinned by the `#guard`s.
+The guards pin the wiring (summands, gate, short-circuit) over sub-values pinned
+in their own modules; chain-context's penalty is caller-resolved. Tensors are
+the dense `quantize` map (`buildCellTensor` / `buildVector`). UNPROVEN; pinned
+by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Assembly
@@ -65,11 +56,9 @@ theorem durationLogProbFull_eq (s : State) (d : Nat) (covered : Bool)
       = durationLogProbFrom s d covered trainMin
           (Duration.logDurationProb (Verified.FloatConst.natToFloat d) fit minForMode) := rfl
 
-/-- `transitionLogProb = transition(from,to) (+ chainContext)`, with the
-    `t === −∞ ⇒ −∞` short-circuit (a hard-zero transition stays hard-zero; the
-    chain penalty is never added to it). The base transition carries the
-    station-graph `placeNear` hard-zero (served `buildTransitionMatrix`).
-    `chainVal` is the caller-resolved per-transition penalty. -/
+/-- `transitionLogProb = transition(from,to) (+ chainContext)`, with `−∞ ⇒ −∞`:
+    a hard zero (including the `placeNear` one) never gets the chain penalty.
+    `chainVal` is the caller-resolved penalty. -/
 def transitionLogProbFull (placeNear : Int → String → Bool) (states : List State) (selfLoop : Float)
     (src dst : State) (chainVal : Float)
     (weight : State → State → Float := Transitions.transitionWeight) : Float :=

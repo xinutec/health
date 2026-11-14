@@ -1,23 +1,13 @@
 //! The GPS track of a recorded workout, into `exercise_routes`.
 //!
-//! Google serves a session's route as a TCX document, one request per
-//! session: `GET …/dataTypes/exercise/dataPoints/{id}:exportExerciseTcx?alt=media`
-//! (`location.readonly` scope). There is no route data type to list; the
-//! session's `exerciseMetadata.hasGps` says which sessions have one, and
-//! `exercise_sessions.has_gps` is where that is kept.
+//! Google serves a session's route as a TCX document, one request per session
+//! (`GET …/dataTypes/exercise/dataPoints/{id}:exportExerciseTcx?alt=media`,
+//! `location.readonly`); `exercise_sessions.has_gps` says which have one. The
+//! document is kept whole in `tcx`, with two census counts beside it.
 //!
-//! The document is kept whole (`tcx`). A trackpoint carries time, position,
-//! altitude, distance and heart rate; the two counts beside it are for a census,
-//! not a replacement. A reader that wants points parses the column.
-//!
-//! A route is part of its session, not a stream of its own: the roster
-//! (`source::STREAMS`) lists `exercise_sessions`, and the freshness census does
-//! not watch this table — the last GPS workout may be months old on a healthy
-//! account, which is not a stale stream.
-//!
-//! A refusal is stored (`http_status`, `tcx` NULL) so the daily sync asks each
-//! session once. The alternative re-asks every 4xx forever at one request per
-//! session per day — not a lot, but an invisible loop against a quota.
+//! A route belongs to its session, so it is no roster stream and the freshness
+//! census does not watch it. A refusal is stored (`http_status`, `tcx` NULL) so
+//! each session is asked once, not every day against the quota.
 
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;
@@ -41,11 +31,8 @@ pub fn export_url(point_id: &str) -> String {
     )
 }
 
-/// How many `<Trackpoint>` elements a TCX document has.
-///
-/// A substring count, not an XML parse: the document is stored whole and this
-/// is a census figure. `<Trackpoint>` and `<Trackpoint ` (with attributes) both
-/// count; `<Trackpoints>` does not exist in TCX.
+/// How many `<Trackpoint>` elements a TCX document has, by substring count (a
+/// census figure): `<Trackpoint>` and `<Trackpoint ` both count.
 #[must_use]
 pub fn trackpoints(tcx: &str) -> usize {
     tcx.matches("<Trackpoint>").count() + tcx.matches("<Trackpoint ").count()
@@ -118,14 +105,9 @@ pub struct Synced {
     pub trackpoints: usize,
 }
 
-/// Fetch and store the route of every GPS session that has none.
-///
-/// One row per session, written once. A session's route does not change after
-/// the fact the way its summary can; an edit to the session replaces its
-/// `exercise_sessions` row (same point id) and leaves the route alone.
-///
-/// `limit` bounds a run; `None` takes every missing session, which is the daily
-/// sync's shape (a handful at most once the backlog is in).
+/// Fetch and store the route of every GPS session that has none, once: an edit
+/// replaces the session row, not its route. `limit` bounds a run; `None` takes
+/// every missing session, as the daily sync does.
 pub async fn sync_routes(
     pool: &MySqlPool,
     http: &reqwest::Client,

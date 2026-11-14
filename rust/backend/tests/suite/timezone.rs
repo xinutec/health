@@ -1,11 +1,7 @@
-//! Wall-clock → UTC, at the boundaries where it can be wrong.
-//!
-//! Fitbit sends a wall clock with no offset, so every intraday row's `ts_utc`
-//! depends on this. The interesting cases are the two an hour a year each:
-//! the wall clock that never happened, and the one that happened twice.
-//!
-//! Europe/London is the zone the corpus is in, so the transitions used here are
-//! the real ones: 2026-03-29 01:00 → 02:00, and 2026-10-25 02:00 → 01:00.
+//! Wall-clock → UTC, where it can be wrong: the wall clock that never happened
+//! and the one that happened twice. Legacy Fitbit rows' `ts_utc` depends on it.
+//! Europe/London, at its real 2026 transitions (29 March 01:00 → 02:00, 25
+//! October 02:00 → 01:00).
 
 use backend::timezone::{parse_wall_clock, wall_clock_to_unix, wall_clock_to_utc_string};
 
@@ -69,13 +65,9 @@ fn both_separators_parse_and_a_suffix_is_ignored() {
 
 #[test]
 fn the_wall_clock_that_happened_twice_takes_the_later_instant() {
-    // 2026-10-25: clocks go 02:00 → 01:00, so 01:30 occurs twice — once on BST
-    // (00:30 UTC) and once on GMT (01:30 UTC).
-    //
-    // Every value here is a stored row's instant, not derived. The earlier
-    // instant is the defensible reading and is not what `wall_clock_to_unix`
-    // returns; choosing it would silently re-time rows already in the
-    // database.
+    // Autumn: 01:30 occurs twice (00:30 UTC on BST, 01:30 UTC on GMT). These
+    // are stored rows' instants: choosing the earlier reading would silently
+    // re-time rows already stored.
     assert_eq!(
         wall_clock_to_utc_string("2026-10-25 01:30:00", Some("Europe/London")).as_deref(),
         Some("2026-10-25 01:30:00")
@@ -104,13 +96,9 @@ fn the_wall_clock_that_happened_twice_takes_the_later_instant() {
 
 #[test]
 fn the_wall_clock_that_never_happened_reads_on_the_post_transition_offset() {
-    // 2026-03-29: clocks go 01:00 → 02:00, so 01:00–01:59 name no instant. They
-    // must still resolve — a null ts_utc for a real data point loses it — and
-    // the resolution must not search.
-    //
-    // Again, measured. Reading on the pre-transition offset gives 01:30 UTC
-    // and is the intuitive answer; production returns 00:30. Values below are
-    // the production ones.
+    // Spring: 01:00–01:59 name no instant, yet must resolve (a null `ts_utc`
+    // loses a real point) without searching. Production gives 00:30 UTC, not
+    // the intuitive 01:30.
     assert!(
         wall_clock_to_unix("2026-03-29 01:30:00", "Europe/London").is_some(),
         "a nonexistent wall clock must still resolve"
@@ -166,17 +154,9 @@ fn the_fall_back_transition_stays_monotonic() {
 
 #[test]
 fn the_spring_forward_gap_is_not_monotonic_and_that_is_recorded_not_repaired() {
-    // This test asserts a defect, deliberately. `00:45` maps to `00:45` UTC
-    // and the following `01:00` maps to `00:00`, an hour backwards, rather than
-    // an invented monotonic answer.
-    //
-    // It is not repaired because it cannot arise from a device: the watch's own
-    // clock jumps at the transition too, so no Fitbit sample ever carries a wall
-    // clock inside the gap. A row that did would be corrupt on arrival, and
-    // smoothing it here would hide that rather than fix it.
-    //
-    // Written as a test so that if someone later "fixes" the gap reading, this
-    // fails and points at the reason rather than at a style preference.
+    // Asserts a known non-monotonicity: `00:45` → 00:45 UTC, then `01:00` →
+    // 00:00. A device never reports a time inside the gap (its clock jumps
+    // too), so such a row is corrupt on arrival. Do not "fix" this here.
     let before = wall_clock_to_unix("2026-03-29 00:45:00", "Europe/London").unwrap();
     let in_gap = wall_clock_to_unix("2026-03-29 01:00:00", "Europe/London").unwrap();
     assert!(

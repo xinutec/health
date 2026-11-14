@@ -1,16 +1,7 @@
-//! Thin Nextcloud HTTP client.
-//!
-//! Basic Auth with the stored app password on every request, plus the
-//! `OCS-APIRequest` header Nextcloud requires for its OCS endpoints.
-//!
-//! # It holds a user, unlike the Fitbit client did
-//!
-//! The Fitbit client was per-process and took an access token per call, because
-//! Fitbit's rate budget was charged against the application and a client that
-//! reached for a user's token would quietly acquire a current user. Nextcloud has no such shared budget and its
-//! credentials are per-user by construction, so binding the user here is honest
-//! rather than a shortcut — and it is what lets [`super::phonetrack`] resolve
-//! the credentials once for a multi-week walk instead of per chunk.
+//! Thin Nextcloud HTTP client: Basic Auth with the stored app password, plus
+//! the `OCS-APIRequest` header OCS endpoints require. It binds one user's
+//! credentials, resolved once, so [`super::phonetrack`] can page a multi-week
+//! walk without re-reading them.
 
 use anyhow::Context;
 use sqlx::MySqlPool;
@@ -25,11 +16,8 @@ pub struct NextcloudClient {
 }
 
 impl NextcloudClient {
-    /// Resolve the user's credentials and bind a client to them.
-    ///
-    /// Fails with [`NcError::NotLinked`] or [`NcError::ReauthRequired`] before
-    /// any HTTP happens: the pre-flight is part of construction so it cannot be
-    /// skipped.
+    /// Resolve the user's credentials and bind a client to them; fails with
+    /// [`NcError::NotLinked`] or [`NcError::ReauthRequired`] before any HTTP.
     pub async fn connect(
         http: reqwest::Client,
         pool: &MySqlPool,
@@ -47,14 +35,8 @@ impl NextcloudClient {
         })
     }
 
-    /// GET a path and return the raw body.
-    ///
-    /// `pool` is taken per call and not held, solely so a 401 can flag the row.
-    ///
-    /// An empty body is `Ok(None)` and not a parse error. Several PhoneTrack
-    /// endpoints answer 200 with nothing at all, and `serde_json` on `""` fails
-    /// with a message about JSON that would send a reader looking for a
-    /// malformed response that does not exist.
+    /// GET a path and return the raw body. `pool` is per call, to flag the row
+    /// on a 401. An empty body is `Ok(None)`: PhoneTrack answers 200 with nothing.
     pub async fn get(&self, pool: &MySqlPool, path: &str) -> Result<Option<String>, NcError> {
         let url = if path.starts_with("http") {
             path.to_string()
@@ -97,13 +79,8 @@ impl NextcloudClient {
         Ok(if body.is_empty() { None } else { Some(body) })
     }
 
-    /// PUT a JSON body. Used by the PhoneTrack preference writes.
-    ///
-    /// Shares `get`'s 401 handling on purpose: a revoked app password is
-    /// durable state, and discovering it on a write must record it just as
-    /// discovering it on a read does. Otherwise a user whose credential died
-    /// during a write keeps being told the write failed, with nothing saying
-    /// why or prompting a relink.
+    /// PUT a JSON body, for PhoneTrack preference writes. A 401 flags the row as
+    /// on reads, so a revoked password prompts a relink.
     pub async fn put(
         &self,
         pool: &MySqlPool,

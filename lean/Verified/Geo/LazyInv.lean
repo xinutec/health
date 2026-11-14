@@ -3,34 +3,22 @@ import Verified.Rail.HeapInv
 import Verified.Rail.LoopInv
 
 /-!
-# LazyDijkstra "settled = final" — the last `#guard` pin, retired
+# LazyDijkstra "settled = final"
 
-`LazyDijkstra.lean` proved the refinement half (lazy pausing/resuming
-traverses exactly the eager trajectory); the classic "a settled vertex's
-`dist`/`prev` never change afterwards" fact stayed `#guard`-pinned. This
-file proves it with a slim cut of the rail `LoopInv` bundle — no ghost
-tree, no certification, no completeness, just the freezing argument:
+A settled vertex's `dist`/`prev` never change afterwards, proved with a slim
+cut of the rail `LoopInv` bundle (no ghost tree, certification or
+completeness).
 
-`LInv g L s` carries the heap-shape invariant, lazy deletion (`wf`:
-every live heap entry over-approximates its vertex's `dist`), the
-monotone pop floor `L` (`ge`), and settled-prices-below-the-floor
-(`dle`). One `lstep` preserves the bundle at a possibly-larger floor and
-— the point — leaves every already-done vertex's `dist`/`prev` bits
-untouched: a done vertex `v` has `dist v ≤ L ≤ p` for the popped price
-`p`, so a relaxation candidate `p + w ≥ p` can never beat it
-(`relaxStep_inv`). Induction along `iter`/`lsettle` gives
-`iter_frozen`/`lsettle_frozen`; `linit_inv` starts the chain, and
-`lsettle_inv` re-establishes the bundle after every settle, so the fact
-holds across any interleaving of memoised settles — the per-source
-cache never serves a value that a later resume could have changed.
+`LInv g L s`: heap shape, lazy deletion (`wf`: live entries over-approximate
+`dist`), the monotone pop floor `L` (`ge`), and settled prices below it
+(`dle`). One `lstep` preserves it and leaves done vertices untouched: `dist v ≤
+L ≤ p`, so a candidate `p + w` never beats it (`relaxStep_inv`). Induction gives
+`iter_frozen`/`lsettle_frozen`; `linit_inv` starts the chain and `lsettle_inv`
+restores it after each settle, so it holds across any interleaving of memoised
+settles.
 
-Hypotheses, as in the rail proof: `WFEdges g` (in-range adjacency
-targets — `setIfInBounds` silently drops out-of-range updates, so this
-is a real assumption, true of production graphs by construction) and an
-in-range source for `linit`.
-
-Fuel sufficiency (the loop always reaches the stop condition) is proved in
-`LazyFuel.lean`; the `#guard`s stay as smoke tests.
+Assumes `WFEdges g` (`setIfInBounds` drops out-of-range updates) and an
+in-range source. Fuel sufficiency is `LazyFuel.lean`.
 -/
 
 namespace Verified.Geo
@@ -298,10 +286,8 @@ theorem linit_inv {g : Graph} {src : Nat} (hsrc : src < g.n) :
     · rw [Array.getElem?_eq_none (by simpa using hvn)] at hv
       exact absurd hv (by simp)
 
-/-- Settled = final (the retired pin): from a valid state, once a
-vertex is done, its `dist` and `prev` are what every later state of the
-trajectory reports — through any number of steps or fueled settles,
-hence through any interleaving of memoised `settle` calls. -/
+/-- Settled = final: from a valid state, a done vertex's `dist` and `prev` are
+what every later state reports, through any steps or fueled settles. -/
 theorem settled_final {g : Graph} {maxR L k : Nat} {s : LState} {v : Nat}
     (hwf : WFEdges g) (h : LInv g L s)
     (hv : s.done.getD v false = true) :

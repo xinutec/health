@@ -2,31 +2,18 @@ import Verified.Geo.LazyInv
 import Verified.Rail.LoopInv
 
 /-!
-# LazyDijkstra fuel sufficiency — the model's last hypothesis, discharged
+# LazyDijkstra fuel sufficiency
 
-`LazyDijkstra.lean` models the unfueled `while (heap nonempty)` settle loop
-with a fuel parameter; its refinement theorems assume a stop is fuel-reachable
-(`k ≤ fuel` with `stopAt … = true`). This file proves that assumption for the
-fuel the model is actually run with: the rail potential argument, on the lazy
-state.
+`LazyDijkstra.lean`'s theorems assume a stop is fuel-reachable (`k ≤ fuel`,
+`stopAt … = true`); this proves it for the fuel actually used.
 
-`potentialL = heap.a.size + Σ undone out-degrees` strictly decreases at
-every live step (`lstep_potential`): a pop always shrinks the heap by
-one, a stale pop changes nothing else, and a fresh settle's relaxation
-pushes at most `outdeg u` entries while permanently removing `outdeg u`
-from the undone sum (`sum_map_flip`, as in the rail proof). Hence the
-trajectory reaches a terminal state within `potentialL` steps
-(`iter_terminal`), the initial potential is at most `E + 1`
-(`potentialL_linit`), and every settle call with fuel ≥ `E + 1` lands
-on a stopped state — from the initial state, from any trajectory point,
-and therefore through any interleaving of memoised settles, since a
-fold of settles is itself a trajectory point (`settles_eq_iter`,
-via `lsettle_spec`). `all_settles_stop` is the headline.
-
-Combined with `lsettle_eq_iter`/`lsettle_comm` (refinement) and
-`settled_final` (`LazyInv.lean`), no hypothesis about the lazy search
-remains unproved: the loop always terminates within the modelled fuel, pausing
-order is irrelevant, and settled reads are final.
+`potentialL = heap.a.size + Σ undone out-degrees` strictly decreases per live
+step (`lstep_potential`): a pop shrinks the heap, and a settle pushes at most
+`outdeg u` while removing `outdeg u` from the sum (`sum_map_flip`). So a
+terminal state comes within `potentialL` steps (`iter_terminal`), which starts
+≤ `E + 1` (`potentialL_linit`), and every settle with fuel ≥ `E + 1` stops,
+through any interleaving of memoised settles (`settles_eq_iter`).
+`all_settles_stop` is the headline.
 -/
 
 namespace Verified.Geo
@@ -296,11 +283,9 @@ theorem iter_potential_le {g : Graph} {maxR : Nat} :
     have h2 := lstep_potential_le (maxR := maxR) hdsz
     omega
 
-/-- Fuel sufficiency. From any trajectory point of the real run,
-`lsettle` with fuel ≥ `E + 1` lands on a stopped state: the stop is
-reachable within the remaining potential, which the initial bound
-dominates. This discharges the `k ≤ fuel` reachability hypothesis of
-`lsettle_eq_iter`/`lsettle_comm`/`lsettle_idem` for the modelled fuel. -/
+/-- Fuel sufficiency: from any trajectory point, `lsettle` with fuel ≥ `E + 1`
+stops, discharging the reachability hypothesis of `lsettle_eq_iter`,
+`lsettle_comm` and `lsettle_idem`. -/
 theorem lsettle_stops {g : Graph} {maxR t src m fuel : Nat}
     (hfuel : totalOut g + 1 ≤ fuel) :
     stopAt t (lsettle g maxR t fuel (iter g maxR m (linit g.n src))) = true := by

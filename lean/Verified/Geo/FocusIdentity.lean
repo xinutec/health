@@ -2,38 +2,27 @@ import Verified.Hsmm.FloatScore
 /-!
 # Focus-place identity across re-mining
 
-`refresh-focus-places` wipes and re-inserts every cluster nightly, so the
-auto-increment id churns on every run. Anything that wants to reference a focus
-place by id (HSMM `model_states`, `journey_patterns`) needs that id to survive.
-`matchClusters` computes the mapping from newly-mined clusters to existing rows
-by centroid overlap.
+`refresh-focus-places` re-inserts every cluster nightly, churning the
+auto-increment id, while `model_states` and `journey_patterns` reference ids.
+`matchClusters` maps new clusters to existing rows by centroid, greedily:
 
-Greedy bipartite matching, which handles split and merge implicitly:
+1. every `(old, new)` pair within `MATCH_RADIUS_M` is a candidate;
+2. sorted closest first, then by `firstSeenTs`, so the older place wins a tie;
+3. a pair is accepted iff neither side is taken;
+4. unmatched new clusters are inserts, unmatched old ids deletions.
 
-1. every `(old, new)` pair within `MATCH_RADIUS_M` becomes a candidate;
-2. sorted closest-first, `firstSeenTs` ascending as the tiebreaker — on an exact
-   distance tie the older place keeps its identity;
-3. walk the sorted list and accept a pair iff neither side is taken;
-4. unassigned new clusters are fresh inserts, unassigned old ids are deletions.
+Greedy suffices at 5-30 clusters per user. The sort is stable, so full ties keep
+generation order (old outer, new inner).
 
-Greedy is enough at the 5-30 clusters/user scale; the interface would survive a
-swap to Hungarian.
-
-The sort is stable (`List.mergeSort` merges left-biased), so pairs equal on
-both keys keep their generation order: old-index outer, new-index inner.
-
-Exactness: every decision is exact; `haversineMeters` (atan2) puts the radius
-test at ≤ 1 ULP. UNPROVEN; pinned by the `#guard`s.
+Exact except `haversineMeters` (≤ 1 ULP). UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.FocusIdentity
 
 open Verified.Hsmm.FloatScore (haversineMeters)
 
-/-- Max distance between an existing and a new cluster centroid for them to be
-the same place. Sized to absorb the drift of a stable place's centroid when a
-year of fixes is re-mined (10-50 m), plus the tail of a cluster that shifts a
-city block as new fixes accumulate. -/
+/-- Max distance between an existing and a new centroid for one place: a stable
+place drifts 10-50 m on re-mining, and a growing one up to a city block. -/
 def MATCH_RADIUS_M : Float := 150
 
 structure ExistingPlace where
@@ -131,10 +120,8 @@ private def mv (r : MatchResult) : Array (Option Int) × Array Int :=
 -- (old-index outer) decides and the first old id wins.
 #guard mv (matchClusters #[⟨20, 51.5201, -0.13, 500⟩, ⟨21, 51.5201, -0.13, 500⟩] #[⟨51.52, -0.13⟩])
   == (#[some 20], #[21])
--- The near-mirror is not a tie: `51.5205 - 51.52` and `51.52 - 51.5195` are
--- different doubles (55.59746332175475 m vs 55.59746332254485 m), so this pair
--- is decided on distance and the younger place wins by being barely closer.
--- Recorded because it is the case I first mistook for the tiebreaker.
+-- Not a tie: the two offsets are different doubles (55.59746332175475 m vs
+-- 55.59746332254485 m), so distance decides and the younger, closer place wins.
 #guard mv (matchClusters #[⟨20, 51.5205, -0.13, 9000⟩, ⟨21, 51.5195, -0.13, 1⟩] #[⟨51.52, -0.13⟩])
   == (#[some 20], #[21])
 -- Everything out of radius: all new, all old deleted.

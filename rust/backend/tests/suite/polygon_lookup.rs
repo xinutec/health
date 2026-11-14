@@ -1,22 +1,12 @@
-//! The lat/lon → IANA zone lookup.
+//! The lat/lon → IANA zone lookup's wrapper, not `tzf-rs`'s polygons.
 //!
-//! ⚠ The coordinates here are public landmarks and coastlines with no time
-//! attached to any of them. Nowhere anybody has been, and no (place, time) pair:
-//! `tests/golden/ground-truth/` is where real locations live, and it is
-//! gitignored for exactly that reason.
-//!
-//! What these guard is not the polygon data — that is `tzf-rs`'s problem — but
-//! the three ways the wrapper around it can be wrong while looking right.
+//! ⚠ Coordinates here are public landmarks and coastlines, never a (place,
+//! time) pair: real locations live only in gitignored `tests/golden/`.
 
 use backend::tz_lookup::PolygonLookup;
 
-/// The argument order. `tzf` takes longitude first and every other signature
-/// in this codebase takes latitude first, so the swap lives in exactly one
-/// function. Get it backwards and the lookup does not fail — it confidently
-/// answers with a different continent's zone.
-///
-/// Greenwich is the case that makes a reversal visible: at (51.48, 0.0) the
-/// swapped call is (0.0, 51.48), which is in the Indian Ocean off Somalia.
+/// The argument order: `tzf` takes longitude first. Greenwich (51.48, 0.0)
+/// swapped lands off Somalia, so a reversal shows.
 #[test]
 fn latitude_comes_first() {
     let p = PolygonLookup::new();
@@ -44,13 +34,9 @@ fn ordinary_coordinates_resolve() {
     }
 }
 
-/// The oceans are covered, so a corrupt-but-in-range fix does not fall back.
-///
-/// Mid-Pacific does not yield `None`: `tzf` answers `Etc/GMT+8` there. The
-/// polygons include the nautical zones, so a GPS glitch that drops the phone
-/// into an ocean produces a confident zone name that is written into `tz` and
-/// reads like any other answer. That is the behaviour, asserted here so nobody
-/// re-derives the wrong expectation from the `Option` in the signature.
+/// The oceans are covered: mid-Pacific is `Etc/GMT+8`, not `None`, so a fix
+/// glitched into an ocean gets a confident zone. Asserted so nobody expects
+/// `None` from the signature.
 #[test]
 fn open_ocean_gets_a_nautical_zone_not_none() {
     let p = PolygonLookup::new();
@@ -64,12 +50,8 @@ fn open_ocean_gets_a_nautical_zone_not_none() {
     assert_eq!(p.zone(0.0, 0.0).as_deref(), Some("Etc/GMT"));
 }
 
-/// `None` is reached only by a value that is not a coordinate at all.
-///
-/// `tzf` returns an empty string for these rather than erroring. An empty string
-/// reaching a `tz` column would look present, parse as no zone, and be invisible
-/// to an `IS NULL` check — so the wrapper has to turn it into `None`, and this
-/// is what proves it does.
+/// `None` only for a non-coordinate: `tzf`'s empty string must become `None`,
+/// or a `tz` column would hold "" that `IS NULL` misses.
 #[test]
 fn a_non_coordinate_is_none_not_an_empty_string() {
     let p = PolygonLookup::new();
@@ -90,10 +72,8 @@ fn a_non_coordinate_is_none_not_an_empty_string() {
     }
 }
 
-/// The finder is expensive to build and cheap to query, which is the whole
-/// reason it is a struct held for the run rather than a free function. If a
-/// refactor ever makes `zone` rebuild it, this gets slow rather than wrong —
-/// so this asserts the cheap thing works repeatedly, not a timing.
+/// The finder is expensive to build and cheap to query, hence a struct held for
+/// the run; this checks repeated queries work, not timing.
 #[test]
 fn one_finder_answers_many_queries() {
     let p = PolygonLookup::new();

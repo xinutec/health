@@ -3,19 +3,15 @@ import Verified.Hsmm.Packed
 /-!
 # The trellis by segment start
 
-A trellis cell is the score of entering its state at the run's first minute
-plus the run's emissions (`col_eq_openVal`), and closing a run is `bestEnd`
-(`closeB_eq`). So the decoder keeps, per minute and state, the entering score
-(`entSpec`) and the best close (`bestEnd`), both encoded (`Packed`), and reads
-any cell as an entering score plus a difference of emission prefix sums
-(`sCell`). Nothing is shifted minute to minute and no column is stored: a day
-is two `T × S` rows of `Nat`s, which the walk reads directly.
+A cell is the score of entering its state at the run's first minute plus the
+run's emissions (`col_eq_openVal`), and closing a run is `bestEnd`
+(`closeB_eq`). So the decoder keeps per minute and state the entering score
+(`entSpec`) and the best close (`bestEnd`), encoded (`Packed`), and reads any
+cell from emission prefix sums (`sCell`): a day is two `T × S` rows of `Nat`s.
 
-`sDecode_eq` proves the decoder equal to `decode` under the envelope
-hypotheses; every argmax is `pickBest`'s, in `Nat` (`sPick_eq`), so the path is
-the specification's own, ties included. `sDecodeInc_eq` proves today's
-incremental decode, an earlier run's rows cut at its frontier and built on,
-equal to the full one.
+`sDecode_eq`: equal to `decode` under the envelope; every argmax is
+`pickBest`'s (`sPick_eq`), so the path is the specification's, ties included.
+`sDecodeInc_eq`: the incremental decode equals the full one.
 -/
 
 namespace Verified.Hsmm
@@ -701,10 +697,9 @@ theorem pWalkC_eq {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds 
 
 /-! ## The pick, in `Nat`
 
-`pickBest` is a right fold that keeps the earlier of two equal candidates and
-ignores `-∞`. The same fold over encoded values — scanning from the last
-candidate back, replacing on `≥` — returns the same candidate, without a
-`Score` built per candidate. -/
+`pickBest` is a right fold keeping the earlier of equal candidates and ignoring
+`-∞`; the same fold over encoded values (from the last back, replacing on `≥`)
+picks the same one without building a `Score`. -/
 
 /-- One candidate of the right fold: `x` with value `v` against the best of
     the candidates after it (`0` for none). -/
@@ -1020,10 +1015,9 @@ theorem sDecode_correct {d : PData} {P : Problem} (hag : Agrees (toModel d) P)
 
 /-! ## Today, resumed
 
-Two models that agree on what the rows up to `t0` read build the same rows up
-to `t0` (`sBuild_agree`), and a build to a later minute only appends rows
-(`sBuild_prefix`). So a day's rows, cut at `t0` and built on with the new
-model, are the new model's own (`sDecodeInc_eq`). -/
+Models agreeing on what rows up to `t0` read build the same rows
+(`sBuild_agree`), and building further only appends (`sBuild_prefix`), so rows
+cut at `t0` and built on are the new model's own (`sDecodeInc_eq`). -/
 
 theorem sBuild_size (d : PData) (pref : Pref) :
     ∀ u, (sBuild d pref u).1.size = u * d.S ∧ (sBuild d pref u).2.size = (u + 1) * d.S
@@ -1167,9 +1161,8 @@ theorem sBuildFrom_eq (d : PData) (pref : Pref) (t0 : Nat) :
     rw [sBuildFrom, sBuildFrom_eq d pref t0 k, show t0 + (k + 1) = (t0 + k) + 1 by omega, sBuild]
 
 /-- The server's incremental decode: an earlier run's rows `old`, cut at `t0`
-    and built on to the day's end. When the earlier run's model agrees with
-    `d`'s up to `f ≥ t0`, this is `sDecode d`, and it hands on `d`'s own rows
-    (`sDecodeInc_eq`). -/
+    and built on. When that run's model agrees with `d`'s up to `f ≥ t0`, this
+    is `sDecode d` (`sDecodeInc_eq`). -/
 def sDecodeInc (d : PData) (t0 : Nat) (old : Array Nat × Array Nat) :
     Option DecodeResult × (Array Nat × Array Nat) :=
   let pref := sPrefix d

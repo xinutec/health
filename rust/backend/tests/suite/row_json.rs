@@ -1,19 +1,13 @@
-//! The wire shape of a `selectAll()` row.
+//! The wire shape of a `selectAll()` row. The table endpoints hold almost no
+//! logic, so this pins what they render:
 //!
-//! The twelve table endpoints have almost no logic, so what is worth testing is
-//! not what they decide but what they render. Three things are pinned here:
+//!   1. Lean's type → shape table;
+//!   2. the host's inline ISO formatter against Lean's (the serving path does not
+//!      call Lean per value);
+//!   3. `days` coercion, on recorded answers.
 //!
-//!   1. Lean's type → shape table, including the one that reads wrong;
-//!   2. that the host's inline ISO formatter agrees with Lean's, because the
-//!      serving path does NOT call Lean per value and could otherwise drift;
-//!   3. that `days` coercion matches JavaScript's `Number()`, on recorded
-//!      answers rather than ones from memory.
-//!
-//! What is not here: encoding an actual row. A `MySqlRow` cannot be built
-//! without a server, so nothing in this file has ever seen a DECIMAL come off
-//! the wire. `backend rows-check` does that against production, and it is the
-//! only thing that does — a green run here is evidence about the rules, not
-//! about the decode.
+//! A `MySqlRow` needs a server, so no real row is encoded here;
+//! `backend rows-check` does that against production.
 
 use backend::lean::{self, RowShape};
 use backend::routes::tables::js_number;
@@ -66,12 +60,8 @@ fn shape_table_matches_lean() {
     );
 }
 
-/// An unmapped type must refuse, not render as null.
-///
-/// Float and DOUBLE are in this list on purpose. Rendering a float to JSON
-/// for a JavaScript client means reproducing shortest-round-trip output, so
-/// until a column needs one, refusing is the honest answer and a guess would
-/// be an invisible one.
+/// An unmapped type must refuse, not render as null. FLOAT and DOUBLE are
+/// refused until a column needs the client's shortest-round-trip rendering.
 #[test]
 fn unmapped_types_are_refused() {
     init();
@@ -140,10 +130,7 @@ fn date_renders_as_a_full_timestamp() {
     assert_eq!(format_date_iso(nd), "2026-08-22T00:00:00.000Z");
 }
 
-/// `days` coercion.
-///
-/// Every expectation here is a recorded answer, not derived from reading
-/// documentation.
+/// `days` coercion, on recorded answers.
 #[test]
 fn days_coercion_matches_number() {
     init();
@@ -176,12 +163,8 @@ fn days_coercion_matches_number() {
     assert_eq!(lean::validate_days(None).expect("absent"), Some(30));
 }
 
-/// How a JS number renders.
-///
-/// Every expectation here is JavaScript's own rendering. The rule matters
-/// because JavaScript has no integer/float distinction: a derived `Serialize`
-/// writes `120.0` where `JSON.stringify` writes `120`, 8,790 bytes of
-/// difference across one day of GPS fixes, which only a byte diff caught.
+/// How a number renders on the wire: as the client's `JSON.stringify` does, so
+/// `120`, not the `120.0` a derived `Serialize` writes.
 #[test]
 fn numbers_render_as_javascript_renders_them() {
     use backend::row_json::{js_number_opt, js_number_value};

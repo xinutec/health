@@ -1,16 +1,9 @@
-//! `local_hour_of` / `local_stay_samples`.
+//! `local_hour_of` / `local_stay_samples`: Rust resolves instants to local
+//! `(weekday, minute)` (tzdata) for `Verified.Geo.OpeningHours` and `bestPlace`.
 //!
-//! These two exist because `Verified.Geo.OpeningHours` decides open-versus-
-//! closed but instant → local `(weekday, minute)` is tzdata, so the shell
-//! resolves the pairs and puts them on the wire. They feed `bestPlace`, whose
-//! entries are the only derived ones in any answer table.
-//!
-//! The cases were produced by running `dist/geo/opening-hours.js` and
-//! `dist/geo/venue-prior.js` — see `fixtures/local-time-ts.mjs`. They are
-//! chosen for what these get wrong quietly rather than loudly: the Monday-based
-//! weekday index, both European DST transitions, a zero-length window, a stay
-//! that starts mid-minute, and a southern-hemisphere zone whose DST runs the
-//! other way.
+//! Cases recorded from the retired implementation (`fixtures/local-time-ts.mjs`),
+//! picked for quiet failures: the Monday-based weekday, both European DST
+//! transitions, a zero-length window, a mid-minute start, and a southern zone.
 
 use backend::timezone::{local_hour_of, local_stay_samples};
 use serde_json::Value;
@@ -58,12 +51,8 @@ fn the_stay_samples_match_the_typescript() {
     }
 }
 
-/// Monday is zero, and nothing about the shape of the output says so.
-///
-/// `chrono`'s `num_days_from_sunday` is the obvious call and is wrong here.
-/// Using it shifts every opening-hours judgement by one day while producing
-/// output of exactly the right length and range — a venue judged open on the
-/// wrong weekday, with no signal anywhere.
+/// Monday is zero. `chrono`'s `num_days_from_sunday` would shift every opening
+/// judgement by a day with output of the right shape.
 #[test]
 fn the_weekday_index_is_monday_based() {
     // 2026-01-01 00:00Z is a Thursday.
@@ -80,11 +69,8 @@ fn the_weekday_index_is_monday_based() {
     );
 }
 
-/// A zero-length window is the instant at its start, not an empty list.
-///
-/// An empty sample list is not "a stay of no minutes" to the scorer — it is a
-/// stay it can say nothing about, which scores differently from one sampled at
-/// a single instant.
+/// A zero-length window is the instant at its start, not an empty list, which
+/// the scorer reads as a stay it knows nothing about.
 #[test]
 fn a_zero_length_stay_samples_its_start() {
     let t = 1_768_435_200;
@@ -97,10 +83,8 @@ fn a_zero_length_stay_samples_its_start() {
     );
 }
 
-/// The observation tensor's table is resolved per minute, and the two days a
-/// year that matters are the two days the decoder is hardest to debug. On a
-/// spring-forward day 01:00 local is followed by 02:00 local, so the day has
-/// 1380 minutes and the naive `(m / 60) % 24` is wrong for 22 of its hours.
+/// The observation tensor's table is per minute: a spring-forward day has 1380
+/// minutes, and `(m / 60) % 24` is wrong for 22 of its hours.
 #[test]
 fn the_local_ctx_table_follows_dst_rather_than_the_minute_index() {
     use backend::timezone::{date_bounds_utc, local_ctx_table};
@@ -126,10 +110,9 @@ fn the_local_ctx_table_follows_dst_rather_than_the_minute_index() {
         (0..23 * 60).map(|m: u32| (m / 60) % 24).collect::<Vec<_>>()
     );
 
-    // Sunday is 0 here and 6 in `local_stay_samples`. The two live in one file
-    // and disagree deliberately: opening hours are Monday-based, the tensor
-    // follows JavaScript's `Date`. Pinned so a shared helper is never "tidied"
-    // in without noticing it shifts every hour profile by a day.
+    // Sunday is 0 here and 6 in `local_stay_samples`, deliberately: opening
+    // hours are Monday-based, the tensor Sunday-based. A shared helper would
+    // shift every hour profile by a day.
     let mon = date_bounds_utc("2026-03-30", Some("Europe/London")).unwrap();
     assert_eq!(
         local_ctx_table(mon.start_utc, mon.end_utc, "Europe/London").unwrap()[0],

@@ -1,27 +1,18 @@
 import Verified.Geo.LazyFuel
 
 /-!
-# Lazy Dijkstra: the live-heap-entry invariant (weight-optimality, keystone)
+# Lazy Dijkstra: the live-heap-entry invariant
 
-`LazyInv.wf` says every heap entry is *valid* (its price ≥ the vertex's current
-`dist`). The converse — every *unsettled* vertex with a defined `dist` still
-holds a live heap entry *at* that `dist` — is what `LazyInv` omits, and it is
-the keystone of weight-optimality: it forces the price a vertex is popped at to
-equal its `dist` (a smaller live entry would have popped first), which is what
-makes "settled distances are the ones the relaxations wrote" true.
+`LazyInv.wf` says every heap entry's price is ≥ its vertex's `dist`. The
+converse, that every unsettled vertex with a `dist` still has an entry at it,
+forces a vertex to pop at its `dist`:
 
-> `HInv`: for every vertex `v` that is not yet `done` with `dist[v] = some d`,
-> the pair `(d, v)` is in the heap.
+> `HInv`: every not-`done` `v` with `dist[v] = some d` has `(d, v)` in the heap.
 
-It holds because `dist[v]` is only ever set by `relaxStep`, which in the same
-step pushes `(d, v)`; `done` only grows; and `pop` removes exactly the popped
-top (`pop_cover`), so any *other* vertex's entry survives. `iter_hinv` carries
-it from `linit`; `settle_price` reads off the consequence — when `lstep` settles
-`u`, it pops it at price `dist[u]`.
-
-Native to the lazy machine (the rail `dijkstra_complete` lives on the rail
-`DState`, a different state type), but it reuses the shared `HeapInv` lemmas
-(`push_mem`, `pop_cover`, `pop_min`) over the shared `Heap`.
+`relaxStep` sets `dist[v]` and pushes `(d, v)` together, `done` only grows, and
+`pop` removes only the top (`pop_cover`). `iter_hinv` carries it from `linit`;
+`settle_price` gives the pop price. Reuses `HeapInv`'s `push_mem`, `pop_cover`
+and `pop_min`.
 -/
 
 namespace Verified.Geo
@@ -107,10 +98,8 @@ private theorem pop_survive {h h' : Heap} {t : Nat × Nat} (hp : h.pop = some (t
   · exact absurd (congrArg Prod.snd heq) hvu
   · exact hin
 
-/-- Marking the popped vertex done and dropping it from the heap preserves
-`HInv`: every still-unsettled vertex with a distance is `≠` the popped one (it
-is either already `done` at range, or out of range with no distance), so its
-entry survives the pop. -/
+/-- Marking the popped vertex done and dropping it preserves `HInv`: every
+other unsettled vertex with a distance is not the popped one. -/
 private theorem hinv_settle {g : Graph} {L : Nat} {s : LState} {p u : Nat} {h' : Heap}
     (hds : s.done.size = g.n) (hL : LInv g L s)
     (hpop : s.heap.pop = some ((p, u), h')) (hH : HInv g s) :
@@ -184,11 +173,9 @@ theorem linit_hinv {g : Graph} {src : Nat} (hsrc : src < g.n) : HInv g (linit g.
 
 /-! ## The payoff: a vertex settles at its own distance -/
 
-/-- Settle price = distance. When `lstep` pops `u` at price `p` to settle it
-(it was unsettled with `dist[u] = some d`), `p = d`: a smaller live entry would
-have popped first (`HInv` + `pop_min`), and `LazyInv.wf` bounds it below. This
-is the fact weight-optimality rests on — the search settles each vertex exactly
-at the distance the relaxations recorded for it. -/
+/-- Settle price = distance: `lstep` pops an unsettled `u` with `dist[u] = some
+d` at exactly `d`, since a smaller entry would pop first (`HInv`, `pop_min`)
+and `LazyInv.wf` bounds it below. -/
 theorem settle_price {g : Graph} {L p u d : Nat} {s : LState} {h' : Heap}
     (hL : LInv g L s) (hH : HInv g s)
     (hpop : s.heap.pop = some ((p, u), h'))

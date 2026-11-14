@@ -1,31 +1,16 @@
 //! A landmark table that answers empty names nothing, and counts as answered.
 //!
-//! `nearbyLandmarks` is what puts a venue name on a timeline instead of a bare
-//! "stationary". If the shaping returns an empty list, every ask still reads as
-//! answered, the stay still renders, and venue names silently vanish: a day
-//! where all six asks answer and all six are empty.
+//! An empty shaping reads as answered, so venue names vanish silently. Two
+//! encoding mismatches between the Lean entry points, neither visible by shape:
 //!
-//! ⚠ The fixture here is synthetic on purpose: a tracked test must not
-//! carry a real coordinate and a real venue, which together record where
-//! someone was. The defect does not need real data to reproduce — it is an
-//! encoding mismatch, and it fires on any tagged feature at any coordinate.
+//! * `ServeEntry.tagsJson` writes a tag as a two-element array; reading it as a
+//!   `{k, v}` object parses to no tags, so every answer is `[]`.
+//! * `distanceM` crosses as an IEEE-754 bit string (`DayEntry.parsePoi`, `jBits`);
+//!   a JSON number fails the fold's decode.
 //!
-//! The two defects this pins are both encoding mismatches between the two
-//! Lean entry points, and neither is detectable by shape:
-//!
-//! * `ServeEntry.tagsJson` writes a tag pair as a two-element array, and
-//!   `BackendEntry`'s shaping read it as a `{k, v}` object. Both are
-//!   well-formed JSON. A feature whose tags parse to nothing spawns no
-//!   landmark, so the answer was `[]` for every stay everywhere.
-//! * `distanceM` crosses as an IEEE-754 bit pattern in a string, which is what
-//!   `DayEntry.parsePoi` reads with `jBits`. Emitting a JSON number instead
-//!   fails the fold's decode with "String expected" — and that one is only
-//!   reachable once the shaping stops being empty, which is how it hid behind
-//!   the first.
-//!
-//! So the assertion is not "the call succeeded": it is that a named, tagged
-//! feature within the radius comes back as a landmark, spelled the way the fold
-//! reads it.
+//! So it asserts a named, tagged feature in range comes back as a landmark the
+//! fold reads. ⚠ The fixture is synthetic: a tracked test carries no real
+//! coordinate and venue.
 
 use backend::lean::Answerer;
 use backend::lean::Ask;
@@ -55,11 +40,8 @@ const LON: f64 = -0.1;
 const VENUE_LAT: f64 = 51.500_2;
 const VENUE_LON: f64 = -0.1;
 
-/// One tagged point POI and no lines — a node-mapped venue, the common case.
-///
-/// Answers `Some` for both buckets. Either returning `None` declines the
-/// whole table, and a decline is loud where an empty answer is not; this test
-/// would pass for the wrong reason if the line side declined.
+/// One tagged point POI and no lines, the common case. Both buckets answer
+/// `Some`: a declined line side would pass this for the wrong reason.
 struct OneVenue;
 
 impl RowSource for OneVenue {
