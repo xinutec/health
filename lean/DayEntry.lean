@@ -7,23 +7,17 @@ import Verified.Geo.WalkMatchAdapt
 /-!
 # `DayEntry` — the day fold's JSON boundary
 
-The day request comes in as one JSON object (`env`, carrying the day's stored
-decode), the decoder's segments are named by the tail (`PassFold.passes`), and the
-timeline goes back out. Every lookup the fold needs beyond its request —
-the OSM tables, the zone at a coordinate, a geocode, a stay's local hours — is
-asked of the host mid-fold through `DayEntry.Host.ask`. Nothing is
-carried in the request that the host could answer on demand: there are no
-lookup tables here and no miss policy, because a miss is an ask.
-
-Layering, and why it is three and not two:
+The day request comes in as one JSON object (`env`, with the day's stored
+decode), the tail names the decoder's segments (`PassFold.passes`), and the
+timeline goes out. Every other lookup (OSM tables, zones, geocodes, a stay's
+local hours) is asked of the host mid-fold (`DayEntry.Host.ask`), so there are
+no lookup tables here and no miss policy: a miss is an ask.
 
     Verified        pure folds + their #guard specs. No Json, anywhere.
     DayEntry.Wire   the float-exact JSON helpers all entry points share.
     DayEntry.Host   the one ask, and the pipe it crosses.
     DayEntry        this: the day request/response shape.
     ServeEntry      the mode table `verified_cli serve` dispatches on.
-
-`Verified` stays parser-free on purpose; see `DayEntry/Wire.lean`.
 -/
 
 open Lean (Json)
@@ -118,13 +112,9 @@ private def parseKnownPlace (j : Json) : Except String Verified.Geo.SegmentMerge
   return ⟨← (← nth a 0).getInt?, ← jBits (← nth a 1), ← jBits (← nth a 2)⟩
 
 /-- `[id, latBits, lonBits, radiusBits, uniqueDaysBits, hourProfile|null,
-displayName|null, sleepHoursBits, amenityLabel|null]` — a mined `focus_places`
-row as the OSM enrichment stage reads it.
-
-The whole row rather than a projection, unlike `stayPlaces` and `dwellPlaces`
-beside it: the stationary branch scores the candidate and then branches its
-label on three more fields of the same row in one decision, so a split would
-only give the halves somewhere to drift apart. -/
+displayName|null, sleepHoursBits, amenityLabel|null]`: a mined `focus_places`
+row, whole, since the stationary branch scores and labels from several of its
+fields in one decision. -/
 private def parseNamedPlace (j : Json) : Except String Verified.Geo.StayEnrich.NamedPlace := do
   let a ← j.getArr?
   let profile ← match a[5]? with
@@ -231,12 +221,8 @@ private def parseWay (j : Json) : Except String Verified.Geo.RefineMode.NearbyWa
     distanceM := ← optBits j "distanceM"
   }
 
-/-- A Nominatim reverse-geocode, whole.
-
-It used to decode the five city-like fields only, because `extractCity` was the
-one consumer. `Verified.Geo.BestPlace` reads the rest, so the projection went
-away on both sides at once — a decoder narrower than the encoder would
-silently drop the venue keys the naming turns on. -/
+/-- A Nominatim reverse-geocode, whole: `Verified.Geo.BestPlace` reads the
+venue keys, which a narrower decoder would silently drop. -/
 private def parseGeoResult (j : Json) : Except String Verified.Geo.BestPlace.Result := do
   return {
     displayName := ← (← j.getObjVal? "displayName").getStr?
@@ -282,11 +268,9 @@ private def parseVenueStats (j : Json) : Except String Verified.Geo.VenuePrior.V
     hours := (← (← optArr j "hours").mapM jBits).toList
   }
 
-/-- The mined visit-shape priors, or `none` when nothing has been mined.
-
-Association lists rather than maps, and in the encoder's order: `shapeScore`
-reads the subtype universe's size off `bySubtype`, so the collection is data and
-not just an index. -/
+/-- The mined visit-shape priors, or `none` when nothing is mined. Association
+lists in the encoder's order: `shapeScore` reads the subtype count off
+`bySubtype`. -/
 private def parseVenuePriors (j : Json) :
     Except String (Option Verified.Geo.VenuePrior.VenuePriors) := do
   match j.getObjVal? "venuePriors" with
@@ -302,15 +286,9 @@ private def parseVenuePriors (j : Json) :
         totalVisits := ← jBits (← v.getObjVal? "totalVisits")
       }
 
-/-- `[latBits, lonBits, zoom, address|null]`.
-
-The zoom crosses as a plain integer rather than as bits: it is an argument the
-caller writes as a literal (16 here, 18 by default), not a measured double, and
-keying an integer on its float bits would be a spelling both sides have to agree
-on for no gain.
-
-`null` is a result — Nominatim resolving nothing — and is stored as such, so a
-key present with a null answer is not a miss. -/
+/-- `[latBits, lonBits, zoom, address|null]`. The zoom is a plain integer (a
+literal the caller writes, not a measured double). `null` is Nominatim
+resolving nothing, a result, so a key with a null answer is not a miss. -/
 private def entryGeo (j : Json) :
     Except String (String × Option Verified.Geo.BestPlace.Result) := do
   let a ← j.getArr?
@@ -346,16 +324,11 @@ private def entryS (parse : Json → Except String α) (j : Json) : Except Strin
   let a ← j.getArr?
   return (← (← nth a 0).getStr?, ← parse (← nth a 1))
 
-/-- `[latBits, lonBits, startTs, endTs, tz, samples, localHour]` — the stay
-context of one naming question, keyed on all five arguments because it is asked
-per merged stay and two stays at one centroid with different windows are
-different questions.
-
-It used to carry the answer, `{label, city}`, because `bestPlace` was a shell.
-It is now `Verified.Geo.BestPlace`, so what crosses is the part Lean cannot
-compute: the stay's minutes and its midpoint hour resolved in the venue's zone.
-The zone stays in the key as well — it is what those two were resolved against,
-and a key without it would spell two different questions the same way. -/
+/-- `[latBits, lonBits, startTs, endTs, tz, samples, localHour]`: the stay
+context of one naming question, keyed on all five arguments since two stays at
+one centroid with different windows are different questions. What crosses is
+what Lean cannot compute: the stay's minutes and midpoint hour in the venue's
+zone, which stays in the key. -/
 private def entryPlace (j : Json) :
     Except String (String × (List (Nat × Nat) × Int)) := do
   let a ← j.getArr?
@@ -372,10 +345,8 @@ private def entryPlace (j : Json) :
 
 /-! ### The stages after the fold
 
-`Verified.Geo.DayChain` reads a different closure: two raw-fix series from
-outside the day, the Fitbit windows before place attribution, the mined places in
-two projections, and one shell lookup. Parsed separately from `Env` because they
-are a different stage's inputs, not more of the fold's. -/
+`Verified.Geo.DayChain`'s inputs (raw fixes from outside the day, sleep windows,
+mined places, a shell lookup), parsed apart from `Env` as another stage's. -/
 
 private def parseStayFix (j : Json) : Except String Verified.Geo.DayState.StayFix := do
   let a ← j.getArr?
@@ -479,12 +450,9 @@ private def placeInputJson (pois : List Verified.Geo.BestPlace.Poi)
                                ("totalVisits", Lean.toJson pr.totalVisits)]),
     ("preferResidential", Json.bool preferResidential)]).compress
 
-/-- Name one coordinate.
-
-`stay` is `(startUnix, endUnix, tz)` when there is a window to weigh and `none`
-when there is not — the two arms of `bestPlace`. The stay-context lookup sits
-inside `Option.map`, so a `none` stay never applies the panicking table and a
-naming with no window cannot fail on a key it was never going to need. -/
+/-- Name one coordinate. `stay` is `(startUnix, endUnix, tz)` when there is a
+window to weigh. The stay-context lookup sits inside `Option.map`, so a naming
+without a window never touches the panicking table. -/
 private def Namer.name (n : Namer) (lat lon : Float) (stay : Option (Int × Int × String))
     (preferResidential : Bool) : Option Verified.Geo.SegmentMerge.ResolvedPlace :=
   let ctx := stay.map fun (s, e, tz) => n.stayCtx lat lon s e tz
@@ -517,11 +485,8 @@ private def parseChain (j : Json) (segs : Array Seg)
     dayEndTs := (← optInt j "dayEndTs").getD 0
     dayStartTs := (← optInt j "dayStartTs").getD 0
     dayTz := (j.getObjValAs? String "dayTz").toOption
-    -- Injected, not computed here, unlike `sleepPlace` below. The
-    -- bracket is two `presence_log` reads plus a `focus_places` centroid — DB,
-    -- not mirror — so the fold cannot ask for it and is handed the answer. The
-    -- shell also names it, which is what `buildInferredStayState`'s doc has
-    -- said all along.
+    -- Injected: the bracket is two `presence_log` reads and a `focus_places`
+    -- centroid, from the database, which the fold cannot ask for.
     bracketPlace := (j.getObjValAs? String "bracketPlace").toOption
     -- `bestPlace(preferResidential: true)` composed with `placeLabel`, computed
     -- here. No stay window: the sleep attribution asks about a centroid, not
@@ -622,34 +587,23 @@ private def parseEnv (j : Json) : Except String Env := do
       Verified.Geo.Enrich.enrichMovingSegment waysAt geocodeAt seg
         ((pts.filter fun p => p.ts ≥ seg.startTs && p.ts ≤ seg.endTs).map fun p =>
           ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt))
-    -- The road matcher: the corridor read is an ask of the host
-    -- (`OsmHost.drivableRoads`), the matcher is `Verified.Geo.Match`'s
-    -- quantised road arm through `RoadMatchAdapt`. A leg whose corridor is
-    -- declined or empty bails before the matcher runs.
+    -- The road matcher: the corridor is an ask (`OsmHost.drivableRoads`), the
+    -- matcher `Verified.Geo.Match`'s road arm via `RoadMatchAdapt`. A declined
+    -- or empty corridor bails first.
     roadEnv := {
       drivableRoads := DayEntry.OsmHost.drivableRoads
       matcher := Verified.Geo.RoadMatchAdapt.matcher }
     walkEnv := {
       walkableRoads := DayEntry.OsmHost.walkableRoads
       buildingsNear := DayEntry.OsmHost.buildingsNear
-      -- The real pedestrian matcher, through the quantisation adapter
-      -- (`Verified.Geo.WalkMatchAdapt`). It draws nothing without ways, so a
-      -- host that declines `walkableRoads` gets the raw leg back.
-      -- Each solver leaf is timed under `walk.<leaf>`, so a slow walkMatch
-      -- pass says which solver took the time.
+      -- The pedestrian matcher via `Verified.Geo.WalkMatchAdapt`; without ways it
+      -- draws nothing. Each solver leaf is timed under `walk.<leaf>`.
       matcher := fun fixes ways buildings => DayEntry.Host.timed "walk.matcher" fun _ =>
         DayEntry.Host.dump "match" (fun _ => matchInputJson fixes ways buildings)
           (Verified.Geo.WalkMatchAdapt.matcher fixes ways buildings)
-      -- The four smoothing/correction leaves — `WalkSmooth.reconstructWalk`,
-      -- `WalkSmooth.refineMatchedPath`, `WalkEscape.correctWalkPathIn`,
-      -- `WalkEscape.snapPassagesIn` — each
-      -- speaks exactly the type its `Env` field declares (`SmoothedPoint` is
-      -- `TPt` is `PathPt`), so this is a wiring, not a port.
-      --
-      -- They are wired together because two arms once agreed on every
-      -- display-gate decision of a day and still drew different legs: the
-      -- corrector attaching a changed raw line, and the reconstruction swap
-      -- claiming a leg. Neither was the matcher nor the orchestrator.
+      -- The four smoothing and correction leaves, each speaking its `Env` field's
+      -- type, so this is wiring. Wired as one, since the corrector and the
+      -- reconstruction swap each changed legs the display gate agreed on.
       reconstruct := fun fixes ways buildings ev => DayEntry.Host.timed "walk.reconstruct" fun _ =>
         Verified.Geo.WalkSmooth.reconstructWalk fixes ways buildings {} ev
       refineMatched := fun fixes base => DayEntry.Host.timed "walk.refine" fun _ =>
@@ -689,13 +643,9 @@ private def parseEnv (j : Json) : Except String Env := do
     sleep := (← (← optArr j "sleep").mapM parseSleep).toList
     displayFixes := ← (← optArr j "displayFixes").mapM parsePedFix
     speedByTs := fun ts => speeds[toString ts]?
-    -- `/api/velocity?walkMatch=0`, the raw baseline the map A/Bs the matched
-    -- line against. Absent means match: every other caller — the gates, the
-    -- CLIs, `decode-day` — omits the field and must keep the production draw.
-    --
-    -- It reaches the fold only because the host puts it here. Spent only on
-    -- the cache key, the two arms would compute the same day and the A/B would
-    -- compare a value with itself.
+    -- `/api/velocity?walkMatch=0`, the raw baseline the map compares against.
+    -- Absent means match, as every other caller expects. It must reach the
+    -- fold, not only the cache key, or the A/B compares a value with itself.
     walkFlags := { matchDisable := !(← optBool j "walkMatch" true) }
   }
 
@@ -745,20 +695,15 @@ private def segJson (s : Seg) : Json :=
     ("walkMatchedPath", match s.walkMatchedPath with | none => Json.null | some p => pathJson p),
     ("walkSmoothedPath", match s.walkSmoothedPath with | none => Json.null | some p => pathJson p),
     ("walkBuildingsMeasured", match s.walkBuildingsMeasured with | none => Json.null | some b => Json.bool b),
-    -- A debug surface: where the walk matcher's route actually ran,
-    -- named way by named way, longest first. Nothing consumes it — the day
-    -- gate compares `states`, and `parseSeg` does not read it back, so a
-    -- replay's input is unchanged by its presence.
+    -- A debug surface: the ways the walk matcher's route ran along, longest
+    -- first. Nothing reads it back, so a replay's input is unchanged.
     ("walkWayUm", Json.arr (s.walkWayUm.map fun (n, um) =>
       Json.arr #[Json.str n, Lean.toJson um])),
     ("roads", Json.arr (s.roads.map Json.str)),
     ("biometrics", match s.biometrics with | none => Json.null | some b => biomJson b)]
 
-/-- One `DayState` on the wire.
-
-Public (as `Day.stateJson`) because `ServeEntry`'s `clipfuture` mode re-emits states with this
-same encoder. Two encoders for one record would drift, and the drift would show
-as a field quietly missing from a clipped day but present in an unclipped one. -/
+/-- One `DayState` on the wire. Public (`Day.stateJson`) because `clipfuture`
+re-emits states with it: two encoders would drift. -/
 def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson s.startTs), ("endTs", Lean.toJson s.endTs),
@@ -785,10 +730,8 @@ private def legJson (l : Verified.Eval.Journeys.Leg) : Json :=
     ("mode", Json.str l.mode), ("line", jOptS l.line),
     ("board", jOptS l.board), ("alight", jOptS l.alight)]
 
-/-- A run of travelling states the timeline collapses into one row.
-
-Assembled here rather than in the client, so the timeline has one list of
-journeys. -/
+/-- A run of travelling states the timeline collapses into one row, assembled
+here so the timeline has one list of journeys. -/
 private def journeyJson (j : Verified.Eval.Journeys.Journey) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson j.startTs), ("endTs", Lean.toJson j.endTs),
@@ -798,11 +741,8 @@ private def episodeJson (e : Verified.Geo.EpisodeGeometry.Episode) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson e.startTs), ("endTs", Lean.toJson e.endTs),
     ("mode", Json.str e.mode), ("kind", Json.str e.kind), ("place", jOptS e.place),
-    -- `ts` rides as bits like its `lat`/`lon` siblings: it is a `Float` now,
-    -- and a derived vertex's is fractional, so a JSON number would round
-    -- at the boundary the bit encoding exists to avoid. Nothing decodes this
-    -- payload yet — the day chain has no serving path — so a consumer
-    -- must read `ts` as bits when one is written.
+    -- `ts` rides as bits like `lat`/`lon`: a derived vertex's is fractional. No
+    -- consumer decodes this yet; one must read `ts` as bits.
     ("points", Json.arr (e.points.map fun p =>
       Json.mkObj [("lat", fBits p.lat), ("lon", fBits p.lon), ("ts", jOptF p.ts)]))]
 
@@ -820,12 +760,10 @@ private def isVehicle (mode : String) : Bool :=
   mode == "train" || mode == "driving" || mode == "bus" || mode == "cycling"
 private def isAfoot (mode : String) : Bool := mode == "walking" || mode == "stationary"
 
-/-- A boundary between a vehicle and a walk or a stay, at fix resolution inside
-the decoder's minute grid: of the fix-pair speeds within
-`DECODER_BOUNDARY_SLACK_S` of it (and the pair across each edge), the split with
-the least squared deviation on either side, kept when the vehicle's side is the
-faster; else the minute stands. `vehicleFirst`: the vehicle is the earlier
-segment. -/
+/-- A vehicle/walk or vehicle/stay boundary at fix resolution inside the
+decoder's minute grid: among the fix-pair speeds within `DECODER_BOUNDARY_SLACK_S`,
+the split with the least squared deviation either side, kept when the vehicle's
+side is faster; else the minute stands. -/
 def refineBoundary (pts : Array Verified.SpeedFix) (b : Int) (vehicleFirst : Bool) : Int := Id.run do
   -- The fixes within the slack, and the one either side of it: the pair across
   -- the slack's edge can be where the speeds part.
@@ -871,13 +809,11 @@ def WALK_MAX_KMH : Float := 12
 /-- The fewest pairs of fixes a walk's speed is read from. -/
 private def WALK_SPEED_MIN_PAIRS : Nat := 3
 
-/-- A walk between two trains that touch it, whose own fixes move faster than
-anyone walks, is the train: steps taken aboard (along the carriage) split one
-ride. The three become that ride, boarding where the first boarded and
-alighting where the second alighted. Read over consecutive fixes, from
-`WALK_SPEED_MIN_PAIRS` or more: the slowest quarter of them must still be
-faster than walking, so a real change whose first minute holds the end of the
-ride before it (a quarter or more of slow pairs) stays a change. -/
+/-- A walk between two touching trains whose fixes move faster than walking is
+the train (steps taken aboard), so the three become one ride. Over
+`WALK_SPEED_MIN_PAIRS` or more consecutive pairs the slowest quarter must still
+beat walking, so a real change whose first minute holds the previous ride's end
+stays a change. -/
 def joinRidesAcrossAboardWalks (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
     (pts : Array Verified.SpeedFix) : Array Verified.Geo.PlaceOverride.HmmSeg := Id.run do
   let mut out : Array Verified.Geo.PlaceOverride.HmmSeg := #[]
@@ -955,9 +891,8 @@ def refineDecoderBoundaries (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
     if startTs < endTs then { h with startTs, endTs } else h
 
 /-- The decoder's segments as the fold's input, measured from the fixes inside
-each: mean speed over the path, the fixes' centroid and count. A train keeps
-its route as `wayName` (`board → alight · line`) when the decoder's chain named
-both ends, else its line. The served day's input wherever the day has a decode. -/
+each (mean speed, centroid, count). A train keeps `board → alight · line` as
+`wayName` when the chain named both ends, else its line. -/
 def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
     (pts : Array Verified.SpeedFix)
     (places : List (Int × Verified.Geo.PlaceOverride.PlaceLookup) := []) : Array Seg :=
@@ -968,11 +903,9 @@ def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
       s + Verified.Hsmm.FloatScore.haversineMeters a.lat a.lon b.lat b.lon) ZERO_F
     let dur := Float.ofInt (endTs - startTs)
     let n := Verified.FloatConst.natToFloat w.size
-    -- A day with no fix at all is where the decoder placed it — a whole day
-    -- bracketed at a place — at the place's own position, so the stay namer
-    -- names it there as it names any stay. Only then: a dark stretch inside a
-    -- day keeps the name the rest of the evidence gives it (04-30's stay at a
-    -- shop became the residential street beside it).
+    -- A day with no fix at all is at the place the decoder placed it, so the
+    -- stay namer names it there. A dark stretch inside a day keeps the name the
+    -- rest of the evidence gives it.
     let atPlace := if !pts.isEmpty || mode != "stationary" then none else
       (placeId.bind fun pid => (places.find? (·.1 == pid)).map (·.2)).bind fun pl =>
         match pl.lat, pl.lon with
@@ -993,12 +926,10 @@ def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
           some (if l == "unknown_rail" then s!"{b} → {a}" else s!"{b} → {a} · {l}")
         | some b, some a, none => some s!"{b} → {a}"
         | _, _, l => l
-    -- A wait the chain found at a change is a stay at the station, the ride
-    -- its own span: his rows write a change so (06-29, 07-01). A wait the
-    -- decoder found arrives as a `stationary` with its station as
-    -- `boardStation` and is a stay at the station too; the journey referee
-    -- reads a stay before a ride as its wait.
-    -- A change: the other ride is adjacent, or across the in-station walk.
+    -- A wait at a change, from the chain or the decoder, is a stay at the
+    -- station and the ride its own span, as the narratives write a change; the
+    -- journey referee reads a stay before a ride as its wait. A change: the
+    -- other ride is adjacent, or across the in-station walk.
     let trainAt := fun (k : Nat) => (hmm[k]?).any (·.mode == "train")
     let afterTrain := i > 0 && (trainAt (i - 1)
       || (i > 1 && (hmm[i - 1]?).any (·.mode == "walking") && trainAt (i - 2)))
@@ -1010,10 +941,8 @@ def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
       ++ #[build rideStart rideEnd h.mode way (if h.mode == "stationary" then h.boardStation else none) h.placeId]
       ++ (if rideEnd < h.endTs then #[build rideEnd h.endTs "stationary" none h.alightStation none] else #[])).flatten
 
-/-- The passes whose output differs from what they were handed — computed from
-the trace rather than declared, so it cannot drift from what ran. This is the
-witness question at real-day scale: `PassFold.unwitnessed` names the 11 passes
-no synthetic day reaches, and a corpus day that fires one retires it. -/
+/-- The passes whose output differs from their input, from the trace rather
+than declared: the witness question at real-day scale. -/
 private def changedPasses (input : Array Seg) (trace : Array (String × Array Seg)) : Array String :=
   Id.run do
     let mut prev := input
@@ -1068,10 +997,8 @@ def dayResult (j : Json) : Json :=
           linesLookup := fun lat lon =>
             env.linesAtPoint lat lon Verified.Geo.PassFold.LINES_AT_POINT_DEFAULT_RADIUS_M }
         segs env.points env.railStops)
-    -- Under the head the stays take the enrichment stage's naming (its
-    -- stationary branch, `nameStay`) and nothing else of that stage, which
-    -- also rewrites modes and labels; the decoder's places then override.
-    -- A stay that arrived named (a decoded wait, at its station) keeps its name.
+    -- The stays take only the enrichment stage's naming (`nameStay`); the
+    -- decoder's places then override, and a stay that arrived named keeps it.
     let nameStays : Verified.Geo.PassFold.Pass := ("nameStays", fun segs =>
       segs.map fun s => if s.mode == "stationary" && s.place.isNone then env.nameStay s else s)
     -- A walk or a drive takes its roads and city from the enrichment stage's
@@ -1086,10 +1013,9 @@ def dayResult (j : Json) : Json :=
           | some e => { s with wayName := e.wayName, city := e.city }
           | none => s
         if s.mode != "walking" then named else
-        -- A walk is labelled by the roads it was on longest (`roadsByTime`),
-        -- as the matcher labels one; the five-sample pick names whichever
-        -- road its samples fell on, and the decoder's walk has a different
-        -- fix set from the split stage's, so the same walk got another road.
+        -- A walk is labelled by the roads it was on longest (`roadsByTime`), as
+        -- the matcher labels one; a five-sample pick named whichever road its
+        -- samples hit.
         let roads := Verified.Geo.Enrich.roadsByTime enrichReads.ways pts s.endTs
         -- Every road goes on the segment, so a reader has the whole
         -- attribution, not the three the label has room for.
@@ -1098,10 +1024,8 @@ def dayResult (j : Json) : Json :=
         | some n => { named with wayName := some n }
         | none => named)
     -- A moving stretch between two stays at one place that never left it is
-    -- that stay (`absorbMoveInsidePlace`): dark, or every fix inside the place
-    -- as the stays' own fixes show it. After the decoder's places land: a dark
-    -- stay is named by `hsmmOverride`, not by `nameStays`, which needs a
-    -- centroid.
+    -- that stay (`absorbMoveInsidePlace`). After the decoder's places land, since
+    -- a dark stay is named by `hsmmOverride`.
     let accOf : Std.HashMap Int Float := env.rawFixes.foldl (fun m f =>
       match f.accuracy with | some a => m.insert f.ts a | none => m) {}
     let accFixes : Array Verified.Geo.SegmentMerge.AccFix := env.points.map fun p =>
@@ -1119,10 +1043,8 @@ def dayResult (j : Json) : Json :=
     let chosen := #[pauses, unnamedRail, nameStays, nameMoves] ++ tail
     let chosen := chosen.map fun (n, f) => (n, fun s => DayEntry.Host.timed s!"pass.{n}" fun _ => f s)
     let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs
-    -- The fold's output is the chain's input, which is the whole reason these
-    -- run in one call rather than two: a second bridge crossing would have to
-    -- ship the segments back out and in again, and the two arms could then be
-    -- compared against different segment lists without anything saying so.
+    -- The fold's output is the chain's input, hence one call: two crossings
+    -- could compare different segment lists without saying so.
     let chain ← parseChain envJson out env.points env.displayFixes
     let (states, episodes) := DayEntry.Host.timed "dayChain" fun _ => Verified.Geo.DayChain.dayChain chain
     let base := [
@@ -1145,11 +1067,7 @@ def dayResult (j : Json) : Json :=
   | .ok out => out
 
 end Day
-/-! ## `focus` lives here, with its helpers
-
-Beside the day cascade rather than in `ServeEntry` only because this is where
-its wire helpers are. A later tidy that moved it beside its siblings would not
-be wrong.
+/-! ## `focus` lives here, beside its wire helpers
 -/
 
 namespace Focus
@@ -1191,12 +1109,9 @@ private def encStay (s : Stay) : Json :=
   Json.arr #[Lean.toJson s.startTs, Lean.toJson s.endTs, fBits s.centroidLat, fBits s.centroidLon,
              Lean.toJson s.pointCount, Lean.toJson s.durationSec]
 
-/-- A cluster and everything the mining cron derives from it.
-
-The hour profile is emitted both serialised and re-parsed, because
-`serializeHourProfile` rounds to permille: comparing only the string would let
-`parseHourProfile` drift unseen, and comparing only the parse would hide a
-rounding difference the column actually stores. -/
+/-- A cluster and everything the mining cron derives from it. The hour profile
+goes out serialised and re-parsed, since `serializeHourProfile` rounds to
+permille and either alone could drift unseen. -/
 private def report (windows : List (Int × Int)) (c : Cluster) : Json :=
   let profile := serializeHourProfile (hourProfileOf c)
   Json.mkObj [

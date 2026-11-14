@@ -5,59 +5,26 @@ import Verified.Geo.SegmentMerge
 /-!
 # Naming a stay
 
-Given a coordinate and, optionally, the stay window that happened there, which
-label does the timeline show? One function with two arms:
+Which label does the timeline show for a coordinate and, optionally, the stay
+there? With a stay, every Overpass landmark plus a Nominatim venue candidate
+compete on the venue-plausibility ranking, and the winner must clear a floor.
+Without one, `pickBestLandmark`: the same ranking with no stay or priors. Both
+fall through the same address chain.
 
-* with a stay: the venue-plausibility ranking. Every Overpass
-  landmark plus a Nominatim venue candidate compete on summed log-evidence,
-  and the winner must clear a floor or nothing is named.
-* without one — `pickBestLandmark`, which is the same ranking with no stay
-  and no priors, so it degrades to distance + venue-over-area.
+Naming is Lean's: `bestPlace` is two mirror reads (landmarks at 100 m, the
+zoom-18 geocode, and zoom 16 on the fall-through) and then ranking and `if`s.
+Only opening hours and the stay's local hour need tzdata, so the shell samples
+the window into `(weekday, minute-of-day)` pairs
+({@link Verified.Geo.OpeningHours.openFractionOver}): the shell supplies when,
+Lean decides what.
 
-Both then fall through the same address chain.
+The corpus reaches both arms: enrichment's stationary branch asks the stay arm
+for every stay, and `DayChain` asks the no-stay arm. The guards pin which term
+moved a candidate, which a corpus name cannot localise.
 
-## Why this is not a shell
-
-Naming is not an injected answer: a callback is a shell only when what it does
-cannot be said in Lean. `bestPlace` is two mirror reads
-(`nearbyLandmarks(lat, lon, 100)` and `reverseGeocode(lat, lon, 18)`, plus
-`reverseGeocode(lat, lon, 16)` on the fall-through) followed by ranking and a
-chain of `if`s. The reads are shell; everything after them is this module.
-
-## The one thing that genuinely cannot be said here
-
-Opening hours are evaluated in the venue's local time, and the instant → local
-`(weekday, minute-of-day)` map is tzdata. So the shell samples the stay window
-and hands over the resolved pairs; {@link Verified.Geo.OpeningHours.openFractionOver}
-was written for exactly that split and its docstring states the contract. The
-same is true of `localHour`, the stay midpoint's hour, which the shape prior
-reads.
-
-So the shell supplies when, and Lean decides what.
-
-## Which arm the golden corpus actually reaches
-
-Both, on every day. The stationary branch of the enrichment loop
-({@link Verified.Geo.StayEnrich.enrichStay}) asks the stay arm — the
-venue-plausibility ranking, with the mined priors and the opening-hours paths —
-for every stay it names, at the coordinate that module chooses; the corpus's
-truth floor grades the names that come back. The no-stay arm answers
-`DayChain`'s sleep-place attribution and the alight and Home/Work arms of that
-cascade, which read only the city from it.
-
-The `#guard`s below pin what a corpus name cannot localise: which term moved a
-candidate, not only who won.
-
-## Truthiness, twice, and they disagree
-
-`hasSpecificVenue` tests `!!(a.amenity || a.tourism || a.leisure || a.shop)`,
-so an empty string is absent. `nominatimVenueName` uses
-`a.amenity ?? a.tourism ?? …`, so an empty string is present and wins the
-chain — after which `if (!name) return null` rejects it.
-
-The two differ on exactly one input: `amenity = ""` with a real `tourism`.
-`hasSpecificVenue` says yes, `nominatimVenueName` yields `""` and the candidate
-is dropped. Both are modelled as written.
+Two truthiness rules disagree on purpose: `hasSpecificVenue` treats an empty
+string as absent, while `nominatimVenueName` takes the first present key, so
+`amenity = ""` beside a real `tourism` yields `""` and the candidate is dropped.
 -/
 
 namespace Verified.Geo.BestPlace
@@ -77,11 +44,9 @@ structure Result where
   address : Address
   deriving Inhabited, BEq, Repr
 
-/-- An Overpass landmark before its opening-hours tag has been evaluated
-against a stay. {@link Verified.Geo.VenuePrior.Landmark} carries the resolved
-`openFraction` instead, because the scorer weighs the fraction and never sees
-the tag — so the raw tag needs somewhere to live between the wire and the
-scorer, and that is here. -/
+/-- An Overpass landmark with its raw opening-hours tag, before evaluation
+against a stay; the scorer's {@link Verified.Geo.VenuePrior.Landmark} carries
+the resolved `openFraction` instead. -/
 structure Poi where
   name : String
   type : String
@@ -106,12 +71,9 @@ private def nullish (xs : List (Option String)) : Option String :=
 /-! ## Landmarks into candidates -/
 
 /--
-Resolve one POI's hours against the stay's sampled minutes, producing the
-`Landmark` the scorer ranks.
-
-`none` out of the parser means no evidence, not closed — the asymmetry
-{@link Verified.Geo.OpeningHours} exists to preserve. An absent or empty tag is
-the same silence, which is why the guard is truthiness rather than `isSome`.
+Resolve one POI's hours against the stay's sampled minutes into the `Landmark`
+the scorer ranks. A parser `none` is no evidence, not closed, and an absent or
+empty tag is the same silence.
 -/
 def toLandmark (samples : List (Nat × Nat)) (hasStay : Bool) (p : Poi) : Landmark :=
   let openFraction :=
@@ -127,10 +89,9 @@ fields hold the name, not the tag value. -/
 def nominatimVenueName (r : Result) : Option String :=
   nullish [r.address.amenity, r.address.tourism, r.address.shop, r.address.leisure]
 
-/-- Map a specific-venue Nominatim result onto a candidate so the ranking can
-weigh it against the Overpass landmarks. Distance 0 because zoom-18 Nominatim
-named the building the centroid is on — which is why it is flagged
-`reverseGeocoded` and barred from near-field dominance. -/
+/-- A specific-venue Nominatim result as a candidate. Distance 0, since zoom 18
+named the building the centroid is on, hence `reverseGeocoded` and barred from
+near-field dominance. -/
 def nominatimVenueCandidate (r : Result) : Option Landmark :=
   match nominatimVenueName r with
   | none => none
@@ -153,13 +114,9 @@ def landmarkToResult (l : Landmark) : Result :=
   { displayName := l.name, type := l.subtype, category := l.type, address := a }
 
 /--
-`{...detailed.address, ...result.address}` — the detailed address underneath,
-the landmark's own field on top.
-
-Field-wise `orElse` is faithful here and not in general: the spread would let a
-key present-but-`undefined` in `result` erase `detailed`'s, and `orElse` would
-not. It cannot arise, because the only value ever passed as `result` comes from
-{@link landmarkToResult}, which sets exactly one key and leaves the rest absent.
+The detailed address underneath, the landmark's own field on top. Field-wise
+`orElse` suffices because `result` only ever comes from
+{@link landmarkToResult}, which sets exactly one key.
 -/
 def mergeAddress (over under : Address) : Address :=
   { amenity := over.amenity.orElse fun _ => under.amenity
@@ -205,10 +162,8 @@ def LODGING_OVERRIDE_DIST_M : Float := 50
 def isLodgingLandmark (l : Landmark) : Bool :=
   l.type == "tourism" && LODGING_TOURISM_SUBTYPES.contains l.subtype
 
-/-- The closest lodging POI within {@link LODGING_OVERRIDE_DIST_M}.
-
-A minimum by a strict `<` rather than a sort, which keeps the first of an exact
-distance tie, as a stable sort would. -/
+/-- The closest lodging POI within {@link LODGING_OVERRIDE_DIST_M}; the strict
+`<` keeps the first of an exact tie. -/
 def pickLodgingOverride (landmarks : List Landmark) : Option Landmark :=
   (landmarks.filter fun l => isLodgingLandmark l && decide (l.distanceM ≤ LODGING_OVERRIDE_DIST_M)).foldl
     (fun best l => match best with
@@ -221,63 +176,37 @@ def pickLodgingOverride (landmarks : List Landmark) : Option Landmark :=
 rides beside the label in the data. -/
 private def named (name _type : String) : String := name
 
-/-- Everything before the first comma of `display_name`.
-
-`String.split` always returns at least one element, so no fallback is needed.
-An empty `displayName` yields `""`. -/
+/-- Everything before the first comma of `display_name` (`""` for empty). -/
 private def firstPart (s : String) : String :=
   (s.splitOn ",").headD ""
 
-/-- OSM types that must never name a stay (the user's call).
-
-The `"{type} on {road}"` fallback below produces a category, not an identity:
-"Wagamama" says where the user was, "waste_basket on Barn Hill" says a bin
-exists nearby. Street furniture (a bin, a bench, a post box) is unnamed and on
-almost every street, so it names a stay by proximity, not because anyone went
-there.
-
-Highway classes are handled separately, in `HIGHWAY_CLASSES`: they keep the
-street and drop the class. A bin carries no information; the road the user
-stood on does. -/
+/-- OSM types that must never name a stay (the user's call): street furniture
+is on almost every street, so "waste_basket on Barn Hill" names a stay by
+proximity. Highway classes are `HIGHWAY_CLASSES`, which keep the street. -/
 def UNNAMEABLE_TYPES : List String :=
   [ -- street furniture: untended, unnamed, everywhere
     "waste_basket", "bench", "post_box", "bicycle_parking", "drinking_water",
     "telephone", "recycling", "street_lamp", "waste_disposal", "bollard",
     "vending_machine", "parking_meter", "clock", "hydrant", "grit_bin" ]
 
-/-- OSM highway classes. A stay that resolves to one of these is on a street,
-which is worth saying, but `secondary` is OSM's vocabulary, not a person's (the
-user's call).
-
-Unlike `UNNAMEABLE_TYPES`, the road is kept and only the class discarded: a
-highway class means the geocode resolved to the road the user was on:
+/-- OSM highway classes (the user's call): the geocode resolved to the road, so
+the road is kept and only OSM's class word dropped:
 
     "secondary on First Way"          ->  "First Way"
-    "residential on Caledonian Road"  ->  "Caledonian Road"
-
-The second is the `#guard` below. -/
+    "residential on Caledonian Road"  ->  "Caledonian Road" -/
 def HIGHWAY_CLASSES : List String :=
   [ "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
     "residential", "service", "living_street", "pedestrian", "track", "road",
     "footway", "path", "cycleway", "bridleway", "steps" ]
 
 /-- ⚠ A house number is precision a stay centroid cannot support (the user's
-call: "area by default, street when confident").
-
-The geocode locates a point; the stay is a cloud of fixes, and the label claims
-a door. Every stay this branch named in the corpus is spread 79-102 m, several
-buildings wide, against 19-58 m for stays that resolve to a real venue; and
-where the ground truth can check the number, it was wrong every time.
-
-The road is kept, the same rule as `HIGHWAY_CLASSES`: what the geocode
-legitimately located survives, and only the part it cannot support is dropped.
+call: "area by default, street when confident"). Stays named this way spread
+79-102 m, and where the truth could check the number it was wrong every time.
+The road is kept, as in `HIGHWAY_CLASSES`:
 
     "Elm Street 187"   ->  "Elm Street"
-    "Mill Road 77"     ->  "Mill Road"
 
-The branch condition is unchanged: `hasResidentialAddress` decides as before
-and only the rendering moves. Widening the condition would change which stays
-are named residential at all, which is lodging work, not this. -/
+Only the rendering changes; `hasResidentialAddress` still decides the branch. -/
 def placeLabel (r : Result) : String :=
   let a := r.address
   if truthy a.amenity then named (a.amenity.getD "") r.type
@@ -296,13 +225,9 @@ def placeLabel (r : Result) : String :=
 
 /-! ## The chain -/
 
-/-- Everything the shell answers for one `bestPlace` question.
-
-`geocode` is a function of the zoom rather than two resolved fields: zoom 18 is
-asked up front and zoom 16 only at the bottom of the chain, so most calls never
-make the second request. A recorded lookup table panics on a key the run never
-asked (`LEAN_ABORT_ON_PANIC`), so resolving both eagerly would panic on every
-call; as a function, the zoom-16 ask happens only in the branch that needs it. -/
+/-- Everything the shell answers for one `bestPlace` question. `geocode` is a
+function of the zoom: zoom 16 is asked only at the bottom of the chain, and a
+recorded table panics on a key the run never asked. -/
 structure Reads where
   landmarks : List Poi
   /-- `osm.reverseGeocode(lat, lon, zoom)` at this coordinate. -/
@@ -344,14 +269,9 @@ def Source.key : Source → String
   | .landmark => "landmark" | .openSpace => "openSpace" | .address => "address"
 
 /--
-`bestPlace`, whole, with the branch that answered (`Source`).
-
-Reads the two (or three) geocodes the shell already answered and returns the
-`NominatimResult`, or `none` when nothing names the place.
-
-`stay` present selects the plausibility ranking; absent selects
-`pickBestLandmark`, which is `rankVenues` with no context. `preferResidential`
-enables the two overrides an overnight stay needs.
+`bestPlace`, whole, with the branch that answered (`Source`), or `none` when
+nothing names the place. A `stay` selects the plausibility ranking, its absence
+`pickBestLandmark`; `preferResidential` enables the overnight overrides.
 -/
 def bestPlaceSourced (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
     (preferResidential : Bool) : Option (Result × Source) :=
@@ -409,12 +329,9 @@ where
   afterLodging (bestLandmark : Option Landmark) (rankedSource : Source) (detailed : Option Result)
       (geocode : Int → Option Result) (preferResidential : Bool)
       (openSpace : Option Landmark) : Option (Result × Source) :=
-    -- A geocode that names a venue is not the neutral address this arm is
-    -- for: a venueless cluster asks for an address so a low-confidence nearby
-    -- venue does not name it, and a zoom-18 result can be `Fireaway Pizza, 47,
-    -- The Parade`, the wrong restaurant printed amenity-first. So the shortcut
-    -- takes only a venue-free address; a venue-bearing one falls through to the
-    -- ranked landmark.
+    -- The residential shortcut takes only a venue-free address: a zoom-18
+    -- result can print the wrong restaurant amenity-first, so a venue-bearing
+    -- one falls through to the ranked landmark.
     if preferResidential && detailed.any (fun d => hasResidentialAddress d && !hasSpecificVenue d)
       then detailed.map (·, .residential)
     else match bestLandmark with
@@ -449,9 +366,9 @@ def resolve (reads : Reads) (stay : Option StayShape) (priors : Option VenuePrio
 
 /-! ## Guards
 
-The ranking is guarded in {@link Verified.Geo.VenuePrior} and the parser in
-{@link Verified.Geo.OpeningHours}. What is pinned here is the chain — one case
-per branch — and the two string functions the chain ends in. -/
+The ranking is guarded in {@link Verified.Geo.VenuePrior}, the parser in
+{@link Verified.Geo.OpeningHours}; here, one case per branch of the chain and
+its two string functions. -/
 
 section Guards
 
@@ -553,10 +470,8 @@ One case per branch, with a stay so the plausibility arm runs. -/
 
 private def stay : StayShape := { startUnix := 0, endUnix := 3600, localHour := 13 }
 
-/-- A `geocode` from two fixed answers. The shell's real one is a recorded table
-that panics on a key the run never asked about, so which zoom the chain applies
-it to is observable there and not here: these guards pin the decisions, and the
-day gate pins the question set (a lookup miss names the coordinate). -/
+/-- A `geocode` from two fixed answers. Which zoom is asked is pinned by the day
+gate, where a lookup miss names the coordinate. -/
 private def geo (detail area : Option Result) : Int → Option Result :=
   fun z => if z == DETAIL_ZOOM then detail else if z == AREA_ZOOM then area else none
 
@@ -593,10 +508,8 @@ private def landmarkVsStreet : Reads :=
   { landmarks := [poi "Olivomare" "amenity" "restaurant" 11], geocode := geo (some streetGeocode) none }
 #guard (bestPlace landmarkVsStreet (some stay) none false).map placeLabel == some "Olivomare"
 
--- Nothing nearby, a residential geocode: the street is the honest label.
--- `hasResidentialAddress` still selects this result and only the rendering
--- drops the number; this guard would catch an edit that widened the condition
--- instead.
+-- Nothing nearby and a residential geocode: the street is the honest label.
+-- Would catch an edit that widened `hasResidentialAddress` instead.
 private def downing : Result :=
   res "house" "building" { A with houseNumber := some "10", road := some "Downing Street" }
 private def addressOnly : Reads := { landmarks := [], geocode := geo (some downing) none }
@@ -612,10 +525,8 @@ private def areaSquare : Reads := { landmarks := [], geocode := geo none (some s
 private def areaNothing : Reads := { landmarks := [], geocode := geo none (some (res "" "boundary" A)) }
 #guard (bestPlace areaNothing none none false).map placeLabel == some "Somewhere"
 
--- `preferResidential`: an overnight stay 5 m from a guesthouse slept at the
--- guesthouse. The override has to beat the ranking, so the discriminating case
--- puts a nearer non-lodging venue beside it — with the flag the guesthouse wins
--- anyway, without it the closer cafe does.
+-- `preferResidential`: an overnight stay 5 m from a guesthouse slept there,
+-- beating a nearer café that wins without the flag.
 private def guesthouse : Poi := { name := "Sea View", type := "tourism", subtype := "guest_house", distanceM := 5 }
 private def nearerCafe : Poi := { name := "Beach Cafe", type := "amenity", subtype := "cafe", distanceM := 2 }
 private def residential : Result :=
@@ -624,12 +535,9 @@ private def lodgingReads : Reads := { landmarks := [nearerCafe, guesthouse], geo
 #guard (bestPlace lodgingReads none none true).map placeLabel == some "Sea View"
 #guard (bestPlace lodgingReads none none false).map placeLabel == some "Beach Cafe"
 
--- The residential shortcut takes only a venue-free address. In shape: a stay,
--- the restaurant at 13 m, the pizza place at 57 m also among the landmarks (so
--- the geocode's venue candidate is skipped), and a venueless cluster
--- preferring an address. The zoom-18 geocode is `Fireaway Pizza, 47, The
--- Parade`, a house number, a road and a venue: the ranked landmark names the
--- stay. The same address without the venue is taken, and labels as its road.
+-- The residential shortcut takes only a venue-free address: with the
+-- geocode naming a pizza place, the ranked restaurant names the stay; the same
+-- address without the venue is taken and labels as its road.
 private def trattoria : Poi := { name := "L'artista", type := "amenity", subtype := "restaurant", distanceM := 13 }
 private def pizzaPlace : Poi := { name := "Fireaway Pizza", type := "amenity", subtype := "fast_food", distanceM := 57 }
 private def eveningStay : StayShape := ⟨1788715200, 1788719520, 18⟩

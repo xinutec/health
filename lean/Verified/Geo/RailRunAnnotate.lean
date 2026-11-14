@@ -5,24 +5,16 @@ import Verified.Geo.LineStoppingPattern
 /-!
 # Labelling an unnamed train
 
-`labelUnnamedTrains` gives each train segment that carries no route its
-`board → alight · line` label, as a run of its own: the decoder has already
-drawn the changes of trains, so no run grows and no segment merges.
-`resolveRailRunLabel` does the work through two injected lookups, stations and
-lines at a coordinate, recorded in a read trace (`TraceM`). Neither lookup is
-memoised:
+`labelUnnamedTrains` gives each train segment without a route its own
+`board → alight · line` label (the decoder already drew the changes, so nothing
+merges). `resolveRailRunLabel` works through two injected lookups, stations and
+lines at a coordinate, recorded in a read trace (`TraceM`) and not memoised:
+the boarding lookup is skipped when a preceding stay answered, the mid-ride vote
+reads every fix between board and alight, and the line retry reads the boarding
+node then each alight candidate's until one shares a line. The leaves are
+`Verified.Geo.RailRuns`'.
 
-* the boarding lookup is skipped when a preceding stationary segment already
-  answered;
-* the mid-ride vote reads every fix between board and alight;
-* the line-intersection retry reads the boarding station's node first and then
-  each alight candidate's, stopping at the first that shares a line.
-
-The leaves (`findRunBoardingFix`, `findRunAlightFix`, `expandTubeLineNames`)
-are `Verified.Geo.RailRuns`'.
-
-Exactness: every decision is exact except the float distance comparisons.
-UNPROVEN.
+Every decision is exact except the float distance comparisons. UNPROVEN.
 -/
 
 namespace Verified.Geo.RailRunAnnotate
@@ -61,11 +53,9 @@ def fetchLines (env : Env) (lat lon : Float) : TraceM (Array String) := do
 
 /-! ## Constants -/
 
-/-- Search radius (m) for the endpoint station lookup. Larger than the adapter's
-200 m default: an overground station's first post-train fix is often 200-300 m
-away, because the phone reports the next position after the rider has already
-walked off the platform. Read by the shell, which builds the lookup — the pass
-itself never sees it, so it is here for the record. -/
+/-- Search radius (m) for the endpoint station lookup, read by the shell that
+builds it: an overground station's first post-train fix is often 200-300 m off,
+the rider having already walked off the platform. -/
 def RAIL_RUN_STATION_RADIUS_M : Float := 400
 
 /-- Above this a fix-to-fix hop is mid-tunnel GPS noise rather than a walk
@@ -76,13 +66,9 @@ def BOARDING_NOISE_SPEED_KMH : Float := 15
 
 def hasRefinedKind (s : Seg) (kind : String) : Bool := s.refinedKinds.contains kind
 
-/-- The fixes in a segment's window, with an exclusive upper bound.
-
-The strictness is load-bearing. `seg.endTs` equals the next segment's `startTs`
-— the classifier lays segments back to back — so the fix on the boundary is the
-first fix of what follows, not the last of this. Including it made the boarding
-lookup resolve to wherever the train was passing instead of the platform the
-rider stood on. -/
+/-- The fixes in a segment's window, upper bound exclusive: segments lie back to
+back, so the boundary fix is the next segment's first. Including it resolved
+the boarding to wherever the train was passing. -/
 def samplesInWindowExclusiveEnd (points : Array Fix) (s : Seg) : Array Fix :=
   points.filter fun p => p.ts ≥ s.startTs && p.ts < s.endTs
 
@@ -101,11 +87,8 @@ insertion, which is what every line collection here is. -/
 private def pushUnique (xs : Array String) (x : String) : Array String :=
   if xs.contains x then xs else xs.push x
 
-/-- Canonicalise a raw `linesAtPoint` result into a directionless line set.
-
-OSM tags each travel direction as its own relation ("Jubilee Line Eastbound" at
-one station, "Jubilee Line" at the next), so a raw string intersection comes up
-empty for the same physical line. -/
+/-- A raw `linesAtPoint` result as a directionless line set: OSM tags each
+direction as its own relation ("Jubilee Line Eastbound"). -/
 def canonicalLines (lines : Array String) : Array String :=
   lines.foldl (fun acc l => (expandTubeLineNames l).foldl pushUnique acc) #[]
 
@@ -122,18 +105,10 @@ def stationCoord (s : Option NearbyStation) : Option (Float × Float) :=
     | some la, some lo => some (la, lo)
     | _, _ => none
 
-/-- The alight stations a site offers, best first: the pick `pickBestStation`
-made, then the other station-node candidates in its own tier/distance order.
-
-Platforms and entrances are dropped — not because they name the place wrongly,
-which is why `pickBestStation` keeps them as tiers, but because the sweep asks a
-coordinate question, and a gate or a platform end sits tens of metres off the
-node whose corridor membership is being tested. A terminus has a dozen platform
-nodes strung along its trainshed; admitting them would make the sweep
-answer about whichever one happened to be captured.
-
-The chosen pick leads regardless of tier, so the sweep's first iteration is
-exactly what the code did before the sweep existed. -/
+/-- The alight stations a site offers, best first: `pickBestStation`'s pick,
+then the other station nodes in its order. Platforms and entrances are dropped:
+the sweep tests corridor membership at a coordinate, and a terminus's dozen
+platform nodes lie tens of metres off its station node. -/
 def alightCandidates (stations : Array NearbyStation) (chosen : NearbyStation) :
     Array NearbyStation :=
   (rankStations stations).foldl (init := #[chosen]) fun out s =>
@@ -143,37 +118,25 @@ def alightCandidates (stations : Array NearbyStation) (chosen : NearbyStation) :
 
 /-! ## `lineUnderTheTrack` -/
 
-/-- Which of several candidate lines does the ride's own track run along?
-
-Two lines serving both endpoints are indistinguishable from the endpoints — that
-is a fact about the stations, not about the journey. The fixes between them are
-not ambiguous at all: tube lines diverge between interchanges, often by a
-kilometre, so one surfaced mid-ride fix is usually enough.
-
-Votes rather than distances, reusing the `linesAtPoint` lookup already in hand.
-Decides only on a clean winner — one candidate backed by the track and the rest
-by none. Anything less returns `none` and the caller emits a bare station pair,
-because a missing line label is honest and a guessed one is not.
-
-Every mid fix is read even once the outcome is settled, deliberately: the trace
-guards pin the reads. -/
+/-- Which candidate line does the ride's own track run along? Lines serving
+both endpoints are indistinguishable there, but diverge between interchanges,
+so one surfaced mid-ride fix usually decides. Votes via `linesAtPoint`, and only
+a clean winner counts; otherwise `none` and a bare station pair, since a missing
+line is honest and a guessed one is not. Every mid fix is read, for the trace
+guards. -/
 def lineUnderTheTrack (env : Env) (candidates : Array String) (points : Array Fix)
     (boardTs alightTs : Int) : TraceM (Option String) := do
-  -- Strictly between the boarding and alighting fixes, not between the run's
-  -- segment bounds. Those endpoint fixes sit at interchanges and carry every
-  -- candidate, so including either would make the vote a tie by construction —
-  -- and the run's own end can fall exactly on the one surfaced mid-ride fix,
-  -- which an exclusive segment window would then discard as the sole evidence.
+  -- Strictly between the board and alight fixes: those sit at interchanges and
+  -- carry every candidate, and the run's own end can fall on the one surfaced
+  -- mid-ride fix.
   let mid := points.filter fun p => p.ts > boardTs && p.ts < alightTs
   if mid.isEmpty then return none
   let mut votes : Array (String × Nat) := candidates.map (·, 0)
   for p in mid do
     let here := canonicalLines (← fetchLines env p.lat p.lon)
     let supported := candidates.filter here.contains
-    -- Only discriminating fixes vote. One naming every candidate says nothing
-    -- about which was ridden — that is shared track through an interchange, and
-    -- near the alighting station most fixes are of that kind. One naming none is
-    -- off-corridor, or outside the mirror's coverage.
+    -- Only discriminating fixes vote: naming every candidate is shared track,
+    -- naming none is off-corridor or unmirrored.
     if supported.isEmpty || supported.size == candidates.size then continue
     votes := votes.map fun (c, n) => if supported.contains c then (c, n + 1) else (c, n)
   -- Descending by votes, stable, so ties keep candidate order.
@@ -195,12 +158,9 @@ private structure StayCandidate where
   endTs : Int
   station : NearbyStation
 
-/-- Walk back from the run looking for the stay the rider boarded from.
-
-Through stationary and walking segments only; anything else — a previous train,
-a drive — stops the walk, so the last journey's destination is never claimed as
-this one's boarding station. The first stationary hit is the candidate, whether
-or not it resolves. -/
+/-- Walk back from the run for the stay the rider boarded from, through
+stationary and walking segments only, so the previous journey's destination is
+never claimed. The first stationary hit is the candidate. -/
 private def findStayCandidate (env : Env) (segments : Array Seg) (points : Array Fix) :
     Nat → TraceM (Option StayCandidate)
   | 0 => return none
@@ -228,21 +188,18 @@ private structure Boarding where
   /-- The boarding node's OSM subtype, when a node named it. -/
   subtype : Option String
 
-/-- The line suffix for a resolved station pair, or the bare pair.
-
-Three sources of evidence in order, each consulted only when the previous could
-not decide: the endpoints' own line sets, then the ride's track, then its
-stopping pattern. -/
+/-- The line suffix for a resolved pair, or the bare pair: the endpoints' line
+sets, then the ride's track, then its stopping pattern, each only when the
+previous could not decide. -/
 private def suffixFor (env : Env) (base : String) (candidates : Array String)
     (points : Array Fix) (boardTs alightTs : Int)
     (board alight : String) (railStops : Array RailStopRelation) : TraceM String := do
   match ← lineUnderTheTrack env candidates points boardTs alightTs with
   | some ridden => return s!"{base} · {ridden}"
   | none =>
-    -- The track could not separate them, which means they share it — Wembley
-    -- Park to Finchley Road is seven kilometres of Metropolitan and Jubilee on
-    -- the same rails. Where they differ is where they stop, and the ride's own
-    -- speed profile says which pattern it ran.
+    -- The track could not separate them, so they share it (Metropolitan and
+    -- Jubilee run on the same rails for kilometres); the speed profile says
+    -- which stopping pattern the ride ran.
     let ride := points.map fun p =>
       ({ ts := p.ts, lat := p.lat, lon := p.lon, speedKmh := p.speedKmh, bearing := 0 } :
         Verified.Geo.LineStoppingPattern.FilteredPoint)
@@ -250,28 +207,12 @@ private def suffixFor (env : Env) (base : String) (candidates : Array String)
     | some stopped => return s!"{base} · {stopped}"
     | none => return base
 
-/-- Walk the alight candidates for a pair some line can actually realise.
-
-A pair must be realisable. `pickBestStation` chooses on distance, and at a
-shared site that choice is itself in doubt: King's Cross carries a National
-Rail terminus node ("London King's Cross") and a tube node ("King's Cross St
-Pancras") ~200 m apart, both station-tier, and the street reacquire after a
-Victoria-line ride can land nearer the terminus. That names the ride after a
-station the Victoria line does not reach, and erases the line too, since the
-terminus node sits on the mainline corridor. The erasure is what makes it
-self-concealing: with no line on the leg, `checkRailTriples` has nothing to
-assert against, so the invariant that would catch the impossible pair is
-disabled by the very defect it should catch.
-
-So: take the first candidate sharing any line with the boarding station,
-membership deciding the label instead of proximity. A nearer candidate is only
-ever overridden by a farther one that is reachable where the nearer is not;
-when none is, nothing is renamed and the bare pair stands.
-
-Sharing some line, not exactly one, because the station question and the line
-question are separate and only the first is what proximity got wrong. The
-corrected pair is emitted either way, and its suffix goes through the same
-evidence the primary path uses. -/
+/-- Walk the alight candidates for a pair some line can realise: the first
+sharing any line with the boarding station, so membership, not proximity,
+decides. At a shared site the nearer node can be a terminus the ride's line does
+not reach, which also erases the line and with it the check that would catch
+the pair. A nearer candidate is overridden only by a reachable farther one;
+otherwise the bare pair stands. -/
 private def sweepAlight (env : Env) (startRetry : Array String) (endCanon : Array String)
     (startStation : String) (points : Array Fix) (boardTs alightTs : Int)
     (railStops : Array RailStopRelation) (fallback : String) :
@@ -295,11 +236,8 @@ private def sweepAlight (env : Env) (startRetry : Array String) (endCanon : Arra
           return s!"{pair} · {retry[0]}"
         else suffixFor env pair retry points boardTs alightTs startStation c.name railStops
 
-/-- The station-pair (and optional line) label for one rail run, or `none`.
-
-The station lookup and the line lookup have independent failure modes: a line
-failure degrades to a bare station pair rather than losing the annotation, while
-a station failure returns nothing at all. -/
+/-- The station-pair (and optional line) label for one rail run, or `none`. A
+line failure degrades to a bare pair; a station failure returns nothing. -/
 def resolveRailRunLabel (env : Env) (run : RailRun) (segments : Array Seg)
     (points : Array Fix) (railStops : Array RailStopRelation) : TraceM (Option String) := do
   let some first := segments[run.from_]? | return none
@@ -309,20 +247,14 @@ def resolveRailRunLabel (env : Env) (run : RailRun) (segments : Array Seg)
   match slowBefore, after with
   | some slowBefore, some after => do
     let stay ← findStayCandidate env segments points run.from_
-    -- The stay is used IFF the apparent velocity from it to `slowBefore` is
-    -- mid-tunnel-noise territory. At realistic walking pace the rider genuinely
-    -- moved to a different station between the stay and the boarding, and
-    -- `slowBefore`'s own lookup is the truthful one.
+    -- The stay is used iff the apparent speed from it to `slowBefore` is tunnel
+    -- noise; at walking pace the rider moved to another station.
     let b0 : Boarding := match stay with
       | some st =>
         let dM := haversineMeters st.lat st.lon slowBefore.lat slowBefore.lon
         let dt := max 1 (slowBefore.ts - st.endTs)
-        -- `Float.ofInt`, not `Int.toNat.toFloat`: the latter clamps a negative
-        -- to zero, which turns the division into `inf` and reads as
-        -- "impossibly fast" where a negative reads as "slower than walking".
-        -- `max 1` means the difference cannot arise here, and a conversion
-        -- that is only correct because of a guard elsewhere is one bad edit
-        -- from being wrong.
+        -- `Float.ofInt`, not `Int.toNat.toFloat`, which clamps a negative to
+        -- zero and reads as impossibly fast; correct without relying on `max 1`.
         let apparentKmh := (dM / Float.ofInt dt) * 3.6
         if apparentKmh > BOARDING_NOISE_SPEED_KMH then
           ⟨some st.name, st.lat, st.lon, stationCoord (some st.station), some st.station.subtype⟩
@@ -344,9 +276,7 @@ def resolveRailRunLabel (env : Env) (run : RailRun) (segments : Array Seg)
         ⟨some st.name, st.lat, st.lon, stationCoord (some st.station), some st.station.subtype⟩
       | _, _ => b1
     -- A ride boarded at a tube node alights at one: at a shared site the
-    -- mainline node can be nearer ("London King's Cross" 19 m against the
-    -- King's Cross St Pancras tube node) and on distance alone it names a
-    -- Victoria line ride after a terminus that line does not reach.
+    -- mainline node can be nearer and name a terminus the line does not reach.
     let preferEnd := b.subtype.filter (· == "subway")
     let bestEnd := pickBestStation endStations preferEnd
     match b.station, bestEnd with
@@ -367,27 +297,13 @@ def resolveRailRunLabel (env : Env) (run : RailRun) (segments : Array Seg)
           return some (← suffixFor env base inter points slowBefore.ts after.ts
             startStation bestEnd.name railStops)
         else do
-          -- The endpoints yielded nothing. A lookup point can be an off-corridor
-          -- fix — a street reacquire after alighting, a stay centroid a block
-          -- from the platform — where `linesAtPoint` finds nothing; the
-          -- intersection empties and the label loses its line, which is also the
-          -- rail_route_cache key, so the ride draws as raw GPS. The stations
-          -- themselves resolved and their own nodes sit on the corridor: retry
-          -- there.
-          --
-          -- Only when empty. An ambiguous primary must not be collapsed by this
-          -- retry: the station nodes are a different and here less trustworthy
-          -- lookup, and with the alight still resolved to the National Rail
-          -- terminus the retry returned a confident singleton of the wrong line
-          -- while the honest answer was "two candidates, and the track knows
-          -- which".
-          --
-          -- The boarding side keeps the single-node retry. Its station is chosen
-          -- from the preceding stationary under a walking-pace gate — anchored
-          -- on where the rider actually stood — whereas the alight is a bare
-          -- lookup at the reacquire fix, which is precisely the fix that
-          -- surfaces at street level away from the platform. The asymmetry is in
-          -- the evidence, not in the rule.
+          -- The endpoints yielded nothing: a lookup point can be off-corridor
+          -- (a street reacquire, a stay centroid), which loses the line and so
+          -- the route-cache key. Retry at the resolved stations' own nodes.
+          -- Only when empty: an ambiguous primary must not collapse to a
+          -- confident singleton from the less trustworthy node lookup. The
+          -- boarding side keeps the single-node retry, being anchored where the
+          -- rider stood; the alight is a bare lookup at the street reacquire.
           let startRetry ← match b.coord with
             | some (la, lo) => canonicalLines <$> fetchLines env la lo
             | none => pure startCanon
@@ -420,17 +336,11 @@ def labelUnnamedTrains (env : Env) (segments : Array Seg) (points : Array Fix)
 
 /-! ## Guards
 
-The reference scenarios for the whole rail-run pass, on the segments
-`labelUnnamedTrains` takes as they stand: each train segment that carries no
-route is a run of its own, so the label and the ordered reads are the
-reference's wherever its run was that one segment. The comments beside each
-scenario describe the reference pass, which also grew runs over pauses and
-upgraded driving legs; the scenarios where it did either are not here, and
-those kept compare only the label and the reads.
-
-The two lookups replay as tables of what the reference stub answered: a query
-this arm makes that the reference never did misses the table and comes back
-empty, which reads as a divergence rather than as a plausible answer. -/
+The reference scenarios for the pass, on the segments `labelUnnamedTrains`
+takes as they stand: each unrouted train segment is a run of its own, so only
+the label and the read set are compared. The lookups replay tables of the
+reference stub's answers; a query outside them comes back empty and reads as a
+divergence. -/
 
 private def STATION_TABLE : Array (Float × Float × Array NearbyStation) := #[
     (51.5, (-38.1), #[⟨"Ayton", "subway", 0.0, some 51.5, some (-38.1)⟩, ⟨"Ayton Platform 1", "stop_position", 11.119492664825003, some 51.5001, some (-38.1)⟩]),
@@ -558,17 +468,11 @@ private def segsS13 : Array Seg := #[
   { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS13 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1060, 51.5, (-38.1), 2.0⟩, ⟨1120, 51.505, (-38.1), 45.0⟩, ⟨1180, 51.515, (-38.1), 50.0⟩, ⟨1240, 51.53, (-38.1), 50.0⟩, ⟨1300, 51.5395, (-38.1), 20.0⟩, ⟨1360, 51.54, (-38.1), 2.0⟩, ⟨1420, 51.54, (-38.1), 2.0⟩]
 #guard labelsOf segsS13 fixesS13 == #[(1100, 1200, "Ayton → Ceeford · Alpha Line"), (1200, 1260, ""), (1260, 1300, "Ayton → Ceeford · Alpha Line")]
--- The reference read order, which this arm does not reproduce across runs: every
--- run's station pair, then every run's line pair: #[.stations 51.5 (-38.1),
--- .stations 51.54 (-38.1), .stations 51.5 (-38.1), .stations 51.54 (-38.1),
--- .lines 51.5 (-38.1), .lines 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54
--- (-38.1)]
+-- Reads compare as a set: the order across runs differs from the reference's.
 #guard ((traceOf segsS13 fixesS13).map reprStr).qsort (· < ·) == (((#[.stations 51.5 (-38.1), .stations 51.54 (-38.1), .stations 51.5 (-38.1), .stations 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1)] : Array Read).map reprStr).qsort (· < ·))
 
--- A walk is refused however slow, so it splits where the same shape with a
--- `driving` middle segment merges in the reference.
--- Two confirmed interchange walks in the corpus were being welded into their
--- neighbouring train legs by the avgSpeed arm below the fix.
+-- A walk is refused however slow, so it splits where a `driving` middle would
+-- merge: interchange walks were being welded into their train legs.
 private def segsS12w : Array Seg := #[
   { startTs := 1100, endTs := 1200, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
   { startTs := 1200, endTs := 1260, mode := "walking", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 10.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 4 },
@@ -583,10 +487,7 @@ private def segsS15 : Array Seg := #[
   { startTs := 1200, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #["turnaround-board"], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS15 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1060, 51.5, (-38.1), 2.0⟩, ⟨1120, 51.505, (-38.1), 45.0⟩, ⟨1180, 51.515, (-38.1), 50.0⟩, ⟨1240, 51.53, (-38.1), 50.0⟩, ⟨1300, 51.5395, (-38.1), 20.0⟩, ⟨1360, 51.54, (-38.1), 2.0⟩, ⟨1420, 51.54, (-38.1), 2.0⟩]
 #guard labelsOf segsS15 fixesS15 == #[(1100, 1200, "Ayton → Ceeford · Alpha Line"), (1200, 1300, "")]
--- The reference read order, which this arm does not reproduce across runs: every
--- run's station pair, then every run's line pair: #[.stations 51.5 (-38.1),
--- .stations 51.54 (-38.1), .stations 51.515 (-38.1), .stations 51.54 (-38.1),
--- .lines 51.5 (-38.1), .lines 51.54 (-38.1)]
+-- Reads compare as a set: the order across runs differs from the reference's.
 #guard ((traceOf segsS15 fixesS15).map reprStr).qsort (· < ·) == (((#[.stations 51.5 (-38.1), .stations 51.54 (-38.1), .stations 51.515 (-38.1), .stations 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1)] : Array Read).map reprStr).qsort (· < ·))
 
 -- Board and alight resolve to the same station: no label, and the line
@@ -681,17 +582,11 @@ private def segsS27 : Array Seg := #[
   { startTs := 2100, endTs := 2300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS27 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1060, 51.5, (-38.1), 2.0⟩, ⟨1120, 51.505, (-38.1), 45.0⟩, ⟨1180, 51.515, (-38.1), 50.0⟩, ⟨1240, 51.53, (-38.1), 50.0⟩, ⟨1300, 51.5395, (-38.1), 20.0⟩, ⟨1360, 51.54, (-38.1), 2.0⟩, ⟨1420, 51.54, (-38.1), 2.0⟩, ⟨2000, 51.54, (-38.1), 2.0⟩, ⟨2120, 51.545, (-38.1), 45.0⟩, ⟨2240, 51.55, (-38.1), 50.0⟩, ⟨2360, 51.56, (-38.1), 2.0⟩]
 #guard labelsOf segsS27 fixesS27 == #[(1100, 1300, "Ayton → Ceeford · Alpha Line"), (1300, 2000, ""), (2100, 2300, "Ceeford → Deeham")]
--- The reference read order, which this arm does not reproduce across runs: every
--- run's station pair, then every run's line pair: #[.stations 51.5 (-38.1),
--- .stations 51.54 (-38.1), .stations 51.54 (-38.1), .stations 51.56 (-38.1),
--- .lines 51.5 (-38.1), .lines 51.54 (-38.1), .lines 51.54 (-38.1), .lines 51.56
--- (-38.1), .lines 51.545 (-38.1), .lines 51.55 (-38.1)]
+-- Reads compare as a set: the order across runs differs from the reference's.
 #guard ((traceOf segsS27 fixesS27).map reprStr).qsort (· < ·) == (((#[.stations 51.5 (-38.1), .stations 51.54 (-38.1), .stations 51.54 (-38.1), .stations 51.56 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1), .lines 51.54 (-38.1), .lines 51.56 (-38.1), .lines 51.545 (-38.1), .lines 51.55 (-38.1)] : Array Read).map reprStr).qsort (· < ·))
 
--- A run tagged turnaround-alight takes the fix nearest its endTs rather than
--- scanning forward. Standing on the platform the rider has already come back
--- past the outermost point, so the forward scan would name a station from the
--- return journey.
+-- A turnaround-alight run takes the fix nearest its endTs: on the platform the
+-- rider is already back past the outermost point.
 private def segsS30 : Array Seg := #[
   { startTs := 1100, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #["turnaround-alight"], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS30 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1060, 51.5, (-38.1), 2.0⟩, ⟨1120, 51.505, (-38.1), 45.0⟩, ⟨1180, 51.515, (-38.1), 50.0⟩, ⟨1240, 51.53, (-38.1), 50.0⟩, ⟨1300, 51.5395, (-38.1), 20.0⟩, ⟨1360, 51.54, (-38.1), 2.0⟩, ⟨1420, 51.54, (-38.1), 2.0⟩]
@@ -743,11 +638,7 @@ private def segsS35 : Array Seg := #[
   { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS35 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1120, 51.505, (-38.1), 45.0⟩, ⟨1210, 51.51865, (-38.1), 40.0⟩, ⟨1230, 51.52135, (-38.1), 40.0⟩, ⟨1250, 51.51865, (-38.1), 40.0⟩, ⟨1300, 51.5395, (-38.1), 20.0⟩, ⟨1360, 51.54, (-38.1), 2.0⟩]
 #guard labelsOf segsS35 fixesS35 == #[(1100, 1200, "Ayton → Ceeford · Alpha Line"), (1200, 1260, ""), (1260, 1300, "Ayton → Ceeford · Alpha Line")]
--- The reference read order, which this arm does not reproduce across runs: every
--- run's station pair, then every run's line pair: #[.stations 51.5 (-38.1),
--- .stations 51.54 (-38.1), .stations 51.5 (-38.1), .stations 51.54 (-38.1),
--- .lines 51.5 (-38.1), .lines 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54
--- (-38.1)]
+-- Reads compare as a set: the order across runs differs from the reference's.
 #guard ((traceOf segsS35 fixesS35).map reprStr).qsort (· < ·) == (((#[.stations 51.5 (-38.1), .stations 51.54 (-38.1), .stations 51.5 (-38.1), .stations 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1)] : Array Read).map reprStr).qsort (· < ·))
 
 -- The percentile index, which only an outlier can expose: four fixes within
@@ -759,11 +650,7 @@ private def segsS36 : Array Seg := #[
   { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS36 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1120, 51.505, (-38.1), 45.0⟩, ⟨1205, 51.52, (-38.1), 40.0⟩, ⟨1215, 51.5201, (-38.1), 40.0⟩, ⟨1225, 51.5202, (-38.1), 40.0⟩, ⟨1235, 51.5203, (-38.1), 40.0⟩, ⟨1245, 51.5238, (-38.1), 40.0⟩, ⟨1300, 51.5395, (-38.1), 20.0⟩, ⟨1360, 51.54, (-38.1), 2.0⟩]
 #guard labelsOf segsS36 fixesS36 == #[(1100, 1200, "Ayton → Ceeford · Alpha Line"), (1200, 1260, ""), (1260, 1300, "Ayton → Ceeford · Alpha Line")]
--- The reference read order, which this arm does not reproduce across runs: every
--- run's station pair, then every run's line pair: #[.stations 51.5 (-38.1),
--- .stations 51.54 (-38.1), .stations 51.5 (-38.1), .stations 51.54 (-38.1),
--- .lines 51.5 (-38.1), .lines 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54
--- (-38.1)]
+-- Reads compare as a set: the order across runs differs from the reference's.
 #guard ((traceOf segsS36 fixesS36).map reprStr).qsort (· < ·) == (((#[.stations 51.5 (-38.1), .stations 51.54 (-38.1), .stations 51.5 (-38.1), .stations 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1)] : Array Read).map reprStr).qsort (· < ·))
 
 -- The walk-back passes through a walking segment to reach the stay behind it
@@ -787,9 +674,7 @@ private def fixesS43 : Array Fix := #[⟨950, 51.52, (-38.1), 1.0⟩, ⟨1080, 5
 #guard traceOf segsS43 fixesS43 == #[.stations 51.5 (-38.1), .stations 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1)]
 
 -- `max 1` on the elapsed time: the stay's closing fix is later than
--- slowBefore, so the raw difference is −150 s and the apparent speed comes
--- out negative — below the bar, and the stay would be distrusted for having
--- moved impossibly fast.
+-- slowBefore, and a negative speed would distrust the stay.
 private def segsS44 : Array Seg := #[
   { startTs := 900, endTs := 1160, mode := "stationary", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 0.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
   { startTs := 1100, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
@@ -824,51 +709,36 @@ private def fixesS47 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1120, 5
 #guard labelsOf segsS47 fixesS47 == #[(1100, 1500, "Ayton → Deeham")]
 #guard traceOf segsS47 fixesS47 == #[.stations 51.5 (-38.1), .stations 51.56 (-38.1), .lines 51.5 (-38.1), .lines 51.56 (-38.1), .lines 51.505 (-38.1), .lines 51.53 (-38.1), .lines 51.54 (-38.088), .lines 51.555 (-38.1)]
 
--- The boarding slow-fix arm is a speed test, not merely the latest fix: a
--- transit-speed fix sits after the platform one and before the classifier's
--- start, and taking it would resolve the boarding station to wherever the
--- train was passing.
+-- The boarding slow-fix arm is a speed test: a transit-speed fix after the
+-- platform one would name wherever the train was passing.
 private def segsS50 : Array Seg := #[
   { startTs := 1100, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS50 : Array Fix := #[⟨900, 51.5, (-38.1), 2.0⟩, ⟨1000, 51.5135, (-38.1), 20.0⟩, ⟨1180, 51.53, (-38.1), 50.0⟩, ⟨1360, 51.54, (-38.1), 2.0⟩]
 #guard labelsOf segsS50 fixesS50 == #[(1100, 1300, "Ayton → Ceeford · Alpha Line")]
 #guard traceOf segsS50 fixesS50 == #[.stations 51.5 (-38.1), .stations 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1)]
 
--- The sweep must skip a candidate carrying the boarding station's own name.
--- Boarding at Beeston, the alight site's second candidate is a
--- through-station also tagged 'Beeston', and its retry would match — so
--- without the skip the run is labelled with the degenerate pair 'Beeston →
--- Beeston'. The candidate it settles on shares two lines, and every mid-ride
--- fix is on the stretch Alpha and Beta share, so nothing separates them and
--- the bare pair stands: a two-element retry must not simply take its first
--- entry.
+-- The sweep skips a candidate carrying the boarding station's own name (no
+-- 'Beeston → Beeston'). The one it settles on shares two lines with all fixes on
+-- shared track, so the bare pair stands: a two-line retry does not take its first.
 private def segsS51 : Array Seg := #[
   { startTs := 1100, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS51 : Array Fix := #[⟨1000, 51.52, (-38.1), 2.0⟩, ⟨1120, 51.515, (-38.1), 45.0⟩, ⟨1240, 51.505, (-38.1), 50.0⟩, ⟨1360, 51.5, (-38.12), 2.0⟩, ⟨1420, 51.5, (-38.12), 2.0⟩]
 #guard labelsOf segsS51 fixesS51 == #[(1100, 1300, "Beeston → Haldon")]
 #guard traceOf segsS51 fixesS51 == #[.stations 51.52 (-38.1), .stations 51.5 (-38.12), .lines 51.52 (-38.1), .lines 51.5 (-38.12), .lines 51.52 (-38.1), .lines 51.5 (-38.1225), .lines 51.5 (-38.1165), .lines 51.515 (-38.1), .lines 51.505 (-38.1)]
 
--- The pause window is inclusive at its start: a fix sitting exactly on
--- `startTs` belongs to the pause. Here it is the one far fix, and admitting
--- it drags the centroid out and rejects the pause; excluding it would leave
--- two fixes 6 m apart and absorb.
+-- The pause window includes its start: the far fix exactly on `startTs`
+-- belongs to the pause and drags the centroid out.
 private def segsS54 : Array Seg := #[
   { startTs := 1100, endTs := 1200, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
   { startTs := 1200, endTs := 1260, mode := "walking", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 3 },
   { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS54 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1120, 51.505, (-38.1), 45.0⟩, ⟨1200, 51.524, (-38.1), 40.0⟩, ⟨1230, 51.52, (-38.1), 40.0⟩, ⟨1250, 51.5201, (-38.1), 40.0⟩, ⟨1300, 51.5395, (-38.1), 20.0⟩, ⟨1360, 51.54, (-38.1), 2.0⟩]
 #guard labelsOf segsS54 fixesS54 == #[(1100, 1200, "Ayton → Ceeford · Alpha Line"), (1200, 1260, ""), (1260, 1300, "Ayton → Ceeford · Alpha Line")]
--- The reference read order, which this arm does not reproduce across runs: every
--- run's station pair, then every run's line pair: #[.stations 51.5 (-38.1),
--- .stations 51.54 (-38.1), .stations 51.5 (-38.1), .stations 51.54 (-38.1),
--- .lines 51.5 (-38.1), .lines 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54
--- (-38.1)]
+-- Reads compare as a set: the order across runs differs from the reference's.
 #guard ((traceOf segsS54 fixesS54).map reprStr).qsort (· < ·) == (((#[.stations 51.5 (-38.1), .stations 51.54 (-38.1), .stations 51.5 (-38.1), .stations 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1), .lines 51.5 (-38.1), .lines 51.54 (-38.1)] : Array Read).map reprStr).qsort (· < ·))
 
--- An alight site of nothing but platforms: `pickBestStation` still answers,
--- but every candidate is tier 2, so the sweep's list is exactly the one node
--- it seeded with — the tier filter and the `#[chosen]` seed are both
--- load-bearing here.
+-- An alight site of only platforms: every candidate is tier 2, so the sweep's
+-- list is just its `#[chosen]` seed.
 private def segsS52 : Array Seg := #[
   { startTs := 1100, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS52 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1120, 51.505, (-38.1), 45.0⟩, ⟨1240, 51.51, (-38.1), 50.0⟩, ⟨1360, 51.52, (-38.13), 2.0⟩, ⟨1420, 51.52, (-38.13), 2.0⟩]

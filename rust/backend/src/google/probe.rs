@@ -1,28 +1,14 @@
 //! What does Google Health actually serve for this account?
 //!
-//! # Why this exists as code rather than as a decision
+//! Measures each stream rather than assuming it from the one that works
+//! (weight reaches Google by a phone-side path, which says nothing about the
+//! watch's data).
 //!
-//! The Fitbit Web API dies in Sep 2026 and eight streams have to land
-//! somewhere. Weight already comes from Google — but it reaches Google as
-//! Hume scale → Health Connect → Google Health, which is a phone-side path
-//! that says nothing about whether the watch's data travels the same way.
+//! # ⚠ Field names only — never a value
 //!
-//! Sizing the migration off that one working stream is the mistake this module
-//! exists to prevent: "weight works, so the rest is the same client with a
-//! different `dataTypes` segment" is a guess wearing the clothes of a measured
-//! fact. If Google does not carry HR intraday at ~34,000 points a day, the port
-//! is not a port, and the five days before the deadline are better spent
-//! knowing that than discovering it.
-//!
-//! # ⚠ field names only — never a value
-//!
-//! This prints the shape of a data point (`weightGrams`, `sampleTime`), never
-//! its contents. The output lands in a Kubernetes log, and a log is not a place
-//! for heart rates, sleep stages or coordinates. Shape is also all the probe is
-//! for: the question is whether a stream exists and what fields it carries, and
-//! a value cannot answer that any better than its key can.
-//!
-//! Read-only throughout. No `POST`, no DB handle, nothing to write with.
+//! It prints a data point's shape (`weightGrams`, `sampleTime`), never its
+//! contents: the output lands in a Kubernetes log, which is no place for heart
+//! rates or coordinates. Read-only throughout.
 
 use anyhow::{Context, Result};
 use std::collections::BTreeSet;
@@ -31,36 +17,17 @@ use super::oauth::GoogleCreds;
 
 const BASE: &str = "https://health.googleapis.com/v4";
 
-/// The Google counterpart of every stream `fitbit::sync` owns, plus the
-/// aggregates that might stand in for one.
-///
-/// Kebab-case, and that is not cosmetic. The identifiers are
-/// `heart-rate`, not `heart_rate`. This list was first written in snake_case
-/// from the shape of the one type we already use — and `weight` is a single
-/// word, so the working stream cannot reveal the convention. Every probe would
-/// have returned 404 and the readout would have said Google carries none of
-/// this, which is the opposite of true. Names are from the v4 reference, not
-/// from the shape of `weight`.
-///
-/// A 404 still means "not under this name", not "Google does not have it".
-/// Discovery is the authority; this list is the fallback.
-/// The types cheap enough to walk to the end — one point per day each.
-///
-/// `heart-rate` and `heart-rate-variability` are deliberately absent. They
-/// are intraday (~34,000 points a day for HR), the list has no ascending sort,
-/// and reaching the oldest point means paging through all of it. Their depth
-/// needs the `filter` parameter, which is a separate piece of work.
-/// Points per page when walking a series to its end. The documented maximum is
-/// 10,000; a daily aggregate over four years is ~1,500, so this is one page in
-/// practice and the loop is for correctness rather than volume.
+/// Points per page when walking a daily series to its end: the documented
+/// maximum, so a daily aggregate fits one page and the loop is for correctness.
 const DEPTH_PAGE_SIZE: u32 = 10_000;
 
-/// A bound on the page walk. Not expected to be reached — it exists because a
-/// `nextPageToken` that never changes is an infinite loop against a paid API,
-/// and "hangs until the pod deadline kills it" is far worse to diagnose than a
-/// readout that stops and says how far it got.
+/// A bound on the page walk: a `nextPageToken` that never changes would loop
+/// against a paid API, and a readout that stops and says so beats a hang.
 const DEPTH_MAX_PAGES: u32 = 100;
 
+/// The types cheap enough to walk to the end, one point per day each. The
+/// intraday `heart-rate` and `heart-rate-variability` are absent: newest-first
+/// with no ascending sort, their depth needs the `filter` parameter.
 const DAILY_TYPES: &[&str] = &[
     "weight",
     "daily-resting-heart-rate",
@@ -68,45 +35,44 @@ const DAILY_TYPES: &[&str] = &[
     "daily-oxygen-saturation",
     "daily-respiratory-rate",
     "daily-sleep-temperature-derivations",
-    // Not one per day: it runs past 500,000 points and hits the page bound,
-    // where the five above land at ~1,200. Kept because the bound is reported
-    // out loud, and a type that does not fit the assumption is worth seeing say
-    // so rather than being quietly dropped.
+    // Not one per day: it runs past the page bound, which is reported, so a
+    // type that breaks the assumption says so rather than being dropped.
     "daily-heart-rate-zones",
     // A weigh-in's sibling: how much body-fat history is there to backfill?
     "body-fat",
 ];
 
+/// The Google type for every biometric stream, plus aggregates that might stand
+/// in for one. Kebab-case (`heart-rate`), from the v4 reference: a single-word
+/// type like `weight` cannot show the convention, and snake_case 404s on every
+/// probe. A 404 means "not under this name"; discovery is the authority.
 const CANDIDATES: &[&str] = &[
     // The stream that already works — the control. If this 404s, the probe
     // itself is broken and nothing below can be read.
     "weight",
-    // fitbit::sync::heartrate — intraday samples and the daily zones.
+    // Heart rate: intraday samples and the daily zones.
     "heart-rate",
     "daily-heart-rate-zones",
     "time-in-heart-rate-zone",
     "daily-resting-heart-rate",
-    // fitbit::sync::steps
+    // Steps.
     "steps",
-    // fitbit::sync::sleep — sessions with stages.
+    // Sleep: sessions with stages.
     "sleep",
-    // fitbit::sync::hrv — samples, and the nightly figure.
+    // HRV: samples, and the nightly figure.
     "heart-rate-variability",
-    // Carries both `hrv_daily` columns, in this one type: the daily average
-    // and `deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds`. HRV has
-    // no per-stage sibling type: `heart-rate-variability-sleep-summary`, guessed
-    // from `respiratory-rate-sleep-summary`, answers HTTP 400
-    // `INVALID_PARENT_DATA_TYPE_COLLECTION`, "not supported". Written down so
-    // the analogy is not drawn a second time; the deep figure is here.
+    // Carries both `hrv_daily` columns (the daily average and the deep-sleep
+    // RMSSD). There is no per-stage sibling: the analogue of
+    // `respiratory-rate-sleep-summary` answers 400 "not supported".
     "daily-heart-rate-variability",
-    // fitbit::sync::daily — SpO2, breathing rate, temperature.
+    // Daily: SpO2, breathing rate, temperature.
     "oxygen-saturation",
     "daily-oxygen-saturation",
     "daily-respiratory-rate",
     "respiratory-rate-sleep-summary",
     "daily-sleep-temperature-derivations",
     "core-body-temperature",
-    // fitbit::sync::activity — the fields the daily row carries.
+    // Activity: the fields the daily row carries.
     "distance",
     "floors",
     "altitude",
@@ -127,14 +93,10 @@ pub fn shape_of(v: &serde_json::Value) -> Vec<String> {
     out.into_iter().collect()
 }
 
-/// The keys of one JSON object, one level deep, as `a.b` paths.
-///
-/// Nested objects recurse; arrays report their element's shape from the first
-/// element only. Values never appear.
-/// The type of a scalar, never its value — `number`, `string`, `bool`, `null`.
-///
-/// A string that holds digits reports as `string`, which is the entire point:
-/// that is the difference between a field being read and being dropped.
+/// The keys of one JSON object as `a.b` paths; arrays report their first
+/// element's shape. Values never appear.
+/// The type of a scalar, never its value. A quoted number reports as `string`,
+/// which is the difference between a field being read and being dropped.
 pub fn json_kind(v: &serde_json::Value) -> &'static str {
     match v {
         serde_json::Value::Number(_) => "number",
@@ -159,14 +121,9 @@ pub(crate) fn shape(v: &serde_json::Value, prefix: &str, out: &mut BTreeSet<Stri
                     serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
                         shape(sub, &path, out)
                     }
-                    // The type, not the value. A path alone cannot tell a
-                    // number from a quoted number, and `as_f64()` returns None
-                    // on a string — so a type-confused field is read as an
-                    // absent one and the whole stream reports as empty. That is
-                    // how `daily-resting-heart-rate` looked like "Google has no
-                    // RHR" while carrying 1258 points. Naming the type keeps
-                    // this readout free of readings, which is the rule that
-                    // lets it run in a pod log.
+                    // The type, not the value: `as_f64()` returns `None` on a
+                    // quoted number, so a type-confused field reads as absent
+                    // and a stream with data reports as empty.
                     _ => {
                         out.insert(format!("{path}: {}", json_kind(sub)));
                     }
@@ -185,12 +142,9 @@ pub(crate) fn shape(v: &serde_json::Value, prefix: &str, out: &mut BTreeSet<Stri
     }
 }
 
-/// The date carried by a data point, as `YYYY-MM-DD`, wherever it sits.
-///
-/// Each type nests its date under its own key — `dailyRestingHeartRate.date`,
-/// `dailyOxygenSaturation.date` — so this looks for the shape (an object with
-/// year/month/day) rather than for a path. A per-type path table would be a
-/// list of guesses; the shape is the thing they have in common.
+/// The date carried by a data point, as `YYYY-MM-DD`. Each type nests it under
+/// its own key, so this looks for the shape (an object with year/month/day)
+/// rather than a path.
 pub fn date_of(v: &serde_json::Value) -> Option<String> {
     match v {
         serde_json::Value::Object(m) => {
@@ -208,12 +162,8 @@ pub fn date_of(v: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Page one type to exhaustion, reporting how far back it goes.
-///
-/// Only for one-point-per-day types. The list is ordered newest first and
-/// there is no ascending sort, so the only way to the oldest point is to walk
-/// every page. That is a few pages for a daily aggregate and millions of points
-/// for `heart-rate`, which is why the intraday types are not in this list.
+/// Page one type to exhaustion, reporting how far back it goes. Only for daily
+/// types: the list is newest first with no ascending sort.
 async fn depth_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
     let mut page_token: Option<String> = None;
     let mut total = 0usize;
@@ -272,11 +222,8 @@ async fn depth_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
         }
     }
 
-    // Say so when the walk was cut short. A bounded scan that prints its
-    // partial total beside a date reads as a complete series
-    // (`daily-heart-rate-zones` once reported "500000 points" over an impossible
-    // date range), which is a finding about this loop, not the data. A silent
-    // cap is the failure this whole instrument exists to avoid.
+    // Say so when the walk was cut short: a partial total beside a date reads
+    // as a complete series.
     let note = if hit_bound {
         format!(
             "  ⚠ STOPPED AT THE {DEPTH_MAX_PAGES}-PAGE BOUND — partial, and the \
@@ -292,13 +239,8 @@ async fn depth_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
     format!("{ty:36} {total:6} points   {dates}{note}")
 }
 
-/// Google's error, with its `details` — the half that says what to do.
-///
-/// Shared on purpose. This started inside the `list` probe; the rollup probe
-/// grew its own copy that kept only `message`, and on the first live run every
-/// rollup line read `Invalid argument in request` with the `details` that name
-/// the offending field thrown away. One truncation, fixed once, reintroduced by
-/// duplication a few hours later. Every caller uses this.
+/// Google's error with its `details`, the half that says what to do. Shared by
+/// every caller, since a copy keeping only `message` dropped the field names.
 fn error_detail(body: &str) -> String {
     match serde_json::from_str::<serde_json::Value>(body) {
         Err(e) => {
@@ -323,41 +265,26 @@ fn error_detail(body: &str) -> String {
 
 /// One line of readout for one candidate type.
 async fn probe_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
-    // Not pageSize=1. Session and interval types (sleep, steps) answer the
-    // degenerate page with 200 and no dataPoints field — indistinguishable from
-    // "no data", and read as exactly that twice (sleep lost its owner and
-    // minute-steps was declared an accepted loss). Probe with the
-    // request shape a real consumer sends.
+    // Not pageSize=1: session and interval types answer it with 200 and no
+    // dataPoints, indistinguishable from "no data". Probe as a consumer asks.
     let url = format!("{BASE}/users/me/dataTypes/{ty}/dataPoints?pageSize=25");
     let res = match http.get(&url).bearer_auth(token).send().await {
         Ok(r) => r,
         Err(e) => return format!("{ty:24} TRANSPORT ERROR  {e}"),
     };
     let status = res.status().as_u16();
-    // A body that failed to read is not an empty body. Defaulting to "" here
-    // would render a mid-transfer failure as "HTTP 200, 0 points — type exists,
-    // no data": a confident, wrong answer to the exact question this probe was
-    // built to settle.
+    // A body that failed to read is not an empty body: defaulting to "" would
+    // report "200, 0 points" for a failed transfer.
     let body = match res.text().await {
         Ok(b) => b,
         Err(e) => return format!("{ty:24} HTTP {status} but the body failed to read: {e}"),
     };
 
     if status != 200 {
-        // Print the whole `details` array, not a prefix of the envelope.
-        //
-        // A 403 here answers "which scope is missing", and that string is the
-        // next action — it is what the re-consent has to ask for. The first
-        // version truncated at 120 chars, which spent the budget on the
-        // envelope ("Required OAuth scope(s) are missing") and cut the part
-        // that names them, leaving a readout that says something is wrong
-        // without saying what to do.
-        //
-        // Every branch is named, none defaults to silence. A non-JSON body
-        // is a real case here — Google answers some errors with an HTML page —
-        // but "the body did not parse" and "the body parsed and carried no
-        // details" are different diagnoses, and a readout that renders both as
-        // an empty string sends the reader to the wrong problem.
+        // Print the whole `details` array: for a 403 it names the missing
+        // scope, the next action. A non-JSON body (Google answers some errors
+        // with HTML) and a JSON body without details are different diagnoses,
+        // so every branch is named.
         let detail = error_detail(&body);
         return format!("{ty:24} HTTP {status}  {}", detail.replace('\n', " "));
     }
@@ -388,13 +315,9 @@ async fn probe_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
 }
 
 /// Types whose `list` answered 200 with nothing, or refused `list` outright.
-///
-/// "200 and empty" and "400, wrong method" are different symptoms that may
-/// share a cause. `floors` and `total-calories` say plainly that `list` is not
-/// their action; `steps` and `sleep` accept `list` and return nothing. If the
-/// rollup form has data for the second group too, then an interval type answers
-/// `list` with silence rather than a refusal — and every "no data" conclusion
-/// drawn from `list` alone was wrong.
+/// `floors` and `total-calories` refuse `list`; `steps` and `sleep` accept it
+/// and return nothing. If the rollup has data for those too, an interval type
+/// answers `list` with silence, and a "no data" from `list` alone is wrong.
 const ROLLUP_SUSPECTS: &[&str] = &[
     "steps",
     "sleep",
@@ -410,15 +333,9 @@ const ROLLUP_SUSPECTS: &[&str] = &[
     "total-calories",
 ];
 
-/// One `dailyRollUp` over a recent window.
-///
-/// 14 days, not more. The reference caps the range at 14 days for
-/// `heart-rate`, `active-minutes`, `total-calories` and
-/// `calories-in-heart-rate-zone`. One width for every type keeps a refusal
-/// meaning "no data" rather than "your window was too wide for this one".
-///
-/// Midnight-aligned. The range must align with the aggregation window, and
-/// `windowSizeDays` defaults to 1.
+/// One `dailyRollUp` over a recent 14-day, midnight-aligned window. 14 days is
+/// the reference's cap for several types, so one width for all keeps a refusal
+/// meaning "no data" rather than "window too wide".
 async fn rollup_one(
     http: &reqwest::Client,
     token: &str,
@@ -427,30 +344,15 @@ async fn rollup_one(
     end: (i32, u32, u32),
 ) -> String {
     let url = format!("{BASE}/users/me/dataTypes/{ty}/dataPoints:dailyRollUp");
-    // `start`/`end`, each a CivilDateTime — not `startTime`/`endTime` holding
-    // ISO strings, which every type refuses with
-    //
-    //     400 Unknown name "startTime" at 'range': Cannot find field.
-    //
-    // A uniform 400 across all types is a malformed request, not absent series.
-    //
-    // `time` is optional and defaults to midnight, which is the alignment a
-    // one-day window wants, so it is omitted rather than spelled out.
+    // `start`/`end`, each a CivilDateTime: `startTime`/`endTime` ISO strings
+    // are refused by every type (`400 Unknown name "startTime"`). `time`
+    // defaults to midnight, which a one-day window wants.
     let civil = |(y, m, d): (i32, u32, u32)| serde_json::json!({ "date": { "year": y, "month": m, "day": d } });
     let body = serde_json::json!({
         "range": { "start": civil(start), "end": civil(end) },
-        // `pageSize` is bounded by the duration it implies, not by response size.
-        //
-        //     "The duration covered by window_size_days * page_size must not
-        //      exceed 90 days for steps."
-        //
-        // With `windowSizeDays` defaulting to 1, a pageSize of 100 asks for 100
-        // days and is refused — as `INVALID_ROLLUP_QUERY_DURATION` on the range
-        // field, which is misleading: the range was 14 days and blameless.
-        //
-        // The cap is per type: 90 for steps/distance/floors, 14 for
-        // active-minutes and total-calories. 14 satisfies every one of them, and
-        // matches the window above so one page covers it exactly.
+        // `pageSize` is bounded by the duration it implies (window × pageSize
+        // ≤ 90 days for steps, 14 for active-minutes and total-calories), and an
+        // excess is blamed on the range field. 14 fits every type and the window.
         "pageSize": 14
     });
     let res = match http.post(&url).bearer_auth(token).json(&body).send().await {
@@ -492,11 +394,8 @@ async fn rollup_one(
     }
 }
 
-/// Probe Google Health for every stream the Fitbit sync currently owns.
-///
-/// Prints a readout and returns. Deliberately does not fail on a 404 — a
-/// missing type is the answer, not an error, and exiting non-zero on the first
-/// one would hide the twelve behind it.
+/// Probe Google Health for every biometric stream and print a readout. A 404
+/// is an answer, not an error, so it does not stop the run.
 pub async fn run() -> Result<()> {
     let Some(creds) = GoogleCreds::from_env() else {
         anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
