@@ -204,7 +204,7 @@ pub fn trim_heap() {
         unsafe extern "C" {
             fn malloc_trim(pad: usize) -> i32;
         }
-        // Safety: glibc's `malloc_trim` has no preconditions; it releases only
+        // SAFETY: glibc's `malloc_trim` has no preconditions; it releases only
         // memory the allocator already holds as free.
         unsafe {
             malloc_trim(0);

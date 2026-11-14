@@ -2,27 +2,17 @@ import Verified.Civil
 /-!
 # Ground-truth narrative parser
 
-`tests/golden/ground-truth/YYYY-MM-DD.md` carries a free-text narrative and then
-an `## Audit of …` table. That table is the corpus's only truth signal that is
-not self-referential: every other check compares the pipeline against itself or
-its blessed output. Each row says what actually happened, and the status says
-how the pipeline relates to it. It feeds `routeCorr`, the walk referee's by-name
-metric, and `score-decoder`, whose oracle is this narrative.
+`tests/golden/ground-truth/YYYY-MM-DD.md` holds a narrative and an
+`## Audit of …` table: the corpus's only truth not derived from the pipeline.
+Each row says what happened and how the pipeline relates to it. It feeds
+`routeCorr` and `score-decoder`.
 
-## Civil time, not instants
+Rows carry civil fields (`startDay`, `startHh`, `startMm`, likewise for the
+end); Rust resolves them with `timezone.rs`'s `wall_clock_to_unix`, since a
+named zone needs the tz database. The day and clock anchoring is decided here.
 
-`Row` carries the anchored civil fields (`startDay`, `startHh`, `startMm`, and
-the same for the end) and the shell resolves them with
-`rust/backend/src/timezone.rs`'s `wall_clock_to_unix`: a wall clock in a named
-zone needs the tz database, which is data, not logic. Which day and clock time a
-row anchors to is decided here and pinned by the `#guard`s.
-
-## No regex
-
-Each pattern is explicit string walking, documented with the regex it
-implements; greedy and non-greedy splits differ only on inputs with two
-candidate splits, which is where a hand-written matcher drifts. The witnesses
-cover every parse shape the real corpus produces.
+No regex: each pattern is explicit string walking, documented with the regex it
+implements. The witnesses cover every parse shape the corpus produces.
 -/
 
 namespace Verified.Eval.GroundTruth
@@ -34,11 +24,9 @@ inductive Status where
   | correct | wrong | «partial» | unclear
   deriving BEq, Repr, Inhabited
 
-/-- How a verdict is known — the provenance ladder, strongest first.
-
-`inferred` is read back from the pipeline's own output and is not truth: a
-"hair appointment" once wore a `correct` badge that way. `unspecified` is
-treated the same, so an unannotated legacy row cannot gate a regression check. -/
+/-- How a verdict is known, strongest first. `inferred` is read back from the
+pipeline's own output and is not truth; `unspecified` is treated the same, so an
+unannotated row cannot gate. -/
 inductive Provenance where
   | corroborated | user | derived | inferred | unspecified
   deriving BEq, Repr, Inhabited
@@ -109,10 +97,8 @@ def isEnforceable (r : Row) : Bool :=
 def stripStars (s : String) : String :=
   String.ofList (s.toList.filter (· != '*'))
 
-/-- `text.replace(/\{[^}]*\}/g, "")` — drop brace runs.
-
-`[^}]*` cannot span a `}`, so an unclosed `{` swallows the rest of the string
-only if no `}` follows. -/
+/-- `text.replace(/\{[^}]*\}/g, "")` — drop brace runs. An unclosed `{` swallows
+the rest only if no `}` follows. -/
 def stripBraceRuns (s : String) : String := Id.run do
   let mut out : String := ""
   let mut inBrace := false
@@ -142,11 +128,8 @@ def findSub (hay needle : String) : Option Nat := Id.run do
     if (h.drop i).take ns == n then return some i
   return none
 
-/-- Split off a trailing ` (qualifier)` — the `(?:\s+\(([^)]+)\))?$` suffix.
-
-Returns the body and the qualifier. `[^)]+` forbids a `)` inside, and `\s+`
-requires whitespace before the `(`, so `"Miné Mané"` keeps its name and
-`"ORAC (waste_disposal)"` splits. -/
+/-- Split off a trailing ` (qualifier)` — the `(?:\s+\(([^)]+)\))?$` suffix —
+returning body and qualifier. Whitespace is required before the `(`. -/
 def splitTrailingParen (s : String) : String × Option String := Id.run do
   let cs := s.toList
   if cs.isEmpty || cs.getLast! != ')' then return (s, none)
@@ -178,10 +161,8 @@ private def modeWords : Array (String × Mode) := #[
   ("cycling", .cycling), ("driving", .driving), ("bus", .bus),
   ("train", .train), ("plane", .plane)]
 
-/-- `/^(verb)\b\s*(.*)$/` — the leading mode word and what follows it.
-
-`\b` is why "buses" does not read as `bus`: the next character must be a
-non-word character or the end. -/
+/-- `/^(verb)\b\s*(.*)$/` — the leading mode word and the rest. The `\b` keeps
+"buses" from reading as `bus`. -/
 def splitVerb (t : String) : Option (Mode × String) := Id.run do
   for (w, m) in modeWords do
     if t.startsWith w then
@@ -190,11 +171,8 @@ def splitVerb (t : String) : Option (Mode × String) := Id.run do
         return some (m, rest.trimAscii.toString)
   return none
 
-/-- `/^(.+?)\s+→\s+([^·]+?)(?:\s*·\s*(.+))?$/` — a transit leg.
-
-The arrow split and the middle-dot split are both the first: `(.+?)` is
-non-greedy and `[^·]` cannot cross a `·`. A station name containing either
-would split early; none in the corpus does. -/
+/-- `/^(.+?)\s+→\s+([^·]+?)(?:\s*·\s*(.+))?$/` — a transit leg. Both splits are
+at the first arrow and the first middle dot; no corpus station name has either. -/
 def splitTransit (rest : String) : Option (String × String × Option String) := Id.run do
   let some arrowAt := findSub rest " → " | return none
   let from_ := (rest.take arrowAt).toString.trimAscii.toString
@@ -265,11 +243,9 @@ def parseProvenance (text : String) : Provenance := Id.run do
     | none => pure ()
   return (best.map Prod.snd).getD .unspecified
 
-/-- Free-text status to one of four canonical values.
-
-The provenance tag is stripped before matching, since `parseProvenance` reads
-it separately and `correct {user}` would otherwise fall through to `unclear`.
-Anything qualified ("likely correct") is `unclear`: it cannot be scored. -/
+/-- Free-text status to one of four canonical values. The provenance tag is
+stripped first, or `correct {user}` would read as `unclear`. Anything qualified
+("likely correct") is `unclear`: it cannot be scored. -/
 def normaliseStatus (text : String) : Status :=
   let t := (stripBraceRuns (stripStars text)).trimAscii.toString.toLower
   if t == "wrong" then .wrong
@@ -279,12 +255,9 @@ def normaliseStatus (text : String) : Status :=
 
 /-! ## The table walk -/
 
-/-- `line.split("|")` with the leading and trailing empties of `| … |` dropped.
-
-The trailing empty is dropped only when the line ends with `|`, since
-otherwise the last cell is real: free-text notes that overflowed past a closing
-pipe. (`splitOn "|"` yields a trailing empty part exactly then, so the test is
-redundant; no witness can tell the difference.) -/
+/-- `line.split("|")` without the outer empties of `| … |`. The trailing one is
+dropped only when the line ends with `|`; otherwise the last cell is overflowed
+free text. -/
 def splitTableRow (line : String) : Array String := Id.run do
   let mut parts := (line.splitOn "|").toArray
   if (parts[0]?.map (·.trimAscii.toString.isEmpty)).getD false then
@@ -301,10 +274,8 @@ private def two (cs : List Char) (i : Nat) : Option Nat :=
     if a.isDigit && b.isDigit then some ((a.toNat - 48) * 10 + (b.toNat - 48)) else none
   | _, _ => none
 
-/-- `/^(\d{2}):(\d{2})\s*[–-]\s*(\d{2}):(\d{2})$/`.
-
-Both dashes: the corpus uses an en dash, and a plain hyphen also matches;
-accepting only one would drop rows without failing. -/
+/-- `/^(\d{2}):(\d{2})\s*[–-]\s*(\d{2}):(\d{2})$/`. Both dashes, or rows using the
+other would be dropped silently. -/
 def parseWindow (t : String) : Option (Nat × Nat × Nat × Nat) := Id.run do
   let cs := t.toList
   let some sh := two cs 0 | return none
@@ -342,16 +313,12 @@ private def isSeparatorRow (cells : Array String) : Bool :=
     let t := c.toList
     !t.isEmpty && t.all (fun ch => ch.isWhitespace || ch == ':' || ch == '-')
 
-/-- Parse one narrative into structured, day-anchored rows.
+/-- Parse one narrative into day-anchored rows.
 
-The day cursor is the subtle part. Rows are walked in table order; when a
-row's start time decreases from the previous row's, the cursor advances a day.
-That is how a table puts tonight's sleep at the bottom.
-
-The first row anchors to the previous day only when it is an overnight stay
-that wraps past midnight: after noon and ending at or before its own start. An
-evening activity that does not wrap ("19:27 – 20:40 dinner") anchors to `date`,
-or a table holding only that row would sit a day early and match nothing. -/
+Rows are walked in table order, and a start time earlier than the previous
+row's advances the day, which is how tonight's sleep sits at the bottom. The
+first row anchors to the previous day only for an overnight stay that wraps
+midnight (after noon, ending at or before its start). -/
 def parseGroundTruth (markdown : String) (date : String) (tz : String) : Day := Id.run do
   let tz := (declaredTz markdown).getD tz
   let mut raw : Array (String × Nat × Nat × Nat × Nat × String × String × Option String) := #[]
@@ -413,19 +380,14 @@ def parseGroundTruth (markdown : String) (date : String) (tz : String) : Day := 
 
 /-! ## Witnesses
 
-⚠ Every cell below is synthetic: `tests/golden/ground-truth/` is gitignored,
-since the narratives name real places, clinics and hotels and these repos are
-public. The shapes are reproduced with invented names, and the real corpus is
-checked by a local-only harness that announces a skip.
+⚠ Every cell below is synthetic: the real narratives name real places and are
+gitignored in a public repo. A local-only harness checks the real corpus.
 
-The categories are every structural shape the real corpus's rows produce,
-grouped by which fields come back non-null, with their counts:
-
-    23 walking:way      22 stationary:place     20 train:fromTo+line
-    11 stationary:place+qual   10 train:fromTo   3 sleeping:place+qual
-     2 bus:fromTo+line   2 driving:qual  2 driving:way  2 walking:qual
-     1 each: bus:way, driving:bare, sleeping:place, stationary:bare,
-             stationary:way, walking:bare, walking:way+qual, UNPARSEABLE
+The shapes are those the real corpus's rows produce, by non-null fields:
+walking:way, stationary:place, train:fromTo+line, stationary:place+qual,
+train:fromTo, sleeping:place+qual, bus:fromTo+line, driving:qual, driving:way,
+walking:qual, bus:way, driving:bare, sleeping:place, stationary:bare,
+stationary:way, walking:bare, walking:way+qual, and unparseable.
 -/
 
 section Witnesses
@@ -535,8 +497,7 @@ private def row (st : Status) (pv : Provenance) : Row :=
 
 /-! ### The table walk
 
-Synthetic narratives, for the same reason as the cells above: the real ones are
-gitignored. Each exercises one decision of the day cursor. -/
+Synthetic narratives, each exercising one decision of the day cursor. -/
 
 private def doc (rows : List String) : String :=
   String.intercalate "\n" (["# A day", "", "Some narrative prose.", "",

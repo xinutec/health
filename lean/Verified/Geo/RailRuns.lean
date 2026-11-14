@@ -4,31 +4,19 @@ import Verified.Fix
 /-!
 # Rail-run leaves
 
-Three helpers the train labeller (`Verified.Geo.RailRunAnnotate`) uses to decide
-where a ride began and ended, and what to call the line it ran on.
+Helpers the train labeller (`Verified.Geo.RailRunAnnotate`) uses to find where
+a ride began and ended and name its line:
 
-* `findBoardingPlatformFix` — walk backwards from the first train-speed fix to
-  the platform the rider actually boarded from.
-* `findRunAlightFix` — walk forwards to the first sustained slow fix, stepping
-  past mid-ride station dwells.
+* `findBoardingPlatformFix` — walk back from the first train-speed fix to the
+  platform boarded from.
+* `findRunAlightFix` — walk forward to the first sustained slow fix, past
+  mid-ride station dwells.
 * `expandTubeLineNames` — one OSM line name → the physical lines it denotes.
 
-## `expandTubeLineNames` is a third line-name canonicaliser, not a duplicate
-
-`Verified.Hsmm.RouteGraph.parseLineMemberships` does a
-similar job and the two are not interchangeable:
-
-* that one requires a `" Line"`/`" Lines"` suffix and returns the empty set
-  without one; this one falls back to the input unchanged, so `"Bakerloo"` maps
-  to `["Bakerloo"]` here and to `[]` there;
-* that one strips a directional by matching a fixed list of `" Eastbound"`-style
-  suffixes; this one uses `\s+(?:East|West|North|South)bound$/i`, so it also
-  strips `"Line EASTBOUND"` and `"Line   Westbound"`;
-* a combined name that splits into only one part returns the base here
-  (`"Solo Lines"` → `["Solo Lines"]`, not `["Solo Line"]`): splitting needs
-  more than one part.
-
-All three differences are guarded below.
+`expandTubeLineNames` differs from `Verified.Hsmm.RouteGraph.parseLineMemberships`
+on purpose, each difference guarded below: a name without a `" Line"` suffix
+maps to itself here (`[]` there); any `…bound` direction is stripped
+case-insensitively; and a combined name with one part returns itself.
 
 Exactness: every decision is exact; `haversineMeters` (atan2) puts the platform
 cluster's spread test at ≤ 1 ULP. UNPROVEN; pinned by the `#guard`s.
@@ -86,18 +74,13 @@ private def splitParts : Nat → List Char → List String
         | head :: tail => (String.singleton c ++ head) :: tail
 
 /-- Canonicalise one OSM rail-line name into the physical lines it denotes, so a
-board∩alight intersection can resolve a unique line despite OSM's inconsistent
-naming. Two quirks are handled:
+board∩alight intersection can resolve one line:
 
-1. Direction split — a line's two directions are separate relations
-   ("Victoria Line" vs "Victoria Line Northbound"). Strip the compass word.
-2. Shared-track combine — lines sharing track are tagged under one relation
-   ("Circle, Hammersmith & City and Metropolitan Lines") while the same line is
-   plain elsewhere. Split and re-suffix each component. `&` is not a separator,
-   so "Hammersmith & City" stays whole.
+1. Strip a direction ("Victoria Line Northbound" → "Victoria Line").
+2. Split a shared-track name ("Circle, Hammersmith & City and Metropolitan
+   Lines") and re-suffix each part. `&` does not split.
 
-A plain singular name — or anything that does not split into two or more parts —
-returns itself. -/
+Anything that does not split into two or more parts returns itself. -/
 def expandTubeLineNames (name : String) : List String :=
   let base := stripDirectional name
   if base.endsWith " Lines" then
@@ -114,9 +97,8 @@ def expandTubeLineNames (name : String) : List String :=
 a multi-station tube ride whose opening got classified as walking because the
 per-station stops dominated the window median. -/
 def PLATFORM_PATTERN_WALKBACK_S : Int := 900
-/-- At or below this the user is standing on the platform, not still walking
-towards it. The backward chain walks through these only, stopping at the first
-walking-pace fix — that is what separates the platform-wait cluster from an
+/-- At or below this the rider is standing on the platform. The backward chain
+stops at the first faster fix, which separates the platform wait from an
 approach walk past a nearer station. -/
 def BOARDING_STILL_KMH : Float := 3
 /-- At or above this the train is clearly in motion. -/
@@ -127,19 +109,15 @@ def PLATFORM_MAX_GAP_S : Int := 180
 /-- How far the platform cluster may spread before it is a different place. -/
 def PLATFORM_MAX_SPREAD_M : Float := 150
 
-/-- The platform fix a ride actually boarded from, or `none`.
+/-- The platform fix a ride boarded from, or `none`.
 
-Two phases, and the split matters. The platform-train-platform pattern has
-accelerating fixes (walking-pace, 4-8 km/h) between the platform and the first
-train-speed fix, so phase one walks back past those to find the first
-near-stationary fix — the anchor. Phase two then extends further back through
-more near-stationary fixes, bounded by time gap and cluster spread; the first
-walking-pace fix ends the chain, because further back the user was still
-approaching. The earliest fix in the chain is the boarding anchor.
+Phase one walks back past the accelerating walking-pace fixes (4-8 km/h) before
+the first train-speed fix to the first near-stationary one. Phase two extends
+back through near-stationary fixes, bounded by time gap and cluster spread, and
+stops at the first walking-pace fix. The earliest fix in the chain is the anchor.
 
-`none` when the window holds no train-speed fix (the classifier's start is
-already at or before the first train signal we have) or no near-stationary fix
-before it. -/
+`none` with no train-speed fix in the window, or no near-stationary fix before
+it. -/
 def findBoardingPlatformFix (points : Array Fix) (startTs : Int) : Option Fix := Id.run do
   let windowStart := startTs - PLATFORM_PATTERN_WALKBACK_S
   let windowFixes :=
@@ -197,18 +175,13 @@ def POST_TRANSIT_ALIGHT_SPEED_KMH : Float := 5
 at a station, not the user getting off. -/
 def MID_RIDE_DWELL_RESUME_S : Int := 120
 
-/-- The fix closest to a timestamp, ties keeping input order.
+/-- The fix nearest `t` in time, the first on a tie (the index is in the key, so
+the order is total).
 
-Both turnaround arms use this instead of scanning. By the time they run, nothing
-in the fixes still says a turnaround happened: standing on the platform the
-rider has already come back past the outermost point, so the approach and the
-departure both read as heading home. A scan therefore walks straight through the
-interchange and names a station from the other direction of travel. The split
-pass decided this boundary from the whole leg's geometry; take it.
-
-The fix nearest `t` in time, first on a tie. The index is carried in the key
-rather than relying on `List.mergeSort` being left-biased, so the order is
-total. -/
+The turnaround arms use this instead of scanning: on the platform the rider is
+already back past the outermost point, so a scan walks through the interchange
+and names a station from the other direction. The split pass chose this
+boundary from the whole leg. -/
 def nearestByTs (points : Array Fix) (t : Int) : Option Fix :=
   let keyed := points.mapIdx fun i p => (p, i)
   ((keyed.toList.mergeSort fun a b =>
@@ -216,13 +189,9 @@ def nearestByTs (points : Array Fix) (t : Int) : Option Fix :=
     let db := (b.1.ts - t).natAbs
     if da != db then da < db else a.2 ≤ b.2).head?).map (·.1)
 
-/-- The fix at which a ride ended.
-
-Walks past mid-ride dwells: the alight is the first slow fix that is not
-followed within 120 s by a return to transit speed. Three arms, in preference
-order — under 5 km/h, then under 15, then simply the first fix after the ride's
-end (the ride ran off the end of the data). Fixes at or before `endTs` are
-skipped entirely. -/
+/-- The fix at which a ride ended: the first slow fix after `endTs` not followed
+within 120 s by transit speed, preferring under 5 km/h, then under 15, then the
+first fix after the ride (it ran off the end of the data). -/
 def findRunAlightFix (points : Array Fix) (endTs : Int)
     (endsAtTurnaround : Bool := false) : Option Fix :=
   if endsAtTurnaround then nearestByTs points endTs else
@@ -234,24 +203,14 @@ def findRunAlightFix (points : Array Fix) (endTs : Int)
     (findSustained fun p => p.speedKmh < POST_TRANSIT_SPEED_KMH).orElse fun _ =>
       points.find? fun p => p.ts > endTs
 
-/-- The fix at which a ride began.
-
-Prefer fixes where the rider is not in transit — those are at or near a station
-rather than mid-route. A subway line that surfaces between stations means a fix
-near the run's `startTs` can be a real reading at 30 km/h mid-train; skipping
-transit-speed fixes reaches the actual boarding one.
-
-`findBoardingPlatformFix` runs first, because the classifier's `startTs` is
-often too late: when the per-window scorer averages over a stop-and-go platform
-sequence, the early part of a multi-station ride lands in the preceding
-"walking" segment. Failing that, the latest slow fix at or before `startTs`,
-then any fix at or before it. -/
+/-- The fix at which a ride began. `findBoardingPlatformFix` first, since the
+classifier's `startTs` is often late (a stop-and-go platform sequence averages
+into the preceding walk); then the latest non-transit fix at or before
+`startTs`, skipping a surfacing subway's mid-train readings; then any fix. -/
 def findRunBoardingFix (points : Array Fix) (startTs : Int)
     (startsAtTurnaround : Bool := false) : Option Fix :=
-  -- The mirror of the alight case: a run cut at a turnaround boards there, and
-  -- the platform walkback would otherwise stride back across the cut into the
-  -- outbound journey and name a station the rider merely passed through on the
-  -- way out, fifteen minutes and one whole direction of travel earlier.
+  -- As for the alight: a run cut at a turnaround boards there, or the walkback
+  -- crosses the cut and names a station passed on the way out.
   if startsAtTurnaround then nearestByTs points startTs else
   let lastWhere (pred : Fix → Bool) : Option Fix :=
     (points.filter pred).back?

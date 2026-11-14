@@ -1,22 +1,14 @@
-//! Capture a live day's OSM callback answers as an `osmTrace`.
+//! Capture a live day's OSM callback answers as an `osmTrace`, so a recent day
+//! can become a gate. The readers are in `day_shell::osm`.
 //!
-//! The `osmTrace` writer. Every reader of the format is in
-//! `day_shell::osm`; this records a recent day's trace so it can become a
-//! gate, since recent days are where the defects are.
+//! Only the sections the `@[extern]` callbacks answer (`walkableRoads`,
+//! `buildingsNear`, `drivableRoads`) are captured. The answerer sections and
+//! `osmRowSet` are not: a day built from this alone feeds the road and walk
+//! matchers and misses every answerer lookup.
 //!
-//! It is one third of a golden day, and saying so is the point. A fixture
-//! carries `{meta, inputs, expected}`; `inputs.osmTrace` has ten sections and
-//! this writes the three the `@[extern]` callbacks answer — `walkableRoads`,
-//! `buildingsNear`, `drivableRoads`. The other seven and `osmRowSet` come from
-//! the answerer and are not captured here. A day built from this alone replays
-//! with the road and walk matchers fed and every answerer lookup missing.
-//!
-//! And it proves itself. Writing a trace that cannot answer its own day
-//! is the failure this repo has already had twice — a fixture whose keys the
-//! fold never spells answers nothing and looks exactly like no fixture at all.
-//! So after capturing, it reloads what it wrote and folds the same day
-//! again, and reports the hit rate. Anything below 100% means the key the
-//! capture wrote is not the key the lookup forms.
+//! It then reloads what it wrote, folds the day again and reports the hit
+//! rate: under 100% means the key written is not the key the lookup forms, a
+//! fixture that looks loaded and answers nothing.
 //!
 //! ```text
 //! scripts/prod-db.sh cargo run --release --example capture_trace -- "$USER" 2026-09-15 /tmp/trace.json
@@ -73,10 +65,8 @@ async fn main() -> Result<()> {
 
     let cap = backend::head::capture(&inputs, date, user).context("head capture")?;
 
-    // Through `fold_from_mirror_recording`, production's own entry point,
-    // so the capture records what production records: the mirror is read on
-    // a blocking thread with a runtime handle, the only place it may be read
-    // from.
+    // Through `fold_from_mirror_recording`, production's own entry point, which
+    // reads the mirror on a blocking thread with a runtime handle.
     let now_ms = chrono::Utc::now().timestamp_millis();
     let (conv, row_set, mut trace, geocodes) = backend::mirror_source::fold_from_mirror_recording(
         pool.clone(),
@@ -89,10 +79,8 @@ async fn main() -> Result<()> {
     pool.close().await;
     let live_day: Value = serde_json::from_str(&conv.out).context("the live fold's reply")?;
 
-    // The geocodes do not come from the recording answerer, which records
-    // the three matcher reads; `reverseGeocode` travels the row source instead.
-    // Merged here so a captured fixture carries the section the older fixtures
-    // carry.
+    // `reverseGeocode` travels the row source, not the recording answerer;
+    // merged here so the fixture carries the section as older ones do.
     if let (Some(section), Some(o)) = (geocodes, trace.as_object_mut()) {
         o.insert("reverseGeocode".into(), section);
     }
@@ -112,22 +100,15 @@ async fn main() -> Result<()> {
     }
 
     // ── the proof ────────────────────────────────────────────────────────────
-    // Reload what was just written and fold the same day again. Every callback
-    // must now hit. A miss here means the key the capture wrote is not the key
-    // the lookup forms, which is precisely the failure that makes a fixture
-    // look loaded and answer nothing.
-    // Non-emptiness first, because the hit rate below cannot see this. An
-    // answer recorded as `[]` is returned as `[]` and counts as a hit, so a
-    // trace with zero buildings replays at 100%. The shape of what was written
-    // is asserted before anything is said about replaying it.
+    // Reload what was written and fold the same day again; every callback must
+    // hit. Non-emptiness first: an answer recorded as `[]` replays as a hit, so
+    // a trace with zero buildings would read 100%.
     let mut empties: Vec<String> = Vec::new();
     let mut total_answers = 0usize;
     for (table, entries) in trace.as_object().into_iter().flatten() {
         let obj = entries.as_object().cloned().unwrap_or_default();
-        // An answer is not always an array. The three callback sections hold
-        // row lists; `reverseGeocode` holds an object per key. Counting only
-        // non-empty arrays would report a fully captured geocode section as
-        // entirely empty and trip the warning below.
+        // The callback sections hold row lists, `reverseGeocode` an object per
+        // key; counting only arrays would call the geocodes empty.
         let filled = obj
             .values()
             .filter(|v| match v {
@@ -185,10 +166,8 @@ async fn main() -> Result<()> {
         backend::lean::Chain(&captured, RowSetAnswerer::new(&row_set).context("row set")?);
     let replay = backend::fold::run_day(&cap, &inputs, &mut answerer2).context("replay")?;
 
-    // Day equality, not key matching. The row set is a conversion —
-    // positional mirror rows into the fixture's object form — and a conversion
-    // that loses a field produces a fixture that is well formed and wrong. The
-    // only proof worth having is that the fold reaches the same day from it.
+    // Day equality, not key matching: the row set is a conversion, and one
+    // that loses a field gives a well-formed, wrong fixture.
     let replay_day: Value = serde_json::from_str(&replay.out).context("the replayed reply")?;
     if replay_day == live_day {
         eprintln!("day equality: the replay reproduces the live fold EXACTLY");
@@ -233,12 +212,8 @@ async fn main() -> Result<()> {
     }
 
     // ── the control ──────────────────────────────────────────────────────────
-    // Does the decline list do any work? Day equality above says the
-    // capture is faithful; it does not say which part of it mattered. Replay
-    // once more with `declined` stripped: if the day is still identical, the
-    // list is inert for this day and nobody should conclude from it that a
-    // low-coverage day is being reproduced. Where it is not identical, that
-    // difference is the gap a fixture without the list cannot express.
+    // Replay with `declined` stripped. An identical day means the list is
+    // inert for this day; a difference is what a fixture without it loses.
     let mut stripped = rs.clone();
     stripped.remove("declined");
     let stripped = Value::Object(stripped);
@@ -257,30 +232,16 @@ async fn main() -> Result<()> {
     );
     let no_declines_day: Value =
         serde_json::from_str(&no_declines.out).context("the control reply")?;
-    // The counts go out either way. An identical day does not mean an
-    // identical provenance: a declined key leaves the fold on defaults and is
-    // counted `unanswerable`, while an empty answer is a claim that there is
-    // nothing there. Those can reach the same day and are not the same fact —
-    // and `routes::velocity` logs the unanswerable count as the signal that a
-    // served day was built from defaults. Reporting only when the day
-    // moves would hide exactly that.
+    // The counts go out either way: a declined key is `unanswerable` (the
+    // signal `routes::velocity` logs for a day built from defaults), an empty
+    // answer claims nothing is there. Same day, different facts.
     eprintln!(
         "control: declined — live {} · replay {} · without `declined` {}",
         conv_declined, replay_declined, control_declined,
     );
-    // The day is the coarser test and it misses this: the output can be
-    // identical either way while the unanswerable count falls (108 -> 49 on
-    // one day: 59 coverage gaps answered as "nothing is there" instead of
-    // "nobody knows"). Comparing days alone reports that as no difference.
-    // The direction is named, because only one of the two is ordinary.
-    // Stripping `declined` can only turn an unknown into an empty answer, so the
-    // control must have fewer unanswerable, never more. The other way round
-    // means the arms differ in something else, which is how a biased control
-    // reads (the replay arm and the control must get the same trace).
-    //
-    // And it is `usize`: the subtraction underflowed to 18446744073709551602
-    // the first time the control came out ahead, printing a number rather than
-    // failing.
+    // Stripping `declined` can only turn an unknown into an empty answer, so
+    // the control must have fewer unanswerable, never more; more means the arms
+    // differ in something else. Compared with `cmp`: the counts are `usize`.
     match replay_declined.cmp(&control_declined) {
         std::cmp::Ordering::Greater => eprintln!(
             "control: `declined` is LOAD-BEARING — without it {} gap(s) read as \
@@ -311,16 +272,10 @@ async fn main() -> Result<()> {
     }
 
     // ── the whole fixture ────────────────────────────────────────────────────
-    // `{meta, inputs, expected}`, the shape a golden day carries.
-    //
-    // `expected.statesOut`, not under `tsArm`: this is self-blessed, the
-    // pipeline's own output, frozen. It catches a regression and cannot catch
-    // "it was always wrong"; the ground-truth narrative grades correctness, and
-    // the day must be named in `corpus::day::SELF_BLESSED` to be accepted.
-    //
-    // `meta.captureInputs` says what the capture was taken under. Without it
-    // a fixture cannot notice the constants it depends on moving, and every
-    // gate stays green while the served day differs.
+    // `{meta, inputs, expected}`. `expected.statesOut` is self-blessed: it
+    // catches regressions, not "always wrong", so the day must be named in
+    // `corpus::day::SELF_BLESSED`. `meta.captureInputs` records the constants
+    // the capture was taken under, so a fixture notices them moving.
     let mut fixture_inputs = inputs.clone();
     if let Some(o) = fixture_inputs.as_object_mut() {
         o.insert("osmTrace".into(), doc["inputs"]["osmTrace"].clone());

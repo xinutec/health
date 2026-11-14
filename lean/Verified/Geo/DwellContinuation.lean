@@ -4,29 +4,22 @@ import Verified.Geo.FocusPlaces
 /-!
 # Dwell-prior continuation
 
-When the phone goes quiet at a strong focus_place with no closing bracket,
-silence is evidence the user is still there. Model P(still here | Δ) as an
-exponential survival curve in elapsed time, with mean dwell τ = totalDwell /
-visits; continue the stay while P ≥ a floor. The whole module ports:
+When the phone goes quiet at a strong focus place with no closing bracket,
+silence is evidence the user is still there. P(still here | Δ) is an
+exponential survival curve with mean dwell τ = totalDwell / visits; the stay
+continues while P ≥ a floor.
 
 * `meanDwellSec` — τ, or `none` when the stats can't support one (exact).
-* `dwellContinuation` — how far to carry the stay: to where P hits the floor
-  (`Δ = τ·ln(1/floor)`, `Math.round`ed), clamped to the day end; `none` when
-  weakly established / unusable / no trailing room.
-* `applyDwellContinuation` — the DayState orchestration around them: pick the
-  anchor, bind the day's last stay centroid to a focus place, and splice the
-  inferred stay in after the anchor — unless it would be too short to assert
-  (`MIN_CONTINUATION_S`).
+* `dwellContinuation` — the carry, `Δ = τ·ln(1/floor)` rounded, clamped to the
+  day end; `none` when weak, unusable or with no trailing room.
+* `applyDwellContinuation` — pick the anchor, bind the day's last stay centroid
+  to a focus place, and splice the inferred stay unless shorter than
+  `MIN_CONTINUATION_S`.
 
 UNPROVEN; pinned by the `#guard`s below.
 
-⚠ Those guards are the only record of these answers, and nothing re-derives
-them. Treat a change to one as a change to the specification rather than as a
-correction to a transcription.
-
-A continuation shorter than `MIN_CONTINUATION_S` is not spliced, so the guard
-that would pin a one-second inferred stay pins its refusal, and says so where it
-sits.
+⚠ Those guards are the only record of these answers; changing one changes the
+specification.
 -/
 
 namespace Verified.Geo.DwellContinuation
@@ -82,22 +75,14 @@ private def cafe : DwellPlace := ⟨108000, 30, 10⟩     -- τ = 3600
 
 /-! ## `applyDwellContinuation` — the DayState orchestration
 
-Pure: no DB, no clock. The caller supplies the day's states, its segments, the
-mined focus places and the day end; this decides whether to splice one inferred
-stay onto the trailing edge.
-
-Three details the port has to carry, each of which reads as incidental and is
-not:
+Pure. Three details that look incidental:
 
 * The anchor is the latest-ending state that started before the day end, not
-  the array's last element. Day-state assembly brackets the day with sleep
-  windows, so the array can end with tomorrow's early-hours sleep while the last
-  thing that actually happened today is an earlier daytime stay. The `endTs`
-  comparison is strict, so a tie keeps the earlier state.
-* The stay centroid is the last segment carrying one, found by reversing —
-  not the last segment, which may have none.
-* An empty `place` or `tz` string is dropped rather than inherited as `""`.
-  Same rule `EpisodeGeometry` records.
+  the last element: the array can end with tomorrow's early sleep. Strict
+  `endTs` comparison, so a tie keeps the earlier.
+* The stay centroid is the last segment carrying one, not the last segment.
+* An empty `place` or `tz` is dropped, not inherited as `""`, as in
+  `EpisodeGeometry`.
 -/
 
 open Verified.Hsmm.FloatScore (haversineMeters)
@@ -107,26 +92,13 @@ open Verified.Geo.DayState (DayState)
 back to the place's own radius when that is larger. -/
 def PLACE_MATCH_M : Float := 120
 
-/-- How long a spliced continuation must run to be worth asserting.
+/-- How long a spliced continuation must run to be asserted: a continuation
+asserts a visit, and `FocusPlaces.FOCUS_VISIT_MIN_S` is what counts as one.
+Named, not copied, so the two cannot drift.
 
-Not a new bar. A continuation asserts a visit to the anchor's place, and
-`FocusPlaces.FOCUS_VISIT_MIN_S` is already the pipeline's answer to "how long
-must a dwell last to count as one" — the lowest such bar there is, chosen to
-catch cafés. Asserting a visit the miner would not count is asserting something
-the rest of the pipeline would not record.
-
-The name is the point, not the number. Pasting `10 * 60` here would carry the
-value without the reasoning that sets it, and the two would drift the first time
-the miner's bar moved.
-
-It fires because `dwellContinuation` clamps to the day end: the survival horizon
-can want hours and get whatever is left, which is sometimes seconds. Measured
-over the 41-day golden corpus, 15 continuations survive every other guard and
-their lengths are bimodal — 3 s, 76 s and 194 s, then nothing at all until
-1,135 s (19 min). So this cuts three rows and the nearest one it keeps is 80%
-clear of the bar; every threshold between 194 s and 1,135 s does exactly the
-same thing on this data. The corpus is 41 curated days, which is why the bar is
-still argued from the miner rather than read off the gap. -/
+It fires because the clamp to the day end can leave seconds. On the golden
+corpus the continuations are 3 s, 76 s, 194 s, then 1,135 s and up, so any bar
+in that gap acts the same; the bar is argued from the miner, not the gap. -/
 def MIN_CONTINUATION_S : Int := Verified.Geo.FocusPlaces.FOCUS_VISIT_MIN_S
 
 /-- The `KnownPlaceProjection` fields this pass reads. The dwell stats are
@@ -181,19 +153,13 @@ def bindPlace (lat lon : Float) (places : Array DwellCandidate) : Option DwellCa
     if decide (d ≤ reach) && decide (d < bestD) then (some p, d) else (best, bestD)).1
 
 /-- Splice one inferred stay onto the trailing edge when the day's last stay
-binds to an established focus place. The time past the survival horizon is left
-blank — an honest gap beats a fabricated stay.
+binds to an established focus place. Past the survival horizon stays blank: an
+honest gap beats a fabricated stay. A no-op after sleep-bridging or empty-day
+inference has filled to the day end.
 
-Composes after sleep-bridging and empty-day inference: where those already
-carried the stay to the day end there is no trailing room, so this is a no-op.
-
-Two of these guards are provably unpinnable, and are kept so nobody
-"simplifies" them away; both probed at zero:
-
-* `states.isEmpty` is a short-circuit only. On an empty array `anchorIndex`
-  returns `none`, which returns the array unchanged by the same path.
-* `anchor.endTs ≥ dayEndTs` is shadowed by `dwellContinuation`'s own
-  `lastEndTs ≥ dayEndTs`, which refuses the identical condition one step later. -/
+Two guards cannot be pinned and are kept so nobody removes them: `states.isEmpty`
+(an empty array already returns via `anchorIndex`) and `anchor.endTs ≥ dayEndTs`
+(`dwellContinuation` refuses the same one step later). -/
 def applyDwellContinuation
     (states : Array DayState) (segments : Array Seg)
     (knownPlaces : Array DwellCandidate) (dayEndTs : Int) : Array DayState :=
@@ -215,12 +181,9 @@ def applyDwellContinuation
           match dwellContinuation place anchor.endTs dayEndTs with
           | none => states
           | some (endTs, _) =>
-            -- The bar is here, not in `dwellContinuation`. That function is
-            -- pinned bit for bit and answers a different question, how far the
-            -- prior carries, which the clamp can cut to seconds. Whether a span
-            -- that short is worth splicing as a state is this orchestration's
-            -- call, so the maths stays untouched and its `#guard`s keep meaning
-            -- what they say.
+            -- The bar is here, not in `dwellContinuation`: that kernel answers
+            -- how far the prior carries and stays pinned bit for bit; whether
+            -- a short span is worth a state is this function's call.
             if decide (endTs - anchor.endTs < MIN_CONTINUATION_S) then states
             else
             let continuation : DayState :=
@@ -320,12 +283,8 @@ private def far : DwellCandidate := { homeFocus with centroidLat := 51.51 }   --
     #[{ centroidLat := 51.5, centroidLon := -0.2, uniqueDays := 30, visitCount := some 30 }] == #[stay]
 #guard run #[stay] here
     #[{ centroidLat := 51.5, centroidLon := -0.2, uniqueDays := 30, totalDwellSec := some 1080000 }] == #[stay]
--- τ = 1 s used to splice a one-second stay, and this guard pinned it. The
--- rounding it describes is unchanged — `dwellContinuation` still answers
--- `some (950001, _)`, because a 0.69 s horizon rounds up — but a one-second
--- visit is not one the miner would count, so `MIN_CONTINUATION_S` refuses to
--- draw it. The kernel and the splice decision now differ here on
--- purpose, which is the whole reason the bar sits in the orchestration.
+-- `dwellContinuation` still answers `some (950001, _)` (a 0.69 s horizon rounds
+-- up), but a one-second visit is below `MIN_CONTINUATION_S`, so nothing is drawn.
 #guard match dwellContinuation ⟨30, 30, 30⟩ 950000 DAY_END with
   | some (e, _) => e == 950001
   | none => false
@@ -333,10 +292,9 @@ private def far : DwellCandidate := { homeFocus with centroidLat := 51.51 }   --
 -- …and τ = 0.7 s rounds to 0, which is no room at all — refused one step
 -- earlier, by the kernel, and still worth pinning separately.
 #guard run #[stay] here #[{ homeFocus with totalDwellSec := some 21, visitCount := some 30 }] == #[stay]
--- The bar's own edge, one second wide. τ = 864 s carries the stay 599 s and is
--- refused; τ = 865 s carries it 600 s and is kept, because the comparison is
--- strict — exactly the bar is long enough. (The horizon is τ·ln 2, not τ, so
--- these are 25,920 and 25,950 seconds of total dwell over 30 visits.)
+-- The bar's edge: τ = 864 s carries 599 s and is refused; τ = 865 s carries
+-- 600 s and is kept (strict comparison). The horizon is τ·ln 2, so these are
+-- 25,920 and 25,950 s of dwell over 30 visits.
 #guard run #[stay] here #[{ homeFocus with totalDwellSec := some 25920, visitCount := some 30 }] == #[stay]
 #guard run #[stay] here #[{ homeFocus with totalDwellSec := some 25950, visitCount := some 30 }]
   == #[stay, cont 950000 950600 (some "Home") (some "Europe/London")]

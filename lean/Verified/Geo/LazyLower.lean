@@ -4,36 +4,17 @@ import Verified.Rail.Certify
 /-!
 # Lazy Dijkstra: the optimality lower bound (`dist[tgt] ≤ every path`)
 
-The weight-optimality *value* half (`LazyWeight.iter_route_pathCost_eq`) proves
-the reconstructed route costs exactly `dist[tgt]`. This file supplies the other
-half of "the search's answer is *the* shortest": every valid `src → tgt` path
-costs at least `dist[tgt]`. Together they say the route is a minimum-cost path.
+`LazyWeight.iter_route_pathCost_eq` proves the route costs exactly `dist[tgt]`;
+this file proves every valid `src → tgt` path costs at least that, so the route
+is a minimum-cost path, and bridges it to `Rail.oracleDist`.
 
-The classical argument is the feasible-cut walk (rail `Certify.cut_bound`): walk
-a candidate path from `src`, chaining the no-shortcut inequality (a settled
-vertex's edges were relaxed, so `dist[v] ≤ dist[u] + w`) while the path stays in
-the settled set, and stop at the first vertex that left it — which by the floor
-already costs `≥ D`. The rail proof reuses `feasibleCut` over the shared bare
-`done`/`dist` arrays, but the lazy machine breaks that predicate: a
-radius-*exhausted* vertex is settled with its edges deliberately not relaxed
-(`dist > maxR`, the radius cutoff), so `feasibleCut` over the whole graph is false.
+The rail proof's `feasibleCut` does not hold here: a radius-exhausted vertex is
+settled with its edges unrelaxed. `cut_walk` instead branches on `du ≤ maxR`:
+inside, `UInv` gives the no-shortcut step; beyond, `D ≤ maxR < du` closes the
+goal. So the bound is claimed only for `D ≤ maxR`.
 
-`cut_walk` handles the radius honestly. It threads the bound `du ≤ prefix-cost`
-and branches on `du ≤ maxR`: within the radius `UInv` supplies the no-shortcut
-step; a settled vertex found *beyond* the radius short-circuits, because
-`D ≤ maxR < du ≤ du + C` closes the goal outright. The honest precondition is
-therefore `D ≤ maxR` — the lower bound is claimed only inside the searched
-radius, never beyond it.
-
-The "nothing cheaper is still unsettled" fact (`nocheap_of_inv`) is not an extra
-assumption: it falls straight out of the existing invariants — an unsettled
-finite vertex holds a live heap entry (`HInv`) priced `≥ L` (`LInv.ge`), and the
-settled target is priced `≤ L` (`LInv.dle`), so `D ≤ L ≤ dv`.
-
-What remains for a *fully* unconditional statement — and is the next brick — is
-discharging `done[src]` (the search settled the source) and bridging the bound
-to `Rail.oracleDist` via the enumeration lemmas. Those are taken as explicit
-hypotheses here.
+`nocheap_of_inv` (nothing cheaper is unsettled) and `done[src]` are derived from
+the invariants, not assumed.
 -/
 
 namespace Verified.Geo
@@ -44,12 +25,9 @@ open Verified.Rail (Graph Heap WFEdges edgeMinW pathCost pathCost_cons_cons
 
 /-! ## Discharging `done[src]` — the source is always settled
 
-`iter_route_optimal` below assumed `done[src]` ("the search settled the
-source"). It is not an assumption: `linit`'s heap is seeded `#[(0, src)]`, so
-the very first `lstep` pops `(0, src)` at price `0 ≤ maxR` (never radius-
-exhausted, since `maxR : Nat`) and settles it; `done` only ever grows
-(`lstep_done_mono`), so `src` stays settled for every `k ≥ 1`. And any `k` that
-settled `tgt` is `≥ 1`. -/
+The heap is seeded `#[(0, src)]`, so the first `lstep` settles `src` (price
+`0 ≤ maxR`), `done` only grows (`lstep_done_mono`), and any `k` that settled
+`tgt` is `≥ 1`. -/
 
 /-- `linit`'s `done` array is all-false. -/
 private theorem linit_done_getD (n src v : Nat) :
@@ -117,13 +95,10 @@ theorem iter_src_done_of_tgt {g : Graph} {maxR src : Nat} (hsrc : src < g.n)
 
 /-! ## The radius-aware cut walk -/
 
-/-- Radius-aware Dijkstra lower bound. Walking any path from a settled
-in-range vertex `u` (priced `du`) to `tgt` (priced `D`), the settled distance
-`D` is bounded by `du` plus the path cost.
-
-While the path stays inside the settled set *and* the radius, `UInv` gives the
-no-shortcut step; the first unsettled vertex is bounded below by `D` (`hnc`); and
-a settled vertex found beyond the radius short-circuits via `D ≤ maxR < du`. -/
+/-- Radius-aware Dijkstra lower bound: along any path from a settled in-range
+vertex `u` (priced `du`) to `tgt` (priced `D`), `D ≤ du +` the path cost.
+`UInv` steps inside the settled set and radius, the first unsettled vertex is
+`≥ D` (`hnc`), and a settled vertex beyond the radius gives `D ≤ maxR < du`. -/
 theorem cut_walk {g : Graph} {maxR D tgt : Nat} {s : LState}
     (hwf : WFEdges g) (hU : UInv g maxR s)
     (hnc : ∀ v dv, v < g.n → s.done.getD v false = false →
@@ -177,10 +152,9 @@ theorem cut_walk {g : Graph} {maxR D tgt : Nat} {s : LState}
 
 /-! ## Discharging "nothing cheaper is unsettled" -/
 
-/-- The floor bound: with `LInv`/`HInv` and the target settled at `D`, no
-unsettled finite vertex is priced below `D`. An unsettled vertex with a distance
-holds a live heap entry (`HInv`) priced `≥ L` (`LInv.ge`), and the settled target
-is priced `≤ L` (`LInv.dle`), so `D ≤ L ≤ dv`. -/
+/-- The floor bound: no unsettled finite vertex is priced below a settled
+target's `D`. It holds a live heap entry (`HInv`) priced `≥ L` (`LInv.ge`), and
+the target is `≤ L` (`LInv.dle`), so `D ≤ L ≤ dv`. -/
 theorem nocheap_of_inv {g : Graph} {L D tgt : Nat} {s : LState}
     (hL : LInv g L s) (hH : HInv g s)
     (htgtdone : s.done.getD tgt false = true) (htgt : s.dist.getD tgt none = some D) :
@@ -197,12 +171,7 @@ theorem nocheap_of_inv {g : Graph} {L D tgt : Nat} {s : LState}
 /-! ## The lower bound at a search state -/
 
 /-- Optimality lower bound. At `iter g maxR k (linit g.n src)` with `tgt`
-settled at `D ≤ maxR`, every valid `src → tgt` path costs at least `D`.
-
-Given the value half (`iter_route_pathCost_eq`), this makes the reconstructed
-route a minimum-cost path. `done[src]` (the source was settled) is the only
-"ran far enough" fact still assumed — the floor bound (`nocheap_of_inv`) is
-discharged internally. -/
+settled at `D ≤ maxR`, every valid `src → tgt` path costs at least `D`. -/
 theorem iter_lower_bound {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
     (hsrc : src < g.n) (k : Nat) {tgt D : Nat}
     (htgtdone : (iter g maxR k (linit g.n src)).done.getD tgt false = true)
@@ -227,10 +196,8 @@ theorem iter_lower_bound {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
 
 /-! ## The route is a minimum-cost path -/
 
-/-- Weight-optimality, both halves. The reconstructed route from a settled,
-chain-completed, within-radius target costs exactly `dist[tgt]` (value half) and
-that cost lower-bounds every valid `src → tgt` path (this file) — so the route is
-a minimum-cost path. -/
+/-- Weight-optimality: the route to a settled, chain-completed, within-radius
+target costs exactly `dist[tgt]`, and no valid `src → tgt` path costs less. -/
 theorem iter_route_optimal {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
     (hsrc : src < g.n) (k : Nat) {tgt dt : Nat}
     (htgtdone : (iter g maxR k (linit g.n src)).done.getD tgt false = true)
@@ -247,31 +214,19 @@ theorem iter_route_optimal {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
 
 /-! ## Bridge to the shared enumeration oracle
 
-`iter_route_optimal` says the route is a minimum over *valid* paths. The rail
-flagship is certified against `Rail.oracleDist` — the minimum over *simple*
-paths of bounded length. This bridge closes the gap, pinning the lazy search's
-answer to the very same oracle: `oracleDist g src tgt = some dt`.
+The rail flagship is certified against `Rail.oracleDist`, the minimum over
+simple bounded paths; this pins the lazy search to it. Lower bound: every
+enumerated cost is a valid-path cost (`enum_sound`), floored by
+`iter_lower_bound`. Membership: the route itself is enumerated
+(`enum_complete`).
 
-Two directions, both radius-honest:
+The route's simplicity (`nodupB`) and length (`≤ g.n + 1`) are hypotheses the
+caller checks per route, as the rail `certify` gate does; no settle-order
+invariant is carried to prove them. -/
 
-* Lower bound — every enumerated (simple-path) cost is a valid-path cost
-  (`enum_sound`), and `iter_lower_bound` floors every valid `src → tgt` path at
-  `dt`. No feasible cut needed; the radius bound `dt ≤ maxR` carries it.
-* Membership — the reconstructed route itself is enumerated
-  (`enum_complete`) at cost `dt`, so the running minimum can be no larger.
-
-The route's simplicity (`nodupB`) and length (`≤ g.n + 1`) are taken as
-hypotheses — cheap, executable checks the caller witnesses per route, exactly
-as the rail `certify` gate does — rather than proved from a settle-order ghost
-invariant the lazy machine does not carry. The endpoints and cost are proved:
-`iter_route_pathCost_eq` (cost `dt`), `chainList_head?` (far end `tgt`),
-`iter_route_head?_src` (near end `src`). -/
-
-/-- The lazy search's route attains the shared oracle distance. For a
-settled, chain-completed, within-radius target whose reconstructed route is
-simple and short (both executable checks), the route's cost `dt` is exactly
-`Rail.oracleDist g src tgt` — the same simple-path minimum the rail flagship is
-certified against. -/
+/-- The lazy search's route attains the shared oracle distance: for a settled,
+chain-completed, within-radius target whose route is simple and short, its cost
+`dt` is `Rail.oracleDist g src tgt`. -/
 theorem iter_route_oracle {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
     (hsrc : src < g.n) (k : Nat) {tgt dt : Nat}
     (htgtdone : (iter g maxR k (linit g.n src)).done.getD tgt false = true)

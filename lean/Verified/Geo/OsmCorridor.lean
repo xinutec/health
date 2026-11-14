@@ -4,45 +4,24 @@ import Verified.JsNum
 /-!
 # Corridor road-geometry fetch
 
-Read the OSM ways along a GPS track by sampling small discs down the track and
-unioning them, instead of one giant disc around the track's centroid. The
-motivation is cost, not output: the mirror's spatial query is super-linear in
-the query box, so a long drive's centroid disc is a pathological scan while the
-drive itself is a thin line.
+Read the OSM ways along a GPS track as a union of small discs down the track,
+not one disc around the centroid: the mirror's spatial query is super-linear in
+the box, and a long drive is a thin line. Which arm a leg takes shows in the read
+trace a fixture replay must reproduce:
 
-Two arms, and which arm a leg takes is the observable thing — the read trace a
-fixture replay must reproduce:
+* short leg (every fix within `SINGLE_DISC_MAX_DIST_M` of the centroid): one
+  read at the centroid, radius rounded.
+* long leg: `resamplePolyline` at `stepM` and read a `radiusM` disc at each
+  sample, unioning by `osmId`, first wins.
 
-* short leg (every fix within `SINGLE_DISC_MAX_DIST_M` of the centroid) —
-  one read, at the centroid, with a `Math.round`ed radius. Sampling a short leg
-  would only multiply round-trips.
-* long leg — a corridor: `resamplePolyline` the track at `stepM` spacing and
-  read a `radiusM` disc at each sample, unioning by `osmId`, first wins.
+The resampler recurses on a `Nat` cap derived from the step choice:
+`step = max stepM (total / (maxSamples - 1))` bounds the walk to
+`maxSamples - 1` steps. Float drift in the accumulated `nextAt` could outrun it;
+the guards pin the sample count on a long track, where that would show.
 
-## Termination of the resampler is derived, not budgeted
-
-`resamplePolyline`'s inner walk advances `nextAt` by `step` while
-`nextAt <= acc + segLen`. Here it recurses on a `Nat`, and that `Nat` is the
-function's own declared cap: `step = max stepM (total / (maxSamples - 1))`
-forces `total / step ≤ maxSamples - 1`, and the walk stops once `nextAt` passes
-`total`, so it cannot take more than `maxSamples - 1` steps. The parameter
-records that argument for the termination checker: a bound derived from the
-step choice, not a net thrown over unanalysed control flow.
-
-Reaching zero with the loop condition still true would mean the float walk
-outran its real-arithmetic bound. That cannot be ruled out by this argument
-(the walk accumulates `nextAt` by repeated addition, so it drifts from
-`step × j`), and the guards pin the sample count on a track long enough to take
-many steps, which is where such a drift would first show.
-
-Exactness: `metersBetween` is `WalkableRoute`'s, `sqrt` of the sum of squares,
-≤1 ULP from an overflow-careful hypot at these magnitudes, and every sample
-position is a lerp whose parameter divides by it, so positions inherit that
-wobble. The arm choice, the union order and the sample count are exact unless
-the wobble crosses a comparison; at 600 m against a ≤1 ULP perturbation it does
-not.
-
-UNPROVEN; pinned by the `#guard`s.
+Exactness: `metersBetween` is ≤1 ULP from an overflow-careful hypot, and sample
+positions inherit that. Arm choice, union order and sample count are exact
+unless the wobble crosses a 600 m comparison. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.OsmCorridor
@@ -104,12 +83,9 @@ private def sampleRun (a b : Pt) (segLen acc step : Float) :
     else (out, nextAt)
 
 /--
-Resample a polyline at ~`stepM` arc-length spacing. Always includes the first
-vertex, and the last one unless a sample already landed within a metre of it, so
-the corridor reaches both ends of the leg.
-
-A zero-length track segment is skipped entirely, its `acc += segLen` too, which
-is harmless only because the length it skips is zero.
+Resample a polyline at ~`stepM` arc-length spacing, always including the first
+vertex and the last unless a sample landed within a metre of it. A zero-length
+segment is skipped.
 -/
 def resamplePolyline (track : Array Pt) (stepM : Float) (maxSamples : Nat := MAX_SAMPLES) :
     Array Pt :=
@@ -152,24 +128,13 @@ def unionById (acc : Array Way) (ways : Array Way) : Array Way :=
     if seen.any (·.osmId == w.osmId) then seen else seen.push w
 
 /--
-Fetch the ways in a corridor around `track`. Short legs read one centroid disc;
-long ones read a `radiusM` disc at every `stepM` sample down the track and union
-the results. `query` is `osm.drivableRoads` (roads) or `osm.walkableRoads`
-(walks).
+Fetch the ways in a corridor around `track`, with `query` either
+`osm.drivableRoads` or `osm.walkableRoads`. The single-disc arm rounds its
+radius to a metre; the corridor arm passes `radiusM` through.
 
-The `Float` radius: the single-disc arm rounds its own radius to a whole metre,
-the corridor arm passes `radiusM` through untouched.
-
-⚠ `query` may decline, and a corridor of declines is not an empty corridor.
-`none` here means every read the corridor made went unanswered — the
-mirror has never covered this ground — where `some #[]` means it was asked and
-there is nothing there.
-
-A partly answered corridor returns what it found. The union is already a
-best-effort over many independent discs, and one sample falling off the edge of
-a coverage box should not throw away the roads the other samples did find; the
-declined disc is recorded by the host at the read, so the gap is fetched without
-the drawing having to lose anything meanwhile.
+⚠ `none` means every read was declined (the mirror never covered this ground);
+`some #[]` means asked and empty. A partly answered corridor returns what it
+found: the host records each declined disc for fetching.
 -/
 def corridorWays (query : Float → Float → Float → Option (Array Way))
     (track : Array Pt) (stepM radiusM : Float) : TraceM (Option (Array Way)) := do
@@ -205,13 +170,8 @@ def corridorWays (query : Float → Float → Float → Option (Array Way))
 /-! ## Guards
 
 Every number below is a recorded answer on the same fixture, at full double
-precision.
-
-The `metersBetween` wobble is measured, not assumed: across every distance
-this file's fixtures compute, `Math.hypot` and `sqrt(dx² + dy²)` agreed on
-145 of 206 calls, worst disagreement 5.684341886080802e-14 m. The
-sample positions are therefore pinned exactly, not approximately — but the
-guards still compare through `approx`, because that agreement is a fact about
+precision. The `metersBetween` wobble is measured, worst 5.7e-14 m across these
+fixtures, but the guards still compare through `approx`: that is a fact about
 these magnitudes, not a theorem.
 -/
 
@@ -378,10 +338,9 @@ private def ROADS : Array RoadsEntry := #[
       { osmId := 3, name := some "Parallel Road", subtype := some "residential", coords := #[p 51.5 (-0.13920633007295433), p 51.501796622349985 (-0.13920633007295433), p 51.503593244699964 (-0.13920633007295433), p 51.50538986704995 (-0.13920633007295433), p 51.50718648939993 (-0.13920633007295433), p 51.50898311174991 (-0.13920633007295433)] }] }
 ]
 
-/-- Answers `some #[]` on an unknown key, not `none`. These guards pin the
-corridor arithmetic — which discs are read, and how their ways union — against a
-mirror that covers the whole track. Declining here would test the decline path
-instead, and the discriminating stub is what makes the read trace meaningful. -/
+/-- Answers `some #[]` on an unknown key, not `none`: these guards pin the
+corridor arithmetic against a mirror that covers the whole track, not the
+decline path. -/
 private def stubRoads (la lo rad : Float) : Option (Array Way) :=
   match ROADS.find? fun e => approx e.lat la && approx e.lon lo && approx e.radiusM rad with
   | some e => some e.ways

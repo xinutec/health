@@ -4,30 +4,20 @@
 //!   fixture.inputs → head::capture → fold → episodes → walkgate → metrics
 //! ```
 //!
-//! The logic is Lean's (`Verified.Eval.WalkMetrics` measures,
-//! `Verified.Eval.WalkGate` judges); this file handles files. Every walk is
-//! paired with its blessed floor (`tests/golden/walk-baseline.json`), and all
-//! five axes gate: stall, off-path building crossing, step budget, the speed
-//! ceiling, and route-correctness (`routeCorr`, scored by name against the
-//! narratives, `Verified.Eval.GroundTruth`).
+//! Lean measures (`Verified.Eval.WalkMetrics`) and judges
+//! (`Verified.Eval.WalkGate`); this file handles files. Each walk is paired with
+//! its floor in `tests/golden/walk-baseline.json`, and every axis gates: stall,
+//! off-path building crossing, step budget, speed ceiling, and `routeCorr`
+//! against the narratives.
 //!
-//! # Arms
+//! `WALK_TRACE=none|walkable|buildings|drivable|all` picks the matcher reads
+//! answered; `all` (default) gates, the rest are attribution controls and stand
+//! the other graders down. `WALK_DAYS=<dates>` restricts the corpus. Grading
+//! shards by day; `WALK_BLESS` writes the floor whole, so shard 0 measures every
+//! day for it.
 //!
-//! `WALK_TRACE=none|walkable|buildings|drivable|all` chooses which recorded
-//! matcher reads the fold is answered from; `all`, the default, is the gating
-//! arm, since the matcher runs in production. The others are attribution
-//! controls: `none` draws the raw walks. A non-default arm stands the other
-//! graders down, since it ablates the geometry they grade. `WALK_DAYS=<dates>`
-//! restricts the corpus.
-//!
-//! # Sharding
-//!
-//! Grading shards by day, and each shard's verdict covers its own days.
-//! `WALK_BLESS` writes the floor whole, so it does not shard: shard 0 measures
-//! every day and the others stand down.
-//!
-//! `tests/golden/days` is gitignored (real coordinates and places), so without
-//! it this announces a skip, and it prints metrics only, never a coordinate.
+//! `tests/golden/days` is gitignored (real places): without it this announces a
+//! skip. It prints metrics only, never a coordinate.
 
 use serde_json::{Value, json};
 
@@ -51,11 +41,9 @@ fn flatten_section(trace: &Value, key: &str) -> Vec<Value> {
         .collect()
 }
 
-/// Add `v` to `table` if its serialised form is new, and return its index.
-///
-/// Keyed on the serialised bytes rather than on an id: the trace's items carry
-/// no stable identifier here, and byte-equality is the only sharing that cannot
-/// fuse two geometries the referee would score differently.
+/// Add `v` to `table` if its serialised form is new, and return its index. The
+/// items have no stable id, and byte equality cannot fuse two geometries the
+/// referee would score differently.
 fn intern(
     table: &mut Vec<Value>,
     index: &mut std::collections::HashMap<String, usize>,
@@ -85,10 +73,8 @@ fn ring_to_pairs(ring: &Value) -> Value {
     )
 }
 
-/// The raw fixes the fold was given, as `[latBits, lonBits]` inside the leg's
-/// window. From `env.rawFixes`, where the day request nests them: a pointer
-/// at the wrong key yields an empty slice, not an error. The bit strings pass
-/// through untouched.
+/// The raw fixes the fold was given in the leg's window, as `[latBits, lonBits]`
+/// from `env.rawFixes`. A wrong key yields an empty slice, not an error.
 fn raw_in_window(request: &Value, start: i64, end: i64) -> Value {
     let rows = request
         .pointer("/env/rawFixes")
@@ -121,13 +107,11 @@ fn steps_rows(inputs: &Value) -> Value {
     )
 }
 
-/// The day's enforceable named-walk windows, as `(startTs, endTs, wayName)`:
-/// what makes `routeCorr` measurable.
-///
-/// A row must be a walking truth, name a way, and be enforceable (a definite
-/// verdict with `corroborated`/`user`/`derived` provenance): an `inferred` row
-/// comes from the pipeline's own output and would make its guess the standard.
-/// The zone is the fixture's (a narrative may declare its own with `Times:`).
+/// The day's enforceable named-walk windows, `(startTs, endTs, wayName)`, which
+/// make `routeCorr` measurable: walking rows naming a way with a definite
+/// verdict and `corroborated`/`user`/`derived` provenance (an `inferred` row
+/// would make the pipeline's guess the standard). In the fixture's zone unless
+/// the narrative declares one.
 fn named_walk_windows(date: &str, tz: &str) -> Vec<(i64, i64, String)> {
     let path = format!(
         "{}/../../tests/golden/ground-truth/{date}.md",
@@ -186,10 +170,8 @@ fn accepted_names(windows: &[(i64, i64, String)], start: i64, end: i64) -> Vec<S
     names
 }
 
-/// The walk matcher's identity report for the segment covering `[start, end)`
-/// (`Seg.walkWayUm`): where the route ran, and for how far. A diagnostic, not a
-/// metric. Matched on exact bounds: a walking episode keeps its segment's
-/// window, so a near miss means they diverged.
+/// The walk matcher's identity report (`Seg.walkWayUm`) for the segment covering
+/// exactly `[start, end)`: a diagnostic, not a metric.
 fn way_um_for(out: &Value, start: i64, end: i64) -> Vec<Value> {
     out.get("segs")
         .and_then(Value::as_array)
@@ -266,9 +248,6 @@ fn bits_of(v: &Value) -> Option<f64> {
 }
 
 /// Which trace sections this run answers from. See `WALK_TRACE`.
-///
-/// `Copy` because the runner both hands it to `Walk` and reads it per day to
-/// mask the trace load.
 #[derive(Clone, Copy)]
 pub struct Arm {
     pub label: &'static str,
@@ -278,10 +257,8 @@ pub struct Arm {
 }
 
 impl Arm {
-    /// The arm from `WALK_TRACE`, `all` by default: the gating arm, since the
-    /// matcher runs in production. The others attribute drift to a trace
-    /// section; `none` must reproduce the floor exactly, or the drift is this
-    /// harness.
+    /// The arm from `WALK_TRACE`, `all` by default. The others attribute drift
+    /// to a trace section; `none` must reproduce the floor exactly.
     pub fn from_env() -> Self {
         match std::env::var("WALK_TRACE").as_deref().unwrap_or("all") {
             "none" => Arm {
@@ -336,18 +313,14 @@ pub struct Walk {
     graded: usize,
     osm_asked: u64,
     osm_missed: u64,
-    /// Misses on days the capture itself recorded the mirror declining (no
-    /// coverage: the travel days off the mirror's ground, 09-30 and 10-01).
-    /// A coverage gap, not a key the fold spells and the capture lacks, so it
-    /// is reported beside the ratio rather than in it.
+    /// Misses on days the capture recorded the mirror declining (no coverage):
+    /// a coverage gap, reported beside the ratio rather than in it.
     osm_missed_uncovered: u64,
 }
 
 impl Walk {
-    /// `None` when the blessed floor is absent (gitignored beside the
-    /// fixtures), announced by the caller. A floor that is present but does not
-    /// parse stops the run: read as `{}`, every walk would go unfloored and the
-    /// test would pass.
+    /// `None` when the floor is absent (gitignored). A floor that does not
+    /// parse stops the run, or every walk would go unfloored and pass.
     pub fn new(arm: Arm) -> Option<Self> {
         let baseline: Value = match std::fs::read_to_string(BASELINE) {
             Ok(text) => serde_json::from_str(&text)
@@ -419,10 +392,8 @@ impl Walk {
         self.coverage
             .push((date.to_string(), legs.len(), unmeasured, unmeasured_at));
 
-        // Ways and buildings are sent once for the run, not per day: the days'
-        // boxes overlap heavily, and re-sending them was 91% of the request.
-        // Deduplicated by serialised form, so only byte-identical geometry is
-        // shared.
+        // Ways and buildings are sent once per run, deduplicated byte for byte:
+        // the days' boxes overlap heavily.
         let day_ways: Vec<usize> = flatten_section(&trace, "walkableRoads")
             .into_iter()
             .map(|w| intern(&mut self.way_table, &mut self.way_index, w))
@@ -595,10 +566,8 @@ impl Walk {
             return out;
         }
 
-        // WALK_BLESS rewrites walk-baseline.json from the measured set: each date
-        // measured replaces its floor rows wholesale, in the floor's shape (JSON
-        // numbers; `routeCorr` may be null). Bless deliberately and read the diff.
-        // It writes the floor whole, so it needs every day in one process.
+        // WALK_BLESS replaces each measured date's floor rows (`routeCorr` may be
+        // null). Read the diff; it needs every day in one process.
         if std::env::var("WALK_BLESS").is_ok() {
             let mut floor: std::collections::BTreeMap<String, Value> = self
                 .baseline
@@ -637,10 +606,9 @@ impl Walk {
             return out;
         }
 
-        // "never compared anything". Both read as zero regressions. So count, on
-        // the raw numbers, how many paired walks actually moved — a run where
-        // the gate is silent and nothing moved is agreement; silent while
-        // everything moved would mean the pairing quietly matched nothing.
+        // A silent gate can mean "nothing regressed" or "never compared
+        // anything", so count the paired walks that moved: silent while
+        // everything moved means the pairing matched nothing.
         let mut compared = 0usize;
         let mut moved = 0usize;
         // The building-crossing signal, counted on both sides. See the guard
@@ -786,18 +754,12 @@ impl Walk {
             n("added"),
             n("unmeasured")
         );
-        // `moved` is the non-vacuity witness, asserted: a pairing bug that
-        // matched nothing would also leave `regressed` empty. It is not a
-        // geometry check (a rigid shift keeps every length); the gate is.
-        //
-        // Gating arm only: on another arm the matcher redraws legs, so movement
-        // is the measurement, not a fault.
+        // `moved` is the non-vacuity witness. Gating arm only: on the others
+        // the matcher redraws legs, so movement is the measurement.
         if self.arm.label == "all" {
-            // A guard on the building detector: a detector stubbed to `false`
-            // reads every crossing as 0, which the ratchet scores as an
-            // improvement everywhere. A count, not a value: one walk may reach
-            // 0, but the floor having crossings and the run finding none cannot
-            // happen.
+            // A detector stubbed to `false` reads every crossing as 0, which the
+            // ratchet would score as an improvement; floor crossings with none
+            // found now cannot happen.
             if floor_crossings > 0 && now_crossings == 0 {
                 out.push(format!(
                     "walks: the floor records {floor_crossings} walk(s) crossing a building on                      these days and this run found NONE — the building detector is answering                      nothing, which the ratchet scores as an improvement on every walk"

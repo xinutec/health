@@ -2,33 +2,18 @@ import Verified.FloatConst
 /-!
 # JS numeric formatting
 
-`toFixed` is load-bearing algorithm in this codebase, not presentation. Two OSM
-coordinates fuse into one graph vertex exactly when their `toFixed(7)` strings
-are equal — `map-match-core`'s road graph, `rail-snap`'s rail graph and
-`walkable-route`'s `nodeKey` all key vertices that way — so its rounding rule
-decides graph connectivity. It also formats the display strings the ports
-reproduce verbatim.
+`toFixed` decides graph connectivity: OSM coordinates fuse into one vertex when
+their `toFixed(7)` strings are equal (the road, rail and walk graphs). It also
+formats display strings.
 
-ECMA-262 21.1.3.3 step 10 defines the rounding against the double's exact
-binary value: let `n` be the integer for which `n / 10^f - x` is closest to
-zero, and when two are equally close take the larger. Two consequences a
-naive `round(x * 10^f) / 10^f` gets wrong, both pinned by the guards:
+ECMA-262 21.1.3.3 step 10 rounds the double's exact binary value: `n` is the
+integer with `n / 10^f - x` closest to zero, ties to the larger. So
+`(1.005).toFixed(2) = "1.00"` but `(0.45).toFixed(1) = "0.5"`, and the sign is
+stripped first: `(-0.5).toFixed(0) = "-1"`. A finite double is `m · 2^e`, so
+`n = (2N + D) / (2D)` in exact `Nat` arithmetic, which is also the tie rule.
 
-* `(1.005).toFixed(2) = "1.00"`, because the double nearest 1.005 lies below it,
-  while `(0.45).toFixed(1) = "0.5"` because that one lies above;
-* the sign is stripped *before* rounding, so ties go half-up on the magnitude:
-  `(-0.5).toFixed(0) = "-1"`, unlike `Math.round(-0.5)`, which is `-0`.
-
-Doing this exactly needs no decimal library. A finite double is `m · 2^e` for
-integers `m, e`, so `|x| · 10^f = m · 10^f · 2^e` is a dyadic rational, and
-`n = ⌊N/D + 1/2⌋ = (2N + D) / (2D)` in exact `Nat` arithmetic — which is also
-precisely the "ties to the larger" rule, since a tie makes `N/D + 1/2` an
-integer. Lean's `Nat` is a bignum, so the whole computation is exact.
-
-Not implemented: the `|x| ≥ 10^21` arm, which defers to `ToString(x)` — the
-shortest-round-trip printer, a separate algorithm (Ryu/Grisu) with no consumer
-here. {@link toFixed} returns `none` there rather than guessing, and every call
-site in this codebase (coordinates, distances, durations) is far below it.
+Not implemented: `|x| ≥ 10^21`, which defers to the shortest-round-trip
+printer. {@link toFixed} returns `none` there; no caller comes near it.
 -/
 
 namespace Verified.JsNum
@@ -47,9 +32,8 @@ structure Decomposed where
   deriving Repr, BEq
 
 /-- The IEEE-754 fraction mask (2^52 − 1) and implicit bit (2^52), by name:
-`@[noinline]` for the reason `Verified.Geo.COS_K` states — a bare literal this
-wide is a GMP parse per call, and `decompose` runs under every `toFixed` key
-the walk graph builds. -/
+`@[noinline]` as for `Verified.Geo.COS_K`, since a literal this wide is a GMP
+parse per call and `decompose` runs under every walk-graph key. -/
 @[noinline] def FRAC_MASK : UInt64 := 0xFFFFFFFFFFFFF
 @[noinline] def IMPLICIT_BIT : Nat := 0x10000000000000
 
@@ -72,18 +56,9 @@ def decompose (x : Float) : Decomposed :=
 
 /-! ## `Math.round`
 
-A different rounding rule from `toFixed`, and the difference is not cosmetic:
-`Math.round` is round-half-toward-+∞ (`floor(y + 0.5)`), so `Math.round(-0.5)`
-is `-0` while `(-0.5).toFixed(0)` is `"-1"`. `toFixed` strips the sign before
-rounding and takes ties on the magnitude; `Math.round` does not. Reaching for
-the wrong one of these is a silent off-by-one on exactly half the ties.
-
-There are thirteen private copies of this one-liner across `Verified/Geo`
-(RailReconcile, RailSnap, WalkAnnotate, SegmentMerge, StaySplit, CurrentPlace,
-UndergroundAnnotate, RailAbsorbers, OsmCorridor, WalkSmooth, Interchange x2,
-Segments). This is their home; new code should use it rather than add a
-fourteenth. Consolidating the existing thirteen is its own change — see the
-task, and do not fold it into an unrelated one. -/
+Round half toward +∞ (`floor(y + 0.5)`): `Math.round(-0.5)` is `-0`, unlike
+`toFixed`'s ties on the magnitude. The wrong one is off by one on half the ties.
+Private copies of this one-liner remain in `Verified/Geo`; new code uses this. -/
 
 /-- `Math.round` — round half toward +∞. -/
 def jsRound (x : Float) : Float := Float.floor (x + 0.5)
@@ -101,9 +76,8 @@ def jsRoundInt (x : Float) : Int := (jsRound x).toInt64.toInt
 #guard jsRoundInt 2.5 == 3
 
 /--
-The integer `n` of ECMA-262 21.1.3.3 step 10 for `|x|`: the integer closest to
-`|x| · 10^f`, ties going to the larger. Exact — no floating point is involved
-past the decomposition. Meaningful for finite `x` only.
+The integer `n` of ECMA-262 21.1.3.3 step 10 for `|x|`: closest to `|x| · 10^f`,
+ties to the larger. Exact past the decomposition; finite `x` only.
 -/
 def toFixedNExact (x : Float) (f : Nat) : Nat :=
   let d := decompose x
@@ -117,22 +91,17 @@ def toFixedNExact (x : Float) (f : Nat) : Nat :=
     -- and flooring then lands on the larger candidate, as the spec requires.
     (2 * n + den) / (2 * den)
 
-/-! ⚠ A float literal inside a branch or a loop body is not hoisted by the
-compiler: it compiles to a `Float.ofScientific` call (big-integer shifts and a
-GMP allocation) on every pass, a quarter of `toFixedN`'s time; read the
-generated C for `l_Float_ofScientific(` inside the function. A module-level
-`def` compiles to one cell, filled once. -/
+/-! ⚠ A float literal inside a branch or loop is not hoisted: it compiles to a
+`Float.ofScientific` call per pass, a quarter of `toFixedN`'s time. A
+module-level `def` is one cell, filled once. -/
 private def TEN_POW_7 : Float := 10000000.0
 private def HALF : Float := 0.5
 private def TIE_BAND : Float := 1e-6
 
-/-- `toFixedNExact`, with a floating-point fast path for the coordinate case
-(`f = 7`, `|x| < 200`). There `y = |x|·10⁷ < 2³¹`, so the product is within
-2.2·10⁻⁷ of the exact one and `y + 0.5` is exact; away from a tie — `y`'s
-fraction more than 10⁻⁶ from ½ — `⌊y + 0.5⌋` is the exact answer, and nearer
-it the exact arithmetic decides. The exact path's big-integer division was the
-walk graph's dominant cost: two keys per segment, 33,000 segments on a
-long walk. -/
+/-- `toFixedNExact`, with a float fast path for coordinates (`f = 7`,
+`|x| < 200`): `y = |x|·10⁷ < 2³¹` is within 2.2·10⁻⁷ of exact and `y + 0.5` is
+exact, so away from a tie (fraction more than 10⁻⁶ from ½) `⌊y + 0.5⌋` is the
+answer. The big-integer path dominated the walk graph's cost. -/
 def toFixedN (x : Float) (f : Nat) : Nat :=
   if f == 7 && x.abs < 200 then
     let y := x.abs * TEN_POW_7
@@ -175,11 +144,8 @@ private def placePoint (n : Nat) (f : Nat) : String :=
     String.ofList (cs.take (k' - f)) ++ "." ++ String.ofList (cs.drop (k' - f))
 
 /--
-`x.toFixed(f)`.
-
-`none` is returned only for the one unported arm — a finite `|x| ≥ 10^21`,
-where the spec defers to `ToString`. NaN and ±∞ take that same branch in the
-spec but have fixed spellings, so they are answered here.
+`x.toFixed(f)`. `none` only for a finite `|x| ≥ 10^21`; NaN and ±∞ have fixed
+spellings and are answered.
 -/
 def toFixed (x : Float) (f : Nat) : Option String :=
   if x.isNaN then some "NaN"
@@ -193,11 +159,9 @@ def toFixed (x : Float) (f : Nat) : Option String :=
 
 /-! ## The fusion identity
 
-A graph builder does not need the string — it needs to know when two
-coordinates produce the same string. That is `(sign, n)`, which is exact for
-every finite double including those at or above `10^21`, where only the
-*rendering* is unported. Keeping the key separate from the string is what lets
-vertex fusion move into Lean without dragging `ToString` along. -/
+A graph builder needs only when two coordinates produce the same string:
+`(sign, n)`, exact for every finite double, including those whose rendering is
+unported. -/
 
 /-- What `toFixed` distinguishes: a rounded magnitude with its sign, or one of
     the fixed non-finite spellings. -/
@@ -219,13 +183,9 @@ def toFixedKey (x : Float) (f : Nat) : Option FixedKey :=
   else if x.abs ≥ toFixedMax then none
   else some (.num (x < 0) (toFixedN x f))
 
-/-- The coordinate-fusion key that the graph builders hash a vertex by — the
-    comparable form of `` `${lat.toFixed(7)},${lon.toFixed(7)}` ``.
-
-    The `raw` arm is reachable only for a coordinate at or above `10^21`, which
-    `toFixed` does not format. Latitudes and longitudes are bounded by ±90 /
-    ±180, so it cannot arise from real data; it gives such a point its own
-    vertex rather than guessing at a spelling and fusing two distinct points. -/
+/-- The coordinate-fusion key graph builders hash a vertex by, the comparable
+    form of `` `${lat.toFixed(7)},${lon.toFixed(7)}` ``. The `raw` arm (≥ 10^21,
+    impossible for a coordinate) gives such a point its own vertex. -/
 inductive CoordKey where
   | fused (lat lon : FixedKey)
   | raw (latBits lonBits : UInt64)
@@ -238,8 +198,7 @@ def coordKey7 (lat lon : Float) : CoordKey :=
 
 /-! ## Guards
 
-Reference values are `Number.prototype.toFixed`'s. These are exact string
-comparisons, no tolerance, because the rounding decision is the whole point. -/
+Reference values are `Number.prototype.toFixed`'s, compared as exact strings. -/
 
 section Guards
 

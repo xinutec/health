@@ -1,24 +1,12 @@
-//! One replay of one golden day, shared by every corpus grader.
+//! One replay of one golden day, shared by every corpus grader: `corpus_gate`
+//! replays once per day and hands the result to `day_corpus`, `truth_corpus`,
+//! `journey_corpus` and `walk_gate`, so the walk matcher runs once.
 //!
-//! The replay is paid once. Four graders (`day_corpus`, `truth_corpus`,
-//! `journey_corpus`, `walk_gate`) grading the same day each rebuilt it from the
-//! same fixture: `user` 2934 s against 718 s wall on one row, because the walk
-//! matcher's ~305 s was paid per harness rather than per day. `corpus_gate`
-//! replays once per day and hands the result to all four.
-//!
-//! The graders do not all replay the same input, which is why `priors`
-//! is a parameter rather than read from the environment here. `day_corpus`
-//! and `truth_corpus` replace the fixture's captured `venuePriors` with
-//! `VENUE_PRIORS_FILE` when it is set; `journey_corpus` and `walk_gate` never
-//! inject. A shared replay that guessed would either feed those two priors they
-//! did not ask for, or quietly stop the injected arm being an arm, and
-//! neither fails: both produce plausible numbers. So `corpus_gate` replays
-//! each arm it needs: one when `VENUE_PRIORS_FILE` is unset (every grader wants
-//! the fixture's own blob, so they share it), two when it is set.
-//!
-//! The trace is indexed once per day, before any arm, and both arms
-//! borrow it. `load_trace` is separate from `replay` for that reason, not by
-//! accident.
+//! `priors` is a parameter because the graders differ: `day_corpus` and
+//! `truth_corpus` take `VENUE_PRIORS_FILE` when set, the other two never do. A
+//! guess would fail silently, so `corpus_gate` replays one arm when it is unset
+//! and two when set. The trace is loaded once (`load_trace`) and both arms
+//! borrow it.
 
 use serde_json::Value;
 
@@ -32,10 +20,7 @@ pub mod truth;
 pub mod walk;
 
 /// One day, replayed once: the fixture as it was fed in, and what the fold said.
-///
-/// `dead_code` is allowed because the graders use different subsets —
-/// `day` reads `rounds` and `unanswerable`, `walk` reads `request`, the others
-/// read neither.
+/// Graders read different fields, hence `dead_code`.
 // dev-lint: allow-keep-allow `corpus` is compiled into several test binaries, and dead_code fires in some and not others
 #[allow(dead_code, reason = "the graders use different subsets (doc above)")]
 pub struct Replay {
@@ -75,11 +60,8 @@ impl Replay {
     }
 }
 
-/// Every golden day, sorted.
-///
-/// It does not apply `CORPUS_DAYS` — `restrict` does, separately, so that an
-/// empty corpus and a mistyped filter cannot produce the same message: they are
-/// different faults.
+/// Every golden day, sorted. `CORPUS_DAYS` is applied by `restrict`, so an empty
+/// corpus and a mistyped filter give different messages.
 pub fn day_names(golden: &str) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(golden)
         .expect("the corpus directory is readable")
@@ -91,17 +73,9 @@ pub fn day_names(golden: &str) -> Vec<String> {
     names
 }
 
-/// Narrow the corpus to a comma-separated list of date prefixes.
-///
-/// A subset run is not a gating run, and it says so rather than passing
-/// quietly: every floor comparison downstream is a verdict over the days that
-/// actually replayed. This is what makes a four-arm ablation affordable — the
-/// full corpus is ~390 s a run.
-///
-/// A typo must not retain silently. A `CORPUS_DAYS` date in month 13
-/// matches no fixture, and a clean run over nothing reads exactly like a clean run over
-/// everything; reported as "the corpus directory is empty", it would name the
-/// wrong cause.
+/// Narrow the corpus to a comma-separated list of date prefixes, saying so: a
+/// subset run is not a gating run. A filter matching nothing fails, or a clean
+/// run over nothing would read like a clean run over everything.
 pub fn restrict(names: Vec<String>, filter: Option<String>) -> Vec<String> {
     let Some(only) = filter else { return names };
     let want: Vec<&str> = only
@@ -143,15 +117,10 @@ pub fn read_fixture(golden: &str, name: &str) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|e| format!("{name}: parsing: {e}"))
 }
 
-/// Which venue priors an A/B arm replays under.
-///
-/// `VENUE_PRIORS_FILE=<blob.json>` is one blob for every day, ignoring the
-/// as-of-the-day snapshots the serving path uses, for arms that want that on
-/// purpose. `VENUE_PRIORS_DIR=<dir>` holds `<as_of>.json` snapshots and
-/// `current.json` (what `backend venue-prior-snapshots` writes), and each
-/// fixture takes the newest snapshot at or before its date, else
-/// `current.json`, the rule `classification_inputs::venue_priors` serves by, so
-/// the arm names a day the way the pod does.
+/// Which venue priors an A/B arm replays under. `VENUE_PRIORS_FILE=<blob.json>`
+/// is one blob for every day. `VENUE_PRIORS_DIR=<dir>` holds `<as_of>.json`
+/// snapshots and `current.json`; each day takes the newest at or before its
+/// date, else `current.json`, as `classification_inputs::venue_priors` serves.
 pub enum Injection {
     File(Value),
     Dir(std::path::PathBuf),
@@ -219,19 +188,11 @@ pub fn with_priors(fx: &Value, priors: Option<&Value>) -> Value {
 }
 
 /// Index the day's recorded walkable roads, buildings and drivable ways, so the
-/// fold's walk pass runs the way production runs it.
+/// walk pass runs as in production. Without a trace the matcher's asks are
+/// declined and each leg keeps its raw drawing, indistinguishable from a leg
+/// left alone. Sections can be present and empty, so entries are counted.
 ///
-/// Without a trace the walk pass does not run. The matcher's
-/// `walkableRoads` ask is declined unless a trace answers it — and on a decline
-/// `annotateWalkMatches` bails per leg, so the raw drawing survives looking
-/// exactly like a leg the matcher considered and left alone.
-///
-/// Presence of the key is not presence of a trace. A fixture can carry
-/// all three sections as empty objects; a key-presence check calls that
-/// capturable and the loader then refuses it. Count the entries.
-///
-/// `Ok(None)` means the fixture captured no walk read, and the caller must
-/// record that day as unmeasured for walks.
+/// `Ok(None)`: no walk read captured; the caller records walks as unmeasured.
 pub fn load_trace(
     golden: &str,
     name: &str,
@@ -240,11 +201,9 @@ pub fn load_trace(
     buildings: bool,
     drivable: bool,
 ) -> Result<Option<TraceAnswerer>, String> {
-    // Refuse a fixture captured under constants this build no longer uses.
-    // The margin and the candidate limit are applied after the ask key is
-    // formed, so moving one changes production and changes nothing any fixture
-    // answers: the gate stays green while the served day differs. An absent
-    // stamp is not a mismatch: the older fixtures carry none.
+    // Refuse a fixture captured under different margin or candidate-limit
+    // constants: they apply after the ask key, so a change would leave the
+    // gate green while the served day differs. An absent stamp passes.
     backend::osm_trace::check_capture_inputs(&fx["meta"]).map_err(|e| format!("{name}: {e}"))?;
 
     let trace = TraceAnswerer::from_fixture(
@@ -257,11 +216,9 @@ pub fn load_trace(
         },
     )
     .map_err(|e| format!("{name}: osm trace: {e}"))?;
-    // An empty building answer is unmeasured, not clean, and the
-    // referee knows that per leg (`WalkIn.buildingsMeasured`), so a partial
-    // capture is answered as far as it goes rather than refused. What replaces
-    // a refusal is the report: `walks:` prints the measured / unmeasured tally
-    // and names each unmeasured leg on every run.
+    // An empty building answer is unmeasured, and the referee knows that per
+    // leg (`WalkIn.buildingsMeasured`), so a partial capture is used, and
+    // `walks:` names each unmeasured leg.
     Ok(trace.has_walk_capture().then_some(trace))
 }
 
@@ -270,11 +227,9 @@ pub fn load_trace(
 pub fn replay(name: &str, mut fx: Value, trace: Option<&TraceAnswerer>) -> Result<Replay, String> {
     let (date, user) = (&name[..10], name[11..].trim_end_matches(".json"));
 
-    // The stored decode is the frozen twin's blessed one, as the DB holds it
-    // after the re-decode; the fixture's own is a replaced decoder's. A day
-    // without a twin would head its fold with that stale decode and grade a day
-    // production never serves, so it is refused: capture the twin
-    // (`decode-day --dry-run` under `DECODE_CAPTURE`) and bless it.
+    // The stored decode is the frozen twin's blessed one, as the DB holds it;
+    // the fixture's own came from a replaced decoder. A day without a twin is
+    // refused: capture it (`decode-day --dry-run` under `DECODE_CAPTURE`).
     let stored = backend::decode_fixture::stored_decode(date, user)
         .map_err(|e| format!("{name}: {e:#}"))?
         .ok_or_else(|| format!("{name}: no frozen decode twin in tests/golden/decoded_days"))?;
@@ -287,10 +242,8 @@ pub fn replay(name: &str, mut fx: Value, trace: Option<&TraceAnswerer>) -> Resul
         backend::head::capture(inputs, date, user).map_err(|e| format!("{name}: head: {e:#}"))?;
     let rows = RowSetAnswerer::new(rowset).map_err(|e| format!("{name}: row set: {e:#}"))?;
 
-    // The trace first — the answers the day was blessed on — and the row set
-    // for what it does not hold. No trace loaded means the seven answerer
-    // tables still come from the trace sections the fixture carries, if any;
-    // only the three matcher reads are withheld.
+    // The trace first, the row set for what it lacks. Without a trace the
+    // answerer tables still come from the fixture; only the matcher reads go.
     let r = match trace {
         Some(t) => backend::fold::run_day(&cap, inputs, &mut backend::lean::Chain(t, rows)),
         None => {
@@ -318,11 +271,8 @@ pub fn replay(name: &str, mut fx: Value, trace: Option<&TraceAnswerer>) -> Resul
     })
 }
 
-/// Transitional — the pre-shared-runner entry point, for graders
-/// not yet moved into `corpus_gate`. It reads the fixture per caller, which is
-/// the cost the move exists to remove, and it deliberately does not load the
-/// trace: a grader still on this path must keep replaying the arm it was
-/// blessed against until it moves and is re-blessed together with the flip.
+/// The per-grader entry point for graders not yet on `corpus_gate`. It does
+/// not load the trace: such a grader replays the arm it was blessed against.
 // dev-lint: allow-keep-allow `corpus` is compiled into several test binaries, and dead_code fires in some and not others
 #[allow(dead_code, reason = "kept for graders still on this path (doc above)")]
 pub fn replay_own(golden: &str, name: &str, priors: Option<&Value>) -> Result<Replay, String> {
