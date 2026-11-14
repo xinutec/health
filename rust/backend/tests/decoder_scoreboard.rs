@@ -361,7 +361,7 @@ fn the_blessed_scoreboard_reproduces_from_the_frozen_decodes() {
         let got = score(date, tz, segs);
 
         for f in FIELDS {
-            // ⚠ Both sides must CARRY the field — a typo'd name would compare
+            // ⚠ Both sides must carry the field — a typo'd name would compare
             // None == None and read as agreement.
             assert!(
                 want.get(f).is_some() && got.get(f).is_some(),

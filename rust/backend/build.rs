@@ -42,8 +42,8 @@ fn main() {
     let exe = exe.canonicalize().expect("the verified_cli path resolves");
     println!("cargo:rustc-env=VERIFIED_CLI_BUILD={}", exe.display());
 
-    // ⚠ THE LEAN SOURCES, so an edit there makes cargo ask lake again.
-    // `.lake/` is deliberately NOT watched: it is lake's own output.
+    // ⚠ The Lean sources, so an edit there makes cargo ask lake again.
+    // `.lake/` is deliberately not watched: it is lake's own output.
     for src in [
         "Verified",
         "DayEntry",

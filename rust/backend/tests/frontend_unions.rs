@@ -101,7 +101,7 @@ fn the_frontend_episode_kinds_are_the_backends() {
     assert_eq!(backend.len(), 6, "got {backend:?}");
 }
 
-/// ⚠ THE EXTRACTOR MUST FAIL LOUDLY ON A MOVED ANCHOR. Without this, the two
+/// ⚠ The extractor must fail loudly on a moved anchor. Without this, the two
 /// tests above could both pass by comparing two empty sets.
 #[test]
 #[should_panic(expected = "not found")]

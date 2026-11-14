@@ -75,7 +75,7 @@ fn an_ask_is_answered_on_the_same_pipe_and_the_reply_carries_it() {
         &mut Fixed(Some(json!({"answer":{"tz":"Europe/London"}}))),
     )
     .expect("the call completes");
-    // The fake echoes the answer LINE it read, so the reply shows exactly what
+    // The fake echoes the answer line it read, so the reply shows exactly what
     // crossed: `{"answer": <row>}`.
     assert_eq!(
         c.body,
