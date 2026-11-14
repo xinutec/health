@@ -1,22 +1,7 @@
-//! Responses are compressed when the client asks, and only then.
-//!
-//! This exists because the feature was once not compiled in and nothing said
-//! so: `/api/heartrate/intraday` for one half-finished day returned 2,556,228
-//! bytes with no encoding negotiated at all, because `tower-http` was built
-//! with only `fs` and `trace`. The rows are mostly one repeated zone, so they
-//! compress to a fraction; nothing here asserts a size.
-//!
-//! The failure was silent in every direction. Every response was correct,
-//! every status was right, no test failed and no log said anything; the only
-//! symptom was bytes on a wire nobody was measuring. A missing Cargo feature
-//! cannot fail loudly, so the assertion has to be about the served response
-//! rather than about the dependency — checking the feature list would pass on a
-//! router that never mounted the layer.
-//!
-//! No database, deliberately: the pool cannot answer, so this uses the SPA
-//! fallback page, which is the largest body the real router will produce
-//! without a query. That keeps the test about the layer stack and not about
-//! data.
+//! Responses are compressed when the client asks, and only then. A missing
+//! `tower-http` feature fails silently (correct responses, just large), so this
+//! asserts the served response, not the dependency. No database: the SPA
+//! fallback page is the largest body the router produces without a query.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -79,11 +64,8 @@ async fn brotli_is_served_when_the_client_asks() {
     assert_eq!(encoding.as_deref(), Some("br"));
 }
 
-/// The half that makes the change safe. Compression is content-negotiated, so
-/// a caller that sends no `Accept-Encoding` must still get an identity body —
-/// that is why mounting this layer cannot break an existing client, only fail
-/// to help one. Asserting it here means the claim in `routes/mod.rs` is checked
-/// rather than merely written down.
+/// A client without `Accept-Encoding` gets an identity body, so the layer cannot
+/// break a caller, as `routes/mod.rs` claims.
 #[tokio::test]
 async fn identity_is_served_when_the_client_does_not_ask() {
     let (status, encoding, len) = get(None).await;

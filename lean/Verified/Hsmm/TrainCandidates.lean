@@ -3,18 +3,13 @@ import Verified.Hsmm.RouteModel
 /-!
 # Train (board, line, alight) candidate generator
 
-The graph-dependent completion of the train-candidate generator: each train
-window from `findTrainWindows` is matched to board/alight station nodes near its
-GPS bookends, and a candidate is emitted for every line whose stations at both
-ends are graph-connected on that line's edge subgraph. Its output feeds the
-coverage map that gates the per-minute train factors.
+Each `findTrainWindows` window is matched to station nodes near its GPS
+bookends, and a candidate emitted for every line whose two stations connect on
+that line's edges. The output feeds the coverage map gating the train factors.
 
-Consumes a node-annotated `StationGraph` — the shell supplies the station
-annotation (`toFixed` node ids, `parseTags` on OSM points; the parity-hazard
-graph-structure boundary); everything here is pure Lean over it, reusing
-`edgesNearIdx` and `haversine`. Pure graph/observation work, so candidate
-membership is exact (velocity/proximity thresholds sit far from boundaries in
-the tested case). UNPROVEN; pinned by the `#guard`.
+Takes a station-annotated `StationGraph` built by the caller; reuses
+`edgesNearIdx` and `haversine`. Membership is exact (thresholds far from
+boundaries in the tested case). UNPROVEN; pinned by the `#guard`.
 -/
 
 namespace Verified.Hsmm.TrainCandidates
@@ -175,13 +170,10 @@ def enumerateTrainCandidates (g : StationGraph) (obs : Array ObsRow) (knownLines
     | _, _ => pure ()
   return out
 
-/-- The candidate with its window reaching back over the visit to its boarding
-    station: the minutes before `startMin` whose fix is within `R_STATION_M` of
-    that station, or dark, back to the first fix elsewhere. A ride from station
-    A is evidence for the wait on A's platform as much as for the ride; the
-    coverage only lets a train segment BEGIN there, and the minutes' own
-    evidence decides where (a walk to the station pays a train its steps, a
-    long stay its standstill). -/
+/-- The candidate with its window reaching back over the wait at its boarding
+    station: earlier minutes whose fix is within `R_STATION_M` of it, or dark,
+    back to the first fix elsewhere. Coverage only lets a train segment begin
+    there; the minutes' evidence decides where. -/
 def boardingWait (g : StationGraph) (obs : Array ObsRow) (c : Candidate) : Candidate := Id.run do
   let some station := g.nodeById.get? c.boardStationId | return c
   let mut s := c.startMin

@@ -2,13 +2,10 @@ import Verified.Hsmm.Emissions
 /-!
 # Line-proximity factor
 
-Emission term for `train @ L`: at a GPS-present minute, boost when the fix sits
-on L's track corridor, penalise when L is modelled but the fix is off it (or is
-road-nearer-than-rail). The route-graph spatial queries (`edgesNearIdx`,
-`linesInGraph`) stay caller-side and are passed in as resolved facts
-(`lineModeled`, `lineNear`, road/rail distances); this module is the pure
-decision. All outputs are exact rational constants, so parity is exact `==`.
-Bit-exact, pinned by the `#guard`s.
+Emission term for `train @ L` at a GPS-present minute: a boost when the fix is
+on L's corridor, a penalty when L is modelled but the fix is off it or nearer a
+road. The caller resolves `lineModeled`, `lineNear` and road/rail distances.
+Outputs are exact constants; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.LineProximity
@@ -27,12 +24,10 @@ def scoreLineProximity (lineModeled lineNear : Bool) (roadDistM railDistM : Opti
     | some rd, some rl => if rd < rl then ROAD_NEARER_PENALTY else NEAR_BOOST
     | _, _ => NEAR_BOOST
 
-/-- `buildLineProximityFactor`'s per-state verdict. Facts resolved by the caller:
-    `isCovered` (train-generator window), `gpsPresent`, and — for a named line —
-    `lineModeled` / `lineNear` from the route graph. A placeholder line
-    (`unknown_rail`, `unknown_metro`) scores the line-agnostic signals: no railway
-    near the fix at all (`railNear`, any edge of the graph), else road nearer
-    than rail. -/
+/-- The per-state verdict, from caller-resolved `isCovered`, `gpsPresent`, and
+    for a named line `lineModeled`/`lineNear`. A placeholder line
+    (`unknown_rail`, `unknown_metro`) scores the line-agnostic signals: no
+    railway near the fix (`railNear`), else road nearer than rail. -/
 def lineProximityFactor (s : State) (isCovered gpsPresent : Bool)
     (lineModeled lineNear : Bool) (roadDistM railDistM : Option Float)
     (railNear : Bool := true) : Float :=
@@ -43,11 +38,8 @@ def lineProximityFactor (s : State) (isCovered gpsPresent : Bool)
     | some line =>
       if Verified.Hsmm.Emissions.isPlaceholderLine line then
         if !gpsPresent then 0.0
-        -- No railway of any kind within `NEAR_M` of the fix: the unnamed train
-        -- is as far from its track as a named line is from its own, and pays
-        -- the same. Left at 0 it rode a taxi for free — 05-25's 30-minute
-        -- drive decoded as `unknown_rail`, cheaper per minute than `driving`
-        -- on the mode prior alone.
+        -- No railway within `NEAR_M`: pays as a named line off its own track,
+        -- or an unnamed train rides along a road for free.
         else if !railNear then FAR_PENALTY
         else match roadDistM, railDistM with
           | some rd, some rl => if rd < rl then ROAD_NEARER_PENALTY else 0.0

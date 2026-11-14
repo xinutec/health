@@ -3,20 +3,13 @@ import Std.Data.HashSet
 /-!
 # Per-line route connectivity
 
-Route-rail's `connected` fact: does a path of edges all carrying line `L` join
-the fixes near the boarding platform to those near the alighting platform? A BFS
-in the subgraph of `L`-only edges, over the node adjacency the route graph
-already indexes (two edges share a node iff their endpoints collapse to the same
-`nodeKey`). Capped at `MAX_BFS_EDGES` dequeues to bound cost — and that cap is
-also the termination argument, so the search is total without a lemma about
-the graph.
+Route-rail's `connected` fact: do `L`-only edges join the fixes near the
+boarding and alighting platforms? A BFS over the route graph's node adjacency,
+capped at `MAX_BFS_EDGES` dequeues, which bounds cost and makes it total.
 
-Pure graph traversal — no floats, so exact. The adjacency (node ids, incident
-edges) is resolved by the graph builder and passed in; the BFS is opaque over
-string ids, so the `nodeKey` `toFixed` rounding stays with the builder. The Bool
-result is traversal-order-independent (reachability), so fidelity needs only the
-adjacency + line filter + the cap, not a specific visit order. UNPROVEN; pinned
-by the `#guard`s.
+Exact, over string node ids from the graph builder. Reachability is
+order-independent, so only adjacency, the line filter and the cap matter.
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.RouteConnectivity
@@ -34,10 +27,8 @@ structure Graph where
   lines : HashMap String (List String)
   nodeEdges : HashMap String (List String)
 
-/-- BFS worklist step: process the queue front, enqueuing unvisited `L`-edges
-    reachable through its endpoints; short-circuit on reaching a goal edge.
-    `fuel` is the dequeue budget; when it is spent the answer is `false`, which
-    is what makes the search total on any graph. -/
+/-- BFS worklist step: enqueue unvisited `L`-edges through the front's
+    endpoints, stopping at a goal edge. Out of `fuel`, the answer is `false`. -/
 def bfs (g : Graph) (line : String) (goal : HashSet String) :
     Nat → List String → HashSet String → Bool
   | _, [], _ => false

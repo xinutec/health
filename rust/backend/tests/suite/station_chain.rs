@@ -1,21 +1,10 @@
-//! `stationchain` — the board/alight resolver, exercised rather than probed.
+//! `stationchain` — the board/alight resolver, exercised: this asserts what it
+//! decides (including nothing), unlike `tests/lean_serve.rs`'s probe, which the
+//! reachability check does not count.
 //!
-//! # Why this is not the probe it resembles
-//!
-//! `tests/lean_serve.rs` also sends `{"mode":"stationchain"}`, and the
-//! reachability check deliberately does not count it: that test asserts the arm
-//! answers in its own words and is indifferent to the answer. This one asserts
-//! what the resolver decides, including the case where it decides to say
-//! nothing.
-//!
-//! # The geography is invented, and small on purpose
-//!
-//! One straight line, two or three halts on it. A synthetic corridor makes each
-//! refusal below unambiguous — on a real graph, "no resolution" could always be
-//! the fixture failing to build rather than the rule firing.
-//!
-//! One `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
-//! starts a runtime and several tests racing on it would flake.
+//! One synthetic straight line with two or three halts, so each refusal is the
+//! rule, not a fixture failing to build. One `#[test]`: `lean::init()` starts a
+//! runtime that parallel tests would race on.
 
 use serde_json::{Value, json};
 
@@ -91,11 +80,8 @@ fn the_chain_resolves_a_ride_and_refuses_what_it_cannot_tell_apart() {
     assert_eq!(got[0][2], "Beta Halt", "alight");
 
     // ── 2. Two plausible alights and it refuses to guess ────────────────────
-    // A third halt ~65 m from the far end. The margin between the two alight
-    // candidates no longer clears, so the alight comes back NULL while the
-    // board — still unambiguous — resolves. This is the whole point of the
-    // resolver: a station it cannot tell apart is not reported, and a caller
-    // that got a guess here would persist a ride to the wrong platform.
+    // A third halt ~65 m from the far end: the alight margin no longer clears,
+    // so alight is NULL while the unambiguous board resolves.
     let mut crowded = two_halts();
     crowded.push(station("N3", 0.0194, "Gamma Halt"));
     let got = resolve(&request(crowded, vec![train_leg()], all_obs()));

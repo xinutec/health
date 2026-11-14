@@ -3,25 +3,15 @@ import Verified.Hsmm.Forward
 /-!
 # The trellis recurrence, functionally
 
-`col P t s τ` is the trellis cell after processing minute `t`: the best score
-of any prefix of `[0, t]` whose current *open* segment (duration prior not yet
-paid) is a run of state `s` of length exactly `τ`. This is precisely what the
-imperative array in `Viterbi.lean` stores at `(s, τ)` — stated here as a pure
-recurrence so it can be proved correct.
+`col P t s τ` is the cell after minute `t`: the best score of a prefix of
+`[0, t]` whose open segment (duration not yet paid) is a run of `s` of length
+exactly `τ`, what `Viterbi.lean`'s array stores at `(s, τ)`.
 
-- `openVal` gives the cell's intended meaning in terms of the (already proved)
-  forward DP `bestEnd`;
-- `col_eq_openVal` is the column invariant: every cell means what it should;
-- `closeB` is the trellis's per-`t` "best close of a segment ending here", and
-  `closeB_eq` shows closing the open run recovers `bestEnd` exactly;
-- `trellisScore` is the final closure at `T - 1`, and
-  `trellisScore_eq_oracleBest` proves the whole recurrence decodes the true
-  optimum — with *no* side conditions: degenerate shapes (`T = 0`, `S = 0`,
-  `maxD = 0`) are handled explicitly.
-
-The remaining (V1) gap to `Viterbi.lean` is now mechanical: the array code
-computes `col` columns with rolling buffers and picks argmaxes in a fixed
-order; its refinement (plus backtrack correctness) is the next step.
+- `openVal` states each cell's meaning via the forward DP `bestEnd`;
+- `col_eq_openVal`: every cell means what it should;
+- `closeB`/`closeB_eq`: closing the open run recovers `bestEnd`;
+- `trellisScore_eq_oracleBest`: the final closure at `T - 1` is the true
+  optimum, with no side conditions (`T = 0`, `S = 0`, `maxD = 0` handled).
 -/
 
 namespace Verified.Hsmm

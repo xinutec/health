@@ -1,21 +1,10 @@
-//! `lean::focus_places` — the `focus` mode's production caller.
+//! `lean::focus_places`, the `focus` mode as the weekly focus-places cron calls
+//! it (`refresh_focus_places_one`); the decode lives in `lean.rs` so this test
+//! reaches it.
 //!
-//! # Why this exists
-//!
-//! `focus` mines the place list the whole venue-naming stack reads. It is
-//! called once, from the weekly focus-places cron, inside
-//! `refresh_focus_places_one`, a DB-backed `async fn` in the binary crate; the
-//! decode lives in `lean.rs` so this test can reach it.
-//!
-//! # The geography is invented, and has to be
-//!
-//! No tracked test may carry real coordinates or place names. Synthetic points
-//! are also the sharper instrument: a cluster built at a chosen spot with a
-//! chosen dwell is one whose expected mining outcome is known, which a real
-//! day's smear is not.
-//!
-//! One `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
-//! starts a runtime and several tests racing on it would flake.
+//! Synthetic points: no tracked test carries real places, and a cluster built
+//! at a chosen spot with a chosen dwell has a known expected outcome. One
+//! `#[test]`: `lean::init()` starts a runtime that parallel tests would race on.
 
 /// A day of dwell at one invented spot: `n` fixes a minute apart, jittered by
 /// about a metre so it is a cluster rather than a repeated identical point.
@@ -50,11 +39,8 @@ fn focus_places_mines_a_dwell_and_keeps_its_reply_self_consistent() {
         "two spots sat at for four hours on two days must mine at least one place"
     );
 
-    // The invariant the caller depends on. One assignment per mined cluster,
-    // or the cron pairs a cluster with the wrong existing row and moves another
-    // place's `first_seen_ts`. `focus_places` bails when this fails, so reaching
-    // here at all is the assertion — this restates it so a future reader sees
-    // why the lengths must agree.
+    // One assignment per mined cluster, or the cron pairs a cluster with the
+    // wrong row. `focus_places` already bails otherwise; restated for readers.
     assert_eq!(
         mined.assignments.len(),
         mined.mined.len(),

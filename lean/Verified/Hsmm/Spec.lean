@@ -3,22 +3,17 @@ import Verified.Hsmm.Score
 /-!
 # HSMM decoding — the specification
 
-The mathematical meaning of the HSMM decoder, stated independently of any
-algorithm: a *segmentation* of the observation window `[0, T)` into runs of
-equal state, its *score* under the model, and well-formedness. The decoder's
-contract is: return a path whose segmentation is well-formed and whose score
-equals the maximum over all well-formed segmentations (`none` when every
-segmentation scores `-∞`, an explicit signal rather than a fallback path).
+The decoder's meaning, independent of any algorithm: a segmentation of `[0, T)`
+into runs of equal state, its score, and well-formedness. Contract: a path
+whose well-formed segmentation scores the maximum, or `none` when every
+segmentation scores `-∞`.
 
-The model is a bundle of score functions over plain `Nat` indices, mirroring
-the callback interface of `HsmmInput`:
+The model is a bundle of score functions over `Nat` indices:
   - `emit t s`      — emission of observation `t` under state `s`
-  - `trans sp s t`  — transition `sp → s`, conditioned on the destination
-                      observation `t` (matching `transitionLogProb(from, to, toObs)`)
-  - `dur s d e`     — duration prior for a segment of state `s`, length `d`,
-                      whose last minute is observation `e` (the `segEndIndex`)
+  - `trans sp s t`  — transition `sp → s`, at the destination observation `t`
+  - `dur s d e`     — duration prior for state `s`, length `d`, last minute `e`
   - `init s`        — initial-state prior at `t = 0`
-  - `entry s t`     — per-segment-entry prior, applied at every segment start
+  - `entry s t`     — per-segment-entry prior at every segment start
 -/
 
 namespace Verified.Hsmm
@@ -45,11 +40,9 @@ def emitRun (P : Problem) (s start : Nat) : (d : Nat) → Score
   | 0 => Score.zero
   | d + 1 => P.emit start s + emitRun P s (start + 1) d
 
-/-- Score of a segmentation, threading the absolute start index and previous
-state. The first segment pays `init`; every later segment pays the transition
-from its predecessor, evaluated at its own first observation. Every segment
-pays `entry` at its start, its per-minute emissions, and its duration prior
-evaluated at its last minute — exactly the composition the trellis performs. -/
+/-- Score of a segmentation, threading the start index and previous state: the
+first segment pays `init`, later ones the transition at their first observation;
+each pays `entry`, its emissions, and its duration prior at its last minute. -/
 def scoreAux (P : Problem) : Nat → Option Nat → List Seg → Score
   | _, _, [] => Score.zero
   | start, prev, seg :: rest =>

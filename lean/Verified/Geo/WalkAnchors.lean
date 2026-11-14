@@ -3,20 +3,15 @@ import Verified.Geo.PathPoint
 /-!
 # Walk endpoint anchors
 
-A walking leg's endpoints are often confidently known from its neighbours: the
-stay it left or arrived at contributes its centroid, and the train it alighted
-from or boarded contributes the snapped track's terminal vertex — which sits at
-the station to about platform precision. A post-tunnel reacquire smear
-contradicts both, so these anchors pin the reconstruction between the known
-truths.
+A walking leg's endpoints are often known from its neighbours: an adjacent
+stay's centroid, or a train's snapped terminal vertex at the station. These pin
+the reconstruction against a post-tunnel reacquire smear.
 
-Only a temporally adjacent neighbour testifies. Across a long unknown gap the
-endpoint is genuinely unknown, so a neighbour more than three minutes away says
-nothing at all. Note the gap test is one-sided (`> 180`), so a neighbour that
-overlaps the walk — a negative gap — still testifies.
+Only a neighbour within three minutes testifies; across a longer gap the
+endpoint is unknown. The test is one-sided (`> 180`), so an overlapping
+neighbour still counts.
 
-Wholly exact: the only arithmetic is a timestamp subtraction. UNPROVEN; pinned
-by the `#guard`s.
+Exact. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.WalkAnchors
@@ -81,12 +76,9 @@ def neighborAnchor (n? : Option Seg) (side : Side) (walkTs : Int) : Option WalkA
 
 /-- Both endpoint anchors for the walking segment at index `i`. -/
 def walkEndpointAnchors (segments : Array Seg) (i : Nat) : Option WalkAnchor × Option WalkAnchor :=
-  -- `i - 1` truncates to 0 on `Nat`, so at index 0 the "previous" segment would
-  -- be the walk itself; guarded explicitly. No `#guard` can catch its removal,
-  -- and that is not a gap: this is only ever called on a walking leg, and a
-  -- walk anchoring to itself falls through every arm (no centroid, not a train)
-  -- to `none`. The guard is kept because that equivalence depends on the
-  -- caller, not on this function.
+  -- `i - 1` truncates to 0 on `Nat`, so index 0 is guarded explicitly. No
+  -- guard can tell (a walk anchored to itself falls through to `none`), but
+  -- that depends on the caller.
   let prev? := if i == 0 then none else segments[i - 1]?
   match segments[i]? with
   | none => (none, none)  -- no walk, no anchors

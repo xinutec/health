@@ -4,24 +4,16 @@ import Verified.Geo.LazyFuel
 /-!
 # Lazy Dijkstra: the prev-chain closure invariant
 
-`LazyInv` is a deliberately slim cut of the settle bundle — it proves
-"settled = final" without the ghost prev-tree the rail `LoopInv` carries.
-The route reconstruction (`qReconstruct` in `Match.lean`) needs the one fact
-that cut omits: a settled vertex's `prev` chain is itself settled, so
-walking `prev` back from a done target stays inside done vertices until it
-hits the `g.n` sentinel — which is what makes the reconstructed path (and
-hence the route result) resume-stable, not just the target distance.
+The route reconstruction (`qReconstruct` in `Match.lean`) needs a settled
+vertex's `prev` chain to stay inside done vertices until the `g.n` sentinel,
+which makes the route resume-stable; `LazyInv` omits this.
 
-The invariant that delivers it, kept minimal:
+> `PInv`: every relaxed vertex (`dist ≠ none`) is the source with the sentinel
+> `prev`, or has `prev` pointing to a done vertex.
 
-> `PInv`: every vertex that has been *relaxed* (`dist ≠ none`) is either the
-> source at the sentinel `prev`, or has `prev` pointing to a done vertex.
-
-It holds because `prev[w]` is only ever written during `relaxL u …`, and
-`lstep` sets `done[u]` *before* relaxing `u`'s edges — so every `prev` write
-targets an already-done vertex, and `done` only grows. `iter_pinv` carries it
-along the whole trajectory from `linit`; `PInv.done_prev` reads off the
-consequence the reconstruction consumes.
+`prev[w]` is only written in `relaxL u …`, after `lstep` sets `done[u]`, and
+`done` only grows. `iter_pinv` carries it from `linit`; `PInv.done_prev` gives
+the consequence.
 -/
 
 namespace Verified.Geo

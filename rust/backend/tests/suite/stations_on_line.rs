@@ -1,22 +1,10 @@
-//! `stationsOnLine` is keyed by a line name, and that is why it went unanswered.
+//! `stationsOnLine` is keyed by a bare line name, unlike every coordinate-keyed
+//! table, so the dispatch must not require `lat|lon|…`. Unanswered, the tube-hop
+//! pass cannot merge consecutive legs of one ride: more timeline entries, each
+//! correctly named, so no name check notices.
 //!
-//! Every other table the answerer serves is keyed by a coordinate, so the
-//! dispatch parsed `lat|lon|…` out of the key before matching the table name. A
-//! bare line name has no `|`, so it fell out of the dispatch before reaching any
-//! arm — 13 declines a day, silently, while every other table was wired.
-//!
-//! What a missing answer costs here is not a missing name. It is a missing
-//! merge: the table tells the tube-hop pass which stations a line serves, and
-//! without it consecutive legs of one ride arrive as separate segments. The
-//! symptom is a timeline with more entries than it should have, every one of
-//! them correctly labelled — which is why no name comparison caught it.
-//!
-//! This checks the fixture arm against the answers recorded for the same day,
-//! so it measures agreement with the oracle rather than self-consistency.
-//!
-//! ⚠ `tests/golden/days` is gitignored — the fixtures carry real coordinates and
-//! place names. Like `corpus_gate`, this announces a skip rather than passing
-//! quietly when the corpus is absent.
+//! Checked against the answers recorded for the same day. ⚠ `tests/golden/days`
+//! is gitignored real data; a missing corpus announces a skip.
 
 use backend::lean;
 use backend::lean::Answerer;
@@ -99,11 +87,8 @@ fn the_fixture_arm_reproduces_the_recorded_answers() {
     }
 }
 
-/// A name whose base token no way carries is an empty answer, not a decline.
-///
-/// This is the one place an empty answer is honest: "no way of this name"
-/// really is "no stations on it" (a siding, a junction curve). Declining would
-/// leave the fold asking about it forever.
+/// A name whose base token no way carries is an empty answer, not a decline: the
+/// one honest empty (a siding, a junction curve), or the fold asks forever.
 #[test]
 fn a_line_the_mirror_does_not_carry_is_answered_empty() {
     lean::init().expect("the Lean runtime must start");

@@ -1,18 +1,7 @@
-//! `nominatim::Geocode` must round-trip every geocode the corpus already holds.
-//!
-//! # Why a real-data test and not another mock
-//!
-//! The client writes into `osmTrace.reverseGeocode`, a section the Lean fold
-//! reads by field name. A hand-written sample proves only that the struct
-//! matches what its author believed the shape was. The golden days carry 795
-//! recorded answers, the evidence that the wire shape is the one already on
-//! disk.
-//!
-//! Round-trip rather than parse: parsing succeeds while silently dropping a
-//! field serde does not know about, and a dropped field is exactly how a
-//! re-capture would come back subtly poorer than the day it replaced.
-//!
-//! Local-only, and announces a skip: the corpus is gitignored.
+//! `nominatim::Geocode` must round-trip every geocode the corpus holds: the
+//! recorded answers are the evidence of the wire shape the fold reads by field
+//! name. Round-trip, not parse, since serde drops unknown fields silently.
+//! Local-only; announces a skip without the corpus.
 
 use std::path::Path;
 
@@ -153,14 +142,9 @@ fn sample() -> Value {
     })
 }
 
-/// The claim the wiring rests on. A geocode that reaches the fold from a live
-/// cache and one that reaches it from a recorded fixture section must be the
-/// same bytes; otherwise a day graded on the corpus and the same day served
-/// would differ for a reason no gate can see.
-///
-/// Both paths are driven here and compared: the answerer's live row against
-/// `build_day_request`'s encoding of the identical answer at the identical
-/// coordinate.
+/// A geocode from the live cache and one from a recorded fixture section must
+/// be the same bytes, or a graded day and the served day differ unseen. Both
+/// paths are driven at one coordinate and compared.
 #[test]
 fn a_live_geocode_and_a_recorded_one_are_the_same_row() {
     use backend::lean::Answerer;

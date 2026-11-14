@@ -1,9 +1,6 @@
-//! The mirrors' decisions, through the Lean FFI: which region, which tiles,
-//! whether to write, and the breaker.
-//!
-//! None of these are arithmetic checks. Each pins a decision that changes what
-//! the cron does to production data — which city gets mirrored, and whether a
-//! bad run is allowed to replace a good cache.
+//! The mirrors' decisions through the Lean FFI: which region, which tiles,
+//! whether to write, and the breaker. Each changes what a cron does to
+//! production data.
 
 use backend::lean::{self, MirrorTile, tile_key};
 
@@ -85,24 +82,13 @@ fn the_tile_key_is_four_decimal_places_of_the_south_west_corner() {
     assert_eq!(tile_key(&t), "51.5235,-0.1235");
 }
 
-/// A moved BBOX renames every tile, and that is how a cache goes stale for
-/// ever rather than for a night.
+/// A moved bbox renames every tile: `tile_key` is the south-west corner, so a
+/// shifted origin shares no key with the old lattice, and the merge's per-tile
+/// `DELETE` only names current keys. Old rows become unreachable, yet the
+/// reader still takes them.
 ///
-/// The plan is derived from mined focus places, so the bbox is not a constant:
-/// it shifts when the places do. `tile_key` is the south-west corner, so a
-/// shifted origin produces a lattice with no key in common with the old one —
-/// and the merge's per-tile `DELETE` only ever names keys from the current
-/// plan. Rows under the old names are then unreachable by every future run.
-///
-/// Not hypothetical: nearly a third of production's `bus_route_cache` sat
-/// under names no plan could emit, some from before the column existed and the
-/// rest under a band from a retired grid. The reader takes the table
-/// unfiltered, so all of them reached the bus matcher.
-///
-/// ⚠ the numbers below are synthetic, and must stay that way. The real grid is
-/// derived from mined focus places, so its corners describe where he actually
-/// goes — and this repository is public. The property under test needs A
-/// lattice and an off-lattice key, never his.
+/// ⚠ The numbers are synthetic and must stay so: the real grid derives from
+/// mined places, i.e. where the user goes, and this repository is public.
 #[test]
 fn shifting_the_bbox_renames_every_tile() {
     // A whole degree apart would be absurd; the real case is a shift of a few

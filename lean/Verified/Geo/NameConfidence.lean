@@ -1,25 +1,19 @@
 /-!
 # How often each naming rule has been right
 
-The user's call: a stay's name is a guess, and the guess is shown with "the
-certainty percentage from our own calculation". The calculation that carries one
-is which rule named the stay (`Seg.placeSource`). On the golden corpus's
-confirmed stays the ranking's own softmax posterior does not: at leave-one-out
-it scores the same Brier as a constant (0.175 against 0.175), because the rules
-that decide most names (inside a building, the nearest venue) sit outside the
-totals it is computed from. The rule does separate (0.139): a name from inside a
-building is almost always right, one from the summed evidence far less often;
-`COUNTS` has the figures.
+A stay's name is shown with "the certainty percentage from our own calculation"
+(the user's call). What carries certainty is the rule that named it
+(`Seg.placeSource`): the ranking's softmax posterior scores no better than a
+constant at leave-one-out, while the rule separates (a name from inside a
+building is almost always right).
 
-So the number shown is the rule's hit rate on his confirmed days, estimated by
-the rule of succession, `(right + 1) / (graded + 2)` — a small sample never
-claims certainty, and a rule no confirmed row has graded reads 0.5, "unknown".
+The number shown is the rule's hit rate on confirmed days by the rule of
+succession, `(right + 1) / (graded + 2)`; an ungraded rule reads 0.5.
 
-⚠ `COUNTS` is a measurement, not a setting. The truth gate re-counts it on
-every corpus run, day by day, against `tests/golden/name-confidence.jsonl`, and
-a Rust test holds this table to that file's sum. A naming change that moves a
-count fails the gate until it is re-blessed (`NAME_CONFIDENCE_BLESS=1`) and this
-table updated to match.
+⚠ `COUNTS` is a measurement: the truth gate recounts it every corpus run
+against `tests/golden/name-confidence.jsonl`, and a Rust test holds this table
+to that file. A naming change that moves a count needs
+`NAME_CONFIDENCE_BLESS=1` and this table updated.
 -/
 
 namespace Verified.Geo.NameConfidence

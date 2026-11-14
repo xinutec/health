@@ -1,19 +1,8 @@
-//! `encode_seg` against frozen reference output.
+//! `encode_seg` against frozen reference output (`fixtures/encode-seg-ts.json`,
+//! the retired encoder over corpus segments), not hand-written expectations.
 //!
-//! # The oracle is reference output, not a reading of a source
-//!
-//! `fixtures/encode-seg-ts.json` is `encodeSeg`'s output over segments from the
-//! golden corpus's fold captures. Expectations written by hand would encode a
-//! reading of the rules, and a short encoding is easy to write: a first attempt
-//! stopped at `wayName`, fifteen fields early.
-//!
-//! # Why a short encoding is worse than a malformed one
-//!
-//! Lean's `Seg` defaults every absent field, so a request missing
-//! `walkSmoothedPath` or `biometrics` is not rejected — the fold answers a
-//! well-formed question about a segment that has quietly lost its enrichment.
-//! There is no error to notice, which is why this compares whole objects rather
-//! than spot-checking fields.
+//! Lean's `Seg` defaults absent fields, so a short encoding is answered as a
+//! well-formed segment that lost its enrichment: whole objects are compared.
 
 use backend::fold_payload::encode_seg;
 use serde_json::Value;
@@ -44,13 +33,9 @@ fn every_captured_segment_encodes_as_the_typescript_does() {
     assert_eq!(checked, cases.len());
 }
 
-/// The float encoding is the whole reason this wire format exists, so it is
-/// pinned independently of any captured segment.
-///
-/// A coordinate rendered as a decimal instead of its bit pattern is a silent
-/// precision change, and 1e-7° is exactly the quantisation `compare-match`
-/// already adjudicates — so the failure would look like an algorithm
-/// divergence rather than a transport bug.
+/// The float encoding, pinned on its own: a decimal coordinate instead of its
+/// bit pattern is a silent precision change that would look like an algorithm
+/// divergence.
 #[test]
 fn floats_cross_as_their_bit_pattern() {
     use backend::fold_payload::bits;

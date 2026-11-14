@@ -1,21 +1,8 @@
-//! `biolabels` — the cadence passes, exercised rather than probed.
-//!
-//! # Why this is not the probe it resembles
-//!
-//! `tests/lean_serve.rs` also sends `{"mode":"biolabels"}`, and the reachability
-//! check deliberately does not count it: that test asserts the arm answers in
-//! its own words and is indifferent to the answer. This one asserts what the
-//! pass decides. A `#guard`-pinned function can be correct and never run, and a
-//! guard cannot fail for a parameter that does not exist yet.
-//!
-//! # Every rule is bracketed
-//!
-//! Each decision below is asserted against a near-identical input that differs
-//! in one field and decides the other way. A test that only ever sees a flip
-//! cannot tell a working rule from one that flips everything.
-//!
-//! One `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
-//! starts a runtime and several tests racing on it would flake.
+//! `biolabels` — the cadence passes, exercised: this asserts what the pass
+//! decides, unlike `tests/lean_serve.rs`'s probe. Each decision is bracketed by
+//! a near-identical input, differing in one field, that decides the other way.
+//! One `#[test]`: `lean::init()` starts a runtime that parallel tests would
+//! race on.
 
 use backend::fold_payload::bits;
 use serde_json::{Value, json};
@@ -35,11 +22,8 @@ fn seg(start: i64, end: i64, mode: &str, refined: Option<&str>, kinds: &[&str], 
     })
 }
 
-/// Per-minute pedometer rows over `[from, to]`, `spm` steps in each.
-///
-/// Runs past `to`: `hasFreshData` requires a reading at or after the
-/// segment's end, so steps that stop at the boundary make the pass decline for
-/// a reason that has nothing to do with cadence.
+/// Per-minute pedometer rows over `[from, to]`, `spm` steps each, running past
+/// `to`: `hasFreshData` needs a reading at or after the segment's end.
 fn steps(from: i64, to: i64, spm: f64) -> Vec<Value> {
     let mut v = Vec::new();
     let mut t = from;

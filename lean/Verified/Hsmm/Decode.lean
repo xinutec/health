@@ -4,25 +4,18 @@ import Verified.Hsmm.Viterbi
 /-!
 # The verified decoder: path attainment
 
-`decode` returns an optimal per-minute path with a *proof* it is optimal:
-`decode_correct` shows any returned result's path comes from a well-formed
-segmentation achieving `oracleBest`, and `decode_none_iff` shows `none` is
-returned exactly when every segmentation scores `-∞`.
+`decode_correct`: a returned path comes from a well-formed segmentation
+achieving `oracleBest`. `decode_none_iff`: `none` exactly when every
+segmentation scores `-∞`.
 
-Structure: the final cell `(s, τ)` is chosen by `pickBest` (a first-best
-argmax whose result provably attains the list maximum); the segmentation is
-then reconstructed backwards by `walk`, which *re-searches* the argmax at each
-segment boundary against the proved column recurrence `col`. No backpointer
-invariants are needed: each step is justified by `col_eq_openVal` +
-`closeB_eq`, and the chosen candidate's score is pinned by `pickBest`'s
-attainment lemma.
+`pickBest` (first-best, provably attaining the list maximum) picks the final
+cell; `walk` reconstructs backwards by re-searching the argmax at each segment
+boundary against `col`, justified by `col_eq_openVal` and `closeB_eq`, with no
+backpointer invariants.
 
-`decode` evaluates `col` without memoisation, so it is exponential: a
-*specification* decoder, exact on tiny instances (see the `#guard`s in
-`Tests.lean` pinning it against the imperative `viterbi`, including paths:
-`pickBest`'s first-best tie-break composes to the same selection order). The
-efficiency step, memoising `col` into arrays, is a pointwise refinement that
-cannot disturb these theorems.
+`decode` does not memoise `col`, so it is exponential: the specification,
+pinned on tiny instances against `viterbi` (paths included) in `Tests.lean`.
+Memoised forms refine it pointwise.
 -/
 
 namespace Verified.Hsmm
