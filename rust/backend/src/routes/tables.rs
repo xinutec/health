@@ -1,29 +1,16 @@
-//! The twelve `/api` reads that are a table and a window.
+//! The twelve `/api` reads that are a table and a window: eight last-N-days,
+//! two single-day, two whole-table. Each is a select and its rows as JSON;
+//! [`crate::row_json`] owns the rendering.
 //!
-//! Eight are "the last N days of one table", two are "one day of one table",
-//! and two are a whole table with no window at all.
-//! Each is a select and its rows as JSON. [`crate::row_json`] owns the
-//! rendering; nothing about it is decided here.
+//! A share recipient asking for a day outside their window gets `[]` and a 200
+//! from the single-day reads (where `/velocity` gives a 403): the frontend pages
+//! through days and treats an empty day as "nothing that day". The multi-day
+//! reads are capped instead, `earliestVisible` folding the share's `from` into
+//! the `date >=` bound.
 //!
-//! # Two windows, two different refusals
-//!
-//! A share recipient asking for a date outside their window gets `[]` and a
-//! 200 from the single-day endpoints, while `/velocity` gives them a 403,
-//! deliberately: the frontend paging through days treats a 200 with no rows as
-//! "nothing that day" and keeps rendering, and an error would break paging at
-//! the window edge rather than at the request.
-//!
-//! The multi-day endpoints have no such branch at all. They are capped
-//! instead, by `earliestVisible` folding the share's `from` into the `date >=`
-//! bound — so a recipient asking for 365 days gets their window and no error.
-//!
-//! # Why the SQL is written out ten times
-//!
-//! One parameterised `SELECT * FROM {table}` would be shorter and would defeat
-//! `DL-SQLX-SCHEMA-TRUTH`, the lint that keeps every query in this repo a
-//! literal a reader can grep for. Table names cannot be bound as parameters
-//! anyway, so the alternative is string-building a query — which is the thing
-//! the lint exists to stop.
+//! The SQL is written out per table: table names cannot be bound, and building
+//! the string would defeat `DL-SQLX-SCHEMA-TRUTH`, which checks every literal
+//! query against the schema.
 
 use anyhow::{Context, Result};
 use axum::extract::{Query, State};
@@ -48,23 +35,16 @@ pub struct DateParams {
     date: Option<String>,
 }
 
-/// `Number(s)`, as `z.coerce.number()` calls it.
+/// JavaScript's `Number(s)`, the client contract for numeric parameters; `pub`
+/// for `tests/suite/row_json.rs`. Unlike `s.parse::<f64>()`, it changes which
+/// requests are answered:
 ///
-/// `pub` so `tests/suite/row_json.rs` can pin it. Integration tests are a
-/// separate crate, so `pub(crate)` would be invisible to them.
+///   * `Number("")` is `0`, so an empty `?days=` is rejected (below the
+///     minimum), not the 30-day default;
+///   * it trims, so `" 7 "` is 7;
+///   * it reads unsigned hex, so `"0x10"` is 16 (`"-0x10"` is `NaN`).
 ///
-/// Not `s.parse::<f64>()`. Three of these differences change which requests
-/// are answered, so they follow JavaScript's `Number()` exactly:
-///
-///   * `Number("")` is `0`, not `NaN`. An empty `?days=` is therefore a
-///     rejection (0 is below the minimum) and not the 30-day default. A host
-///     that treated empty as absent would silently answer a malformed request.
-///   * `Number` trims, so `" 7 "` is 7.
-///   * `Number` reads non-decimal literals, so `"0x10"` is a valid 16-day
-///     window. Unsigned only — JS gives `NaN` for `"-0x10"`, as does this.
-///
-/// Infinities become `NaN` here, which is a rejection, and keeps them out of
-/// the integer conversion in Lean.
+/// Infinities become `NaN`, a rejection, kept out of Lean's integer conversion.
 pub fn js_number(s: &str) -> f64 {
     let t = s.trim();
     if t.is_empty() {
@@ -134,16 +114,10 @@ fn empty() -> Response {
     Json(Value::Array(Vec::new())).into_response()
 }
 
-/// Keep the rows whose instant survived the repair, and say how many did not.
-///
-/// A row with neither a stored `_utc` nor a convertible zone cannot be placed on
-/// a time axis at all, so it is dropped rather than served as a null a chart
-/// would render as `NaN`. The count is warned rather than swallowed: a
-/// silently shorter series reads as a real statement about the day, when what it
-/// actually says is that the server has no zone tables.
-///
-/// Only for rows that are a position in time. A `sleep` row is mostly not —
-/// see the note on [`SQL_SLEEP`], which keeps the night and nulls the instant.
+/// Keep the rows whose instant survived the repair, and warn how many did not:
+/// a row with neither `_utc` nor a convertible zone cannot be placed on a time
+/// axis and would chart as `NaN`. Only for time-axis rows; [`SQL_SLEEP`] keeps
+/// the night and nulls the instant.
 fn placed_rows(rows: Vec<sqlx::mysql::MySqlRow>, what: &str) -> Vec<sqlx::mysql::MySqlRow> {
     let total = rows.len();
     let placed: Vec<_> = rows
@@ -172,13 +146,8 @@ fn outside_share_window(session: &UserSession, date: &str) -> Result<bool> {
     }
 }
 
-/// Every days-back handler is this, with one literal query substituted.
-///
-/// The query is expanded into each handler rather than passed to a shared
-/// function taking `&str`. `DL-SQLX-SCHEMA-TRUTH` resolves literals and macro
-/// fragments and checks the columns and bind arity against the replayed schema;
-/// a `&'static str` parameter defeats it, and a query nobody checks is a
-/// renamed column away from a runtime 500.
+/// Every days-back handler is this with one literal query, expanded per handler
+/// because `DL-SQLX-SCHEMA-TRUTH` cannot check a query passed as `&str`.
 macro_rules! days_back_handler {
     ($name:ident, $sql_const:ident, $sql:expr) => {
         /// The query this endpoint serves, exported so `backend rows-check` can
@@ -221,25 +190,12 @@ days_back_handler!(
     SQL_ACTIVITY,
     "SELECT * FROM daily_activity WHERE user_id = ? AND date >= ? ORDER BY date"
 );
-// The wall clock does not ship, and the instant is repaired rather than
-// served beside it. `start_time`/`end_time` are the clock the watch
-// showed, which `row_json` stamps with a `Z` they have not earned; `CONVERT_TZ`
-// recovers the true instant from the wall clock and the zone whenever the stored
-// `_utc` is missing, which is the same repair `/sleep/stages` makes.
-//
-// And a NULL survives here, where `/sleep/stages` drops the row. A stage point
-// is a position on a time axis and means nothing unplaced. A sleep row is mostly
-// not time-axis data — efficiency, the minutes in each stage, whether it was the
-// main sleep — so refusing the night to punish an unrecoverable instant would
-// hide real data from the dashboard. The instant goes null; the night still
-// shows.
-//
-// The repair is a net, not a path. Every sleep row, stage row and intraday
-// heart-rate row in production carries a stored `_utc`, so the COALESCE
-// reaches its second arm zero times. It is here for a legacy row the backfill
-// never touched, and for the case where it cannot help: `CONVERT_TZ` also
-// returns NULL when the server has no zone tables, which is why the fallback
-// is written rather than assumed.
+// The wall clock does not ship; the instant is repaired from it and the zone
+// with `CONVERT_TZ` where the stored `_utc` is missing, as `/sleep/stages`
+// does. Unlike a stage point, a night with an unrecoverable instant still
+// shows, with a null instant: most of a sleep row is not time-axis data. Every
+// production row carries `_utc`, so the repair is a net for legacy rows, and
+// `CONVERT_TZ` itself returns NULL without the server's zone tables.
 macro_rules! sql_sleep_select {
     () => {
         "SELECT log_id, date, \
@@ -271,12 +227,9 @@ days_back_handler!(
     SQL_BODY,
     "SELECT * FROM body WHERE user_id = ? AND date >= ? ORDER BY date"
 );
-/// `GET /body/before?days=N` — the window `/body?days=N` covers, and the last
-/// weight and body fat recorded before it, so the chart can estimate the
-/// window's first day between that reading and the first one inside.
-///
-/// A share viewer gets no readings: the window's edge is the share's, and
-/// what lies before it is exactly what the link does not show.
+/// `GET /body/before?days=N`: the window `/body?days=N` covers and the last
+/// weight and body fat before it, so the chart can estimate the first day. A
+/// share viewer gets none: what precedes the window is what the link hides.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BodyBefore {
@@ -413,14 +366,9 @@ days_back_handler!(
     "SELECT * FROM skin_temperature WHERE user_id = ? AND date >= ? ORDER BY date"
 );
 
-/// The two whole-table reads: no window, no date, just the user's rows.
-///
-/// Neither has a share-window branch. A share recipient reading `/devices`
-/// sees the owner's watches and their last sync times; reading `/sync-state`
-/// sees the owner's per-stream cursors. Both are metadata about the account
-/// rather than about a date, so a date window has nothing to say about them,
-/// but it does mean these two endpoints are not narrowed by a share, which is
-/// worth knowing before a share link goes to someone new.
+/// The two whole-table reads, with no share-window branch: a recipient sees the
+/// owner's watches and sync cursors, metadata about the account, not a date.
+/// Worth knowing before a share link goes to someone new.
 macro_rules! whole_table_handler {
     ($name:ident, $sql_const:ident, $sql:literal) => {
         /// The query this endpoint serves, exported for `backend rows-check`.
@@ -531,14 +479,8 @@ pub async fn sleep_stages(
     }
 }
 
-/// The stage query, as a zero-arg macro so it can reach two places and stay one
-/// literal.
-///
-/// Not a `const` read at the query site. `DL-SQLX-SCHEMA-TRUTH` resolves a
-/// literal, a `concat!`, or a crate-local zero-arg macro — a `const` path is
-/// opaque to it, so a `const` read at the query site would be unchecked SQL. The
-/// macro lets `rows_check` share the literal without trading the schema check
-/// away.
+/// The stage query as a zero-arg macro, so `rows_check` shares the literal and
+/// `DL-SQLX-SCHEMA-TRUTH` still checks it (a `const` is opaque to the lint).
 macro_rules! sql_sleep_stages {
     () => {
         "SELECT COALESCE(ts_utc, CONVERT_TZ(ts, tz, 'UTC')) AS ts_utc, stage, \
@@ -556,10 +498,8 @@ async fn sleep_stages_run(st: &AppState, session: &UserSession, p: DateParams) -
         return Ok(empty());
     }
 
-    // No ORDER BY, matching `executeTakeFirst()`. A day with two rows flagged
-    // main sleep resolves arbitrarily in both implementations; inventing a sort
-    // here would make this port disagree with production on exactly the days
-    // where the data is already wrong.
+    // No ORDER BY: a day with two rows flagged main sleep is bad data that no
+    // sort would make right.
     let log = sqlx::query(
         "SELECT log_id FROM sleep WHERE user_id = ? AND date = ? AND is_main_sleep = 1 LIMIT 1",
     )
@@ -572,17 +512,12 @@ async fn sleep_stages_run(st: &AppState, session: &UserSession, p: DateParams) -
     };
     let log_id: i64 = log.try_get("log_id").context("sleep.log_id")?;
 
-    // The wall clock does not ship, and the instant is repaired rather than
-    // served nullable. `sleep_stages.ts` is the clock the watch showed,
-    // which `row_json` renders with a `Z` it has not earned — one wire carrying
-    // two meanings under one suffix. Dropping it costs nothing, because a row
-    // missing `ts_utc` is not missing information: `ts` and `tz` determine the
-    // instant exactly, which is what `CONVERT_TZ` does here.
+    // The wall clock does not ship: `ts` and `tz` give the instant exactly,
+    // through `CONVERT_TZ` where `ts_utc` is missing.
     //
-    // ⚠ `CONVERT_TZ` returns NULL when the server's zone tables are absent, and
-    // that is handled rather than assumed: such a row stays NULL, falls into the
-    // filter below and is reported. The COALESCE only reaches it when `ts_utc`
-    // is already null, so an ordinary row cannot be harmed by a missing table.
+    // ⚠ `CONVERT_TZ` returns NULL when the server's zone tables are absent; such
+    // a row stays NULL, is filtered below and reported. Only rows already
+    // missing `ts_utc` can reach it.
     let rows = sqlx::query(sql_sleep_stages!())
         .bind(&session.user_id)
         .bind(log_id)
@@ -593,20 +528,11 @@ async fn sleep_stages_run(st: &AppState, session: &UserSession, p: DateParams) -
     Ok(Json(row_json::rows_to_json(&placed)?).into_response())
 }
 
-/// One day of per-minute heart rate, as a zero-arg macro for the same reason as
-/// [`sql_sleep_stages`]: one literal, two readers, and still lint-checked.
-///
-/// The window is on the wall clock and the payload is the instant — they are
-/// deliberately different columns. `[date, nextDay)` against `ts` is what "his
-/// Tuesday" means; running the bound against `ts_utc` would shift the day's
-/// edges by the offset for anyone not living in UTC. What ships is the instant,
-/// because `row_json` stamps a `Z` on `ts` that it has not earned, and
-/// `tz`, because that is what turns the instant back into the clock he saw.
-///
-/// `CONVERT_TZ` returns NULL when the server has no zone tables. Such a row
-/// keeps a null instant, is dropped by [`placed_rows`] and is reported. The
-/// COALESCE only reaches it when `ts_utc` is already null, so an ordinary row
-/// cannot be harmed by a missing table.
+/// One day of per-minute heart rate, as a zero-arg macro like
+/// [`sql_sleep_stages`]. The window is on the wall clock (`[date, nextDay)`
+/// against `ts`, the user's own day), and the payload is the instant plus `tz`.
+/// A row without `ts_utc` whose zone cannot convert is dropped by
+/// [`placed_rows`] and reported.
 macro_rules! sql_heartrate_intraday {
     () => {
         "SELECT COALESCE(ts_utc, CONVERT_TZ(ts, tz, 'UTC')) AS ts_utc, bpm, tz \

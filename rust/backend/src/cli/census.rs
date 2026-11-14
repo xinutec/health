@@ -4,39 +4,13 @@
 use anyhow::{Context, Result};
 use backend::db;
 
-/// What span of history does each biometric table actually hold?
+/// Did every sync stream's rows actually arrive recently? Fails if one stopped.
 ///
-/// # Why this exists
-///
-/// The Google Health migration needs to know which rows have a Google source
-/// and which do not. `backend google-probe` measures the far side; this
-/// measures this side, so the two can be compared instead of one being assumed
-/// from the other.
-///
-/// Five Google streams agreeing on one date is not corroboration. It is one
-/// observation of one system, and it could as easily be an artefact of how the
-/// probe asks as a fact about the data. A backfill sized from it alone would be
-/// sized from a single unchecked number.
-///
-/// ⚠ `CAST(... AS CHAR)`, always. A bare `MIN(date)` decodes as a temporal type
-/// and MariaDB's DATE/DATETIME mapping fails on real rows in ways an empty
-/// table never shows — the same trap that has bitten DECIMAL and BIGINT
-/// UNSIGNED here before. A string crosses cleanly and this is a readout, not
-/// arithmetic.
-///
-/// Read-only: every statement is a SELECT over a fixed table list compiled in.
-/// Report any stream that has stopped arriving, and fail if one has.
-///
-/// # Why this is an outcome check and not an error check
-///
-/// A sync stream can stop for an hour with every run exiting 0 and the only
-/// trace one error line in a pod log that nothing reads (a source that starts
-/// quoting an integer). This asks the outcome question instead.
-///
-/// Watching for a known error string would not have caught it, and would not
-/// catch the next one either — a stream that writes nothing without erroring
-/// looks identical from the outside. This asks the only question that
-/// generalises: did rows actually arrive?
+/// An outcome check, not an error check: a stream can stop with every run
+/// exiting 0 and one unread error line in a pod log, and a stream that writes
+/// nothing looks the same from outside. `DATEDIFF` in SQL measures against the
+/// database's today, and every bound is in days, so a wall-clock table's
+/// sub-day offset cannot change the verdict.
 pub(crate) async fn freshness() -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
@@ -44,13 +18,7 @@ pub(crate) async fn freshness() -> Result<()> {
         .await
         .context("connecting to the database")?;
 
-    // `DATEDIFF` in SQL rather than parsing dates here, so the comparison is
-    // against the database's today. A local clock in another zone would shift
-    // every lag by a day.
-    //
-    // The intraday tables store a local wall clock, not an instant (see
-    // fitbit::sync::hrv) — which is why every bound here is in days, where a
-    // sub-day offset cannot change the verdict.
+    // `DATEDIFF` in SQL, against the database's today rather than a local clock.
     let rows = sqlx::query(
         "SELECT 'body' AS t, DATEDIFF(CURDATE(), MAX(date)) AS lag FROM body \
          UNION ALL SELECT 'breathing_rate', DATEDIFF(CURDATE(), MAX(date)) FROM breathing_rate \
@@ -108,23 +76,13 @@ pub(crate) async fn freshness() -> Result<()> {
     )
 }
 
-/// What shape is `heart_rate_zones` actually in?
-///
-/// The row count alone cannot tell junk from duplication: rows starting in
-/// 2010 where every other biometric table starts in 2023, at ~19 a day
-/// where Fitbit reports four or five zones, are either dates the watch never
-/// saw or a zone axis nobody expected. Those need opposite repairs, and deleting
-/// before knowing which would be a guess.
-///
-/// The primary key is `(user_id, date, zone_name)`, so rows are distinct
-/// triples: `rows / (days x zones x users)` is 1 when the table is exactly what
-/// its key says, and anything else names which axis grew.
-///
-/// Three queries rather than one union, because they have different shapes and
-/// the tunnel cost of two extra round trips is far below the cost of reading a
-/// column that means something different per arm. Each literal is inline at
-/// its call site: the crate refuses a dynamically built SQL string and
-/// dev-lint's dl-sqlx-schema-truth refuses even a `const` held in a variable.
+/// What shape is `heart_rate_zones` in? Rows from 2010 at ~19 a day, against
+/// four or five zones and every other table starting 2023, are either dates the
+/// watch never saw or an unexpected zone axis, which need opposite repairs.
+/// With key `(user_id, date, zone_name)`, `rows / (days × zones × users)` is 1
+/// when the table is what its key says. Three literal queries, since the crate
+/// refuses dynamic SQL and dev-lint's dl-sqlx-schema-truth a `const` in a
+/// variable.
 pub(crate) async fn zones_census() -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
@@ -178,14 +136,9 @@ pub(crate) async fn zones_census() -> Result<()> {
         println!("  {z:<24} {n:>7} rows over {d} dates");
     }
 
-    // The oldest dates, not a sample. A sentinel date is at one end by
-    // construction, and the question is whether the earliest date is one row or
-    // a decade of them, which `LIMIT 20` from the oldest end answers and a
-    // random sample cannot.
-    // `CAST(SUM(...) AS CHAR)`, not the bare SUM. `SUM` over INT widens to
-    // DECIMAL in MariaDB, which sqlx decodes as neither i64 nor f64, leaving the
-    // one number that decides junk versus real unreadable. A cast on some
-    // columns is not a cast.
+    // The oldest dates, not a sample: a sentinel date sits at one end. And
+    // `CAST(SUM(...) AS CHAR)`: `SUM` over INT widens to DECIMAL, which sqlx
+    // decodes as neither i64 nor f64.
     let oldest = sqlx::query(
         "SELECT CAST(date AS CHAR) AS d, COUNT(*) AS n, \
          CAST(SUM(COALESCE(minutes, 0)) AS CHAR) AS total_minutes \
@@ -202,17 +155,9 @@ pub(crate) async fn zones_census() -> Result<()> {
         println!("  {d}  {n} rows, {tm} zone-minutes");
     }
 
-    // WHERE THE REAL DATA STARTS — and NOT by asking for zero minutes, which
-    // was the obvious guess and is wrong. A date with no heart-rate data comes
-    // back from Fitbit as `Out of Range = 1440`: the whole day, counted as
-    // below the first zone. So every date in the table sums to a full day and
-    // "zero minutes" selects nothing. Measured, not assumed — the first cut
-    // asked the zero question and got 0 dates back, which reads as "it is all
-    // real" and is the opposite of the truth.
-    //
-    // The discriminator is minutes outside `Out of Range`. A day the watch
-    // actually recorded puts some minutes in Fat Burn, Cardio or Peak; a
-    // synthesised day cannot.
+    // Where the real data starts, not "zero minutes": a day with no heart rate
+    // came back as `Out of Range = 1440`, so every date sums to a full day. A
+    // recorded day puts minutes in Fat Burn, Cardio or Peak.
     let bound = sqlx::query(
         "SELECT (SELECT COUNT(*) FROM (SELECT date FROM heart_rate_zones \
            GROUP BY date HAVING SUM(COALESCE(minutes, 0)) = 0) z) AS zero_days, \
@@ -240,20 +185,20 @@ pub(crate) async fn zones_census() -> Result<()> {
     Ok(())
 }
 
+/// What span of history does each biometric table hold? Read-only.
+///
+/// ⚠ `CAST(... AS CHAR)`, always: a bare `MIN(date)` decodes as a temporal type,
+/// and MariaDB's DATE/DATETIME mapping fails on real rows in ways an empty table
+/// never shows.
 pub(crate) async fn coverage() -> Result<()> {
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
 
-    // One static query, inline: not a loop over a table list, and not a
-    // `const` bound above.
-    //
-    // Two guards want this. The crate refuses a dynamically built SQL string, so
-    // a `format!`-ed table name will not compile; dev-lint's dl-sqlx-schema-truth
-    // then refuses even a `const` held in a variable, because schema checking
-    // reads the argument at the call site. And the prod tunnel is latency-bound:
-    // eleven separate reads over it would cost far more than eleven arms of one.
+    // One static query, inline: the crate refuses dynamic SQL, dev-lint's
+    // dl-sqlx-schema-truth a `const` in a variable, and the prod tunnel is
+    // latency-bound, so one query beats eleven.
     let rows = sqlx::query(
         "\
          SELECT 'body' AS t, COUNT(*) AS n, CAST(MIN(date) AS CHAR) AS lo, \
@@ -301,12 +246,10 @@ pub(crate) async fn coverage() -> Result<()> {
     Ok(())
 }
 
-/// The daily-summary series the heart-rate trend reads: `(table, metric
-/// column, key)`. Every table dates its rows in a `date DATE` column.
-///
-/// `resp` is Google's daily figure, which is the deep-sleep rate when there is
-/// one (see `google::sync::sync_breathing_rate`); the three stage rates beside
-/// it are null where Google had no reading for that stage.
+/// The daily-summary series the heart-rate trend reads, `(table, metric
+/// column, key)`, each dated in a `date DATE` column. `resp` is Google's daily
+/// figure, the deep-sleep rate where there is one; the stage rates are null
+/// where Google had none.
 const HR_TREND_SOURCES: [(&str, &str, &str); 6] = [
     ("daily_activity", "resting_heart_rate", "rhr"),
     ("hrv_daily", "daily_rmssd", "rmssd"),
@@ -324,15 +267,12 @@ fn is_iso_date(s: &str) -> bool {
         })
 }
 
-/// Recent resting HR / HRV / breathing rate, one row per date since `since`.
-///
-/// `backend hr-trend [--json] [SINCE]`: a table, or with `--json` the array
-/// `[{"date", "rhr", "rmssd", "resp", "resp_deep", "resp_light", "resp_rem"}]`, a key present only where that table
-/// has a row for the day, `null` where the row holds no value.
-/// `~/Code/dicom-scan/refresh_hr_data.py` reads it through `scripts/prod-db.sh`.
-///
-/// DECIMAL columns are read as CHAR and parsed here — sqlx refuses them on a
-/// real row ([[reference_sqlx_mysql_type_traps]]).
+/// Recent resting HR, HRV and breathing rate, one row per date since `since`.
+/// `backend hr-trend [--json] [SINCE]`: a table, or `[{"date", "rhr", "rmssd",
+/// "resp", "resp_deep", "resp_light", "resp_rem"}]` with a key only where the
+/// table has a row and `null` where it has no value. Read by
+/// `~/Code/dicom-scan/refresh_hr_data.py` via `scripts/prod-db.sh`. DECIMAL is
+/// read as CHAR (sqlx refuses it on a real row).
 pub(crate) async fn hr_trend(since: &str, json: bool) -> Result<()> {
     use sqlx::Row as _;
     if !is_iso_date(since) {
@@ -396,17 +336,11 @@ pub(crate) async fn hr_trend(since: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Window means of the same three series, computed in SQL so they are
-/// reproducible rather than hand-tallied.
-///
-/// `backend hr-trend --averages <FROM> <BOUNDARY>` — `{"windows", "preop",
-/// "postop"}` where `preop` covers `[from, boundary)` and `postop`
-/// `[BOUNDARY, now)`, each `{key: {"avg", "n"}}`. `resp` also carries
-/// `without_deep`: how many of its `n` nights had no deep-sleep reading, so
-/// their figure is Google's fallback rather than the deep-sleep rate.
-/// The dates are the caller's:
-/// this repository is public, and which day divides the two windows belongs
-/// to the case file that asks, not here.
+/// Window means of the same three series, in SQL so they are reproducible.
+/// `backend hr-trend --averages <FROM> <BOUNDARY>`: `{"windows", "preop",
+/// "postop"}` over `[from, boundary)` and `[boundary, now)`, each `{key: {"avg",
+/// "n"}}`; `resp` adds `without_deep`, nights with Google's fallback figure.
+/// The dates are the caller's: this repository is public.
 pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> {
     use sqlx::Row as _;
     if !is_iso_date(from) || !is_iso_date(boundary) {
@@ -494,13 +428,9 @@ pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> 
     Ok(())
 }
 
-/// The full HRV + resting-HR history as CSV, `date,hrv,rhr`, one row per day
-/// present in either table, ascending; an empty cell is a missing reading.
-///
-/// `backend hrv-history` backs the long-term chart in the case file. A
-/// recorded zero counts as missing: an RMSSD of 0 ms is a failed reading, not a
-/// measurement. Dropped here and not at ingest: `hrv_daily` keeps what Fitbit
-/// recorded, verbatim.
+/// The full HRV and resting-HR history as CSV, `date,hrv,rhr`, ascending; an
+/// empty cell is a missing reading, and an RMSSD of 0 counts as missing (a
+/// failed reading). `hrv_daily` itself keeps what was recorded.
 pub(crate) async fn hrv_history() -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
@@ -540,13 +470,8 @@ pub(crate) async fn hrv_history() -> Result<()> {
     Ok(())
 }
 
-/// The OwnTracks proxy's decisions, newest last.
-///
-/// The same fields as the `owntracks …` log line, read from the table the
-/// route writes beside it, so the answer survives a rollout. `CAST(... As
-/// CHAR)` on every column: this is a readout, and a TINYINT or an unsigned
-/// INT decoding as a Rust integer fails on real rows in ways an empty table
-/// never shows.
+/// The OwnTracks proxy's decisions, newest last, from the table written beside
+/// the log line, so they survive a rollout. Every column is cast to CHAR.
 pub(crate) async fn owntracks_log(user: &str, limit: i64) -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
@@ -592,16 +517,11 @@ pub(crate) async fn owntracks_log(user: &str, limit: i64) -> Result<()> {
     Ok(())
 }
 
-/// `venue-prior-snapshots <user> <out-dir>`: every `venue_type_prior_snapshots`
-/// row as `<as_of>.json`, and the current `venue_type_priors` row as
-/// `current.json` — the inputs the serving path resolves `venuePriors` from
-/// (`classification_inputs::venue_priors`: the newest snapshot at or before the
-/// day, else the current row). Read-only. The corpus harness reads the directory
-/// back through `VENUE_PRIORS_DIR` and resolves per fixture date by the same
-/// rule, so a replay under it names a day the way the pod does.
-///
-/// Prints one line per file: the anchor, the mined stay count and the size.
-/// A prior is subtype statistics — no place, no coordinate.
+/// `venue-prior-snapshots <user> <out-dir>`: every prior snapshot as
+/// `<as_of>.json` and the current row as `current.json`, which the corpus reads
+/// back through `VENUE_PRIORS_DIR` by the serving rule (newest snapshot at or
+/// before the day). Prints the anchor, stay count and size per file; a prior
+/// holds no place or coordinate.
 pub(crate) async fn venue_prior_snapshots(user: &str, out_dir: &str) -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
@@ -648,13 +568,10 @@ pub(crate) async fn venue_prior_snapshots(user: &str, out_dir: &str) -> Result<(
     Ok(())
 }
 
-/// Heart rate awake and at rest, one row per day (`Verified.RestHr`).
-///
-/// `backend rest-hr [--json] USER SINCE [UNTIL]` — per local day (the user's
-/// home zone): the median of the settled 5-minute blocks, their 25th–75th and
-/// 5th–95th percentiles, and the minutes behind it; `-` where the day has no
-/// sleep record or no settled rest. `--json` prints the array
-/// `[{"date", "median", "p25", "p75", "p05", "p95", "restMinutes"}]`.
+/// Heart rate awake and at rest, one row per local day (`Verified.RestHr`):
+/// `backend rest-hr [--json] USER SINCE [UNTIL]` gives the median of settled
+/// 5-minute blocks, their 25–75th and 5–95th percentiles and the minutes;
+/// `-` without a sleep record or settled rest.
 pub(crate) async fn rest_hr(
     user: &str,
     since: &str,

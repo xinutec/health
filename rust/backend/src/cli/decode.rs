@@ -5,12 +5,9 @@ use anyhow::{Context, Result};
 use backend::rail_route::{RAIL_CORRIDOR_LINE_LIMIT, line_bits, parse_point_wkt};
 use backend::{db, decode_fixture};
 
-/// Persist a day's HSMM decode, overwriting any existing row.
-///
-/// `classifier_version` is read back: `loadDecode` returns null on a mismatch
-/// so readers re-decode rather than serve stale segments. A wrong number here
-/// fails nothing; every reader just discards the row and recomputes, which
-/// looks like a slow cache.
+/// Persist a day's HSMM decode, overwriting any row. `classifier_version` is
+/// read back: a mismatch makes readers re-decode, so a wrong number fails
+/// nothing and looks like a slow cache.
 pub(crate) async fn save_decode(
     pool: &sqlx::MySqlPool,
     user_id: &str,
@@ -42,12 +39,9 @@ pub(crate) async fn save_decode(
 /// Declared once, in `classification_inputs`.
 use crate::classification_inputs::CLASSIFIER_VERSION;
 
-/// Decode a day's HSMM and persist it to `decoded_days`.
-///
-/// The whole model is built and decoded in Lean: `assemblesegments` takes raw
-/// `edges`/`nodes`/`obs`/`places`, builds the route-graph model, the coverage
-/// map and the trellis, decodes, and groups the path into segments. Nothing
-/// here constructs a model, so no tens-of-MiB quantised payload crosses.
+/// Decode a day's HSMM and persist it to `decoded_days`. The whole model is
+/// built and decoded in Lean (`assemblesegments` takes raw edges, nodes,
+/// observations and places), so no quantised model payload crosses.
 pub(crate) async fn decode_day(
     user: Option<&str>,
     dates: &[String],
@@ -81,10 +75,8 @@ pub(crate) async fn decode_day(
             dates.to_vec()
         };
 
-        // The days are independent: `DECODE_JOBS` of them decode at once (each
-        // in its own task, the Lean decode a blocking call), 1 by default — the
-        // cluster's job has one CPU. A Mac re-decode of the history sets it to
-        // the cores it can spare; a heavy day's worker peaks near half a GiB.
+        // Days are independent: `DECODE_JOBS` decode at once, 1 by default (the
+        // cluster job has one CPU). A heavy day's worker peaks near half a GiB.
         let jobs: usize = std::env::var("DECODE_JOBS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -185,11 +177,9 @@ pub(crate) async fn decode_one(
     )
     .await?;
     step("load", &mut steps);
-    // A day that observes nothing has nothing to decode. Where its bracket
-    // agrees — the day before ended at a place and the day after was mostly
-    // there (`empty_day_bracket`) — it is one stay there, written as its
-    // decode; with no bracket it stays undecoded, which is the rule's own
-    // answer: it does not guess.
+    // A day that observes nothing is one stay at its bracket's place when the
+    // bracket agrees (`empty_day_bracket`); otherwise it stays undecoded rather
+    // than guessed.
     if inputs.get("emptyDayBracket").is_some_and(|b| !b.is_null()) {
         let h = backend::head::run(&inputs, date)?;
         if h.points.is_empty()
@@ -228,10 +218,8 @@ pub(crate) async fn decode_one(
     step("graph rows", &mut steps);
     let (edges, nodes) = backend::lean::build_wire_graph(&ways, &stops)?;
     step("graph wire", &mut steps);
-    // The graph's size is evidence: `emitLeg` is a margin test (a station is
-    // named only when every rival trails by `MARGIN_NATS`), so the number of
-    // stations in range decides whether a leg resolves, and two runs that box
-    // different regions resolve differently with identical scoring.
+    // The graph's size is evidence: `emitLeg` is a margin test, so the stations
+    // in range decide whether a leg resolves.
     println!(
         "graph {date}: {} ways, {} stops -> {} edges, {} nodes",
         ways.len(),
@@ -241,18 +229,13 @@ pub(crate) async fn decode_one(
     );
 
     // ── the observation tensor's raw materials ──────────────────────────────
-    // The tensor is built in Lean, not here: shipping 1440 assembled rows is
-    // the payload this design avoids. What crosses is the day's fixes and two
-    // impure lookups, a timezone and an OSM query.
-    //
-    // Outliers are dropped once, here, and the same cleaned list feeds both
-    // the tensor and the proximity lookups, so the two cannot disagree.
+    // Lean builds the tensor from the day's fixes and two impure lookups (a
+    // timezone, an OSM query). Outliers are dropped once here, so the tensor
+    // and the proximity lookups see the same fixes.
     let cleaned = backend::lean::drop_gps_outliers(&gps_fixes(&obs)?)?;
     step("outliers", &mut steps);
-    // The decoder's places are not `focus_places` rows: `knownPlaces` names
-    // the columns (`centroidLat`, `totalDwellSec`, `displayName`), the decode
-    // wire the concepts (`lat`, `dwell`, `name`). The row shape is refused by
-    // name; see `decode_places` and its request test.
+    // The decoder's places are not `focus_places` rows: `decode_places` maps the
+    // column names to the wire's concepts, and the row shape is refused by name.
     let places = backend::classification_inputs::decode_places(inputs.get("knownPlaces"))?;
     let osm = day_osm(pool, bounds.start_utc, bounds.end_utc, &cleaned, &places).await?;
     println!("osm {date}: {}", osm.note);
@@ -294,10 +277,8 @@ pub(crate) async fn decode_one(
         "edges": edges,
         "nodes": nodes,
         "places": places,
-        // Absent is not neutral: `parseAssemble` reads a missing
-        // `placeNearLine` as the empty set, which drops every place→line hard
-        // zero, and the decode looks plausible while permitting forbidden
-        // boardings.
+        // Absent is not neutral: a missing `placeNearLine` drops every
+        // place→line hard zero, permitting forbidden boardings plausibly.
         "placeNearLine": osm.place_near_line,
         "railStopRelations": inputs.get("railStopsCache").cloned().unwrap_or(serde_json::Value::Null),
         "continuity": continuity,
@@ -341,10 +322,8 @@ pub(crate) async fn decode_one(
         std::fs::write(&path, req.to_string())
             .with_context(|| format!("writing {}", path.display()))?;
     }
-    // `DECODE_CAPTURE=<dir>`: the day as a frozen decoder fixture, format 3 —
-    // the request itself beside an empty `expected`, which `DECODE_BLESS` fills
-    // (`decode_fixture::request` reads it back). A capture never writes the
-    // database: it refuses outside a dry run.
+    // `DECODE_CAPTURE=<dir>`: the day as a frozen decoder fixture (the request
+    // beside an empty `expected`, which `DECODE_BLESS` fills). Dry runs only.
     if let Ok(dir) = std::env::var("DECODE_CAPTURE") {
         anyhow::ensure!(dry_run, "DECODE_CAPTURE is a dry-run tool: pass --dry-run");
         let path = std::path::Path::new(&dir).join(format!("{date}-{user_id}.json"));
@@ -356,12 +335,8 @@ pub(crate) async fn decode_one(
         std::fs::write(&path, serde_json::to_string(&fx)?)
             .with_context(|| format!("writing {}", path.display()))?;
     }
-    // Blocking Lean work: the runtime moves its other tasks off this thread, so
-    // `DECODE_JOBS` days decode side by side.
-    //
-    // `None` is degenerate: Lean found no viable path. That is a real answer
-    // about the day, and must not be written as zero segments, which would
-    // read as "decoded, nothing happened".
+    // Blocking Lean work, so `DECODE_JOBS` days decode side by side. `None` is
+    // a real answer (no viable path) and must not be written as zero segments.
     let Some(segments) = tokio::task::block_in_place(|| backend::lean::assemble_segments(&req))?
     else {
         anyhow::bail!("the decode is degenerate — no viable path");
@@ -381,27 +356,16 @@ pub(crate) async fn decode_one(
     Ok(n)
 }
 
-/// The prior day's end-of-day seed, shaped as `parseContinuity` reads it, or
-/// `null`, a legitimate chain start.
-///
-/// Four fields, not one: `priorPlaceId` alone is refused with `property not
-/// found: hoursSince`. `priorPlaceCoord` is a `[lat, lon]` pair on the wire.
-///
-/// Three absences, read separately though all answer null: no row (a chain
-/// start), a NULL `end_of_day_place_id` (the day ended nowhere known), and no
-/// `end_of_day_ts` (the seed's staleness is unknown).
+/// The prior day's end-of-day seed as `parseContinuity` reads it, or `null` (a
+/// chain start). All four fields are required, and `priorPlaceCoord` is a
+/// `[lat, lon]` pair. No row, a NULL place and no timestamp all answer null.
 ///
 /// ⚠ sqlx types that fail on real rows only: `presence_log.*_place_id` is INT
-/// UNSIGNED, so `u64`; `end_of_day_posterior` is float, so `f32`, widened
-/// exactly.
+/// UNSIGNED, so `u64`; `end_of_day_posterior` is float, so `f32`.
 ///
-/// The timestamp is read with `UNIX_TIMESTAMP`, mirroring the `FROM_UNIXTIME`
-/// that `refresh-presence-log` writes it with, so the seed's staleness does
-/// not depend on the session timezone.
-///
-/// The coordinate comes from the places already in hand, so it is one the
-/// trellis has a state for. A prior place that is no longer a focus place
-/// yields a null coord, the documented ungated case.
+/// `UNIX_TIMESTAMP` mirrors the `FROM_UNIXTIME` it was written with, so the
+/// session timezone does not matter. The coordinate comes from the places in
+/// hand; a prior place no longer mined yields a null coord (ungated).
 pub(crate) async fn load_continuity(
     pool: &sqlx::MySqlPool,
     user_id: &str,
@@ -459,11 +423,8 @@ pub(crate) async fn load_continuity(
     }))
 }
 
-/// `head::capture`'s `obs.points` as fixes.
-///
-/// These are the velocity pipeline's points, not the raw ones. `rawFixes`
-/// builds the route-graph bbox, a wider set on purpose, so the graph contains
-/// the day even where the pipeline dropped fixes.
+/// `head::capture`'s `obs.points` as fixes: the velocity pipeline's points.
+/// The route-graph bbox uses the wider `rawFixes`, so the graph covers the day.
 pub(crate) fn gps_fixes(obs: &serde_json::Value) -> Result<Vec<backend::lean::GpsFix>> {
     let rows = obs
         .get("points")
@@ -490,11 +451,8 @@ pub(crate) fn gps_fixes(obs: &serde_json::Value) -> Result<Vec<backend::lean::Gp
         .collect()
 }
 
-/// Everything the decode needs from OSM, gathered in one trip to the mirror.
-///
-/// Two unrelated questions through one door, because the mirror is
-/// blocking-thread only: `with_mirror_answerer`'s closure cannot await, and a
-/// second `MirrorSource` built on a runtime worker aborts the process.
+/// Everything the decode needs from OSM, in one trip: the mirror is
+/// blocking-thread only, and a second `MirrorSource` on a runtime worker aborts.
 pub(crate) struct DayOsm {
     /// The sparse `[minuteTs, road, rail]` table, opaque — it goes into the
     /// assemble request unread.
@@ -581,11 +539,8 @@ pub(crate) async fn day_osm(
     })
 }
 
-/// `[name, latBits, lonBits]` triples → coordinates.
-///
-/// The bit patterns are parsed only to ask; they go back out as bit patterns
-/// on the `placenearline` request, so Lean measures from the mirror's exact
-/// coordinate.
+/// `[name, latBits, lonBits]` triples as coordinates. The bits go back out on
+/// the `placenearline` request, so Lean measures the mirror's exact values.
 pub(crate) fn station_coords(rows: &[serde_json::Value]) -> Vec<(f64, f64)> {
     rows.iter()
         .filter_map(|r| {
@@ -690,22 +645,12 @@ pub(crate) async fn route_graph_rows(
         }));
     }
 
-    // The stations are not boxed by the day. `emitLeg` names a station only
-    // when every rival trails by `MARGIN_NATS`, so the candidate pool is a
-    // threshold; cut to the day's extent it lowers the bar, and a leg resolves
-    // by where the phone was rather than where the train went.
-    //
-    // Measured on one ride day, changing only the boxes:
-    //
-    //     day ways,      day stops        3706 / 694     17 of 18
-    //     whole lines,   day stops        4885 / 694     17 of 18
-    //     lifetime ways, lifetime stops  38559 / 9474    18 of 18
-    //     day ways,      lifetime stops   3706 / 9474    18 of 18   ← this
-    //
-    // The station pool decides it; the track is irrelevant. This is also the
-    // cheap arm: station points carry no geometry, and a lifetime way box
-    // overruns `RAIL_CORRIDOR_LINE_LIMIT` (sized for the day box), truncating
-    // with no `ORDER BY`, which once decoded a ride with no stations at all.
+    // The stations are not boxed by the day: `emitLeg` is a margin test, so a
+    // smaller candidate pool lowers the bar and a leg resolves by where the
+    // phone was. On one ride day only lifetime stops resolved every leg (18 of
+    // 18, against 17 with day stops); the track box made no difference. Station
+    // points are cheap, while a lifetime way box overruns
+    // `RAIL_CORRIDOR_LINE_LIMIT` (truncating without `ORDER BY`).
     let stops_poly = {
         let rows = sqlx::query(
             // `CAST(… AS CHAR)`: `centroid_lat/lon` are DECIMAL, which sqlx
@@ -757,10 +702,8 @@ pub(crate) async fn route_graph_rows(
     Ok((ways, stops))
 }
 
-/// `tags_json` → `[[k, v], …]`.
-///
-/// Pairs, not an object: `BackendEntry` reads two-element arrays, and the
-/// object spelling parses to nothing, so every stay would answer no venues.
+/// `tags_json` as `[[k, v], …]`: `BackendEntry` reads pairs, and an object would
+/// parse to nothing.
 pub(crate) fn tag_pairs(raw: Option<&str>) -> Vec<serde_json::Value> {
     let Some(v) = raw.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()) else {
         return Vec::new();
@@ -836,23 +779,12 @@ fn decodeprof(
     Ok((v, cpu))
 }
 
-/// `backend decode-bench [--runs N] [DAY…]`: the HSMM decoder's cost per
-/// frozen day, apart from its model build.
-///
-/// The instrument for a trellis change. `hsmm_decode_corpus` proves a decode
-/// still exact, but its wall (~170 s) swings 2× run to run and cannot see a
-/// 10% decoder change. This runs `verified_cli decodeprof` on each fixture's
-/// request, which builds the `PData` once and times `sDecode` N times.
-///
-/// Two numbers per day, because the machine is rarely quiet:
-/// * wall min/median/max of the N decodes: the cost when nothing else runs;
-///   the spread is the machine's.
-/// * CPU per decode: the child's user+sys with N decodes minus the same child
-///   with none, over N. The build, parse and read cancel, and CPU time barely
-///   moves under a neighbour's build where wall doubles.
-///
-/// Compare two arms by swapping `VERIFIED_CLI`, interleaved (A/B/A). Prints
-/// the day, the trellis shape and the times, never a coordinate.
+/// `backend decode-bench [--runs N] [DAY…]`: the decoder's cost per frozen day,
+/// without the model build, for a trellis change (the decode corpus proves
+/// exactness but swings 2×). Runs `verified_cli decodeprof` on each fixture:
+/// wall min/median/max of N decodes, and CPU per decode (user+sys with N
+/// decodes minus with none, over N), which barely moves under load. Compare arms
+/// by swapping `VERIFIED_CLI`, interleaved. Never prints a coordinate.
 pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
     anyhow::ensure!(runs > 0, "decode-bench needs at least one run");
     let Some(mut names) = decode_fixture::fixture_names()? else {
@@ -928,16 +860,11 @@ pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `backend watch-decode-queue`: the decoder beside the serving pod.
-///
-/// Each turn takes the day a read queued (`decode_freshness`), else the newest
-/// stale day among the stored decodes in `window_days` and today, and decodes
-/// it in a child `decode-day` process: one process over many days held memory
-/// until killed, one per day stays flat. After a write, that day's presence
-/// row. A failure counts an attempt in the queue, so a day that keeps failing
-/// stops being tried.
-///
-/// No `migrate()` here: `backend serve` does it, in the same pod.
+/// `backend watch-decode-queue`: the decoder beside the serving pod. Each turn
+/// takes a day a read queued, else the newest stale stored day in
+/// `window_days`, and decodes it in a child process (one process over many days
+/// held memory), then writes its presence row. Failures count attempts, so a
+/// day that keeps failing stops being tried. `backend serve` migrates.
 pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Result<()> {
     use backend::decode_freshness as fresh;
     use backend::fetch_queue as queue;
@@ -1041,10 +968,8 @@ pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Res
     Ok(())
 }
 
-/// Today's own Lean worker: a `verified_cli serve` the decode watch keeps, so
-/// a decode of today resumes from the previous one (`assemblesegmentsinc`,
-/// docs/proposals/2026-11-incremental-today.md). Dropped on any failure; the
-/// next decode of today is then a full one.
+/// Today's own Lean worker, kept so a decode of today resumes from the previous
+/// one (`assemblesegmentsinc`); dropped on any failure, making the next full.
 struct TodayWorker {
     child: std::process::Child,
     stdin: std::process::ChildStdin,

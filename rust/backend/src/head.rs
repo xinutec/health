@@ -1,10 +1,7 @@
-//! The pipeline head: raw PhoneTrack fixes → `segsRaw`.
-//!
-//! `segsRaw` is the day fold's only input, and every stage that produces it —
-//! GPS quality control, place-snap, the Kalman smoother, segmentation — has a
-//! `#guard`-pinned Lean twin reachable through `lean::serve`. This module is
-//! the sequencing: which fixes each stage is handed, in what order, and with
-//! which filter between them.
+//! The pipeline head: raw PhoneTrack fixes → `segsRaw`, the day fold's only
+//! input. Every stage is a `#guard`-pinned Lean mode via `lean::serve`; this
+//! module is the sequencing, which fixes each stage gets and the filters
+//! between.
 //!
 //! ```text
 //!   inputs.phonetrack.today
@@ -16,17 +13,11 @@
 //!     → segments     (Lean)                 classify → segsRaw
 //! ```
 //!
-//! ## The oracle is free
+//! Each golden fixture's `expected.statesOut` is this chain's last blessed
+//! output, so it replays with no database: a regression oracle, not a
+//! correctness one (the narratives grade that).
 //!
-//! Each golden fixture carries `expected.statesOut`, this arm's own last blessed
-//! output, computed from the same `inputs` this module reads. So the whole
-//! chain replays against the corpus with no DB.
-//!
-//! It is a regression oracle: it catches the answer moving and cannot catch
-//! "it was always wrong". Only the ground-truth narratives grade correctness.
-//!
-//! ⚠ compare the serialised TEXT. `jq` parses both sides to doubles, so
-//! `25.0 == 25` and a keyed diff calls a rendering difference clean. Every
+//! ⚠ Compare the serialised text: `jq` parses to doubles (`25.0 == 25`). Every
 //! float leaving this module goes through [`js_num`].
 
 use anyhow::{Context, Result, anyhow};
@@ -52,35 +43,21 @@ pub struct Smoothed {
     pub lon: f64,
     pub speed_kmh: f64,
     pub bearing: f64,
-    /// The accuracy of the raw fix this was smoothed from, in metres.
-    ///
-    /// Carried through the filter so the segmenter can tell a real straight
-    /// walk from a single jump inside the noise: `linearity` is a net/path
-    /// ratio and reads 1.0 — maximally directed — for a path that did not move.
-    /// `None` means the fix reported none, never "perfect".
+    /// The accuracy (m) of the raw fix this was smoothed from, so the segmenter
+    /// can tell a straight walk from a jump inside the noise (`linearity` reads
+    /// 1.0 for a path that did not move). `None` is no report, never "perfect".
     pub accuracy: Option<f64>,
 }
 
-/// The accuracy ceiling for a fix to reach the Kalman filter at all.
-///
-/// Renamed from `ACCURACY_CEILING_M`, which `Verified.Geo.GpsQuality` also
-/// declares — at 80, for a different job entirely (spotting a garbage fix by
-/// pairing a bad accuracy with an impossible implied speed). One name, two
-/// rules, two values, two languages: a reader who found either would have had
-/// no way to know the other existed. `scripts/rules-live-in-lean.sh` now refuses
-/// a name declared on both sides.
-///
-/// Deliberately loose. The filter weights each measurement by its accuracy²
-/// variance, so a noisy fix already contributes little; pre-filtering harder
-/// throws away anchors that matter most on fast linear travel, where even a
-/// 150 m fix pins a smooth path.
+/// The accuracy ceiling for a fix to reach the Kalman filter, deliberately
+/// loose: the filter already weights by accuracy², and harder pre-filtering
+/// drops the anchors fast linear travel needs. Not `GpsQuality`'s 80 m
+/// garbage-fix rule, which is a different job (one name per rule is enforced by
+/// `scripts/rules-live-in-lean.sh`).
 const KALMAN_ADMIT_ACCURACY_M: f64 = 200.0;
 
-/// A `f64` on the Lean wire: its IEEE-754 bit pattern as a decimal string.
-///
-/// JSON cannot carry a Float unrounded (Lean's printer emits six decimals, and a
-/// JavaScript `JSON.parse` re-rounds past 2^53), and the Kalman recursion moves
-/// on the seventh decimal of a fix.
+/// A `f64` on the Lean wire, as its bit pattern in a decimal string: JSON would
+/// round it, and the Kalman recursion moves on a fix's seventh decimal.
 fn bits(v: f64) -> Value {
     Value::String(v.to_bits().to_string())
 }
@@ -110,11 +87,9 @@ fn unbits_opt(v: &Value) -> Result<Option<f64>> {
     unbits(v).map(Some)
 }
 
-/// One `lean::serve` call, with the mode injected and an `error` reply refused.
-///
-/// The Lean side reports a malformed request as `{"error": …}` with a zero exit
-/// status, so a caller that only checked for transport failure would read the
-/// error object as an empty result — an empty day, silently.
+/// One `lean::serve` call with the mode injected and an `error` reply refused:
+/// Lean reports a malformed request as `{"error": …}` with exit 0, which would
+/// otherwise read as an empty day.
 fn ask(mode: &str, mut request: Map<String, Value>) -> Result<Map<String, Value>> {
     request.insert("mode".into(), Value::String(mode.into()));
     let body = Value::Object(request).to_string();
@@ -167,15 +142,9 @@ pub fn quality_filter(pts: &[Fix]) -> Result<Vec<Fix>> {
     parse_fix_rows(out.get("pts").context("gpsquality reply has no pts")?)
 }
 
-/// `Verified.Geo.PlacePrior.snapToPlace` over the whole day in one call.
-///
-/// Batched on purpose: a bridge round trip per fix would be thousands of
-/// calls for one day where every other tenant makes one. The reply is
-/// positional, one row per input fix in the same order, so it zips straight
-/// back on.
-///
-/// With no known places the fixes pass through untouched, rather than asking
-/// Lean to snap against an empty table.
+/// `Verified.Geo.PlacePrior.snapToPlace` over the whole day in one call (not a
+/// round trip per fix). The reply is positional, one row per input fix. With no
+/// known places the fixes pass through.
 pub fn snap_all(pts: &[Fix], places: &[Value]) -> Result<Vec<Fix>> {
     if places.is_empty() {
         return Ok(pts.to_vec());
@@ -201,10 +170,8 @@ pub fn snap_all(pts: &[Fix], places: &[Value]) -> Result<Vec<Fix>> {
                         opt_bits(num("centroidLat")),
                         opt_bits(num("centroidLon")),
                         opt_bits(num("radiusM")),
-                        // `KnownPlace.id` is a string on the Lean side; the
-                        // loader's is the numeric `focus_places` row id. It
-                        // reaches no decision here — `snapToPlace` returns
-                        // coordinates — so it crosses as its own text.
+                        // `KnownPlace.id` is a string in Lean and reaches no
+                        // decision here, so the numeric row id crosses as text.
                         match p.get("id") {
                             None | Some(Value::Null) => Value::Null,
                             Some(Value::String(s)) => Value::String(s.clone()),
@@ -263,11 +230,9 @@ pub fn kalman(pts: &[Fix]) -> Result<Vec<Smoothed>> {
         .get("pts")
         .and_then(Value::as_array)
         .context("kalman reply has no pts")?;
-    // Rejoined by TIMESTAMP, not carried through the filter's wire format.
-    // The Kalman runs in Lean and its reply is a subsequence of the input —
-    // duplicate timestamps and innovation-gated fixes are dropped — so every
-    // output row's `ts` is an input row's `ts` and the join is exact. That
-    // keeps the accuracy plumbing out of the filter entirely.
+    // Rejoined by timestamp: the filter's output is a subsequence of its input,
+    // so each `ts` is an input's and the join is exact, keeping the accuracy
+    // out of the filter.
     let acc_by_ts: std::collections::HashMap<i64, Option<f64>> =
         pts.iter().map(|p| (p.ts, p.accuracy)).collect();
     rows.iter()
@@ -292,11 +257,9 @@ pub fn kalman(pts: &[Fix]) -> Result<Vec<Smoothed>> {
         .collect()
 }
 
-/// The day's phone-battery trace, compressed to run boundaries.
-///
-/// `(ts, level)`. Derived from the same in-day fixes as the track, but before
-/// the quality and accuracy filters touch them: a fix dropped for an incoherent
-/// position still carries a valid battery reading.
+/// The day's phone-battery trace at run boundaries, `(ts, level)`, from the
+/// in-day fixes before the quality filters: a fix dropped for its position
+/// still carries a valid battery reading.
 pub type Battery = Vec<(i64, i64)>;
 
 /// Everything the head produces from one day's inputs.
@@ -311,10 +274,8 @@ pub struct Head {
     pub battery: Battery,
 }
 
-/// Run the head over one day's `ClassificationInputs`.
-///
-/// `inputs` is the JSON the loader produces — `classification_inputs::load` in
-/// this crate, or a golden fixture's `inputs`, which are the same bytes.
+/// Run the head over one day's inputs, as `classification_inputs::load` writes
+/// them or as a golden fixture carries them (the same bytes).
 pub fn run(inputs: &Value, date: &str) -> Result<Head> {
     let tz = inputs
         .pointer("/identity/displayTz")
@@ -352,17 +313,13 @@ pub fn run(inputs: &Value, date: &str) -> Result<Head> {
         .map(Vec::as_slice)
         .unwrap_or(&[]);
     let usable = |p: &&Fix| p.accuracy.is_none_or(|a| a <= KALMAN_ADMIT_ACCURACY_M);
-    // The cap reads the accuracy the phone reported, so it runs before the
-    // snap: a snapped fix carries the place's radius instead. 10-07's six
-    // network fixes (219–426 m) near a known place came out of the snap at that
-    // place's radius, passed, and served a three-minute stay 460 m from the
-    // café he never left.
+    // The cap reads the phone's reported accuracy, so it runs before the snap:
+    // a snapped fix carries the place's radius instead, which let a few
+    // network fixes 200–400 m out pass and serve a stay away from the café.
     let admitted: Vec<Fix> = cleaned.iter().filter(usable).copied().collect();
     let gps_points = snap_all(&admitted, places)?;
-    // The admitted fixes, not the snapped ones. Place-snap pulls a fix near a
-    // known cluster onto its centroid — right for stay detection, but on a leg
-    // that merely passes home it yanks the drawn line off the road. The
-    // renderer wants where the phone actually was.
+    // The admitted fixes, not the snapped ones: snapping is right for stay
+    // detection but yanks a passing leg off the road.
     let display_fixes = admitted;
 
     let points = kalman(&gps_points)?;
@@ -374,16 +331,10 @@ pub fn run(inputs: &Value, date: &str) -> Result<Head> {
     })
 }
 
-/// `Verified.Geo.Velocity.appendBatteryTail (batterySeries pts) tail dayEndTs`.
-///
-/// One call, not two. The pipeline never wants the untailed series, and
-/// splitting it across two round trips would let a caller ship the raw series
-/// by forgetting the second. The Lean mode is composed the same way for the
-/// same reason.
-///
-/// The tail is the first reading after the local day end, fetched cross-day. It
-/// sets the slope of the line the chart draws up to midnight when the phone went
-/// idle in the evening; absent, the series simply ends at its last reading.
+/// `appendBatteryTail (batterySeries pts) tail dayEndTs` in one call, so a
+/// caller cannot ship the untailed series. The tail is the first reading after
+/// the day ends; it sets the slope drawn to midnight, and without it the series
+/// ends at its last reading.
 pub fn battery_series(rows: &[&Value], tail: Option<&Value>, day_end_ts: i64) -> Result<Battery> {
     let mut req = Map::new();
     req.insert(
@@ -393,15 +344,9 @@ pub fn battery_series(rows: &[&Value], tail: Option<&Value>, day_end_ts: i64) ->
                 .map(|p| {
                     json!([
                         p.get("ts").cloned().unwrap_or(Value::Null),
-                        // Absent and null are the same thing: no reading. The
-                        // filter that drops them is Lean's, so both spellings
-                        // have to arrive as null rather than as a zero level.
-                        //
-                        // The absent case is not exercised by the corpus:
-                        // every PhoneTrack row the loader produces carries the
-                        // key, so sending `0` for it changes no golden day. A
-                        // synthetic test holds it,
-                        // `battery_drops_a_missing_reading`.
+                        // Absent and null both mean no reading and must arrive
+                        // as null, not a zero level; the corpus never omits the
+                        // key, so `battery_drops_a_missing_reading` holds it.
                         match p.get("battery") {
                             None => Value::Null,
                             Some(b) => b.clone(),
@@ -455,25 +400,13 @@ fn parse_input_fix(v: &Value) -> Option<Fix> {
     })
 }
 
-/// The head's output in the shape `fold_payload::build_day_request` reads.
+/// The head's output in the shape `fold_payload::build_day_request` reads, so
+/// the corpus checks capture and encoding together. Only the fields the fold
+/// reads: `segsRaw`, `modeStats`, `obs` and `tail`.
 ///
-/// One encoder, fed a capture this crate computes — not a second encoder
-/// beside it. The corpus replays the result against each fixture's
-/// `expected.statesOut`, so the capture and the encoding are checked together
-/// rather than separately.
-///
-/// Only the fields the fold reads are produced: `segsRaw`, `modeStats`, `obs`
-/// and `tail`. Nothing downstream of `build_day_request` reads the
-/// capture's other keys — they are intermediate boundaries kept for the day
-/// gate, not inputs.
-///
-/// An empty day without a decode is refused rather than approximated. When a
-/// day observes nothing, `tail.bracketPlace` carries the resolved name of the
-/// cross-day bracket centroid, and resolving it is a mirror `bestPlace` lookup
-/// this function has no adapter for. Omitting the field silently would produce a
-/// well-formed request for a different day, in which the inference simply stops
-/// happening. No golden day is empty, so this path is unexercised by the corpus
-/// and says so instead of guessing.
+/// An empty day without a decode is refused: it needs `tail.bracketPlace`, a
+/// mirror lookup this has no adapter for, and omitting it would quietly fold a
+/// different day. No golden day is empty.
 pub fn capture(inputs: &Value, date: &str, user: &str) -> Result<Value> {
     let head = run(inputs, date)?;
     let tz = inputs
