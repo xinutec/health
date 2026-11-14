@@ -1,10 +1,6 @@
-//! How often a phone is told to look for itself.
-//!
-//! It is never told to stop looking. The user's decision: a missing journey
-//! is a hole in the record and a flat battery is not, so the backend never
-//! pushes Significant mode. What it chooses is the locate interval inside Move,
-//! and the night, when a still phone is asked once an hour. These tests pin
-//! both halves.
+//! How often a phone is told to look for itself, never to stop: a missing
+//! journey is a hole in the record, a flat battery is not, so Significant mode is
+//! never pushed. Pinned: the locate interval inside Move, and the hourly night.
 
 use backend::lean::{self, OwntracksFix};
 
@@ -58,9 +54,8 @@ fn a_standstill_by_day_keeps_move_mode() {
     assert_eq!(d.monitoring, 2, "monitoring must stay Move");
 }
 
-/// The first fix PUTS the phone in move. Every answer is a push, and the
-/// old factory-default answer pushed Significant onto a walking phone after
-/// every deploy.
+/// The first fix puts the phone in Move: every answer is a push, so a
+/// Significant default would hit a walking phone after every restart.
 #[test]
 fn a_first_fix_pushes_move_mode() {
     init();
@@ -80,9 +75,8 @@ fn a_still_phone_at_night_locates_hourly() {
     assert_eq!(d.move_mode_locator_interval, Some(3600));
 }
 
-/// The window ends at 06:00 local: the same standstill at six is answered
-/// with the day's cadence on the next fix that shows anything, and never
-/// with another hour of silence.
+/// The night window ends at 06:00 local: the next fix showing anything gets the
+/// day's cadence, not another silent hour.
 #[test]
 fn six_in_the_morning_is_not_night() {
     init();

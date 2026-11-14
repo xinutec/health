@@ -1,9 +1,6 @@
-//! `backend`'s command line (`backend::argv`).
-//!
-//! The listing is clap's, rendered from the same enum the dispatch matches on,
-//! so the drift the old hand-kept table suffered (19 of 29 listed) cannot recur.
-//! What is left to pin is that every subcommand says what it does, and that the
-//! argv production actually runs still parses to what it meant.
+//! `backend`'s command line (`backend::argv`), rendered by clap from the enum
+//! the dispatch matches on. Pinned: every subcommand says what it does, and the
+//! argv production runs parses to what it means.
 
 use backend::argv::{Cli, Command};
 use clap::{CommandFactory, Parser};
@@ -131,8 +128,7 @@ fn the_irregular_forms_keep_their_meaning() {
 }
 
 /// A typo is refused, never ignored: `sync`'s one flag decides whether durable
-/// backfill state is written, and the hand parser's reason for existing was
-/// that a misspelling must not fall through to the full run.
+/// backfill state is written, so a misspelling must not run the full sync.
 #[test]
 fn what_it_cannot_parse_it_refuses() {
     assert!(parse(&["sync", "--forwrd-only"]).is_err());

@@ -1,18 +1,13 @@
-//! A fixture carries what it was captured under, and a moved constant refuses.
-//!
-//! Why this test and not just the code: the thing being guarded against is a
-//! change that leaves every gate green. `ROAD_CORRIDOR_MARGIN_M` is applied
-//! inside `query_ways`, after the trace key is formed, so moving it changes what
-//! production fetches and changes nothing any fixture answers. A guard against
-//! that failure mode is itself invisible unless something makes it fire.
+//! A fixture carries what it was captured under, and a moved constant refuses:
+//! `ROAD_CORRIDOR_MARGIN_M` applies after the trace key is formed, so moving it
+//! changes production and no fixture answer. This makes the guard fire.
 
 use serde_json::json;
 
 #[test]
 fn an_absent_stamp_is_not_a_mismatch() {
-    // The 42 existing fixtures carry no stamp. Refusing them would be
-    // claiming they were taken under something they never recorded, and would
-    // break every gate on a change that improved nothing.
+    // Unstamped fixtures pass: refusing them would claim conditions they never
+    // recorded.
     assert!(backend::osm_trace::check_capture_inputs(&json!({})).is_ok());
     assert!(
         backend::osm_trace::check_capture_inputs(&json!({"fixtureFormatVersion": 1})).is_ok(),
@@ -31,9 +26,8 @@ fn the_stamp_this_build_writes_is_accepted() {
 
 #[test]
 fn a_moved_constant_refuses_and_says_which() {
-    // The margin the fixtures were captured under. If this build legitimately
-    // moves it, this test is the reminder that the fixtures need re-capturing,
-    // not a number to update in place.
+    // The margin the fixtures were captured under: if a build moves it, the
+    // fixtures need re-capturing, not this number updating.
     let meta = json!({
         "captureInputs": { "roadCorridorMarginM": 100.0, "candidateLimit": 20_000 }
     });
@@ -51,9 +45,7 @@ fn a_moved_constant_refuses_and_says_which() {
 
 #[test]
 fn a_stamp_naming_something_this_build_lost_also_refuses() {
-    // A constant removed is as much a divergence as one moved, and the
-    // obvious implementation — look up each key and compare — silently passes
-    // when the key is gone. This is the arm that catches that.
+    // A removed constant diverges too; comparing only present keys would pass.
     let meta = json!({ "captureInputs": { "someRetiredKnob": 7 } });
     let err = backend::osm_trace::check_capture_inputs(&meta)
         .expect_err("a stamp naming a constant this build does not have must REFUSE");

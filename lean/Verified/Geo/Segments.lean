@@ -12,8 +12,7 @@ namespace Verified.Geo.Segments
 def MAX_SPEED_FOR_MODE : List (String × Float) := [("stationary", 5), ("walking", 12), ("cycling", 35)]
 
 /-- Temper a `driving` segment's confidence by how much of its track hugged a
-    drivable road. Non-driving or `none` fraction ⇒ unchanged. `Math.round` to
-    two decimals. -/
+    drivable road, rounded to two decimals; others or `none` are unchanged. -/
 def roadSupportedConfidence (mode : String) (confidence : Float) (roadCorridorFraction : Option Float) : Float :=
   match roadCorridorFraction with
   | none => confidence

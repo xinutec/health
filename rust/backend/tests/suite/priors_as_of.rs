@@ -1,10 +1,6 @@
-//! The as-of-the-day prior, end to end through the real Lean op.
-//!
-//! Not a mock of the aggregation. These call `lean::priors_as_of`, which
-//! crosses the FFI into `Verified.Geo.VenuePrior.priorsAsOf`. A Rust-side
-//! reimplementation would encode what I believe the aggregation does, and the
-//! whole reason the cut lives in Lean is that `bumpStats`' insertion order is
-//! read back by `shapeScore` as the subtype-universe size.
+//! The as-of-the-day prior through the real Lean op (`lean::priors_as_of` →
+//! `Verified.Geo.VenuePrior.priorsAsOf`), not a Rust model of it: `bumpStats`'
+//! insertion order is read back by `shapeScore` as the subtype-universe size.
 
 use backend::lean::{self, WirePriorEvent, priors_as_of};
 
@@ -53,9 +49,8 @@ fn a_cut_after_everything_is_the_whole_prior() {
     assert_eq!(s, vec!["cafe", "restaurant"]);
 }
 
-/// The whole point, in one assertion. A day before the restaurant was ever
-/// visited must not know the subtype exists — that is the anachronism the
-/// ticket is named for, where a May dinner was scored against September.
+/// A day before a venue was first visited must not know its subtype exists, or
+/// an early dinner is scored with later knowledge.
 #[test]
 fn a_past_day_cannot_see_later_evidence() {
     boot();
@@ -89,9 +84,8 @@ fn a_cut_before_everything_is_empty() {
     assert!(subtypes(&v).is_empty());
 }
 
-/// Fractional weights survive the wire. Soft attribution contributes `r` of a
-/// visit, and `weight` is the one field that rides as bit patterns for exactly
-/// that reason — a JSON number would be a second rounding nobody asked for.
+/// Fractional weights survive the wire: soft attribution contributes `r` of a
+/// visit, so `weight` rides as bit patterns.
 #[test]
 fn a_fractional_weight_crosses_intact() {
     boot();

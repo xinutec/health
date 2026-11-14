@@ -1,10 +1,6 @@
-//! The decode cron's date window.
-//!
-//! The window is the whole point of this file: `d = 1 ..= days`, not `0..n`,
-//! which would decode today and drop the oldest day of the window. The failure
-//! is not loud: at the cron's 06:00 today is a six-hour stub, and `save_decode`
-//! stamps it with the current `CLASSIFIER_VERSION`, so it does not read as stale
-//! to a consumer; it reads as a decoded day that happens to be nearly empty.
+//! The decode cron's date window: `d = 1 ..= days`, not `0..n`, which would
+//! decode today's six-hour stub (stamped current, so not stale) and drop the
+//! window's oldest day.
 
 use backend::classification_inputs::decode_window;
 
