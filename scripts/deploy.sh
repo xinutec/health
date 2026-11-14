@@ -22,8 +22,8 @@
 # Runs the FULL gate ONCE — `pnpm run verify:deploy` = gate.json, every row,
 # including the 42-day corpus replay that can only run here (the fixtures are
 # gitignored) — commits all changes in this repo WITHOUT the hook (its table,
-# gate-commit.json, is a subset of what just ran), pushes to main, waits for
-# CI, then rolls out the new image on isis. The k8s manifests live in the home
+# gate-commit.json, is a subset of what just ran), pushes to main, and hands
+# the CI wait and the rollout to the deploy plan. The k8s manifests live in the home
 # monorepo (xinutec/pippijn code/kubes/health/k8s).
 #
 # ⚠ Until 2026-09-17 this ran the gate table, then the corpus replay again on
@@ -38,7 +38,7 @@
 # have). Every CronJob in the health namespace pulls `:latest` per
 # invocation, so a green CI run puts new classification code into
 # production the next time a cron fires, with no replay gate in front of
-# it. Step 6 restarts the Deployments (health-auth), the only workloads
+# it. Step 5 restarts the Deployments (health-auth), the only workloads
 # that do not re-pull on their own, and therefore the only thing these
 # gates actually gate.
 #
@@ -176,7 +176,7 @@ if ! scripts/check-decoder-record.sh; then
 	exit 1
 fi
 if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
-	step "[1/7] the full gate: pnpm run verify:deploy (gate.json, corpus replay included)"
+	step "[1/6] the full gate: pnpm run verify:deploy (gate.json, corpus replay included)"
 	dead_gates_banner
 	DEAD_GATES=1
 	$DEV pnpm run verify:deploy
@@ -184,7 +184,7 @@ else
 	# ⚠ The COMMIT table only: everything but the corpus replay, the host/CLI
 	# equivalence and the mode-reachability pair —
 	# `scripts/commit-table.sh` is the list. Announced here and again at the end.
-	step "[1/7] the commit gate ONLY: pnpm run verify (gate-commit.json) — replay SKIPPED"
+	step "[1/6] the commit gate ONLY: pnpm run verify (gate-commit.json) — replay SKIPPED"
 	cat >&2 <<-BANNER
 
 	================================================================
@@ -202,7 +202,7 @@ fi
 
 
 # --- stage + commit ------------------------------------------------------
-step "[2/7] staging changes"
+step "[2/6] staging changes"
 cd "$HEALTH_DIR"
 git add -A
 
@@ -213,91 +213,28 @@ git add -A
 # 5ef3517 walk fix sat committed and unshippable until this was fixed. Skip the
 # commit, deploy what HEAD already says.
 if git diff --cached --quiet; then
-	step "[3/7] git commit — nothing staged; deploying the existing HEAD"
+	step "[3/6] git commit — nothing staged; deploying the existing HEAD"
 else
-	step "[3/7] git commit (--no-verify: the hook's table is a subset of step 1)"
+	step "[3/6] git commit (--no-verify: the hook's table is a subset of step 1)"
 	git commit --no-verify -F "$MSG_FILE"
 fi
 
-COMMIT_SHA=$(git rev-parse HEAD)
-echo "    HEAD is now $COMMIT_SHA"
+echo "    HEAD is now $(git rev-parse HEAD)"
 
-step "[4/7] git push origin main"
+step "[4/6] git push origin main"
 git push origin main
 
-# --- wait for CI ---------------------------------------------------------
-# Find the CI run that matches THIS commit's SHA. `gh run list --limit 1`
-# would race: between push and gh-list the previous commit's run is often
-# still the freshest, and gh run watch on an already-completed run exits
-# in ~0 ms, which then rolls out the stale image. Poll until a run for
-# our specific SHA shows up (Actions usually queues within a few seconds).
-step "[5/7] watching CI for $COMMIT_SHA"
-cd "$HEALTH_DIR"
-RUN_ID=""
-for attempt in $(seq 1 30); do
-	RUN_ID=$(gh run list --branch main --limit 10 --json databaseId,headSha \
-		--jq ".[] | select(.headSha == \"$COMMIT_SHA\") | .databaseId" | head -1)
-	if [[ -n "$RUN_ID" ]]; then
-		echo "    found run $RUN_ID after $attempt attempt(s)"
-		break
-	fi
-	sleep 2
-done
-if [[ -z "$RUN_ID" ]]; then
-	echo "deploy: no CI run for $COMMIT_SHA appeared within ~60s" >&2
-	exit 1
-fi
-# Bound the CI wait. `gh run watch` polls until the run finishes — with
-# no ceiling, a stuck Actions queue (a real ~5-hour stall has happened)
-# would hang the deploy indefinitely. Cap it at 30 min — ⚠ NOT 15: the image build takes 20-23 min (three runs on
-# 2026-09-17: 21, 23, 20), so a 15-min cap failed every deploy at step 5 and
-# left the rollout undone, reading as a CI fault. A normal build
-# is ~1 min, so anything past 15 is wedged — fail fast, before rollout.
-ci_status=0
-deadline=$(( $(date +%s) + 1800 ))
-while :; do
-	left=$(( deadline - $(date +%s) ))
-	if (( left <= 0 )); then ci_status=124; break; fi
-	ci_status=0
-	timeout "$left" gh run watch --exit-status "$RUN_ID" || ci_status=$?
-	[[ $ci_status -eq 0 || $ci_status -eq 124 ]] && break
-	# `gh run watch` also exits non-zero when one of its polls fails: an API
-	# 502 reads as "CI failed" with every job still running and leaves the
-	# rollout undone. The run's own state decides; an unfinished run is
-	# watched again, a finished one is judged by its conclusion below.
-	run_state=$(gh run view "$RUN_ID" --json status --jq .status 2>/dev/null || echo unknown)
-	[[ "$run_state" == "completed" ]] && break
-	echo "deploy: the CI watch dropped (exit $ci_status, run $run_state) — watching again" >&2
-	sleep 5
-done
-if [[ $ci_status -ne 0 && $ci_status -ne 124 ]]; then
-	[[ "$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)" == "success" ]] && ci_status=0
-fi
-if [[ $ci_status -ne 0 ]]; then
-	if [[ $ci_status -eq 124 ]]; then
-		echo "deploy: CI run $RUN_ID did not finish within 30 min — aborting before rollout." >&2
-		echo "        Inspect or cancel it: gh run view $RUN_ID  |  gh run cancel $RUN_ID" >&2
-	elif [[ "$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)" == "cancelled" ]]; then
-		# ⚠ NOT A BUILD FAULT. build.yml runs with `cancel-in-progress`, so a
-		# newer push to main cancels the run this deploy was watching (seen
-		# 2026-09-25: a follow-up commit pushed mid-watch read as "CI failed").
-		# The newer head's run carries this commit; deploy from that head, and
-		# do not push while a deploy is watching CI.
-		echo "deploy: CI run $RUN_ID was CANCELLED — a newer push to main superseded it." >&2
-		echo "        Nothing is wrong with $COMMIT_SHA; re-run this script at the new head." >&2
-	else
-		echo "deploy: CI run $RUN_ID failed (exit $ci_status) — aborting before rollout." >&2
-	fi
-	exit 1
-fi
-
-# --- rollout -------------------------------------------------------------
-# The deploy plan rolls the Deployments that do not re-pull on their own and
-# then requires /version to answer the pushed commit: a rollout that completes
-# proves a pod came up, not which image it came up on.
-step "[6/7] rollout on isis"
-# dev-lint: allow-pii the kubes checkout's path names its repository, not a person's data
-"$HOME/Code/pippijn/code/kubes/deploy.sh" health
+# --- CI, then rollout ------------------------------------------------------
+# The deploy plan waits for CI to build the pushed commit (bounded at 30 min:
+# the image build takes 20-23), rolls the Deployments that do not re-pull on
+# their own, and then requires /version to answer that commit: a rollout that
+# completes proves a pod came up, not which image it came up on. A run that
+# fails or is cancelled stops it before the roll. build.yml cancels a run
+# when a newer push lands, so do not push while a deploy is waiting.
+step "[5/6] CI, then rollout on isis: the deploy plan"
+nix run "$HOME/Code/xinutec-infra#plan-run" -- deploy \
+	--settings "$HOME/Code/xinutec-infra/plan/settings.json" \
+	--app health --roll-forward --apply
 
 # --- memory smoke -----------------------------------------------------------
 # ⚠ AFTER the rollout, as a loud red rather than a block: the policy is roll
@@ -308,7 +245,7 @@ step "[6/7] rollout on isis"
 # prints the container's cgroup peak and OOM count. A fourteen-day browse
 # OOM-killed production twice on 2026-09-25 and nothing before that rollout could
 # have said so (#1071). The Job's OOM, if any, kills the Job, not the pod.
-step "[7/7] memory smoke: the heaviest days under the serving limit"
+step "[6/6] memory smoke: the heaviest days under the serving limit"
 SMOKE_NAME="velocity-smoke-$(git rev-parse --short HEAD)-$(date +%H%M%S)"
 SMOKE_BUDGET_MIB=460   # 90% of the 512 MiB serving limit
 smoke_rc=0

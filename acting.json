@@ -150,7 +150,7 @@
     {
       "class": "ByDesign",
       "path": "scripts/deploy.sh",
-      "why": "health's release pipeline: full gate, commit, push, CI, memory smoke; the roll is the deploy plan's"
+      "why": "health's release pipeline: full gate, commit, push, memory smoke; the CI wait and the roll are the deploy plan's"
     },
     {
       "class": "OutOfScope",

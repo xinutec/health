@@ -15,7 +15,7 @@ let Class = A.Class
 in  { ceilings =
         -- acts: each row names what it becomes (automation-model items 13-15)
         -- observes: a read of production compared with the tree
-        -- by_design: the release pipeline, whose roll is the deploy plan's
+        -- by_design: the release pipeline, whose CI wait and roll are the deploy plan's
       { acts = 1
       , bootstrap = 0
       , by_design = 1
@@ -60,7 +60,7 @@ in  { ceilings =
           , subject
               "scripts/deploy.sh"
               Class.ByDesign
-              "health's release pipeline: full gate, commit, push, CI, memory smoke; the roll is the deploy plan's"
+              "health's release pipeline: full gate, commit, push, memory smoke; the CI wait and the roll are the deploy plan's"
           , subject "scripts/lean-check.sh" Class.OutOfScope ""
           , subject "scripts/place-census.py" Class.OutOfScope ""
           , subject "scripts/probe-cosq-monotonicity.py" Class.OutOfScope ""
