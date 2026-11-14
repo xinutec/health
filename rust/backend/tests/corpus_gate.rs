@@ -1,4 +1,4 @@
-//! Every corpus grader, over ONE replay of each golden day.
+//! Every corpus grader, over one replay of each golden day.
 //!
 //! ```text
 //!   fixture → trace → fold ─┬→ day      (the last blessed timeline, state by state)
@@ -8,41 +8,17 @@
 //!                               └→ feasibility (impossible legs, a ceiling)
 //! ```
 //!
-//! ⚠ **The replay is paid once, not once per harness.** With the walk matcher
-//! on, four replays cost `user` 2934 s against 718 s wall on one gate row, the
-//! matcher's ~305 s charged to `walk_gate` alone. What was unaffordable was
-//! paying for it four times, not the matcher.
+//! The replay, walk matcher included, is paid once rather than per grader. The
+//! trace is loaded before each replay, as in production, so every grader sees
+//! the matched geometry. With `VENUE_PRIORS_FILE` set there are two arms:
+//! `day` and `truth` grade the injected priors, `journeys` and `walks` never do.
 //!
-//! ⚠ **So the trace is not a flag here, it is the structure.** `load_trace`
-//! runs before the replay every day that captured one, exactly as production
-//! does, and every grader sees the matched geometry because they all read the
-//! same fold output.
+//! Shards split days by index modulo; each grader filters its floor or ceiling
+//! to the days reported, so every key is checked once. ⚠ A bless is
+//! single-shard: shard 0 measures all days and the others stand down.
 //!
-//! ⚠ **Two arms, not one, when `VENUE_PRIORS_FILE` is set.** `day` and `truth`
-//! grade the injected-priors arm; `journeys` and `walks` never inject. With the
-//! variable unset (the gate's configuration) those are the same fixture and one
-//! replay serves all four. With it set they are different inputs and must not
-//! be shared: feeding `journeys` priors it did not ask for, or quietly grading
-//! `day` against the fixture's own blob, both produce plausible numbers and
-//! neither fails.
-//!
-//! # Sharding
-//!
-//! By day, index modulo, so no shard draws one contiguous stretch. Every
-//! grader is sound under it: `day` is per-day outright, and `truth`,
-//! `journeys`, `walks` and `feasibility` each filter their floor (or ceiling)
-//! to the days the run actually reported and announce the rest as unchecked.
-//! Between the shards every key is checked exactly once.
-//!
-//! ⚠ A BLESS IS SINGLE-SHARD. Each grader's bless path measures ALL days from
-//! shard 0 and stands the others down — a floor written from half the corpus
-//! would look complete and would silently drop the other half.
-//!
-//! # Local-only
-//!
-//! `tests/golden/{days,ground-truth}` is gitignored; the baselines are
-//! tracked and carry timestamps and metrics, never a place. Announces a skip
-//! rather than passing quietly.
+//! `tests/golden/{days,ground-truth}` is gitignored; the baselines hold only
+//! timestamps and metrics. A missing corpus announces a skip.
 
 use std::path::Path;
 
@@ -50,24 +26,10 @@ mod corpus;
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
 
-/// How many ways the corpus is split.
-///
-/// ⚠ This row's wall clock is its SLOWEST SINGLE TEST, not its total work — the
-/// shards run concurrently beside `hsmm_decode_corpus`'s. Measured:
-/// with the decoder replay split four ways (it had been one ~140 s
-/// test and the row's whole critical path), the row's slowest test fell to
-/// 76–90 s. Six fold shards against four, two alternating runs each: 84 and 76 s
-/// against 84 and 90 — within noise, since ten tests now share ten cores; six
-/// never lost. Six fold and four decode shards peak near 7.7 GB of 32.
-/// Re-measure before raising it: the row is CPU-bound now, not shard-bound.
-///
-/// ⚠ It was stuck at two because two shards in one process CORRUPTED each
-/// other — the trace was a process global and the replays interleaved.
-/// It is a value each replay borrows now, so shard count is a
-/// scheduling choice rather than a correctness one.
-///
-/// ⚠ The ceiling is MEMORY, not cores. The walk referee is ~1.6 GB per
-/// process; measure the sum before adding shards, not by taste.
+/// How many ways the corpus is split. The row's wall clock is its slowest
+/// single test, the shards running beside `hsmm_decode_corpus`'s; six measured
+/// no worse than four. The limit is memory (the walk referee is ~1.6 GB per
+/// process), so measure the sum before adding shards.
 const SHARDS: usize = 6;
 
 #[test]
@@ -100,35 +62,10 @@ fn every_golden_day_grades_shard_f() {
     run(5, SHARDS);
 }
 
-/// ⚠ TWO SHARDS IN ONE PROCESS USED TO REGRADE THE CORPUS SILENTLY.
-///
-/// Measured on one commit and the same archives, one variable at a time:
-///
-/// ```text
-/// nextest    + dev       0 of 118 walks moved   day 21/21
-/// nextest    + release   0 of 118 walks moved   day 21/21
-/// cargo test + release   94 moved, 49 regressed — 215 OSM lookups unanswered
-///                        against 17 under nextest
-/// ```
-///
-/// ⚠ **THE FIRST DIAGNOSIS WAS WRONG, and it is worth saying why.** It blamed
-/// the Lean runtime: the walk referee "hands its ways to a process-wide
-/// `OnceLock`, so two shards overwrite each other". Lean holds NO mutable state
-/// — there is not one `IO.Ref` or `initialize` in the tree — and the way tables
-/// travel INSIDE each request. The story fit every number and named the wrong
-/// layer, which is the failure mode this file exists to record.
-///
-/// The clobbered global was Rust's: the loaded trace. A replay was
-/// `load_trace(day)` then `replay(day)`; run the shards as threads and those
-/// pairs interleaved, so one shard replayed its day against the other's roads.
-/// The trace is a value the replay is handed now, so `cargo test` is sound and
-/// the refusal that stood here is gone.
-///
-/// ⚠ `deploy.sh` was the only caller that ran them this way, and it produced
-/// false failures for an unknown length of time. Nothing caught it:
-/// `gate.dhall`'s rows are nextest (the mode trace relies on test-per-process)
-/// and CI cannot run these gates at all, because the fixtures are gitignored.
-/// So the breakage was invisible until somebody tried to ship.
+/// Shards may share a process (`cargo test` threads, `deploy.sh`): the loaded
+/// trace is a value each replay is handed, not a global. As a global, threaded
+/// shards replayed days against each other's roads, a fault that looked like
+/// shared Lean state though Lean holds none.
 fn run(shard: usize, of: usize) {
     if !Path::new(GOLDEN).is_dir() {
         eprintln!("SKIPPED: no golden corpus at {GOLDEN}; see this file's header.");
@@ -138,12 +75,9 @@ fn run(shard: usize, of: usize) {
     assert!(!all.is_empty(), "the corpus directory is empty");
     let all = corpus::restrict(all, std::env::var("CORPUS_DAYS").ok());
 
-    // ⚠ A FLOOR BLESS IS SINGLE-SHARD. `truth`, `walk` and `feasibility` each
-    // rewrite one floor FILE, so two shards blessing at once race on it and a
-    // floor written from half the corpus reads as complete. `day` writes per
-    // fixture and shards like a plain run: one `cargo test` runs every shard,
-    // and a day blessed by one shard alone is red on the next plain run, not
-    // silently complete.
+    // ⚠ A floor bless is single-shard: `truth`, `walk` and `feasibility` each
+    // rewrite one file, and half a corpus would read as complete. `day` writes
+    // per fixture and shards normally.
     let blessing = ["TRUTH_BLESS", "WALK_BLESS", "FEASIBILITY_BLESS"]
         .iter()
         .any(|k| std::env::var(k).is_ok());
@@ -163,11 +97,8 @@ fn run(shard: usize, of: usize) {
     // merged when it is set.
     let injected: Option<corpus::Injection> = corpus::Injection::from_env();
 
-    // ⚠ AN ABLATION ARM STANDS THE OTHER GRADERS DOWN. `WALK_TRACE` withholds
-    // trace sections ON PURPOSE, so the fold's geometry is ablated — and `day`,
-    // `truth` and `journey` grading that against their blessed oracles would
-    // report a corpus-wide regression that is really the control working. The
-    // arms are an attribution tool, run by hand; they dump rather than assert.
+    // An ablation arm (`WALK_TRACE`) stands the other graders down: their
+    // regression would be the control working. Arms dump, not assert.
     let arm = corpus::walk::Arm::from_env();
     let gating_arm = arm.label == "all";
     if !gating_arm {
@@ -227,7 +158,7 @@ fn run(shard: usize, of: usize) {
         };
         replayed += 1;
 
-        // ⚠ `day` and `truth` grade the INJECTED arm; when nothing is injected
+        // `day` and `truth` grade the injected arm; when nothing is injected
         // that is this same replay and no second fold is paid.
         let injected_rep = match injected.as_ref() {
             None => None,

@@ -1,15 +1,7 @@
-//! The backend reaches the Lean algorithm mode table over the worker's pipe,
-//! and gets back exactly what `verified_cli serve` writes.
-//!
-//! # What this is evidence FOR
-//!
-//! That the worker hands back the reply BODY byte for byte. The expected
-//! strings below were produced by
-//!
-//!     lean/.lake/build/bin/verified_cli serve
-//!
-//! on exactly these requests, MINUS the `{"id", "result"}` envelope, which the
-//! worker strips textually rather than by re-serialising.
+//! The backend reaches the Lean mode table over the worker's pipe and gets the
+//! reply body byte for byte: the expected strings are `verified_cli serve`'s
+//! output on these requests, minus the `{"id", "result"}` envelope the worker
+//! strips textually.
 
 use backend::lean;
 
@@ -30,9 +22,8 @@ fn the_mode_table_answers_over_the_pipe() {
         "the body `verified_cli serve` returns for this request, without its envelope"
     );
 
-    // ⚠ Each of these reaches a DIFFERENT handler, and each fails in that
-    // handler's own words. A single shared error would mean the dispatch never
-    // got there — which is exactly what a broken link looks like from here.
+    // Each reaches a different handler and fails in its own words; one shared
+    // error would mean dispatch never got there.
     for (mode, want) in [
         ("kalman", "property not found: pts"),
         ("gpsquality", "property not found: pts"),
@@ -49,13 +40,9 @@ fn the_mode_table_answers_over_the_pipe() {
         );
     }
 
-    // ⚠ The battery chart, which the velocity pipeline computes beside the day
-    // fold rather than inside it, so a host needs it callable; a pinned Lean
-    // function reachable from no entry point is dead weight.
-    //
-    // The tail case is the one worth pinning: the last in-day reading is
-    // (200, 60), the tail is (300, 40) and the day ends at 250, so the level
-    // where that line crosses the boundary is 60 + (40-60) * 0.5 = 50.
+    // The battery chart, computed beside the day fold, so it must be callable.
+    // The tail case: last in-day reading (200, 60), tail (300, 40), day end 250,
+    // so the boundary level is 60 + (40-60) * 0.5 = 50.
     let battery = lean::serve(
         r#"{"mode":"battery","points":[[100,80],[200,60]],"tail":[300,40],"dayEndTs":250}"#,
     )
@@ -70,11 +57,8 @@ fn the_mode_table_answers_over_the_pipe() {
     .expect("battery must answer");
     assert_eq!(stale, r#"{"series":[[100,80],[200,60]]}"#);
 
-    // ⚠ The walk referee is wired. Its arithmetic is witnessed in
-    // `Verified.Eval.WalkMetrics`; what those witnesses cannot see is whether
-    // `dispatch` still routes to it. An empty corpus is the cheapest question
-    // that distinguishes "reached the handler" from "fell through": a missing
-    // arm answers `unknown mode walkgate` here.
+    // The walk referee is wired: an empty corpus tells "reached the handler"
+    // from a missing arm's `unknown mode walkgate`.
     let walkgate = lean::serve(r#"{"mode":"walkgate"}"#).expect("walkgate must answer");
     assert_eq!(
         walkgate,

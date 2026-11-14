@@ -5,37 +5,21 @@ import DayEntry.Host
 /-!
 # `OsmHost` — the three matcher lookups, asked of the host
 
-`walkableRoads`, `buildingsNear` and `drivableRoads` are the reads the walk and
-road matchers make mid-fold, on discs the fold itself chooses. Each is one
-`DayEntry.Host.ask`; before that they were `@[extern]` C callbacks into
-an in-process host, and before THAT they were shells that answered empty.
+`walkableRoads`, `buildingsNear` and `drivableRoads`, the walk and road
+matchers' mid-fold reads on discs the fold chooses, each one `DayEntry.Host.ask`.
 
-# The rows
-
-A way, as the host writes it — the same record a golden fixture's `osmTrace`
-holds, with the coordinates as bit patterns so a double crosses exactly:
+A way is the record a fixture's `osmTrace` holds, coordinates as bit patterns:
 
     {"osmId": 7, "name": "A" | null, "subtype": "footway" | null,
      "coords": [[latBits, lonBits], …]}
 
-A building ring is a bare array of `[latBits, lonBits]` pairs. `walkableRoads`
-and `drivableRoads` answer an array of ways; `buildingsNear` an array of rings.
+A building ring is a bare array of `[latBits, lonBits]`. `name` absent and `""`
+stay distinct: the road matcher's way-switch penalty reads `Way.name`.
 
-`name` absent and `name: ""` are different things: `Way.name` is an
-`Option String` and the road matcher's way-switch penalty reads it, so an
-unnamed way and a way named `""` must stay distinct across the wire.
+A decline is `none`, an empty answer `some #[]` (see `Host`): the walk pass
+bails on either, but a decline is a gap the host can record and fetch.
 
-# A DECLINE IS `none`, an empty answer is `some #[]`
-
-See `Host`. The walk pass bails on empty ways either way, so a decline changes no
-drawing — what it changes is that the gap is a fact the host can record and
-fetch against, instead of an absence shaped exactly like data.
-
-# Deliberately not in `Verified`
-
-That library has no `Json`, no `IO` and no host, and its folds are pure so their
-`#guard` specs mean something. `DayEntry` is the impure layer — it is where the
-parser lives — so the boundary goes here.
+Not in `Verified`, which has no `Json`, `IO` or host.
 -/
 
 open Lean (Json)
@@ -81,10 +65,8 @@ def walkableRoads (lat lon : Float) (radiusM : Int) : Option (Array Way) :=
 def buildingsNear (lat lon : Float) (radiusM : Int) : Option (Array Ring) :=
   Host.askAs "buildingsNear" (key lat lon (Float.ofInt radiusM)) parseRings
 
-/-- ⚠ `radiusM` is a `Float` here and an `Int` above, and that is not an
-oversight: `RoadMatchAnnotate.Env.drivableRoads` takes a `Float` because
-`OsmCorridor` passes the corridor radius through untouched, while the walk
-pass's disc radius is a whole number of metres by the time it is read. -/
+/-- `radiusM` is a `Float` here: `OsmCorridor` passes the corridor radius
+through untouched, while the walk pass's radius is whole metres. -/
 def drivableRoads (lat lon radiusM : Float) : Option (Array Way) :=
   Host.askAs "drivableRoads" (key lat lon radiusM) parseWays
 

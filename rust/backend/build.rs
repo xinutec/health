@@ -1,16 +1,9 @@
-//! Build `verified_cli`, and tell the crate where it is.
+//! Build `verified_cli`, and tell the crate where it is, so a `cargo build`
+//! after a `.lean` edit rebuilds the binary tests spawn. Production sets
+//! `VERIFIED_CLI`.
 //!
-//! The backend does not link Lean; it spawns `verified_cli serve` and talks to
-//! it over a pipe (`src/lean_worker.rs`). What this script does is keep
-//! the dev tree honest: a `cargo build` after a `.lean` edit rebuilds the
-//! binary the tests will spawn, so a test cannot run yesterday's Lean against
-//! today's Rust. Production sets `VERIFIED_CLI` and never reaches the path
-//! baked here.
-//!
-//! ⚠ SKIPPED in CI: the `rust` job sets `HEALTH_BUILD_SKIP_LEAN`. The image
-//! ships the `lean` job's `verified_cli` and sets `VERIFIED_CLI`, so a
-//! `lake build` here would be a second Lean build for a path production never
-//! reads (.github/workflows/build.yml).
+//! Skipped in CI (`HEALTH_BUILD_SKIP_LEAN`): the image ships the `lean` job's
+//! binary (.github/workflows/build.yml).
 
 use std::path::PathBuf;
 use std::process::Command;

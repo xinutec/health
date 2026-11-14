@@ -3,35 +3,26 @@ import Lean.Data.Json
 /-!
 # `Host` — the one question the fold can put to the process that runs it
 
-Every lookup the day fold cannot compute — the OSM mirror, the zone at a
-coordinate, a geocode — is one `ask`: a table name and a key, answered by
-whoever spawned `verified_cli serve`. The host reads asks off the same
-pipe the results come back on, so the protocol on stdout is two line shapes:
+Every lookup the fold cannot compute (the OSM mirror, the zone at a coordinate,
+a geocode) is one `ask`: a table name and a key, answered by whoever spawned
+`verified_cli serve`, on the result pipe. Stdout carries two line shapes:
 
     {"ask":{"what":"nearbyStations","key":"<latBits>|<lonBits>|<rBits>"}}
     {"id":…,"result":…}
 
-and the host replies to an ask with ONE line on stdin:
+and the host answers an ask with one line on stdin:
 
     {"answer": <row>}          the row, in the shape the table's parser reads
-    {"answer": null}           a DECLINE — the host cannot vouch for this ground
+    {"answer": null}           a decline: the host cannot vouch for this ground
 
-⚠ **A DECLINE IS NOT AN EMPTY ANSWER**. "There are no roads here" is a
-row (an empty array); "nobody has fetched here" is `null`. The two reach the
-fold as `some #[]` and `none`, and every reader keeps them apart.
+⚠ A decline is not an empty answer: "no roads here" is an empty array,
+"nobody fetched here" is `null`; they reach the fold as `some #[]` and `none`.
 
-# Why this is `opaque` with an `IO` implementation
-
-`PassFold.Env` is a record of FUNCTIONS — `Float → Float → Float → Array …` —
-and the passes are pure in it. That is what lets a `#guard` build an `Env` from
-literals and lets a theorem be parametric in it. Production fills those fields
-with `ask`, which reads a pipe: an `@[implemented_by]` body behind an `opaque`
-name, exactly as `@[extern]` was before it, but with the transport in Lean
-rather than in C. Nothing under `Verified` imports this module.
-
-⚠ `ask` is only meaningful under `verified_cli serve`. Run as a one-shot
-(`verified_cli day < request`) the request has already consumed stdin, so every
-ask reads EOF and declines — the same answer the C stub used to give.
+`PassFold.Env` is a record of functions, so guards build it from literals and
+theorems are parametric in it; production fills it with `ask`, an
+`@[implemented_by]` IO body behind an `opaque` name. Nothing under `Verified`
+imports this. Outside `verified_cli serve`, stdin is consumed and every ask
+declines.
 -/
 
 open Lean (Json)
@@ -40,10 +31,9 @@ namespace DayEntry.Host
 
 /-! ## Where a day's time goes
 
-Wall-clock spans, summed by name, read out once per day by `takeTimings`. The
-logic stays pure: `timed` is `f ()` to every proof and guard, and only the
-compiled binary reads the clock around it. The route ships the result as
-`lean.<name>` in its `timing`. -/
+Wall-clock spans summed by name, read once per day by `takeTimings` and shipped
+as `lean.<name>` timings. `timed` is `f ()` to every proof; only the binary
+reads the clock. -/
 
 initialize spansRef : IO.Ref (Array (String × Nat)) ← IO.mkRef #[]
 

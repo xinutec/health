@@ -5,47 +5,27 @@ import Lean.Data.Json
 /-!
 # `ServeEntry.Wire` — what the serve modes and the referee modes read alike
 
-The float, fix and option parsers both halves of `ServeEntry` use. Same
-`Wire` namespace as `DayEntry.Wire` (`fBits`/`jBits`/`nth`/`optArr`), so one
-`open Wire` reaches all of it. A module of its own so the referee modes
-(`ServeEntry.Gates`) can import what they share with the serving modes without
-importing the serving modes.
+Float, fix and option parsers shared by `ServeEntry` and `ServeEntry.Gates`,
+in the same `Wire` namespace as `DayEntry.Wire`, so one `open Wire` reaches
+both. Separate so the referee modes need not import the serving ones.
 -/
 
 open Lean (Json)
 
 namespace Wire
 
-/-- A Float from either encoding on this wire: a JSON number, or the decimal of
-its IEEE-754 bit pattern as a string.
-
-⚠ **Both, because the producers disagree.** A host serialising a float with
-`JSON.stringify` or serde sends a number; every Lean-to-Lean hop sends a bit
-pattern (`fBits`), because a coordinate re-rounded on the wire moves a node's
-5-dp key, which is its identity. Reading only one form is how one Lean entry
-point's `edges`/`nodes` were refused with `number expected` by the next.
-
-⚠ IT IS NOT A LENIENT PARSE. A string that is not a bit pattern is still an
-error, by name: silently reading an unparseable distance as "no evidence" would
-let a day decode, look plausible, and never learn that any fix was on a
-railway. -/
+/-- A Float from either encoding: a JSON number (serde senders) or the decimal
+of its IEEE-754 bit pattern (Lean-to-Lean hops, where re-rounding would move a
+node's 5-dp identity key). Any other string is an error, by name. -/
 def jFloat (j : Json) : Except String Float :=
   match j.getStr? with
   | .ok _ => jBits j
   | .error _ => do return (← j.getNum?).toFloat
 
-/-! ⚠ **A coordinate on this wire is a decimal, and it has to survive exactly.**
-Most floats in this file cross as IEEE-754 bit patterns (`fBits`/`jBits`), but
-`observation.points` does not: the tensor's fixes are plain JSON numbers, as
-`decode-day` sends them.
-
-That is safe because two things hold together: the emitter writes the shortest
-decimal that round-trips (`serde_json` uses Ryū), and `Json.parse` reads it back
-to the same bits. The first is somebody else's library; the second is checked
-here, so a toolchain bump that made the parser merely close would fail loudly
-rather than shift every fix by an invisible amount.
-
-Measured, not assumed. -/
+/-! `observation.points` crosses as plain JSON numbers, as `decode-day` sends
+them. Exact because serde writes the shortest round-trip decimal and
+`Json.parse` reads it back to the same bits, which is checked here so a parser
+change fails loudly. -/
 
 def jFloatField (j : Json) (k : String) : Except String Float := do jFloat (← j.getObjVal? k)
 def jOptFloat (j : Json) (k : String) : Except String (Option Float) :=

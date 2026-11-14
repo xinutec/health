@@ -8,37 +8,23 @@ import ServeEntry.Wire
 # `ServeEntry.Gates` — the referee modes
 
 `walkgate`, `groundtruth`, `journeys`, `decoderscore`, `truthcheck`,
-`floorgate`, `journeyshape`, `feasibility` and the ceiling gates: the modes
-`verified_cli serve` dispatches on that nothing SERVES — each measures a
-corpus against a blessed file and returns a verdict. `ServeEntry.lean`'s mode
-table names each of them.
+`floorgate`, `journeyshape`, `feasibility` and the ceiling gates: modes that
+serve nothing, each measuring a corpus against a blessed file.
 -/
 
 open Lean (Json)
 open Wire
 open Verified.Hsmm
 
-/-! ## Walk-gate mode (`verified_cli walkgate`) — a REFEREE, not a serving path
+/-! ## Walk-gate mode (`verified_cli walkgate`)
 
-`Verified.Eval.WalkMetrics` and `Verified.Eval.WalkGate` over a corpus in one
-call: measure every drawn walk, compare each against its blessed floor, and
-return both the current metrics (ready to re-bless) and the verdict. The
-oracle is a file, `tests/golden/walk-baseline.json`.
+`Verified.Eval.WalkMetrics` and `WalkGate` over a corpus in one call: measure
+every drawn walk against its floor (`tests/golden/walk-baseline.json`) and
+return the current metrics (ready to re-bless) and the verdict.
 
-It sits in the mode table, like `coverage` and `gpsoutliers`, rather than in a
-separate entry point: handlers beside a `main` cannot be linked into the host.
-
-⚠ COORDINATES CROSS AS PLAIN JSON NUMBERS, NOT ON THE 1e-7 GRID `match` uses.
-That mode quantises because its matcher is integer-exact by design. The referee
-is not, and the floor was blessed from raw doubles, so quantising here would
-move every metric away from the very file it is compared against. It is safe
-for the reason `parsesTo` measures above: both ends write the shortest decimal
-that round-trips.
-
-⚠ METRICS COME BACK AS BIT PATTERNS. `Lean.toJson` on a `Float` emits six
-decimal places, and this port has to demonstrate agreement with a baseline
-recorded to seventeen significant digits — six would hide exactly the
-divergence the harness exists to find.
+Coordinates cross as plain JSON numbers, not `match`'s 1e-7 grid: the floor was
+blessed from raw doubles, and shortest round-trip decimals are exact. Metrics
+return as bit patterns: `Lean.toJson` prints six decimals.
 
     { "mode": "walkgate",
       "baseline": [ { "date": "2026-05-15", "walks": [ <entry>, … ] }, … ],
@@ -56,8 +42,8 @@ divergence the harness exists to find.
                 "lenM": bits, "budgetM": bits|null }
 
 Output: `{ "current": [ … ], "passes": bool, "regressed": […], "improved": […],
-"unmatched": […], "added": […], "unmeasured": […] }` — `current` in the request
-order, everything else in the gate's own sorted-by-date order. -/
+"unmatched": […], "added": […], "unmeasured": […] }`, `current` in request
+order, the rest sorted by date. -/
 
 namespace WalkGate
 
@@ -82,7 +68,7 @@ private def parseStep (j : Json) : Except String PedStep := do
   return ⟨← jFloat (← nth a 0), ← jFloat (← nth a 1)⟩
 
 /-- One drawn walk and the two tracks it is judged against. `raw` is the
-pipeline's cleaned GPS for the leg — a fold INPUT, which is why the harness can
+pipeline's cleaned GPS for the leg — a fold input, which is why the harness can
 supply it and a frozen fixture cannot. -/
 private structure WalkIn where
   startTs : Int
@@ -91,26 +77,14 @@ private structure WalkIn where
   raw : Array LatLon
   acceptedNames : Array String
   /-- The matcher's identity report for this leg: named ways and their
-  metres, longest first. A DIAGNOSTIC — nothing here scores it. -/
+  metres, longest first. A diagnostic — nothing here scores it. -/
   wayUm : Array (String × Nat) := #[]
-  /-- Does the mirror hold building outlines for the ground THIS leg ran over?
+  /-- Does the mirror hold building outlines for the ground this leg ran over?
+  An `offPathBuildingCrossingM` of 0.0 is ambiguous without it, and coverage
+  varies within a day. Copied from the fold's `Seg.walkBuildingsMeasured`.
 
-  ⚠ `offPathBuildingCrossingM` reads 0.0 for two different worlds — a line that
-  crosses no wall, and a line over ground with no walls to cross. The day-level
-  `buildings.isEmpty` test below cannot separate them, because coverage varies
-  per location: a day can answer three of its four `buildingsNear` keys and
-  leave one empty, and its walks there would score a clean 0.0 off outlines
-  fetched 20 km away.
-
-  The fold itself says so now: `Seg.walkBuildingsMeasured` records
-  whether the `buildingsNear` read for the leg's ground answered, and the
-  harness copies it onto this row rather than reconstructing it from a trace.
-
-  ⚠ **DEFAULTS TRUE, and the loudness lives in the GATE.** Defaulting false
-  would be the conservative direction for one leg and a disaster for the metric:
-  a wiring slip that dropped the field would turn the whole wall lens off while
-  every day reported `none` and nothing failed. The gate prints the tally on
-  every run instead, so a coverage number that collapses is visible. -/
+  Defaults true: false would let a dropped field silently switch the wall lens
+  off; the gate prints the tally every run instead. -/
   buildingsMeasured : Bool := true
 
 private def parseWalkIn (j : Json) : Except String WalkIn := do
@@ -132,20 +106,9 @@ private structure DayIn where
   steps : Array PedStep
   walks : Array WalkIn
 
-/-- Resolve a day's geometry: either INLINE arrays, or indices into the
-request-level tables.
-
-⚠ The tables exist because 91% of the request was duplication: each way
-crossed the wire ~12 times, and the request was 145 MiB (3.9 GB of
-`serde_json::Value` on the caller's side, ~2.9 GB of `Json` here). Indices
-change nothing the referee computes; they change what has to be held in
-memory at once, which is what made a gate run and a parallel build starve
-each other.
-
-⚠ INLINE STILL WORKS, and is not deprecated: a caller grading one day has
-nothing to dedupe. An index that points past the end is an ERROR, never a
-silently-dropped way — a short ways list would quietly move every metric on
-that day. -/
+/-- Resolve a day's geometry: inline arrays, or indices into request-level
+tables, which keep repeated ways from multiplying the request's size in memory.
+Inline stays supported. An out-of-range index is an error, never a dropped way. -/
 private def resolveIdx {α : Type} (what : String) (table : Array α) (j : Json)
     (inlineKey idxKey : String) (parseOne : Json → Except String α)
     : Except String (Array α) := do
@@ -171,20 +134,9 @@ private def oBits : Option Float → Json
   | some v => fBits v
   | none => Json.null
 
-/-- A floor entry.
-
-⚠ THE WIRE IS ASYMMETRIC ON PURPOSE, and this is the readable half.
-`jFloatField`/`jOptFloat` accept EITHER a bit pattern or a plain JSON number,
-because two different producers feed this side: `walk-baseline.json` holds
-plain decimals a human blessed, and the fold's own episodes arrive as bits.
-Both have to work without the host converting either one.
-
-The WRITTEN half is bits only — see `entryJson`. `Lean.toJson` on a `Float`
-emits six decimal places, which is coarser than the agreement this port exists
-to demonstrate.
-
-An ABSENT column reads as `none`, which is right: a floor that never recorded
-an axis has not measured it. -/
+/-- A floor entry. Floats read as bit patterns or plain numbers
+(`walk-baseline.json` holds blessed decimals, the fold sends bits); written as
+bits only (`entryJson`). An absent column is `none`: never measured. -/
 private def parseEntry (j : Json) : Except String WalkEntry := do
   return {
     startTs := ← (← j.getObjVal? "startTs").getInt?
@@ -199,27 +151,16 @@ private def parseEntry (j : Json) : Except String WalkEntry := do
 private def parseBaselineDay (j : Json) : Except String (String × Array WalkEntry) := do
   return ((← (← j.getObjVal? "date").getStr?), ← (← optArr j "walks").mapM parseEntry)
 
-/-- How far from the drawn line a raw fix counts as UNCOVERED (m).
-
-⚠ Not tuned: it is the display gate's own `WALK_MATCH_MAX_STRAY_M` order of
-magnitude, chosen so the share asks the same "is this fix on the line" question
-the gate already asks — and the whole point of the share is that its answer
-moves smoothly with the radius rather than hinging on it. Re-read the
-distribution before any bar is placed here. -/
+/-- How far from the drawn line a raw fix counts as uncovered (m), of the order
+of the display gate's `WALK_MATCH_MAX_STRAY_M`. Not tuned; the share should
+move smoothly with it. -/
 private def UNCOVERED_RADIUS_M : Float := 30
 
-/-- Measure one drawn walk into exactly the shape the floor records.
+/-- Measure one drawn walk into the floor's shape. Each `none` is a different
+unanswered question, never a zero: no buildings → `offPathM`, no confirmed
+street → `routeCorr`, no steps → no budget.
 
-⚠ EVERY `none` HERE IS A DIFFERENT QUESTION GOING UNANSWERED, and not one of
-them is a zero: no building footprints in the day → `offPathM` unmeasured; no
-ground-truth-confirmed street over the leg → `routeCorr` unmeasured; no step
-rows → no budget. The gate treats an unmeasured axis and a perfect score
-completely differently, so collapsing any of these would be a silent pass.
-
-⚠ `scoreWalk` is given NO steps on purpose. Its own pedometer term uses a
-different stride and a different window from the budget the gate acts on; the
-budget comes from `stepBudgetM` below, separately. Handing steps to both would
-put two incompatible pedometer readings in one row. -/
+`scoreWalk` gets no steps: its pedometer term differs from `stepBudgetM`'s. -/
 
 private def measure (d : DayIn) (wantP90 : Bool) (w : WalkIn) : WalkEntry :=
   let sc := scoreWalk w.drawn (Float.ofInt w.startTs) (Float.ofInt w.endTs) #[] (some d.ways)
@@ -230,19 +171,16 @@ private def measure (d : DayIn) (wantP90 : Bool) (w : WalkIn) : WalkEntry :=
     stallM := maxCorridorStall w.raw w.drawn
     speedKmh := if span > 0 then (sc.drawnLengthM / span) * 3.6 else 0
     routeCorr := onNamedWayFraction w.drawn w.acceptedNames d.ways
-    -- ⚠ UNMEASURED IS NOT CLEAN. `none` when the day holds no outlines
-    -- at all, and now also when none were fetched for THIS leg's ground — the
+    -- Unmeasured is not clean. `none` when the day holds no outlines
+    -- at all, and now also when none were fetched for this leg's ground — the
     -- distinction coverage actually varies along.
     offPathM := if d.buildings.isEmpty || !w.buildingsMeasured then none
                 else some (offPathBuildingCrossingM w.drawn d.buildings d.ways)
     lenM := sc.drawnLengthM
     budgetM := stepBudgetM d.steps (Float.ofInt w.startTs) (Float.ofInt w.endTs)
     wayUm := w.wayUm
-    -- ⚠ COVERAGE, recorded and not scored. `maxFixDistToLine` is the
-    -- MAXIMUM on purpose: the display gate already asks a quantile of the same
-    -- two tracks, and a quantile cannot see a line that abandons part of a
-    -- walk. Cheap enough to take unconditionally — unlike `p90M`, nothing here
-    -- touches the way network.
+    -- Coverage, recorded, not scored: the maximum, since a quantile cannot see
+    -- a line abandoning part of a walk.
     rawLenM := pathLength w.raw
     coverMaxM := maxFixDistToLine w.raw w.drawn
     headGapM := (endpointGapsM w.raw w.drawn).1
@@ -256,7 +194,7 @@ private def entryJson (e : WalkEntry) : Json :=
     ("stallM", fBits e.stallM), ("speedKmh", fBits e.speedKmh),
     ("routeCorr", oBits e.routeCorr), ("offPathM", oBits e.offPathM),
     ("lenM", fBits e.lenM), ("budgetM", oBits e.budgetM),
-    -- ⚠ PASSED THROUGH, NEVER SCORED. It rides the referee's wire so
+    -- Passed through, never scored. It rides the referee's wire so
     -- `WALK_GATE_DUMP` can print it beside the metrics; no floor holds it and
     -- no delta is computed from it.
     ("wayUm", Json.arr (e.wayUm.map fun (n, um) =>
@@ -290,11 +228,8 @@ private def parseReq (j : Json)
           ← (← optArr j "days").mapM (parseDayIn wayTable buildingTable))
 
 def walkGateResult (j : Json) : Json :=
-  -- ⚠ OFF BY DEFAULT, and that is the point. `p90M` is 83% of this mode's cost
-  -- and the ratchet does not act on it — `Metric` has no `p90` case. A caller
-  -- that is GATING does not need it; one that is REFRESHING THE FLOOR does, and
-  -- asks. An absent `p90M` is therefore "not asked this run", not a lost
-  -- measurement, and nothing downstream reads it as one.
+  -- Off by default: `p90M` is most of this mode's cost and nothing gates on
+  -- it. A floor refresh asks for it; absent means not asked.
   let wantP90 := (j.getObjVal? "wantP90" >>= (·.getBool?)).toOption.getD false
   match parseReq j with
   | .error e => Json.mkObj [("error", Json.str e)]
@@ -313,18 +248,11 @@ def walkGateResult (j : Json) : Json :=
 
 end WalkGate
 
-/-! ## Ground-truth mode (`verified_cli groundtruth`) — a REFEREE input
+/-! ## Ground-truth mode (`verified_cli groundtruth`)
 
-`Verified.Eval.GroundTruth.parseGroundTruth` over one narrative: the audit
-tables are the corpus's only non-self-referential truth signal, read by
-`routeCorr` in the walk referee and by `score-decoder`, whose oracle is the
-narrative.
-
-⚠ THE REPLY CARRIES CIVIL TIME, NOT UNIX. Resolving a wall clock in a named zone
-needs the tz database, which is data and IO; the Lean side stops at the anchored
-`(day, hh, mm)` and the shell resolves it with
-`rust/backend/src/timezone.rs::wall_clock_to_unix`. That split is the whole
-reason this mode exists rather than a `parseGroundTruth` that returns seconds.
+`Verified.Eval.GroundTruth.parseGroundTruth` over one narrative. The reply is
+civil time: Rust resolves `(day, hh, mm)` with `timezone.rs`'s
+`wall_clock_to_unix`.
 
   { "mode": "groundtruth", "markdown": "…", "date": "YYYY-MM-DD", "tz": "…" }
 
@@ -387,10 +315,8 @@ end GroundTruth
 
 /-! ## Journeys mode (`verified_cli journeys`)
 
-`Verified.Eval.Journeys.groundTruthJourneys` over RESOLVED audit rows — the
-ground-truth side of the `score-decoder` scoreboard. Rows arrive with
-unix `startTs`/`endTs` because the zone resolution is the shell's (see the
-`groundtruth` mode above).
+`Verified.Eval.Journeys.groundTruthJourneys` over resolved audit rows (unix
+seconds).
 
   { "mode": "journeys",
     "rows": [ { "startTs": n, "endTs": n, "status": "correct|wrong|partial|unclear",
@@ -456,16 +382,14 @@ end Journeys
 
 /-! ## Decoder-scoreboard mode (`verified_cli decoderscore`)
 
-Input: the `journeys`-mode rows EXTENDED with `provenance`, plus the decoded
-day's segments:
+The `journeys` rows plus `provenance`, and the decoded segments:
 
   { "mode": "decoderscore",
     "rows": [ { "startTs", "endTs", "status", "provenance",
                 "truth": { "mode", "lineName", "from", "to" } | null } ],
     "segs": [ { "startTs", "endTs", "mode", "lineName", "board", "alight" } ] }
 
-Output: the ten scoreboard counts, spelled as the blessed
-`decoder-scoreboard.json` spells them. -/
+Output: the ten counts, spelled as `decoder-scoreboard.json` spells them. -/
 
 namespace DecoderScore
 
@@ -519,7 +443,7 @@ def decoderScoreResult (j : Json) : Json :=
       ("stationsMatching", Lean.toJson st.stationsMatching),
       ("stationsMissing", Lean.toJson st.stationsMissing),
       ("phantomRides", Lean.toJson phantoms),
-      -- Per truth journey, for reading WHICH journeys fail and how: the scorer's
+      -- Per truth journey, for reading which journeys fail and how: the scorer's
       -- own `bestOverlap` and `modeShape`, so the detail cannot disagree with
       -- the count.
       ("journeys", Json.arr (gtJ.map fun g =>
@@ -538,13 +462,8 @@ end DecoderScore
 
 /-! ## Truth-check mode (`verified_cli truthcheck`)
 
-`Verified.Eval.TruthCheck.classifyDay` — the provenance-aware truth report.
-Rows arrive RESOLVED (unix seconds), as in `journeys` above, because
-the zone resolution is the shell's; `states` are the drawn timeline legs.
-
-This is the corpus's only NON-SELF-REFERENTIAL gate: every other check compares
-the pipeline against itself or against previously blessed pipeline output. Here
-a human wrote down what actually happened and the pipeline is graded against it.
+`Verified.Eval.TruthCheck.classifyDay`, grading the drawn legs (`states`)
+against resolved narrative rows.
 
   { "mode": "truthcheck",
     "rows": [ { "startTs": n, "endTs": n, "status": "correct|wrong|partial|unclear",
@@ -556,10 +475,8 @@ a human wrote down what actually happened and the pipeline is graded against it.
 
 Output: `{ "verdicts": [s], "verified": n, "regressed": n, "knownError": n,
 "cleared": n, "unverified": n, "hasRegression": b, "covering": [n] }`.
-`covering` is the index of the state that answered each row, or `-1` — the
-diagnosis a regressed row cannot give on its own. The `verdicts` array is
-positional — one entry per input row, in order — so the caller can attribute a
-regression to the row that caused it without a second lookup. -/
+`verdicts` is positional; `covering` is the index of the state that answered
+each row, or `-1`. -/
 
 namespace TruthCheck
 
@@ -634,18 +551,10 @@ end TruthCheck
 
 /-! ## Floor-gate mode (`verified_cli floorgate`)
 
-`Verified.Eval.FloorGate` — the one-way ratchet shared by the truth floor and
-the journey floor.
-
-⚠ THE FLOORS ARRIVE AS ARRAYS, NOT OBJECTS. A JSON object keyed by date is what
-the baseline FILES hold, but the wire here takes `[{ "date", "keys" }]` like
-every other mode, so the shell owns the map/array conversion and this side never
-depends on key order.
-
-`described` is OPTIONAL. Given, the reply also carries the ratcheted `floor` and
-the `dropped` keys the narrative no longer describes; omitted, only the gate
-runs. Dropping a key is the one way a red gate goes green without a fix, so it
-is never computed silently as a side effect of gating.
+`Verified.Eval.FloorGate`, the ratchet behind the truth and journey floors.
+Floors arrive as arrays, not date-keyed objects; Rust converts the files.
+`described` is optional: given, the reply adds the ratcheted `floor` and the
+`dropped` keys, never computed as a side effect of gating.
 
   { "mode": "floorgate",
     "baseline": [ { "date": s, "keys": [n] } ],
@@ -698,16 +607,9 @@ end FloorGate
 
 /-! ## Journey-shape mode (`verified_cli journeyshape`)
 
-`Verified.Eval.JourneyShape` — the journey referee. Builds the PIPELINE
-side of the comparison from the drawn state legs and grades each ground-truth
-journey against it.
-
-⚠ THE STATES ARRIVE RAW, and the journey building happens HERE. Handing over
-pre-built pipeline journeys would put `statesToJourneys` — the merge tolerance,
-the pause split, which modes count as legs — on the shell's side of the line,
-where it is not checked by anything. The shell passes what the fold produced.
-
-`gt` is what the `journeys` mode returned, fed straight back.
+`Verified.Eval.JourneyShape`: builds the pipeline's journeys here from the raw
+drawn states (so the merge rules stay checked) and grades each ground-truth
+journey, as the `journeys` mode returned it.
 
   { "mode": "journeyshape",
     "gt": [ { "startTs": n, "endTs": n,
@@ -718,12 +620,8 @@ Output: `{ "pipelineJourneys": [ { "startTs", "endTs", "legs": [s] } ],
 "results": [ { "startTs", "endTs", "expectedShape", "actualShape", "matched",
 "uncoveredS", "slackS", "matchStartTs", "matchEndTs",
 "clippedLegs": [ { "mode", "overlapS", "durationS" } ] } ] }`.
-
-`pipelineJourneys` comes back because a coverage failure cannot be read without
-it: `bestOverlap` grades ONE journey, so a trip the pipeline split in two is
-scored on the larger half with the other half counted as uncovered — a failure
-that exists only in the comparison. More than one touching the window is the
-tell, and the caller can only see that if it is told. -/
+`pipelineJourneys` shows a trip the pipeline split, which `bestOverlap` scores
+on its larger half. -/
 
 namespace JourneyShape
 
@@ -782,17 +680,10 @@ end JourneyShape
 
 /-! ## Feasibility mode (`verified_cli feasibility`)
 
-`Verified.Eval.Feasibility` — the worldline invariants. A
-model-independent assertion on the DRAWN timeline: some outputs are impossible
-regardless of how the cascade produced them.
-
-⚠ EVERY INPUT IS OPTIONAL AND THE ABSENCE OF ONE SILENCES ITS INVARIANT, on
-purpose. No `points` and the kinematic checks do not run; no `steps` and the
-pedestrian twin does not; no `stationsOnLine` and the triple check does not;
-no `accFixes` and the teleport check does not.
-That is the zero-false-positive rule applied to missing DATA rather than to
-thresholds — a day whose fixture never recorded a line's stations must not have
-its labels called impossible.
+`Verified.Eval.Feasibility`, the worldline invariants on the drawn timeline.
+Every input is optional, and a missing one silences its invariant (`points`,
+`steps`, `lineStations`, `accFixes`): missing data never makes a label
+impossible.
 
   { "mode": "feasibility",
     "legs": [ { "startTs": n, "endTs": n, "mode": s, "wayName": s|null,
@@ -858,14 +749,9 @@ end Feasibility
 
 /-! ## Ceiling-gate modes (`ceilinggate`, `ceilingbless`)
 
-`Verified.Eval.CeilingGate` — the count-shaped sibling of `floorgate`, for the
-two standing-defect baselines.
-
-⚠ `measured` AND `attempted` ARE BOTH REQUIRED and they are not the same list.
-`measured` is the days that produced a count; `attempted` is every day the run
-set out to cover. Without the second, a day whose ceiling is ZERO is in neither
-baseline and so is named nowhere — which is where a new defect hides best, since
-it cannot regress a ceiling it is no longer measured against.
+`Verified.Eval.CeilingGate`. ⚠ `measured` (days that produced a count) and
+`attempted` (days the run covered) are both required, or a zero-ceiling day
+that stopped replaying is named nowhere.
 
   { "mode": "ceilinggate",
     "committed": [ { "date": s, "count": n } ],
@@ -877,9 +763,8 @@ Output: `{ "regressed": [{ "date", "was", "now" }], "improvedDays": n,
 
   { "mode": "ceilingbless", "committed": … | null, "current": …, "measured": [s] }
 
-Output: `{ "ceiling": [ { "date", "count" } ] }` — the MINIMUM per day, so
-blessing a run that fixed some days cannot raise the ceiling on the others. A
-`null` committed is the bootstrap case. -/
+Output: `{ "ceiling": [ { "date", "count" } ] }`, the per-day minimum; `null`
+committed bootstraps. -/
 
 namespace CeilingGate
 
@@ -923,7 +808,7 @@ def ceilingGateResult (j : Json) : Json :=
 
 def ceilingBlessResult (j : Json) : Json :=
   let parsed : Except String Json := do
-    -- ⚠ `null` and ABSENT both mean bootstrap; an empty ARRAY does not. A
+    -- ⚠ `null` and absent both mean bootstrap; an empty array does not. A
     -- committed baseline of `[]` is a real ceiling of zero everywhere.
     let committed : Option Ceiling ← match j.getObjVal? "committed" with
       | .error _ => pure none

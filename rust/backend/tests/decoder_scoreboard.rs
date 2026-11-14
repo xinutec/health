@@ -6,17 +6,9 @@
 //!                                            vs tests/golden/decoder-scoreboard.json
 //! ```
 //!
-//! # What this does and does not prove
-//!
-//! The `expected` block of each `decoded_days` fixture is a frozen decoder
-//! output; this harness does not decode. Agreement therefore proves the
-//! scoring pipeline (`decoderJourneys`, `scoreStations`, `countPhantomRides`,
-//! the journey counters) reproduces the blessed counts from the same decoded
-//! segments; it says nothing about the decoder itself, which
-//! `hsmm_decode_corpus.rs` replays.
-//!
-//! ⚠ The corpora are gitignored; this announces a skip rather than passing
-//! quietly when they are absent.
+//! It scores frozen decodes, so it proves the scoring (`decoderJourneys`,
+//! `scoreStations`, `countPhantomRides`), not the decoder, which
+//! `hsmm_decode_corpus.rs` replays. A missing corpus announces a skip.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -49,8 +41,6 @@ const FIELDS: [&str; 10] = [
     "phantomRides",
 ];
 
-/// The narrative's rows for a day, times resolved to unix seconds, provenance
-/// kept — the decoderscore mode's phantom count needs it.
 /// The ten counts for one day's segments against its narrative.
 fn score(date: &str, tz: &str, segs: Vec<Value>) -> Value {
     let rows = ground_truth_rows(date, tz);
@@ -79,11 +69,9 @@ fn scoreboard_segs(segs: &[Value]) -> Vec<Value> {
         .collect()
 }
 
-/// `SCOREBOARD_LIVE=1`: the same ten counts for TODAY'S Lean decode of each
-/// blessed day, printed beside the blessed ones with totals. Report-only — the
-/// referee for an emissions change: a decoder arm that shifts segments
-/// fails `hsmm_decode_corpus` by design, and this says whether the shift is
-/// an improvement against the narratives before anything is re-blessed.
+/// `SCOREBOARD_LIVE=1`: the ten counts for today's Lean decode of each blessed
+/// day beside the blessed ones, report-only: whether a decoder change that
+/// fails `hsmm_decode_corpus` improves the narratives' counts before re-blessing.
 #[test]
 fn the_live_decode_scores_against_the_narratives() {
     if std::env::var("SCOREBOARD_LIVE").is_err() {
@@ -103,11 +91,9 @@ fn the_live_decode_scores_against_the_narratives() {
         .expect("the live arm must not panic");
 }
 
-/// `SCOREBOARD_CACHE=<dir>`: a day's decode, kept under the hash of the
-/// `verified_cli` binary and the whole request. Lean is pure, so the same
-/// binary on the same request decodes the same segments: a control decoded
-/// once stands for every comparison against it, and nothing a change could
-/// move is read from the cache, because the change moves the key.
+/// `SCOREBOARD_CACHE=<dir>`: a day's decode keyed by the `verified_cli` binary's
+/// hash and the whole request, so a control decodes once and a change moves the
+/// key.
 fn cache_key(req: &Value) -> String {
     use sha2::{Digest, Sha256};
     static BIN: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
@@ -153,10 +139,8 @@ fn live_arm() {
     eprintln!(
         "scoreboard-live: date        journeys  legMode  legLine  stations  phantom   (live | blessed)"
     );
-    // The days decode in parallel over the Lean worker pool (`SCOREBOARD_JOBS`,
-    // default 4): each is about twenty seconds of Lean and the scoring shares
-    // nothing, so one pass over 43 days is minutes, not the better part of an
-    // hour. Printed in date order once every day is in.
+    // Days decode in parallel over the worker pool (`SCOREBOARD_JOBS`, default
+    // 4), printed in date order at the end.
     let jobs: usize = std::env::var("SCOREBOARD_JOBS")
         .ok()
         .and_then(|v| v.parse().ok())

@@ -5,25 +5,15 @@
 //!                                                              vs the fixture's `expected`
 //! ```
 //!
-//! This is the half `decoder_scoreboard.rs` deliberately does not do: the live
-//! Lean decode of each day's raw materials, gated against the blessed segments.
-//! A decoder change that shifts any day's segments fails here, and one that
-//! degrades journey structure fails the scoreboard.
-//!
-//! The request each day replays is `backend::decode_fixture::request` — the
-//! same one `decode-bench` times, so the decoder that is measured is the
-//! decoder that is gated.
-//!
-//! ⚠ Announces a skip when the corpus is absent rather than passing quietly.
+//! The live decode of each day, gated against the blessed segments (the
+//! scoreboard judges journey structure). The request is
+//! `decode_fixture::request`, which `decode-bench` also times. A missing corpus
+//! announces a skip.
 
 use serde_json::Value;
 
-/// How many ways the decoded days are split. This test
-/// decoded its days one after another and was the SLOWEST test of the deploy
-/// gate's corpus row (~140 s against 50–85 s for the fold shards beside it), so
-/// it alone set that row's wall. Days are independent and each decode holds
-/// its own model; by index modulo, like `corpus_gate`'s shards. Eight since the
-/// corpus grew from 11 days to 43: four shards took 66 s.
+/// How many ways the decoded days are split, by index modulo like `corpus_gate`:
+/// unsplit, this test alone set the corpus row's wall time.
 const SHARDS: usize = 8;
 
 #[test]
@@ -128,15 +118,11 @@ fn run_corpus(shard: usize) {
         let segments = answer["segments"].clone();
         let got = backend::row_json::render_segments(&segments).expect("segments render");
         let got = got.as_array().cloned().unwrap_or_default();
-        // `DECODE_BLESS=1`: the fixture's `expected` becomes TODAY'S decode, the
-        // rendered row whole — the row `save_decode` stores and the served fold
-        // heads with, so `boardTs` and whatever else Lean grows reach the
-        // corpus gate as they reach production; the comparison below reads the
-        // named fields only. For landing a decoder change the scoreboard's
-        // live arm has already judged. Tab-indented like the capture.
-        // `DECODE_DUMP_OUT=<path>`: the Lean decode per day, one JSON line each,
-        // APPENDED — for laying an arm's segments against the narrative without
-        // blessing anything.
+        // `DECODE_BLESS=1`: `expected` becomes today's whole rendered row, as
+        // `save_decode` stores it; the comparison reads named fields only. For
+        // landing a change the scoreboard's live arm has judged.
+        // `DECODE_DUMP_OUT=<path>`: append each day's decode as a JSON line,
+        // blessing nothing.
         if let Ok(path) = std::env::var("DECODE_DUMP_OUT") {
             use std::io::Write;
             let line = format!("{}\n", serde_json::json!({ "name": name, "segments": got }));
@@ -211,11 +197,10 @@ fn segment_diffs(name: &str, got: &[Value], want: &[Value]) -> Vec<String> {
     out
 }
 
-/// The days the incremental decode is replayed on, and the minutes each is cut
-/// at: a day's request with every reading from the cut on removed, then the
-/// whole request, through one worker in `assemblesegmentsinc`. The second
-/// answer must be the frozen decode; at least one of a test's runs must have
-/// reused (a frontier, not `full`), or the test proves nothing.
+/// The days the incremental decode is replayed on, and each cut minute: the
+/// request without readings from the cut on, then the whole request, through one
+/// worker. The second answer must equal the frozen decode, and some run must
+/// have reused a frontier.
 const INC_CUTS: [usize; 1] = [1320];
 const INC_EVERY: usize = 16;
 

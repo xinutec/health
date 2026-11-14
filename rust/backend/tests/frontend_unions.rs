@@ -1,21 +1,11 @@
-//! The frontend's hand-copied string unions must match the backend's.
+//! The frontend's hand-copied string unions must match the backend's: a
+//! day-state's `mode` and an episode geometry's `kind`. An unknown mode falls
+//! through to a default style silently. The backend side is
+//! `Verified.Geo.WireVocab`, tied by `#guard` to the closed types. A Rust test,
+//! so CI needs no JavaScript runtime.
 //!
-//! Two vocabularies cross to the browser and are RESTATED there by hand: a
-//! day-state's `mode` and an episode geometry's `kind`. The frontend keys a
-//! `Record<DayStateMode, …>` on the first, so a mode it has never heard of does
-//! not fail — it falls through to a default style, silently, in production.
-//!
-//! ⚠ The backend side is `Verified.Geo.WireVocab`, where the lists are tied by
-//! `#guard` to the closed types that exist (the HSMM's `Mode` inductive and
-//! `EpisodeGeometry.MOVING_MODES`), so neither end is a list nobody enforces.
-//!
-//! A Rust test, not a Node script, so CI needs no JavaScript runtime to check
-//! the backend.
-//!
-//! ⚠ IT FAILS WHEN A TARGET CANNOT BE FOUND, not only when the sets disagree.
-//! A renamed type or a moved file would otherwise reduce this to a check of
-//! nothing, which reads exactly like a check that passes — the property the
-//! original was written with and the one easiest to lose in a port.
+//! ⚠ It fails when a target cannot be found, not only on disagreement, or a
+//! moved file would leave it checking nothing.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -29,10 +19,8 @@ fn read(rel: &str) -> String {
     std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{} is unreadable: {e}", p.display()))
 }
 
-/// Every `"…"` literal in `src[from..]` up to the first `to`.
-///
-/// ⚠ REFUSES AN EMPTY RESULT. Zero members is what a moved anchor produces, and
-/// an empty set compares equal to nothing useful.
+/// Every `"…"` literal in `src[from..]` up to the first `to`; refuses an empty
+/// result, which is what a moved anchor produces.
 fn literals(src: &str, anchor: &str, terminator: char, what: &str) -> BTreeSet<String> {
     let start = src.find(anchor).unwrap_or_else(|| {
         panic!("{what}: anchor {anchor:?} not found — did it move or get renamed?")

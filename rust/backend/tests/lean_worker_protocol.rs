@@ -1,14 +1,9 @@
-//! The ask protocol, driven against a FAKE `verified_cli`.
+//! The ask protocol against a fake `verified_cli`: a shell script that reads the
+//! request, asks once, reads the answer and folds it into its reply, so a
+//! protocol defect fails with the broken line.
 //!
-//! A shell script stands in for Lean: it reads the request, puts one ask on
-//! stdout, reads the answer back off stdin and folds it into its result. That
-//! is the whole wire — request line, ask line, answer line, reply line — with
-//! nothing about the day fold in the way, so a protocol defect fails here with
-//! the line that broke rather than as a wrong day.
-//!
-//! ⚠ ONE PROCESS, ONE FAKE. `verified_cli_path` is resolved once per process
-//! from `VERIFIED_CLI`, so this file sets it before the first call and every
-//! test in it talks to the fake. Nothing here reaches the real Lean.
+//! ⚠ `verified_cli_path` resolves once per process, so this file sets
+//! `VERIFIED_CLI` first and every test talks to the fake.
 
 #![expect(
     unsafe_code,
