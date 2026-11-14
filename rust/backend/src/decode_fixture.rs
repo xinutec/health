@@ -6,18 +6,12 @@
 //!                                                             └── decode-bench (timed)
 //! ```
 //!
-//! One builder for both readers. The gate replays each day and compares its
-//! segments with the blessed decode; the bench times the decoder on the same
-//! request. A second copy of this builder in the bench would time a request
-//! nothing proves is the gated one.
+//! One builder for the gate and the bench, so the bench times the gated
+//! request. Fields come from the fixture as `cli::decode::decode_one` builds
+//! them from the DB (same cleaners, wire shapes, per-fixture `decodeFlags`);
+//! the captured row sets are already boxed.
 //!
-//! Every field comes from the fixture the way `decode_one` builds it from the
-//! DB (main.rs) — same cleaners, same wire shapes, same flags semantics
-//! (`decodeFlags` recorded per fixture). The boxes are not re-applied: the
-//! captured row sets already carry exactly what fed the blessed decode.
-//!
-//! ⚠ The corpus is gitignored and holds real location data. Nothing here
-//! prints a coordinate, and nothing that reads it should.
+//! ⚠ The corpus is gitignored real location data: print no coordinate.
 
 use std::path::PathBuf;
 
@@ -48,13 +42,11 @@ pub fn fixture_names() -> Result<Option<Vec<String>>> {
     Ok(Some(names))
 }
 
-/// What `decoded_days` holds for `date` once the decoder has run at this
-/// `CLASSIFIER_VERSION`: the frozen decode's blessed `expected`, the rows
-/// `save_decode` writes. A day fixture's own `hsmmDecode` is the row at capture
-/// time, from a decoder since replaced, so a replay reads this in its place —
-/// as production reads the re-decoded row. `Ok(None)` without a frozen twin;
-/// an error when the twin is unblessed (`expected` empty), because the fold
-/// would otherwise head with a decode nothing has judged.
+/// The frozen decode's blessed `expected` for `date` at this
+/// `CLASSIFIER_VERSION`, as `save_decode` writes it. A day fixture's own
+/// `hsmmDecode` came from a replaced decoder, so replays read this, as
+/// production reads the re-decoded row. `Ok(None)` without a frozen twin; an
+/// error when it is unblessed.
 pub fn stored_decode(date: &str, user: &str) -> Result<Option<Value>> {
     let name = format!("{date}-{user}.json");
     let path = corpus_dir().join(&name);
@@ -102,13 +94,10 @@ fn arm_knob(var: &str) -> Value {
         .map_or(Value::Null, |f| json!(f))
 }
 
-/// `HSMM_TERM_WEIGHTS='{"lineProximity":0.75}'`: per-family term weights laid
-/// on every request (`examples/tune_weights`), harness-only like the rest.
-///
-/// `HSMM_FITTED_PRIORS_DIR=<dir>`: the parameter table `<dir>/<date>.json`
-/// (`examples/fit_emissions`, fitted without that day) laid on the day's
-/// request — the held-out arm. Harness-only like the knobs above; `null` when
-/// unset, which is the shipped model.
+/// `HSMM_TERM_WEIGHTS='{"lineProximity":0.75}'`: per-family term weights on
+/// every request (`examples/tune_weights`). `HSMM_FITTED_PRIORS_DIR=<dir>`:
+/// `<dir>/<date>.json` from `fit_emissions`, fitted without that day. Both
+/// harness-only; `null` when unset, the shipped model.
 fn term_weights() -> Result<Value> {
     match std::env::var("HSMM_TERM_WEIGHTS") {
         Ok(j) => Ok(serde_json::from_str(&j).context("HSMM_TERM_WEIGHTS is JSON")?),
@@ -164,10 +153,9 @@ fn attach_visits(places: &mut Value, visits: &std::collections::HashMap<i64, f64
 }
 
 /// `HSMM_PLACE_SPREAD=<file>`: the miner's places (`refresh-focus-places
-/// --places-out`), `[{id, visits, visitSs}]`, laid on every request place
-/// whose id they name as `visitSpread: [visits, visitSs]` — what `known_places` carries in production, for the
-/// fixtures captured before the miner measured a place's spread. A place the
-/// file does not name keeps the pooled prior alone.
+/// --places-out`, `[{id, visits, visitSs}]`) set as `visitSpread` on matching
+/// request places, as `known_places` carries in production, for fixtures
+/// captured before spreads were measured. Others keep the pooled prior.
 fn attach_spread(places: &mut Value) -> Result<()> {
     let Ok(path) = std::env::var("HSMM_PLACE_SPREAD") else {
         return Ok(());
@@ -189,10 +177,9 @@ fn attach_spread(places: &mut Value) -> Result<()> {
     Ok(())
 }
 
-/// Each fix's reported accuracy by ts, from the capture-side fixture of the
-/// same day (`tests/golden/days`, whose PhoneTrack rows carry it); empty when
-/// that fixture is absent. The frozen decoder fixtures were written before
-/// the request carried accuracy, and the pipeline's points keep the raw ts.
+/// Each fix's reported accuracy by ts, from the same day's capture fixture
+/// (`tests/golden/days`), for frozen fixtures predating accuracy; empty when
+/// that fixture is absent.
 fn accuracy_by_ts(fx: &Value) -> Result<std::collections::HashMap<i64, f64>> {
     let Some(day) = capture_fixture(fx)? else {
         return Ok(std::collections::HashMap::new());
@@ -218,11 +205,9 @@ fn attach_accuracy(points: &mut Value, accuracy: &std::collections::HashMap<i64,
     }
 }
 
-/// The JSON file the environment variable `var` names, or `null` when unset —
-/// `HSMM_TRANS_FIT=<file>` is a fitted mode-to-mode transition matrix
-/// (`Transitions.fittedWeight`), `{src: {dst: p}}`, harness-only. A directory
-/// holds one file per day, `<dir>/<date>.json` (`fit_emissions --loo`: each
-/// fitted without its own day).
+/// The JSON file the variable `var` names, or `null` when unset (e.g.
+/// `HSMM_TRANS_FIT`, a `{src: {dst: p}}` transition fit). A directory holds
+/// `<dir>/<date>.json`, each fitted without its own day.
 fn json_file(var: &str, date: &str) -> Result<Value> {
     let Ok(path) = std::env::var(var) else {
         return Ok(Value::Null);

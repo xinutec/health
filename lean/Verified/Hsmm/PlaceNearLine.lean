@@ -3,21 +3,13 @@ import Verified.Geo.OsmSpatial
 /-!
 # Is this place within walking distance of that line?
 
-The decoder's hard constraint on place→line transitions. `buildTransitionMatrix`
-hard-zeroes a transition from focus place P to train line L when P is not near a
-station on L — you cannot board the Central Line from a flat two miles from any
-Central Line station, and without this the trellis is free to say you did.
+`buildTransitionMatrix` hard-zeroes focus place P → train line L when P is not
+near a station on L: nobody boards a line two miles from its stations.
 
-## ⚠ an absent `placeNearLine` is not a softer constraint — it is a different one
+⚠ An absent `placeNearLine` parses as the empty set, "no place near any line",
+which removes every hard zero: a plausible timeline with forbidden boardings.
 
-`parseAssemble` reads it as optional, and an absent one is the empty set, which
-reads to the transition matrix as "no place is near any line". That removes
-every hard zero rather than adding them: the decode runs, produces a plausible
-timeline, and allows forbidden boardings.
-
-## The shell's half
-
-`stationsOnLine` is an OSM query and stays out there. Which lines to ask about is
+`stationsOnLine` is an OSM query in Rust; the lines are
 `Verified.Hsmm.Assemble.KNOWN_LINES`; how near counts is here.
 -/
 
@@ -25,12 +17,9 @@ namespace Verified.Hsmm.PlaceNearLine
 
 open Verified.Geo.OsmSpatial (haversineAt LEAN_EARTH_R)
 
-/-- Walking distance to a station, in metres.
-
-400 m, and not the 300 m of {@link Verified.Geo.LineStations.MAX_DIST_M}.
-The two measure different things: that one asks whether a station sits on a
-line's track, this one asks whether a person would walk from their flat to the
-station. A shared constant would make one of the two wrong. -/
+/-- Walking distance to a station, in metres. Not
+{@link Verified.Geo.LineStations.MAX_DIST_M}'s 300 m, which asks whether a
+station is on a track, not whether someone walks there. -/
 def WALK_DIST_M : Float := 400
 
 /-- A focus place, as the state space names it. -/
@@ -46,11 +35,9 @@ structure Station where
   lon : Float
   deriving Repr, Inhabited, BEq
 
-/-- Haversine, at `LEAN_EARTH_R` (6 371 000 m). The equirectangular
-approximation `Verified.Geo.LineStations` uses is fine for its purpose and is
-not this one:
-at 400 m the two disagree by little, but "little" is all it takes to move a
-place across a threshold that hard-zeroes a transition. -/
+/-- Haversine, at `LEAN_EARTH_R` (6 371 000 m), not `LineStations`'
+equirectangular approximation: a small difference can move a place across a
+threshold that hard-zeroes a transition. -/
 def distM (p : Place) (s : Station) : Float :=
   haversineAt LEAN_EARTH_R p.lat p.lon s.lat s.lon
 
@@ -58,22 +45,15 @@ def distM (p : Place) (s : Station) : Float :=
 def nearAnyStation (p : Place) (stations : Array Station) : Bool :=
   stations.any (fun s => distM p s ≤ WALK_DIST_M)
 
-/-- The `"{placeId}|{lineName}"` keys for one line.
-
-A line with no stations contributes nothing. It reads the same as a line
-every place is far from, and it must: an OSM gap is not evidence that nobody
-lives near the Piccadilly Line. -/
+/-- The `"{placeId}|{lineName}"` keys for one line. A line with no stations
+contributes nothing, as if every place were far: an OSM gap is no evidence. -/
 def pairsForLine (places : Array Place) (line : String) (stations : Array Station)
     : Array String :=
   if stations.isEmpty then #[]
   else places.filterMap (fun p => if nearAnyStation p stations then some s!"{p.id}|{line}" else none)
 
-/-- Every place/line pair within walking distance, over all the lines the shell
-resolved stations for.
-
-Lines outer, places inner, so the emitted order is stable. The consumer builds
-a set from it, so order cannot change a decode; a diff reads far more easily
-when it is stable. -/
+/-- Every place/line pair within walking distance, lines outer, places inner.
+The consumer builds a set; the stable order keeps diffs readable. -/
 def buildPlaceNearLine (places : Array Place) (lines : Array (String × Array Station))
     : Array String :=
   lines.foldl (fun acc (line, sts) => acc ++ pairsForLine places line sts) #[]
@@ -88,12 +68,8 @@ private def S (lat lon : Float) : Station := ⟨lat, lon⟩
 -- itself measures, so they pin the formula rather than a conversion.
 #guard (distM (P 1 51.5 (-0.1)) (S 51.5 (-0.1))) == 0.0
 
--- The boundary is pinned from both sides, roughly a metre apart. A rule
--- tested only from the far side passes with the comparison reversed.
---
--- The `≤` versus `<` of `WALK_DIST_M` itself is not pinned, and claiming it
--- were would be false precision: no pair of coordinates lands a haversine on
--- exactly 400.0, so the two comparisons are indistinguishable by any guard.
+-- The boundary is pinned from both sides, about a metre apart. `≤` vs `<` at
+-- exactly 400.0 is not: no coordinates land a haversine there.
 #guard (distM (P 1 51.5 0) (S 51.50359 0) - 399.189787).abs < 1e-5   -- inside
 #guard (distM (P 1 51.5 0) (S 51.50360 0) - 400.301736).abs < 1e-5   -- outside
 #guard nearAnyStation (P 1 51.5 0) #[S 51.50359 0]

@@ -1,36 +1,16 @@
 /-!
 # How long a computed day may be reused
 
-`/velocity` is expensive — a data-rich day is 5–10 s of fetch, Kalman,
-segmentation, OSM enrichment and biometric joins — and deterministic for a given
-`(user, date, tz, walkMatch)`. So the result is cached per pod, and the only
-question that is a decision rather than a data structure is how long.
+`/velocity` takes 5–10 s on a full day and is deterministic for
+`(user, date, tz, walkMatch)`, so it is cached per pod. The map and in-flight
+dedup are the host's; the freshness rule is here.
 
-The map, its eviction order and the in-flight dedup stay in the host: which
-request shares a computation with which is concurrency, not policy. What is here
-is the freshness rule and the two windows it chooses between.
+A finished day is settled, so five minutes of staleness costs nothing. A day
+in progress changes with every fix and its verdicts are provisional, so it
+gets a short window, affordable because a partial day is cheap to recompute.
 
-## The two TTLs are not one number with an exception
-
-A finished day's classification is settled: replaying it tomorrow gives the same
-answer, so five minutes of staleness costs nothing. A day in progress is a
-different object: every new fix can change it, and the pipeline's verdict on an
-unfinished journey is provisional by construction. A ride a minute old cannot
-yet be identified as the train it will turn out to be, and the full window would
-leave the superseded verdict on screen long after the pipeline corrected itself.
-
-The short window is affordable precisely because the day is partial: mid-morning
-there is simply less of it, so recomputing costs a few hundred milliseconds
-rather than the seconds a full day takes.
-
-## Liveness is decided against the viewer's local date
-
-`today` is passed in, already resolved in the viewer's zone, because Lean has no
-zone database. The boundary that matters is the viewer's local midnight and not
-UTC's: at 23:30 in London the UTC date has already rolled over, and treating the
-day as finished would freeze the evening's timeline an hour early. A host that
-passes a UTC date here is not passing a wrong argument — it is asking a different
-question, and getting a plausible answer to it.
+`today` arrives resolved in the viewer's zone: at 23:30 in London the UTC date
+has rolled over, and a UTC date would freeze the evening an hour early.
 
 Pure and total. UNPROVEN; pinned by the `#guard`s below.
 -/
@@ -55,21 +35,14 @@ def MAX_ENTRIES : Int := 32
 experiences it? `today` must already be the viewer's local civil date. -/
 def isLiveDay (date today : String) : Bool := date == today
 
-/-- The window a result computed for `date` may be reused within.
-
-Takes both dates rather than a `Bool` so the liveness rule and the window it
-selects cannot drift apart in two files. -/
+/-- The window a result computed for `date` may be reused within. Takes both
+dates, so the liveness rule and its window live together. -/
 def ttlMsFor (date today : String) : Int :=
   if isLiveDay date today then LIVE_TTL_MS else TTL_MS
 
-/-- May a cached entry still be served?
-
-Strict. An entry exactly at its TTL is stale, which is the direction that
-cannot serve something older than the window promises.
-
-A cache written in the future is stale, not fresh. `cachedAtMs > nowMs` means
-the clock moved backwards, and the arithmetic alone would read a far-future entry
-as eternally fresh — the one failure here that never expires by itself. -/
+/-- May a cached entry still be served? Strict: exactly at its TTL is stale. A
+future `cachedAtMs` (the clock moved back) is stale too, or it would stay fresh
+forever. -/
 def isFresh (cachedAtMs nowMs ttlMs : Int) : Bool :=
   cachedAtMs ≤ nowMs && nowMs - cachedAtMs < ttlMs
 

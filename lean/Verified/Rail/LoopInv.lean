@@ -2,32 +2,23 @@ import Verified.Rail.HeapInv
 import Verified.Rail.Certify
 
 /-!
-# Dijkstra loop invariants — retiring the rail `#guard` pin
+# Dijkstra loop invariants
 
-`Certify.lean` proved the V3 goal theorems by *certification*: whatever the
-untrusted search returns is validated by a proved checker. The remaining
-`#guard`-pinned fact is the converse — the checker never fires on a real
-run (`dijkstraC == dijkstra`), and `none ⟺ disconnected`. This file proves
-it with the classical algorithm invariants, built on the heap theorems of
-`HeapInv.lean`:
+`Certify.lean` validates whatever the search returns. This proves the converse,
+that the checker never fires (`dijkstraC == dijkstra`) and `none ⟺
+disconnected`, from the classical invariants on `HeapInv.lean`'s heap theorems:
 
-* `InvCore` — the working-state invariant: array sizes; the heap really is
-  a heap; lazy deletion (every heap entry over-approximates its vertex's
-  current `dist`); the pop floor `L` (all entries and all settled prices
-  are on the right side of the last popped priority); every unsettled
-  finite vertex has a live heap entry; and a *ghost* prev-tree (`pos`/`c`
-  rank vertices by settle order, so `prev`-chains strictly descend and
-  each hop records the exact relaxing edge).
-* `Relaxed` / `RelaxedExcept` — edges out of settled vertices don't
-  shortcut. The `dst` early exit legitimately skips `dst`'s own pass;
-  `feasibleCut` still holds there because every settled price is `≤ D`.
-* `potential`: pops strictly decrease `heap.size + Σ (undone adjacency)`, so
-  the fuel `E + n + 2` never exhausts.
+* `InvCore` — sizes; the heap is a heap; lazy deletion (entries over-approximate
+  `dist`); the pop floor `L`; every unsettled finite vertex has a live entry;
+  and a ghost prev-tree (`pos`/`c` rank settle order, so `prev` chains descend
+  and each hop records its relaxing edge).
+* `Relaxed` / `RelaxedExcept` — edges out of settled vertices don't shortcut;
+  the `dst` early exit skips its own pass, covered since settled prices are `≤ D`.
+* `potential` — pops strictly decrease `heap.size + Σ (undone adjacency)`, so
+  fuel `E + n + 2` never runs out.
 
-Adjacency targets must be in range (`WFEdges`) — `relaxAll` silently
-drops out-of-range targets, which would break the relaxation invariant.
-Production graphs are in range by construction, and `dijkstraC` remains
-sound without the assumption.
+Adjacency targets must be in range (`WFEdges`): `relaxAll` drops out-of-range
+ones. `dijkstraC` stays sound without it.
 -/
 
 namespace Verified.Rail
@@ -864,11 +855,9 @@ theorem loop_spec (g : Graph) (src dst : Nat) (hwf : WFEdges g) :
 
 /-! ## Rebuilding the path
 
-The ghost ranks make the `prev` walk terminate without repeating: every
-hop strictly descends `pos`, every visited vertex is settled, and each
-hop's recorded edge telescopes the cost. The walk's cost lands `≤ D`; the
-exact `= D` comes later from `cut_bound` — the certificate corrects any
-cheaper parallel edge the recorded hop missed. -/
+The ghost ranks make the `prev` walk terminate: each hop descends `pos`, visits
+a settled vertex, and telescopes the cost to `≤ D`. Exact `= D` comes from
+`cut_bound`. -/
 
 private theorem pathCost_singleton (g : Graph) (v : Nat) : pathCost g [v] = some 0 := rfl
 

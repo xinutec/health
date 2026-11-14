@@ -4,30 +4,17 @@ import Verified.Rail.Graph
 /-!
 # Lazy Dijkstra: the prev-edge provenance invariant
 
-`LazyInv` proves "settled = final" and `LazyPrev` proves the prev-chain stays
-inside *done* vertices — enough to make the reconstructed route
-*resume-stable*. Both deliberately omit the fact that turns a resume-stable
-`prev`-walk into a *valid path*: that every `prev` link is a real graph
-edge. This file supplies exactly that missing brick.
+`LazyInv` proves "settled = final" and `LazyPrev` keeps the prev chain inside
+done vertices. This adds that every `prev` link is a real graph edge, which
+makes the reconstructed route a valid path:
 
-> `EInv`: for every vertex `v` whose `prev` is a non-sentinel `u`, `v` is a
-> genuine out-neighbour of `u` — `(v, w) ∈ g.adj[u]` for some weight `w`.
+> `EInv`: for every `v` whose `prev` is a non-sentinel `u`, `(v, w) ∈ g.adj[u]`
+> for some `w`.
 
-It holds because `prev[v]` is only ever written by `relaxStep u p · (v, w)`
-while `relaxL u p` folds over `g.adj[u]` — so the written `prev[v] = u` always
-comes paired with the edge `(v, w) ∈ g.adj[u]` that drove the relaxation. The
-invariant needs *no* `LInv`, no `done` bookkeeping, and no `WFEdges`: it is a
-pure statement about how `prev` is populated, which is why it is markedly
-lighter than `PInv`. `iter_einv` carries it along the whole search trajectory
-from `linit`; `iter_einv_edge` reads off the consequence the route
-reconstruction (`qReconstruct` over `(iter …).prev`) consumes: each step of
-the reconstructed chain is a real edge of `g`.
-
-This is the first brick of the matcher routing-optimality track (the analogue
-of the rail `dijkstraC_correct` "valid path" half): the reconstructed route is
-a genuine connected `src → tgt` walk of real graph edges. The weight-optimality
-half (`dist[tgt] = trueShortestDist`) builds on this and the `LazyInv` settle
-bundle, and is the next brick.
+`prev[v] = u` is only written by `relaxStep` while folding over `g.adj[u]`, so
+it needs no `LInv`, `done` bookkeeping or `WFEdges`. `iter_einv` carries it
+along the search; `iter_einv_edge` gives each reconstructed step as an edge.
+The weight half is `LazyWeight` and `LazyLower`.
 -/
 
 namespace Verified.Geo
@@ -166,11 +153,9 @@ theorem linit_einv {g : Graph} {src : Nat} : EInv g (linit g.n src) := by
 
 /-! ## The consequence the route reconstruction consumes -/
 
-/-- Edge provenance along the whole search. At any trajectory point of a
-per-source lazy search, a vertex `v` with a non-sentinel `prev` is a real
-out-neighbour of that `prev` — so every step of the reconstructed route
-(`qReconstruct` walks `(iter …).prev`) is a genuine edge of `g`. This is the
-"valid path" half of the matcher's null-over-wrong routing contract. -/
+/-- Edge provenance along the whole search: a vertex with a non-sentinel `prev`
+is its real out-neighbour, so every step `qReconstruct` walks is an edge of `g`.
+The "valid path" half of the matcher's null-over-wrong contract. -/
 theorem iter_einv_edge {g : Graph} {maxR src : Nat} (k : Nat) {v : Nat}
     (hv : (iter g maxR k (linit g.n src)).prev.getD v g.n ≠ g.n) :
     ∃ w, (v, w) ∈
@@ -179,16 +164,9 @@ theorem iter_einv_edge {g : Graph} {maxR src : Nat} (k : Nat) {v : Nat}
 
 /-! ## Lifting edge provenance to a well-formed path cost
 
-`EInv` gives one edge per `prev` link; the route reconstruction turns the
-whole `prev`-chain into a vertex list. Here the per-edge fact is lifted to
-the reconstructed path as a whole: its `pathCost` (the rail spec's cost, the
-same one `dijkstraC_correct` uses) is *defined* — every consecutive step is a
-real edge, so the route has a genuine total weight. This is the matcher's
-route expressed in, and validated against, the shared `Verified.Rail.Graph`
-spec.
-
-`chainList` mirrors `Match.lean`'s `reconGo` without the accumulator (the
-`prev`-walk as a plain cons list); `Match.lean` bridges the two. -/
+The per-edge fact lifted to the whole reconstructed path: its `pathCost` in the
+shared `Verified.Rail.Graph` spec is defined. `chainList` is `Match.lean`'s
+`reconGo` without the accumulator; `Match.lean` bridges the two. -/
 
 /-- The `prev`-walk from `v`, budget `fuel`, stopping at the `≥ n` sentinel —
 `reconGo`'s output as a plain list (no accumulator). -/
@@ -307,11 +285,9 @@ theorem pathCost_snoc_isSome {g : Graph} :
         | none => rw [hc] at hrec; simp at hrec
         | some c => simp
 
-/-- The reconstructed route has a defined cost. Under `EInv`, the reversed
-`prev`-chain (`reconGo`'s output; `Match.lean` bridges `chainList` to it) is a
-path every step of which is a real edge, so its `pathCost` in the shared rail
-spec is `some`. This is the per-route lift of `EInv`: the matcher's route is a
-genuine costed walk of `g`, not a bag of vertices. -/
+/-- The reconstructed route has a defined cost: under `EInv` the reversed
+`prev` chain (`reconGo`'s output) is a path of real edges, so its `pathCost` is
+`some`. -/
 theorem chainList_reverse_pathCost_isSome {g : Graph} {s : LState} (hE : EInv g s) :
     ∀ (fuel v : Nat), chainList s.prev g.n fuel v ≠ [] →
       (pathCost g (chainList s.prev g.n fuel v).reverse).isSome := by

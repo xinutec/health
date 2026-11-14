@@ -2,41 +2,23 @@ import Verified.FloatConst
 /-!
 # Local OSM mirror coverage
 
-The gate in front of every OSM lookup. `covered` means the local mirror has
-already been filled for this area and a spatial query over it is an answer;
-`needsFetch` means nobody has fetched here, and the same query would return
-nothing while looking exactly like an area with no roads in it.
+The gate in front of every OSM lookup: `covered` means the mirror holds this
+area and an empty answer means no features; `needsFetch` means nobody fetched
+here, so an empty answer would be a false claim.
 
-That distinction is the whole point of the module. A host that reads the mirror
-without asking this first cannot tell "no ways here" from "not fetched here",
-and the first is a claim.
+* The search circle is approximated by its bounding box (over-demanding).
+* One row must contain the whole box; there is no union of rows.
+* Boxes are inclusive at both ends.
+* Rows older than `COVERAGE_FRESH_DAYS` are dropped before containment.
+* A row with no `fetchedAt` (legacy) is fresh, or the whole mirror refetches.
 
-Five rules, each small and each easy to get silently wrong:
+`hasLocalData` short-circuits all of it, staleness included, so a city already
+brought back as overflow does not loop on Overpass timeouts. The host reads a
+landmark box only under its fetch vocabulary (`osm_mirror::coverage_rows`)
+and never asks `hasLocalData` for landmarks (`mirror_source`).
 
-* the search circle is approximated by its bounding box, conservatively — at the
-  corners the box is larger than the circle, which only over-demands coverage;
-* one row must contain the whole box. Two rows that jointly cover it do not
-  count: there is no union logic, and adding some would change the answer;
-* boxes are inclusive at both ends;
-* a row older than `COVERAGE_FRESH_DAYS` is dropped before the containment
-  check, so a stale row cannot suppress a refresh;
-* a row with no `fetchedAt` is fresh, not stale — legacy data from before
-  tracking. Treating it as stale would re-fetch the whole mirror.
-
-`hasLocalData` short-circuits all of it, staleness included. That is a
-deliberate trade — "the data might be stale" against "do not query a flaky
-network when the answer is already local" — and it is what stops a trip to an
-unfetched city looping on Overpass timeouts when an earlier visit already
-brought the roads back as overflow.
-
-Two things the host does before a row reaches this gate: a landmark box is read
-only under the venue-tag vocabulary it was fetched with
-(`osm_mirror::coverage_rows`), and `hasLocalData` is not asked for the landmark
-bucket at all, where it could only bypass a box's date or vocabulary
-(`mirror_source`).
-
-Pure and total. The only transcendental is `cos` in `metersPerDegLon`, which
-reaches a box edge and never a coordinate. UNPROVEN; pinned by the `#guard`s.
+Pure and total; `cos` reaches only a box edge. UNPROVEN; pinned by the
+`#guard`s.
 -/
 
 namespace Verified.Geo.OsmCoverage
@@ -78,11 +60,8 @@ def isPointCovered (lat lon radiusM : Float) (coverage : List CoverageRow) : Boo
   coverage.any fun c =>
     c.minLat <= qMinLat && c.maxLat >= qMaxLat && c.minLon <= qMinLon && c.maxLon >= qMaxLon
 
-/-- `true` = covered, `false` = needs a fetch.
-
-The staleness filter runs before containment, not after. A stale row that
-happens to contain the box must not report covered, or the area never refreshes.
--/
+/-- `true` = covered, `false` = needs a fetch. Staleness filters before
+containment, or a stale containing row would block every refresh. -/
 def decideCoverage
     (lat lon radiusM : Float) (coverage : List CoverageRow)
     (nowMs : Int) (hasLocalData : Bool := false) : Bool :=
@@ -97,8 +76,7 @@ def decideCoverage
 
 /-! ## Guards
 
-Every expectation below is a recorded answer, not a value reasoned to; a guard
-that stops matching means the behaviour changed. -/
+Expectations are recorded answers; a mismatch means the behaviour changed. -/
 
 private def NOW : Int := 1700000000000
 private def day : Int := 86400000

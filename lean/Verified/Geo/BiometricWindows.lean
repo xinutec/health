@@ -5,29 +5,19 @@ import Verified.Hsmm.FloatScore
 
 The per-segment biometric reductions (`enrichSegmentWithBiometrics`,
 `stepsInWindow`, `cadenceForSegment`, `peakCadenceForSegment`) and the decision
-core of bridging stays across biometric gaps.
+core of bridging stays across biometric gaps. Two conventions the `#guard`s pin:
 
-Two conventions here are load-bearing and easy to get wrong, so both are
-pinned by `#guard`s:
+* No step data is not zero steps: `stepsTotal`/`stepsInWindow` are `none` with
+  no rows for the day, `0` when rows exist but none fall in the window.
+* Segment windows are inclusive at both ends; the bridge's gap window is
+  strictly inside, so a boundary sample belongs to the stay.
 
-* "No Fitbit data" is not "zero steps." `stepsTotal` / `stepsInWindow`
-  return `none` when the step series carries no rows for the segment's day at
-  all, but `0` when rows exist for the day and simply none landed in the
-  window. Downstream factors must stay off for the former and may treat the
-  latter as real evidence.
-* Window boundaries. Segment windows are inclusive at both ends, but the
-  bridge's gap window is strictly inside — a sample sitting exactly on a gap
-  boundary belongs to the bracketing stay, not the gap.
+{@link bridgeStayRuns} returns the merge plan as `[start, end)` index ranges;
+the caller applies it (first segment's fields, last's `endTs`, summed
+`pointCount`).
 
-Only the merge decision is here: {@link bridgeStayRuns} returns the merge plan
-as `[start, end)` index ranges over the input, and the shell applies it (a
-merged segment is the first segment's fields with the last's `endTs` and the
-summed `pointCount`, fully reconstructible from the range). Decisions in Lean,
-record sequencing in the shell.
-
-Exactness: everything is arithmetic, comparison and counting ⇒ exact, except
-`haversineMeters` (atan2) behind the co-location test, which is ≤1 ULP but
-only ever compared against a 150 m threshold. UNPROVEN; pinned by the `#guard`s.
+Exact except `haversineMeters` (≤1 ULP), compared only against 150 m.
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.BiometricWindows
@@ -56,11 +46,8 @@ it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
 value to every pass in the cascade without a lossy projection at each hop. -/
 abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
-/-- What this module computes and the segment record carries.
-
-Declared in `Verified.Geo.SegmentMerge` rather than here, because `Seg` has a
-field of this type and the segment record cannot import the module that fills
-it in without a cycle. Named here so the pass reads as its own. -/
+/-- What this module computes and the segment record carries; declared in
+`SegmentMerge`, since `Seg` has a field of this type. -/
 abbrev BiometricEnrichment := Verified.Geo.SegmentMerge.BiometricEnrichment
 
 /-- `Math.round(x * 10) / 10`. -/
@@ -135,25 +122,15 @@ def cadenceForSegment (seg : Seg) (stepPoints : List StepPoint) : Float :=
     steps it carries were taken across `[ts, ts + STEP_MINUTE_S)`. -/
 def STEP_MINUTE_S : Int := 60
 
-/-- Does a step row's whole minute lie inside the window?
-
-Containment, not membership of the start instant. A segment ending at
-18:54:12 shares twelve seconds with the minute beginning 18:54; testing
-`sp.ts ≤ seg.endTs` charges it that whole minute's steps. That destroys a
-five-minute shop stay on 06-24: the 82 steps belong to the walk to the next
-shop, they clear `STATIONARY_WALK_PEAK_CADENCE`, and the stay is relabelled
-walking on the strength of a minute it barely touched.
-
-Symmetric at the near end on purpose — a partial first minute is somebody
-else's minute for the same reason a partial last one is. -/
+/-- Does a step row's whole minute lie inside the window? Containment, at both
+ends: a segment ending 12 s into a minute must not be charged that minute's
+steps, which can relabel a short shop stay as walking. -/
 def stepMinuteInside (sp : StepPoint) (seg : Seg) : Bool :=
   decide (sp.ts ≥ seg.startTs) && decide (sp.ts + STEP_MINUTE_S ≤ seg.endTs)
 
-/-- Highest single per-minute step count inside the window. Unlike the mean,
-    the peak survives a window that is slow overall but contains one
-    unmistakable walking minute.
-
-    ⚠ Counts only minutes the window WHOLLY contains — see `stepMinuteInside`. -/
+/-- Highest per-minute step count among minutes the window wholly contains
+(`stepMinuteInside`). Unlike the mean, it survives one clear walking minute in a
+slow window. -/
 def peakCadenceForSegment (seg : Seg) (stepPoints : List StepPoint) : Float :=
   stepPoints.foldl (fun peak sp =>
     if stepMinuteInside sp seg && decide (sp.steps > peak)

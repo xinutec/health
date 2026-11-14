@@ -1,15 +1,8 @@
 //! Session cookies: minting, signing, verifying, and the `sessions` table.
 //!
-//! # The cookie is `<session-id>.<hmac>`
-//!
-//! The id is what the table is keyed by; the signature is what stops a client
-//! inventing one. Neither half is secret-bearing on its own — the id is a
-//! random 32 bytes and the HMAC proves this server issued it.
-//!
-//! The framing of that string is `Verified.Session.splitSigned`, not a
-//! `split_once` here. It splits on the last separator, because the signature is
-//! base64url and carries no dot, so a value containing dots round-trips. That is
-//! three lines, which is exactly the size at which a wrong one survives review.
+//! The cookie is `<session-id>.<hmac>`: the id keys the table, the HMAC proves
+//! this server issued it. Framing is `Verified.Session.splitSigned` (the last
+//! separator), not a `split_once` here.
 
 use anyhow::{Context, Result};
 use base64::Engine;
@@ -31,38 +24,24 @@ pub struct UserSession {
     pub hides_location: bool,
 }
 
-/// A fresh session id: 32 bytes of OS entropy, hex.
-///
-/// ⚠ `getrandom` and not a seeded generator. A session id is the whole of the
-/// bearer's claim, so the only acceptable source is the OS CSPRNG — and a
-/// failure to read it must be an error rather than a fallback, because the
-/// fallback would be a predictable id that works.
+/// A fresh session id: 32 bytes of OS entropy, hex. ⚠ The OS CSPRNG or an
+/// error, never a fallback: a predictable id would work.
 pub fn mint_id() -> Result<String> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).context("reading the OS CSPRNG for a session id")?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// A share token: 32 random bytes as base64url.
-///
-/// Not [`mint_id`], which is the same 32 bytes as hex. Both carry 256 bits,
-/// but a hex token is 64 characters and a base64url one is 43, and
-/// `share_tokens.token` is `VARCHAR(64)` — so hex would fit with nothing to
-/// spare and every link this issued would be visibly a different shape from
-/// every link production has issued.
-///
-/// Errors rather than falling back. A share token that is not from the OS
-/// CSPRNG is a guessable link to someone's location history.
+/// A share token: 32 random bytes as base64url (43 characters, the shape every
+/// issued link has; hex would be 64, filling `VARCHAR(64)`). The OS CSPRNG or an
+/// error: a guessable token exposes location history.
 pub fn mint_share_token() -> Result<String> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).context("reading the OS CSPRNG for a share token")?;
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
-/// `<value>.<base64url-hmac-sha256>`.
-///
-/// base64url with no padding: padding would produce a signature that never
-/// matches one already issued.
+/// `<value>.<base64url-hmac-sha256>`, unpadded, as every issued signature is.
 pub fn sign_value(secret: &str, value: &str) -> String {
     let sig = mac(secret, value);
     format!(
@@ -80,13 +59,9 @@ fn mac(secret: &str, value: &str) -> Vec<u8> {
     m.finalize().into_bytes().to_vec()
 }
 
-/// The value inside a signed string, or `None` if it was not signed by us.
-///
-/// ⚠ constant time. A comparison that returns on the first differing byte tells
-/// an attacker where it differed, one request at a time, and a signature is
-/// exactly the thing that makes that worth doing. `subtle::ConstantTimeEq`
-/// rather than `==`, and the length check is separate because lengths differing
-/// is not a secret.
+/// The value inside a signed string, or `None` if we did not sign it. ⚠ Constant
+/// time (`subtle::ConstantTimeEq`), after a separate length check: an early exit
+/// leaks where the signature differs.
 pub fn verify_value(secret: &str, signed: &str) -> Result<Option<String>> {
     let Some((value, sig)) = lean::split_signed(signed)? else {
         return Ok(None);
@@ -137,11 +112,8 @@ fn expires_at(ms: i64) -> Result<String> {
         .to_string())
 }
 
-/// Who this cookie belongs to, and whether its session was renewed just now
-/// (so the cookie goes back with a fresh `Max-Age`), or `None`.
-///
-/// An expired row is deleted on the way past. The sweep below only reaches
-/// sessions whose owner never returns; this is what retires the ones that do.
+/// Who this cookie belongs to, and whether its session was just renewed (so the
+/// cookie goes back with a fresh `Max-Age`). An expired row is deleted here.
 pub async fn get(
     pool: &MySqlPool,
     secret: &str,
@@ -211,11 +183,7 @@ pub async fn destroy(pool: &MySqlPool, secret: &str, signed: &str) -> Result<boo
     Ok(done.rows_affected() > 0)
 }
 
-/// Sweep expired rows.
-///
-/// The lazy retirement in [`get`] only touches sessions whose owner comes back;
-/// a dormant user's row is never looked at again, so without this the table
-/// grows monotonically.
+/// Sweep expired rows: [`get`] only retires sessions whose owner returns.
 pub async fn cleanup_expired(pool: &MySqlPool, now_ms: i64) -> Result<u64> {
     let done = sqlx::query("DELETE FROM sessions WHERE expires_at < ?")
         .bind(expires_at(now_ms)?)
