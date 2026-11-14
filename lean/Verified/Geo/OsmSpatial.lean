@@ -2,33 +2,17 @@ import Verified.Hsmm.FloatScore
 /-!
 # OSM spatial kernel
 
-The part of the OSM lookup that has been running as SQL inside MariaDB. Moving
-it here is what turns "the nearest station to this fix" from an oracle — a
-number computed elsewhere and handed to the algorithm — into a definition, which
-is the precondition for ever stating a theorem about station selection.
-See `docs/proposals/2026-07-osm-into-lean.md`.
+The OSM distance queries as definitions rather than SQL, so station selection
+is something a theorem can be stated about (`docs/proposals/2026-07-osm-into-lean.md`).
+The database ships rows and computes nothing.
 
-## The distance constant
+The distance uses `FloatScore.haversineMeters` (radius 6371000). MariaDB's
+`ST_Distance_Sphere` uses 6370986 m; both are below, and the 2.2 ppm difference
+can only flip a feature within 0.22 mm of a 100 m bar.
 
-MariaDB 12.3.2's `ST_Distance_Sphere` uses a sphere of radius 6370986 m
-(measured on the live server: one degree of latitude is 111194.68229846345 m,
-which pins the radius to the metre). `FloatScore.haversineMeters` uses 6371000.
-
-Under this design the DB no longer computes distances at all — it ships rows —
-so Lean's constant becomes the definition and there is nothing to chase. The two
-differ by 2.2 ppm, so a decision can only change for a feature lying within
-`radius × 2.2e-6` of the bar: 0.22 mm at a 100 m radius, 0.9 mm at 400 m.
-Both are provided below so the re-bless delta is measurable rather than assumed.
-
-## What is deliberately not modelled
-
-The `MBRIntersects` pre-filter. Its box is `[lat ± dDeg] × [lon ± dDeg]` with
-`dDeg = radius / min(111000, 111000·cos lat)`, and both scale factors understate
-the true metres per degree — 111000 against the sphere's 111194.68, and the
-longitude factor against the same times `cos lat`. So `dDeg` overstates the
-circle's extent on both axes and the box strictly contains the radius circle.
-The pre-filter therefore cannot remove a row the distance test would keep: it
-exists to make the spatial index usable, and is an accelerator, not a predicate.
+The `MBRIntersects` pre-filter is not modelled: its box understates metres per
+degree on both axes, so it strictly contains the radius circle and is an index
+accelerator, not a predicate.
 
 UNPROVEN; pinned by the `#guard`s.
 -/
@@ -72,14 +56,10 @@ structure ScoredPoint where
   distanceM : Float
   deriving Inhabited, BEq, Repr
 
-/-- `queryPoints`: keep rows strictly inside the radius, of a wanted subtype,
-ordered by distance, capped at 50.
-
-The cap does not bind for the station and line-name lookups — over the golden
-corpus `nearbyStations` returns at most 11 rows and `linesAtPoint` at most 14.
-It very much binds for `nearbyWays`: its highway bucket comes back at exactly
-50 on every dense-London query examined, which is what makes the line-metric
-change able to lose a way (see the `lineDistDeg` note below). -/
+/-- `queryPoints`: rows strictly inside the radius, of a wanted subtype, by
+distance, capped at 50. The cap binds for `nearbyWays`, whose dense-London
+highway bucket fills it, so a better line metric can lose a way (see
+`lineDistDeg`). -/
 def queryPoints (rows : Array PointRow) (lat lon radiusM : Float)
     (subtypes : Array String := #[]) (R : Float := LEAN_EARTH_R) : Array ScoredPoint :=
   let scored := rows.map fun r => { row := r, distanceM := haversineAt R lat lon r.lat r.lon }
@@ -103,10 +83,9 @@ subtypes so the picker can deprioritise them — OSM labels entrance nodes "A", 
 otherwise beat the real station node on distance for a passing fix. -/
 def deriveStationSubtype (r : PointRow) : String :=
   if r.subtype == "subway_entrance" then "subway_entrance"
-  -- A `railway=stop` is a platform position, not the station: `stationTier`
-  -- ranks it below every station node. Read as "rail" it was a mainline
-  -- station, and at King's Cross a platform 19 m off outranked the tube
-  -- station 119 m off.
+  -- A `railway=stop` is a platform position, not the station, so it ranks
+  -- below every station node; read as "rail" a platform 19 m off outranked the
+  -- tube station 119 m off.
   else if r.subtype == "stop" then "stop_position"
   else if tag r "station" == some "subway" then "subway"
   else if tag r "station" == some "light_rail" then "light_rail"
@@ -123,19 +102,12 @@ structure NearbyStation where
   lon : Float
   deriving Inhabited, BEq, Repr
 
-/-- `dedupeStationsByName`. A station and its entrances are separate OSM points
-sharing one name, so a naive keep-closest picks the entrance — and the caller
-then filters that out as entrance-like, deleting the station from the result
-entirely and letting a further-away station win by default. Hence the asymmetry:
-a station-typed record beats an entrance-typed one regardless of distance, and
-distance only decides between records of the same kind. Two station records of
-different subtypes are both kept.
-
-Unnamed features are dropped outright.
-
-Insertion order is the arrival order, which is distance order from
-`queryPoints`; the final sort is by distance again, so the map's iteration order
-only shows through on exact ties. -/
+/-- `dedupeStationsByName`. A station and its entrances share a name, and a
+naive keep-closest picks the entrance, which the caller then filters out,
+losing the station. So a station-typed record beats an entrance-typed one
+whatever the distance; distance decides within a kind, and stations of
+different subtypes are both kept. Unnamed features are dropped. Arrival is
+distance order, so map order shows only on exact ties. -/
 def dedupeStationsByName (scored : Array ScoredPoint) : Array NearbyStation := Id.run do
   let mut best : Array NearbyStation := #[]
   for s in scored do
@@ -145,10 +117,8 @@ def dedupeStationsByName (scored : Array ScoredPoint) : Array NearbyStation := I
       let cand : NearbyStation :=
         { name := nm, subtype := deriveStationSubtype s.row, distanceM := s.distanceM
           lat := s.row.lat, lon := s.row.lon }
-      -- Same name and same kind collapse. Two station records of different
-      -- subtypes are two stations at one site (King's Cross St Pancras is a
-      -- tube node and a mainline node), and keeping only the nearer would lose
-      -- the tube one, so a tube ride could not prefer it.
+      -- Same name and kind collapse; different station subtypes are two
+      -- stations at one site (tube and mainline King's Cross), both kept.
       let entrance := fun (x : NearbyStation) => x.subtype == "subway_entrance"
       match best.findFinIdx? (fun b => b.name == nm &&
           (b.subtype == cand.subtype || entrance b || entrance cand)) with
@@ -208,17 +178,13 @@ private def ids (q : Array ScoredPoint) : Array Int := q.map (·.row.osmId)
 #guard approxD (haversineAt MARIA_EARTH_R QLAT QLON (QLAT + 99 / MDEG) QLON) 99.00000000004454
 #guard approxD (haversineAt LEAN_EARTH_R QLAT QLON (QLAT + 99 / MDEG) QLON) 99.00021754878816
 
--- The radius bar is strict, and the subtype filter drops the level crossing.
--- "Just In" at 99 m is kept; "On The Bar" at 100.0000000003 and "Just Out" at
--- 101 are not. The same set under both spheres — the constant can only flip a
--- feature within ~0.22 mm of the bar at this radius.
+-- The radius bar is strict and the subtype filter drops the level crossing:
+-- 99 m is kept, 100.0000000003 and 101 are not, under either sphere.
 #guard ids (queryPoints FEATURES QLAT QLON 100 STATION_SUBTYPES MARIA_EARTH_R) == #[2, 4, 3, 7, 12, 1, 8]
 #guard ids (queryPoints FEATURES QLAT QLON 100 STATION_SUBTYPES LEAN_EARTH_R) == #[2, 4, 3, 7, 12, 1, 8]
 #guard ids (queryPoints FEATURES QLAT QLON 400 STATION_SUBTYPES LEAN_EARTH_R) == #[2, 4, 3, 7, 12, 1, 8, 11, 9]
--- The bar is strict. No latitude gives a distance of exactly 100 m — the
--- haversine steps from 99.99999999946 to 100.00000000025 — so the strictness is
--- pinned by setting the radius to a feature's own distance instead: under `<`
--- that feature is excluded, under `≤` it would be kept.
+-- No latitude gives exactly 100 m, so strictness is pinned by setting the
+-- radius to a feature's own distance: `<` excludes it, `≤` would keep it.
 #guard ids (queryPoints FEATURES QLAT QLON
   (haversineAt LEAN_EARTH_R QLAT QLON (QLAT + 99 / MDEG) QLON) STATION_SUBTYPES LEAN_EARTH_R)
   == #[2, 4, 3, 7, 12, 1]
@@ -236,12 +202,9 @@ private def dsub (subtype : String) (tags : Array (String × String)) : String :
 #guard dsub "halt" #[] == "halt"
 #guard dsub "station" #[] == "rail"
 
--- The dedupe trap: "Willesden Green" arrives as an entrance at 6.3 m, another
--- entrance at 18.6 m, and the station at 38.4 m — and resolves to the station,
--- because station-typed beats entrance-typed regardless of distance. Take that
--- asymmetry away and the caller filters the entrance out and loses the station
--- altogether. "Dollis Hill" has only an entrance in range, so it stays one.
--- The unnamed tram stop is dropped.
+-- The dedupe trap: "Willesden Green" arrives as entrances at 6.3 m and 18.6 m
+-- and the station at 38.4 m, and resolves to the station. "Dollis Hill" has
+-- only an entrance in range, so stays one. The unnamed tram stop is dropped.
 private def NAMED : Array (String × String × Float) :=
   (nearbyStations FEATURES QLAT QLON 400).map fun s => (s.name, s.subtype, s.distanceM)
 #guard NAMED.map (fun t => (t.1, t.2.1)) ==
@@ -253,10 +216,8 @@ private def NAMED : Array (String × String × Float) :=
 -- outranks the entrances.
 #guard approxD NAMED[0]!.2.2 9.002446540603552
 
--- The King's Cross shape: a mainline platform stop nearest, a tube platform stop
--- next, the tube station and the mainline station further out. Platforms come
--- back as `stop_position` beside their stations, not in place of them, so the
--- picker's platform tier can rank them below both.
+-- The King's Cross shape: platform stops come back as `stop_position` beside
+-- their stations, so the picker's platform tier ranks them below both.
 private def SHARED : Array PointRow :=
   #[pr 20 "stop" (some "Main Cross") (QLAT + 19 / MDEG) QLON,
     pr 21 "stop" (some "Cross Tube") (QLAT + 32 / MDEG) QLON,
@@ -271,75 +232,22 @@ end SpatialGuards
 
 /-! ## The line side (`queryLines` / `linesAtPoint`)
 
-A different metric, and deliberately so. MariaDB's `ST_Distance` is planar in
-degree space, and the result is scaled back to metres by a single
-`mPerDeg = min(111000, 111000·cos lat)` — one scale for both axes.
+A planar degree-space distance scaled back by one `mPerDeg = min(111000,
+111000·cos lat)` for both axes, as the corpus was blessed under: at 51.55°N a
+way 100 m north scores 62.1 m and one 100 m east 99.8 m (`1 / cos`). `MBRContains`
+is boundary-inclusive, checked on the server.
 
-At 51.55°N that is a large distortion, and the guards below state it as a
-number: a way lying 100 true metres due north is scored at 62.1 m, one 100 true
-metres due east at 99.8 m — a ratio of 1.608, which is `1 / cos(51.55°)`. The
-search therefore reaches about 1.6× further north than east. This is an
-approximation the algorithm has always run on and the corpus was blessed under,
-so it is reproduced rather than corrected; changing it would be a behaviour
-change, not a port.
+`lineDistDeg` is the true minimum over segments (checked against dense sampling
+to 1e-13). MariaDB's `ST_Distance` was refuted as that: on a multi-vertex
+linestring it returns the nearest vertex (a two-vertex check could not tell).
+Encoding that defect would make every theorem about it a theorem about the
+defect. Over the corpus it differs by up to 17.67 m for `nearbyLandmarks`
+(polygon walls have vertices only at corners) and 37.96 m for `nearbyWays`;
+point queries are untouched.
 
-`MBRContains` is boundary-inclusive — a point on the bbox edge, on a corner, or
-on a degenerate zero-extent bbox all return true. Confirmed on the live server.
-
-## `lineDistDeg` deliberately does not reproduce MariaDB
-
-An earlier version of this comment claimed `ST_Distance` was "the planar minimum
-over segments clamped at the endpoints, confirmed against the live server". The
-confirmation was run on a two-vertex fixture, which cannot tell that behaviour
-apart from "distance to the nearest vertex". It is the second.
-
-Measured on MariaDB 12.3, same point, same coordinates:
-
-    full 12-vertex line   0.002419365488074187  = the distance to VERTEX 2
-    its segment 1 alone   0.002405760590290686  = the true perpendicular
-
-So `ST_Distance` is correct for a 2-point linestring and returns the nearest
-vertex for a multi-vertex one. `lineDistDeg` computes the true minimum over
-segments — verified against an independent dense-sampling brute force, which
-agrees to 1e-13 and locates the minimum mid-segment.
-
-This is therefore a deliberate behaviour change, not a port, and it is taken
-because encoding a database defect into the definition would make every theorem
-about it a theorem about the defect.
-
-### How big is it, really
-
-A sample drawn only from `highway`/`railway` rows near captured query points
-understates the gap: roads are densely vertexed along their curves, so the gap
-between the perpendicular foot and the nearest vertex stays small. Replaying
-every captured kernel query against the pushed row-set gives the real scale:
-
-- `nearbyLandmarks` — worst 17.67 m. Landmark rows include closed ways:
-  parks, buildings, car parks. A polygon's long wall carries vertices only at
-  its corners, so standing beside the middle of one, the true distance and the
-  corner distance differ by a large fraction of the wall's length. Measured
-  case: Paleistuin (`osm 86909138`, 59 vertices) — true 2.0687 m, MariaDB
-  16.9640 m, bit-identical to its own nearest vertex.
-- `nearbyWays` — worst 37.96 m, for the same reason on long straight trunk
-  roads.
-- point-backed methods are untouched, as the sphere argument requires:
-  `nearbyStations` worst 0.0009 m over 269 differing queries, no membership
-  change anywhere.
-
-The size of the defect is the vertex spacing along the nearest edge, not
-anything about the corpus — which is why a road-only sample understated it by a
-factor of ~40.
-
-### One-directional, but not monotone in the result
-
-A vertex is never nearer than the true minimum, so this port is never farther
-than MariaDB: as a predicate the change can only bring ways in. The method is
-not monotone, though, because `LIMIT 50` is applied after ordering. Over the
-corpus, `nearbyWays` gained features on 18 queries and lost them on 9 of those
-same 18 — every loss displaced by the cap, whose highway bucket was already
-saturated at exactly 50 rows in each case. So "features can only be gained" is
-true of the filter and false of the method, and only the filter version is
-safe to reason from.
+A vertex is never nearer than the true minimum, so as a filter this only
+brings ways in; but `LIMIT 50` applies after ordering, so the method can also
+displace a way where the highway bucket is saturated.
 -/
 
 namespace Lines
@@ -356,14 +264,9 @@ structure LineRow where
   subtype : String
   name : Option String
   coords : Array (Float × Float)
-  /-- The feature's OSM tags.
-
-  Defaulted to empty so every existing caller is unaffected, and carried at
-  all because `nearbyLandmarks` needs the full map rather than `subtype`: it
-  spawns one landmark per tag key, so a building tagged both `amenity=cafe` and
-  `tourism=attraction` is two candidates. While this field did not exist, that
-  table could not be answered and served days silently lost venue names.
-  -/
+  /-- The feature's OSM tags, defaulted empty. `nearbyLandmarks` spawns one
+  landmark per tag key (a building tagged `amenity=cafe` and
+  `tourism=attraction` is two candidates), so it needs the full map. -/
   tags : Array (String × String) := #[]
   deriving Inhabited, BEq, Repr
 
@@ -434,10 +337,8 @@ def queryLines (rows : Array LineRow) (lat lon radiusM : Float)
   let scored := rows.map fun r =>
     (r, lineDistDeg r.coords lat lon,
       if closed r.coords then ringContains r.coords lat lon else mbrContainsPoint r.coords lat lon)
-  -- In range, or standing inside it: from the middle of a large outline every
-  -- edge is out of range, and a stay deep inside a park, 130 m from its
-  -- outline, had no candidate at all. The reported distance stays the edge's,
-  -- so a venue inside the park still ranks against it as before.
+  -- In range, or standing inside it: deep inside a park every edge is out of
+  -- range. The distance reported stays the edge's, so ranking is unchanged.
   let inRadius := scored.filter fun s => s.2.1 < dDeg || ringContains s.1.coords lat lon
   let wanted :=
     if subtypes.isEmpty then inRadius
@@ -482,11 +383,9 @@ private def LINES : Array LineRow :=
     lr 6 "motorway" (some "North Circular") #[(LQLAT, LQLON - 0.001), (LQLAT, LQLON + 0.001)],
     lr 7 "rail" (some "Far Line") #[(51.60, -0.30), (51.61, -0.30)],
     lr 8 "rail" (some "Degenerate") #[(LQLAT, LQLON)],
-    -- A short way lying entirely west, at the same 100 m northward offset. Its
-    -- nearest approach is its eastern endpoint (350 m away), so the segment
-    -- clamp decides: unclamped, the infinite line through it runs due east-west
-    -- at that latitude and would measure only the 100 m offset, pulling it into
-    -- both radii below.
+    -- A short way entirely west at the same 100 m offset: its nearest point
+    -- is its eastern end (350 m), so the segment clamp decides; unclamped, the
+    -- line through it would measure only the 100 m offset.
     lr 9 "rail" (some "Stub West") #[(LQLAT + D_LAT, LQLON - 0.01), (LQLAT + D_LAT, LQLON - 0.005)]]
 
 private def lids (q : Array ScoredLine) : Array Int := q.map (·.row.osmId)

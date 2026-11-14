@@ -8,8 +8,7 @@ import Verified.Fix
 /-!
 # Biometric label rewrites
 
-The four passes that use the step counter to overrule what GPS alone decided
-about a segment's mode:
+The four passes that let the step counter overrule GPS on a segment's mode:
 
 | decision                        | velocity pass          | direction                |
 | ------------------------------- | ---------------------- | ------------------------ |
@@ -18,44 +17,16 @@ about a segment's mode:
 | `demoteJitterWalkToStationary`  | `jitterWalkToStay`     | walking → stationary     |
 | `applyStationaryWalkThrough`    | `walkThrough`          | stationary → walking     |
 
-The first half (`enrichSegmentWithBiometrics`, `cadenceForSegment`,
-`peakCadenceForSegment`) is in {@link Verified.Geo.BiometricWindows}; this
-module consumes it rather than restating it.
+The cadence windows are {@link Verified.Geo.BiometricWindows}'. Each pass returns
+a {@link Decision} per segment (and the sequence pass a merge plan as `[start,
+end)` ranges); the shell rewrites the record, appending a flip's reason fragment
+to `refinedReason` with `"; "`.
 
-## Decisions, not records
-
-Lean decides, the shell rewrites the record.
-Each pass returns a {@link Decision} per input segment, and the sequence pass
-additionally returns a merge plan as `[start, end)` ranges. Nothing here
-constructs a segment, so the port cannot drift on fields it does not model.
-
-A {@link Decision.flip} carries the reason fragment, not the final string: the
-shell appends it to any existing `refinedReason` with `"; "`.
-
-## Exactness
-
-The decisions are discrete, so this admits an exact gate rather than the
-bounded-ULP one `Kalman` needs — every output is a label, an index or a
-formatted string, never a fresh real. Three things carry that claim:
-
-* The reason strings embed `toFixed`. `cadence.toFixed(0)`,
-  `linearity.toFixed(2)`. Lean's `Float` printer is a different algorithm
-  entirely, so these go through {@link Verified.JsNum.toFixed}, which
-  implements ECMA-262 21.1.3.3 against the double's exact binary value.
-* The thresholds are compared, not computed. `cadenceForSegment` and
-  `peakCadenceForSegment` are sums and comparisons over the same bit-identical
-  step rows, so both arms see the same Float and land the same side of the
-  same constant.
-* One Float-computed guard exists: the stay-extent veto in
-  {@link correctStationaryWalkThrough} takes a centroid and a `haversineMeters`
-  (≤1 ULP, `atan2`) max, compared against 80 m. That is the single place a libm
-  difference could flip a decision, and only for a segment whose extent sits
-  within 1 ULP of exactly 80 m.
-
-Stated boundary: the extent max uses Lean's `max`, which answers `0` where
-`Math.max` answers `NaN`, so a `NaN` fix coordinate would diverge. Haversine
-over finite coordinates cannot produce one, and the quality pre-filter has
-already run by this point.
+Every output is a label, an index or a formatted string, so the gate is exact:
+reason strings use {@link Verified.JsNum.toFixed}, thresholds are compared on
+bit-identical sums, and the only Float-computed guard is the stay-extent veto
+(haversine against 80 m, ≤1 ULP). A `NaN` coordinate would differ (Lean's `max`
+gives 0), which the quality pre-filter rules out.
 -/
 
 namespace Verified.Geo.BiometricLabels
@@ -78,11 +49,9 @@ def CADENCE_REVERT_PEDESTRIAN_AVG_KMH : Float := 7
 def STATIONARY_JITTER_MAX_PEAK_CADENCE : Float := 20
 def STATIONARY_JITTER_MAX_LINEARITY : Float := 0.35
 def STATIONARY_WALK_PEAK_CADENCE : Float := 80
-/-- …but a walk that keeps stopping never produces that one unmistakable
-minute. Its evidence is spread across minutes rather than concentrated in one,
-so no value of a peak floor can see it. Count walking minutes as a second,
-independent route in: several at pedestrian cadence, separated by pauses, is a
-walk with pauses in it. -/
+/-- …but a walk that keeps stopping never produces one unmistakable minute, so
+walking minutes are a second route in: several at pedestrian cadence,
+separated by pauses, are a walk with pauses. -/
 def STATIONARY_WALK_MIN_BURST_MINUTES : Nat := 3
 def STATIONARY_WALK_MIN_AVG_SPEED_KMH : Float := 1.0
 def STATIONARY_WALK_STAY_MIN_DURATION_S : Int := 10 * 60
@@ -94,12 +63,8 @@ def STATIONARY_WALK_THROUGH_MAX_DURATION_S : Int := 45 * 60
 /-- A Kalman-filtered fix, as much of one as the extent veto reads. -/
 abbrev Fix := Verified.GeoFix
 
-/-- The pipeline segment record. These four passes read a handful of its fields
-— `refinedKinds` for the low-cadence tag, the speeds, the linearity, the place
-and way labels — and construct nothing: each returns a {@link Decision}, so the
-port cannot drift on a field it does not model. It names the whole record so
-that `Verified.Geo.PassFold` can hand the same value to every pass in the
-cascade without a lossy projection at each hop. -/
+/-- The pipeline segment record, whole, so `Verified.Geo.PassFold` hands one
+value to every pass. These passes read a few fields and construct nothing. -/
 abbrev LabelSeg := Verified.Geo.SegmentMerge.Seg
 
 /-- What a pass decided about one segment. `flip` carries the new mode, the
@@ -121,13 +86,9 @@ def modeAfter (s : LabelSeg) : Decision → String
 private def win (s : LabelSeg) : Seg :=
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, pointCount := s.pointCount }
 
-/-- How many whole minutes inside the window are at or above pedestrian cadence.
-Where `peakCadenceForSegment` asks "was there one unmistakable walking minute",
-this asks "how much of this window was spent walking" — the question an
-interrupted walk can actually answer.
-
-Whole minutes: the window test is `stepMinuteInside`, containment rather than
-membership of the start instant. See that function for why. -/
+/-- How many whole minutes inside the window are at pedestrian cadence or more:
+how much of the window was walking, which an interrupted walk can answer. Whole
+minutes by containment (`stepMinuteInside`). -/
 def walkingMinutesInSegment (seg : Seg) (stepPoints : List StepPoint) : Nat :=
   stepPoints.foldl (fun n sp =>
     if Verified.Geo.BiometricWindows.stepMinuteInside sp seg
@@ -135,12 +96,8 @@ def walkingMinutesInSegment (seg : Seg) (stepPoints : List StepPoint) : Nat :=
     then n + 1 else n) 0
 
 /--
-`toFixed` for a reason string.
-
-The one unported `toFixed` arm (a finite `|x| ≥ 10^21`) cannot arise here:
-cadence is steps per minute and linearity is a ratio in `[0,1]`, so a `none`
-means the input was already nonsense. Rather than invent a spelling, this yields
-a marker that cannot equal any real reason, so such a call shows loudly.
+`toFixed` for a reason string. Its `none` case (`|x| ≥ 10^21`) cannot arise for
+a cadence or a ratio, so it yields `"?"`, which no real reason contains.
 -/
 private def fx (x : Float) (f : Nat) : String := (Verified.JsNum.toFixed x f).getD "?"
 
@@ -155,11 +112,8 @@ private def hasFreshData (s : LabelSeg) (stepPoints : List StepPoint) : Bool :=
 
 /--
 A "walking" segment with near-zero cadence is a passenger in slow traffic or on
-an escalator, not a walker. Runs before merge so a neighbouring drive can absorb
-the relabelled leg.
-
-Conservative on missing data: an empty step series means no correction, because
-we do not know the cadence and a false positive is the worse error.
+an escalator. Runs before merge, so a neighbouring drive can absorb it. No step
+data means no correction: a false positive is the worse error.
 -/
 def correctModeFromCadence (seg : LabelSeg) (stepPoints : List StepPoint) : Decision :=
   if stepPoints.isEmpty then .keep
@@ -198,19 +152,10 @@ private def evidenceIsDrive (l : List LabelSeg) : Bool :=
   | some s => isRealDrive s
 
 /--
-Undo a cadence flip that has no vehicular context.
-
-The flip exists to let a neighbouring drive absorb a slow leg, and it trusts
-the step counter completely — so when steps under-record (phone in hand, an
-irregular gait) a real slow walk reads as a passenger trip. Speed cannot
-separate them: a slow vehicle GPS mistook for walking is, by GPS alone,
-indistinguishable from a walk.
-
-Context can. A flip reverts when both: no adjacent real driving in either
-direction, and the leg is pedestrian-paced.
-
-Note the tag is not removed on revert — a reverted segment still carries
-`"low-cadence"`, which is why {@link isCadenceFlip} also requires
+Undo a cadence flip with no vehicular context: under-recorded steps make a real
+slow walk read as a passenger trip, which speed cannot tell apart. A flip
+reverts when no adjacent leg is real driving and the leg is pedestrian-paced.
+The `"low-cadence"` tag stays, so {@link isCadenceFlip} also requires
 `refinedMode == "driving"`.
 -/
 def revertIsolatedCadenceDrives (segments : List LabelSeg) : List Decision :=
@@ -223,16 +168,10 @@ def revertIsolatedCadenceDrives (segments : List LabelSeg) : List Decision :=
 /-! ## walking → stationary -/
 
 /--
-Demote a "walking" segment to stationary when the watch says no walking step
-was taken and the path just jittered around one spot — sitting indoors while
-urban-canyon GPS wanders enough to score as a slow walk.
-
-This is the third outcome for a low-cadence "walk":
-{@link correctModeFromCadence} handles the case that translates (a vehicle),
-this one the case that does not (a chair).
-
-Two guards keep it off a real walk Fitbit under-counted: one clear walking
-minute anywhere in the window vetoes it, and so does a directed path.
+Demote a "walking" segment to stationary when the watch took no walking step
+and the path only jittered round one spot (indoors, with urban-canyon GPS). The
+chair case, where {@link correctModeFromCadence} is the vehicle case. One clear
+walking minute, or a directed path, vetoes it.
 -/
 def demoteJitterWalkToStationary (seg : LabelSeg) (stepPoints : List StepPoint) : Decision :=
   if stepPoints.isEmpty then .keep
@@ -257,13 +196,8 @@ private def samplesInWindow (points : List Fix) (seg : LabelSeg) : List Fix :=
 
 /--
 Physical-plausibility veto: a long segment whose fixes never leave a tight
-radius is a stay, whatever a step burst or a jitter-inflated `avgSpeed` says.
-`avgSpeed` is the mean of per-fix speeds, so multipath lifts it above the
-translation threshold without the user going anywhere; the geometry — net-zero
-displacement — dominates.
-
-`true` means "vetoed". Skipped without fixes: absent the geometry the older
-behaviour stands.
+radius is a stay, whatever a step burst or a multipath-inflated `avgSpeed`
+says. `true` means vetoed; skipped without fixes.
 -/
 private def looksLikeStay (seg : LabelSeg) (points : List Fix) : Bool :=
   if seg.endTs - seg.startTs < STATIONARY_WALK_STAY_MIN_DURATION_S then false
@@ -278,21 +212,12 @@ private def looksLikeStay (seg : LabelSeg) (points : List Fix) : Bool :=
       extent ≤ STATIONARY_WALK_STAY_MAX_EXTENT_M
 
 /--
-Symmetric counterpart to {@link correctModeFromCadence}: relabel a "stationary"
-segment into walking when the watch recorded an unmistakable walking burst and
-the GPS shows the segment actually translated. A slow meandering walk-through
-(a park stroll) scores as stationary on GPS alone; the step counter knows
-better.
-
-Steps alone cannot tell walking-in-place from walking-somewhere — that is what
-the speed guard is for, and the extent veto behind it.
-
-No freshness guard is needed: the trigger is the presence of a high-cadence
-minute inside the window, which is itself proof Fitbit has data for it.
-
-Must run after the rail / drive absorbers. Walking through a station during an
-interchange is genuine walking, but it belongs to the train journey and those
-passes claim it first.
+The converse of {@link correctModeFromCadence}: a "stationary" segment becomes
+walking when the watch recorded an unmistakable walking burst and the GPS shows
+it translated (a slow park stroll scores stationary on GPS). The speed guard
+and extent veto separate walking in place. The burst itself proves the watch
+had data. Runs after the rail and drive absorbers, which claim an interchange
+walk first.
 -/
 def correctStationaryWalkThrough (seg : LabelSeg) (stepPoints : List StepPoint)
     (points : List Fix := []) : Decision :=
@@ -313,10 +238,9 @@ def correctStationaryWalkThrough (seg : LabelSeg) (stepPoints : List StepPoint)
         none
     else .flip "walking" s!"walking burst ({fx peak 0}/min) with GPS movement" none
 
-/-- A stationary stop bracketed by the same place on both sides is intra-place
-    pacing — walking to the office bathroom and back — part of that stay, not a
-    journey leg. Only a stop that TRANSITIONS between different places (or sits
-    between moving legs) is a genuine walk-through. -/
+/-- A stop bracketed by the same place on both sides is pacing within that
+    place, part of the stay; only a stop between different places, or between
+    moving legs, is a walk-through. -/
 private def bracketedBySamePlace (segments : List LabelSeg) (i : Nat) : Bool :=
   match i, segments[i - 1]?, segments[i + 1]? with
   | 0, _, _ => false  -- no predecessor; `i - 1` truncates to 0 on `Nat`
@@ -325,10 +249,9 @@ private def bracketedBySamePlace (segments : List LabelSeg) (i : Nat) : Bool :=
       && prev.place.isSome && prev.place == next.place
   | _, _, _ => false
 
-/-- The plan the shell applies: one decision per input segment, plus the output
-    segments as `[start, end)` ranges over the DECIDED sequence. The ranges
-    cover the input exactly once in order, so the shell walks them without
-    needing to redo the grouping. -/
+/-- The plan the shell applies: one decision per input segment and the output
+    segments as `[start, end)` ranges over the decided sequence, covering it
+    exactly once in order. -/
 structure WalkThroughPlan where
   decisions : List Decision
   runs : List (Nat × Nat)
@@ -347,15 +270,10 @@ private def walkingRuns (modes : List String) : List (Nat × Nat) :=
   (modes.foldl step []).reverse
 
 /--
-Apply {@link correctStationaryWalkThrough} across a time-ordered sequence, with
-the cross-segment guard the per-segment rule cannot see, then merge.
-
-The place-continuity guard reads the original neighbours, not the decided ones,
-so the pass has no order dependence.
-
-A flip here additionally drops the stay `place` / `city` — a walk-through is no
-longer a stop. That is implied by the flip and left to the shell rather than
-modelled as a separate decision.
+{@link correctStationaryWalkThrough} over a time-ordered sequence, with the
+cross-segment place guard, then merged. The guard reads the original
+neighbours, so order does not matter. A flip implies dropping the stay's
+`place`/`city`, which the shell does.
 -/
 def applyStationaryWalkThrough (segments : List LabelSeg) (stepPoints : List StepPoint)
     (points : List Fix := []) : WalkThroughPlan :=
@@ -368,13 +286,9 @@ def applyStationaryWalkThrough (segments : List LabelSeg) (stepPoints : List Ste
 
 /-! ## Guards
 
-Two kinds, and they fail differently. The `fx` and `walkingRuns` guards pin
-pure structure. The pass guards pin one branch each — every early return above
-has a case here, because a corpus shadow only exercises the branches the corpus
-happens to reach, and the branch that never fires in London is exactly the one
-that will fire on a travel day.
-
-The reference values are recorded answers, not derived ones. -/
+The `fx` and `walkingRuns` guards pin structure; the pass guards pin one branch
+each, every early return included, since the branch that never fires in London
+fires on a travel day. Reference values are recorded answers. -/
 
 private def T0 : Int := 1778457600
 
@@ -515,10 +429,8 @@ private def burst12 : List StepPoint := sp (T0 + 120) 95 :: steady 0 12
 
 /-! ### `applyStationaryWalkThrough` — the sequence guard and the merge
 
-A sequence pass needs a real timeline, so these fixtures are three consecutive
-five-minute windows rather than three segments sharing one: with a shared
-window a merged run and an unmerged one end at the same instant, and the merge
-plan could not be checked. -/
+Three consecutive five-minute windows, so a merged run ends later than an
+unmerged one and the merge plan can be checked. -/
 
 private def W : Int := 300
 /-- The stroll under test: the middle window, translating, GPS-read as a stop. -/

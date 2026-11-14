@@ -1,19 +1,12 @@
-//! The day fold's wire encoding.
+//! The day fold's wire encoding: the interface to the verified core, so a host
+//! that gets it wrong gets a confidently wrong day, not an error. Lookup tables
+//! do not ride in it; the fold asks for them, and `lookup_rows` turns a
+//! fixture's recorded trace into the answers.
 //!
-//! The fold takes one JSON object and the pipeline builds it. This encoding is
-//! the interface to the verified core, so a host that gets it wrong asks a
-//! different question and gets a confidently wrong day, not an error. Lookup
-//! tables do not ride in it: the fold asks for those, and `lookup_rows` below
-//! turns a fixture's recorded trace into the rows it will be answered with.
-//!
-//! Floats cross as their bit pattern. `bits` renders an `f64` as the decimal
-//! of its IEEE-754 payload, so the fold reads the pipeline's exact double.
-//! Formatting the number instead (`{}`, `{:.6}`, `to_string`) silently changes
-//! coordinate precision, where 1e-7° is what the match gate adjudicates.
-//!
-//! `tests/suite/fold_payload.rs` compares the encoding byte for byte against
-//! frozen output: in mostly pass-through data, a wrong field name is a
-//! well-formed request the fold answers anyway.
+//! Floats cross as their bit pattern (`bits`): formatting the number silently
+//! changes coordinate precision. `tests/suite/fold_payload.rs` compares the
+//! encoding byte for byte with frozen output, since a wrong field name still
+//! makes a well-formed request.
 
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
@@ -203,13 +196,9 @@ fn arr_map<F: Fn(&Map<String, Value>) -> Value>(v: Option<&Value>, f: F) -> Valu
 }
 
 /// The observation series and the cross-day tail, as `env` carries them.
-///
-/// `points` and `speedByTs` are the same source sent twice: the fold wants the
-/// track and the speed lookup separately, and deriving one here would be this
-/// encoder deciding something.
-///
-/// `sleep` and `rawSleep` differ: `sleep` is the projection the biometric
-/// windows read, `rawSleep` the Fitbit windows before place attribution.
+/// `points` and `speedByTs` are one source sent twice, so this encoder decides
+/// nothing. `sleep` is what the biometric windows read; `rawSleep` the sleep
+/// windows before place attribution.
 pub fn encode_obs_and_tail(obs: &Value, tail: Option<&Value>) -> Map<String, Value> {
     let o = obs.as_object();
     let g = |k: &str| o.and_then(|o| o.get(k));
@@ -305,13 +294,9 @@ fn num_bits_or(o: &Map<String, Value>, k: &str, dflt: f64) -> Value {
     Value::String(bits(o.get(k).and_then(Value::as_f64).unwrap_or(dflt)))
 }
 
-/// The mined places, six ways, as `env` carries them.
-///
-/// One source list, six tuples, none redundant: each stage reads the columns
-/// it needs and Lean indexes them positionally. The stay detector wants a
-/// display name to snap to; the dwell continuation wants visit counts; the
-/// enrichment stage wants the whole row. Five of six, or six in the wrong
-/// order, is no decode error on the far side.
+/// The mined places six ways, as `env` carries them: each stage reads its own
+/// columns positionally, so five of six, or the wrong order, is no decode error
+/// on the far side.
 pub fn encode_places(known: Option<&Value>) -> Map<String, Value> {
     let mut m = Map::new();
     m.insert(
@@ -402,12 +387,9 @@ const BUS_REACH_LAT_CELL: f64 = 0.002;
 /// longitude is shorter here, and erring wide is the safe direction.
 const BUS_REACH_LON_CELL: f64 = 0.004;
 
-/// The cells the day's fixes occupy, for {@link reachable_bus_routes}.
-///
-/// Quantised rather than compared pairwise: a day is ~850 fixes and the cache
-/// is ~1000 routes of ~50 stops, so the honest pairwise test is ~42 M distance
-/// computations per request. A cell lookup is O(1) and the cells are larger
-/// than the matcher's radius, which is what makes dropping the rest sound.
+/// The cells the day's fixes occupy, for {@link reachable_bus_routes}: a cell
+/// lookup instead of ~42 M pairwise distances, sound because a cell is larger
+/// than the matcher's radius.
 fn fix_cells(points: Option<&Value>) -> std::collections::HashSet<(i64, i64)> {
     let mut cells = std::collections::HashSet::new();
     for p in points.and_then(Value::as_array).into_iter().flatten() {
@@ -425,19 +407,11 @@ fn fix_cells(points: Option<&Value>) -> std::collections::HashSet<(i64, i64)> {
     cells
 }
 
-/// Drop bus routes the day cannot possibly have travelled.
-///
-/// Sound by the matcher's own gate: `Verified.Geo.Bus.bestPairFor` needs a
-/// stop within `BUS_STOP_ANCHOR_M` (120 m) of both the board and alight fix,
-/// and `Env.busFixes` is `env.points`, the array probed here. Grid cells are
-/// ~222 m x ~277 m and a stop counts if any of the nine cells around it holds
-/// a fix, so every route within 120 m of a fix survives.
-///
-/// Worth doing because `busRouteCache` is about half the request, and Lean's
-/// `Json.parse` costs ~20x the text in heap.
-///
-/// With no fixes the input is returned unfiltered: a silent empty cache would
-/// read downstream as a day with no bus service.
+/// Drop bus routes the day cannot have travelled: `Verified.Geo.Bus` needs a stop
+/// within 120 m of the board and alight fixes, and a stop survives if any of the
+/// nine cells (~222 × ~277 m) around it holds a fix. `busRouteCache` is about
+/// half the request, and Lean's `Json.parse` costs ~20x the text in heap. With
+/// no fixes the input is returned whole: an empty cache would read as no buses.
 pub fn reachable_bus_routes(bus_routes: Option<&Value>, points: Option<&Value>) -> Option<Value> {
     let cells = fix_cells(points);
     let all = bus_routes?.as_array()?;
@@ -494,14 +468,9 @@ fn stops(v: Option<&Value>) -> Value {
     })
 }
 
-/// The route and decode caches, as `env` carries them.
-///
-/// `railRouteCache` holds its geometry as a JSON string inside the row, and
-/// a row that does not parse is an error, not a skip. A corrupt row silently
-/// becoming "this route does not exist" would score a day against a route set
-/// with something missing; an empty polyline is a route that goes nowhere, a
-/// dropped row a route nobody offered, and only an error says the cache is
-/// broken.
+/// The route and decode caches, as `env` carries them. A `railRouteCache` row
+/// whose geometry string does not parse is an error, not a skip: a silently
+/// missing route scores the day against the wrong route set.
 pub fn encode_caches(
     hsmm_decode: Option<&Value>,
     rail_routes: Option<&Value>,
@@ -584,19 +553,15 @@ pub fn encode_caches(
 fn key_nums(k: &str) -> Vec<f64> {
     k.split('|')
         .filter(|s| !s.is_empty())
-        // The NaN is the parity, not a sentinel — see the note above: it is what
-        // `Number("x")` yields on the other side, and it survives as a bit
-        // pattern. An Option here would diverge from the oracle this mirrors.
+        // NaN is what `Number("x")` yields on the other side, carried as a bit
+        // pattern; not a sentinel.
         // dev-lint: allow-nan-sentinel
         .map(|s| s.parse::<f64>().unwrap_or(f64::NAN))
         .collect()
 }
 
-/// `[latBits, lonBits, radiusBits, answer]` from a trace section.
-///
-/// The default radius is not a widening: the trace keys on the radius the
-/// caller passed, and several callers omit it, while the Lean fold always
-/// passes one. Filling it in records the effective argument, so `lat|lon` and
+/// `[latBits, lonBits, radiusBits, answer]` from a trace section. Filling in the
+/// default radius records the effective argument, so `lat|lon` and
 /// `lat|lon|100` are the same question.
 fn table3<F: Fn(&Value) -> Value>(section: Option<&Value>, dflt: f64, map: F) -> Value {
     let mut out = Vec::new();
@@ -693,14 +658,9 @@ fn list_of<F: Fn(&Map<String, Value>) -> Value>(v: &Value, f: F) -> Value {
     arr_map(Some(v), f)
 }
 
-/// A fixture's recorded trace as `(table, key, row)` triples — the rows the
-/// fold's asks are answered with, keyed as the fold spells the ask.
-///
-/// The row shapes are the ones `DayEntry`'s `entry2`/`entry3`/… parsers read,
-/// and the key is derived from the row so the two cannot disagree: three-key
-/// tables spell `row[0]|row[1]|row[2]`, two-key tables `row[0]|row[1]`,
-/// `reverseGeocode` `lat|lon|zoom`, `bestPlace` `lat|lon|start|end|tz`, and
-/// `stationsOnLine` the bare line name.
+/// A fixture's recorded trace as `(table, key, row)` triples, keyed as the fold
+/// spells the ask. The key is derived from the row (`row[0]|row[1]|row[2]`,
+/// `lat|lon|zoom`, `lat|lon|start|end|tz`, a line name), so they cannot disagree.
 pub fn lookup_rows(
     trace: Option<&Value>,
     tz_at: Option<&Value>,
@@ -808,14 +768,9 @@ pub fn encode_lookups(
     }))
 }
 
-/// `[latBits, lonBits, startTs, endTs, tz, staySamples, midpointHour]`.
-///
-/// The tz stays in the key though nothing downstream reads it: the derived
-/// fields were resolved against it, and dropping it would let two zones share
-/// a spelling.
-///
-/// The midpoint is floored; an instant and its floor lie in the same hour,
-/// so the hour cannot change.
+/// `[latBits, lonBits, startTs, endTs, tz, staySamples, midpointHour]`. The tz
+/// stays in the key, as the derived fields were resolved against it. Flooring
+/// the midpoint cannot change its hour.
 fn best_place(section: Option<&Value>) -> Result<Value> {
     let mut out = Vec::new();
     for q in section.and_then(Value::as_array).into_iter().flatten() {
@@ -878,13 +833,8 @@ fn stations_on_line(section: Option<&Value>) -> Value {
 /// effective argument rather than a blank.
 pub const NOMINATIM_DEFAULT_ZOOM: f64 = 18.0;
 
-/// `[latBits, lonBits, zoom, address|null]`.
-///
-/// The zoom crosses as a plain integer, unlike every other numeric: it is a
-/// literal the caller writes. So this table cannot reuse `table3`, which would
-/// bit-encode the zoom and miss every key.
-///
-/// Public so a test can hold the answerer's live rows against it.
+/// `[latBits, lonBits, zoom, address|null]`. The zoom is a plain integer (a
+/// literal the caller writes), so `table3`'s bit encoding would miss every key.
 pub fn geocode_table(section: Option<&Value>) -> Value {
     let mut out = Vec::new();
     for (k, v) in section.and_then(Value::as_object).into_iter().flatten() {
@@ -917,12 +867,8 @@ pub fn geocode_table(section: Option<&Value>) -> Value {
     Value::Array(out)
 }
 
-/// One Nominatim answer, flattened: the three top-level fields plus the address
-/// components the naming cascade reads.
-///
-/// Public because the answerer encodes here too: a geocode from a live cache
-/// and one from a recorded section must be the same bytes, so there is one
-/// encoder.
+/// One Nominatim answer, flattened to the fields the naming cascade reads. The
+/// one encoder for live and recorded geocodes, so both are the same bytes.
 pub fn encode_geocode(v: &Value) -> Value {
     let Some(o) = v.as_object() else {
         return Value::Null;
@@ -979,11 +925,8 @@ fn decoder_head_segments(inputs: &Map<String, Value>, var: &str) -> Result<Optio
     Ok(None)
 }
 
-/// The whole fold request: `{trace, env}`.
-///
-/// Key order does not matter to Lean, which reads by name, but the byte
-/// comparison with the frozen fixtures needs it; `preserve_order` emits it as
-/// written here.
+/// The whole fold request, `{trace, env}`, in the key order the frozen fixtures
+/// compare byte for byte (`preserve_order`).
 pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     let c = cap.as_object().context("capture is not an object")?;
     let i = inputs.as_object().context("inputs is not an object")?;
@@ -1014,15 +957,10 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     // encoder whole against the frozen fixtures, so an optimisation belongs one
     // level up, visible at the call site and with its own test.
     let bus_reachable = reachable_bus_routes(i.get("busRouteCache"), obs.get("points"));
-    // The decoder heads the fold on every day it has decoded: its segments are
-    // the day, and Lean runs only the naming tail over them (`DayEntry`,
-    // `decoderHead`). A day without a stored decode at this
-    // `CLASSIFIER_VERSION` (today, or a day the re-decode has not reached)
-    // folds through the cascade.
-    //
-    // `FOLD_DECODER_HEAD=<dump>` puts an arm's decode (the scoreboard's
-    // `DECODE_DUMP_OUT`) in the stored one's place, to measure a decoder change
-    // on the served day before it ships.
+    // The decoder heads the fold on every decoded day: its segments are the day
+    // and Lean runs only the naming tail. A day without a decode at this
+    // `CLASSIFIER_VERSION` folds through the cascade. `FOLD_DECODER_HEAD=<dump>`
+    // substitutes an arm's decode, to measure a decoder change on the served day.
     let decoder_head = decoder_head_segments(i, "FOLD_DECODER_HEAD")?;
     if decoder_head.is_some() {
         eprintln!("⚠ FOLD_DECODER_HEAD — an arm's decode heads this fold, not the stored one");

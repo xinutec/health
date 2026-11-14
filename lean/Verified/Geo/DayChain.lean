@@ -4,44 +4,22 @@ import Verified.Geo.EpisodeGeometry
 /-!
 # The day after the fold
 
-`Verified.Geo.PassFold` ends at `withBiometrics`. What `computeVelocityFromInputs`
-does next — attribute the sleep windows, cut the segment list into a state
-timeline, continue a trailing dwell, and draw the episodes — is six more stages,
-and this composes them.
+After `Verified.Geo.PassFold`: attribute the sleep windows, cut the segments
+into a state timeline, continue a trailing dwell, and draw the episodes, in
+order:
 
-`segmentsToDayStates`, `derivePlaceForSleepAt` and `detectKnownPlaceStays` are
-`Geo.DayState`; `applyDwellContinuation` is `Geo.DwellContinuation`;
-`buildEpisodes` is `Geo.EpisodeGeometry`. This runs them in order against the
-same day.
-
-## The order, and what each stage reads
-
-    detectKnownPlaceStays   over the MORNING and PRIOR-EVENING raw fixes, not the
-                            day's own — the point is to find where the user slept
-                            when today's first stationary segment is hours late.
-    sleepPlace              SHELL. A generic "Stay" label gets one chance at a
-                            lodging POI from the mirror.
-    derivePlaceForSleepAt   over the day's segments PLUS the synthetic stay
-                            candidates, per raw sleep window.
-    segmentsToDayStates     over the day's segments and those enriched windows.
-                            NOT the candidate set — the synthetics exist only to
-                            attribute a sleep place and never enter the timeline.
+    detectKnownPlaceStays   over the morning and prior-evening raw fixes, to find
+                            where the user slept when the day's first stay is late.
+    sleepPlace              shell: a generic "Stay" gets one lodging lookup.
+    derivePlaceForSleepAt   over the segments plus those synthetic candidates.
+    segmentsToDayStates     over the segments and enriched windows, not the
+                            candidates, which never enter the timeline.
     applyDwellContinuation  over the states.
-    buildEpisodes           over the states, the segments, and both fix series.
+    buildEpisodes           over the states, segments and both fix series.
 
-## What stays shell, and why only this
-
-`sleepPlace` is `bestPlace(preferResidential: true)` composed with `placeLabel` —
-venue resolution against the OSM mirror, the same class as `Env.bestPlace` in the
-fold. It is a lookup, so it crosses as an ask the host answers.
-
-The empty-day arm (`inferEmptyDayStatesFromBracket`) is not here. It fires only
-when the day has no states and no points, reads a cross-day bracket this env does
-not carry, and resolves its label through the mirror. A separate stage rather
-than a branch of this one.
-
-`checkWorldlineFeasibility` is not here either: it is a log, not an output. It
-computes nothing the served day carries.
+`sleepPlace` is a mirror lookup, so it crosses as an ask. The empty-day arm is
+its own stage below (it reads a cross-day bracket); `checkWorldlineFeasibility`
+is a log, not an output.
 
 UNPROVEN.
 -/
@@ -93,26 +71,20 @@ structure Env where
   /-- The day's display zone, carried onto an inferred stay so it renders in
   local time like every other state. -/
   dayTz : Option String := none
-  /-- Shell: the cross-day bracket, already resolved to a name.
-  `Verified.Geo.DayState.buildInferredStayState`'s doc has said since it was
-  written that the shell does this resolution, and it does: the centroid comes
-  from `presence_log` and is named through the OSM mirror, neither of which the
-  fold can reach.
-
-  `none` means the day is not bracketed by the same place on both sides, which
-  is the honest "genuinely unknown" case, not a failure. -/
+  /-- Shell: the cross-day bracket resolved to a name (a `presence_log`
+  centroid named through the mirror). `none` means the day is not bracketed by
+  one place on both sides: genuinely unknown, not a failure. -/
   bracketPlace : Option String := none
 
-/-- The placeholder a focus-place match emits when it knows a stay happened but
-not what is there. The only label re-resolution is offered: a specific one (Home,
-Work, a named hotel from a prior re-mine) is kept, because the mirror would
-otherwise replace "Home" with the residential street address. -/
+/-- The placeholder a focus-place match emits for a stay it cannot name: the
+only label re-resolution is offered, since the mirror would replace "Home" with
+a street address. -/
 def GENERIC_STAY_LABEL : String := "Stay"
 
 /-! ## Projections
 
-One per shape a stage declares, on the pattern `PassFold` uses for the fix
-series: each drops fields the consumer does not read, none invents one. -/
+One per shape a stage declares, as `PassFold` does: each drops unread fields
+and invents none. -/
 
 def stateSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.DayState.Seg :=
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, refinedMode := s.refinedMode
@@ -123,14 +95,8 @@ def stateSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.DayState.Seg :=
     roads := (s.roads ++ (if s.walkMatchedPath.isSome then s.walkWayUm.map (·.1) else #[])).toList.eraseDups.toArray
     displayTz := s.displayTz, city := s.city }
 
-/-- The drawn paths, `Option (Array PathPt)` on the shared segment record and
-`Array SPt` here — absent and empty mean the same thing to the renderer.
-
-The timestamp used to narrow here: `PathPt.ts` is a `Float` because the
-over-route trim and the walk corrector interpolate `ts` along a chord without
-rounding, while `SPt.ts` was an `Int`, so this conversion rounded. Both are
-`Float` now, so the vertex crosses the stage boundary untouched — which
-is what a projection between two views of one record should do. -/
+/-- The drawn paths; absent and empty mean the same to the renderer. `ts` stays
+a `Float` across the boundary, since interpolated vertices are fractional. -/
 private def spts (p : Option (Array Verified.Geo.PathPt)) :
     Array Verified.Geo.EpisodeGeometry.SPt :=
   (p.getD #[]).map fun q => ⟨q.lat, q.lon, q.ts⟩
@@ -144,10 +110,9 @@ def episodeSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.EpisodeGeometr
 def episodeState (s : DayState) : Verified.Geo.EpisodeGeometry.State :=
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, place := s.place }
 
-/-- A post-midnight stay candidate as the sleep-place attributor reads it: a
-synthetic stationary segment. It never enters the day's segment output, only the
-candidate set, so every field but the window, the mode and the place is filler —
-and `derivePlaceForSleepAt` reads exactly those. -/
+/-- A post-midnight stay candidate as a synthetic stationary segment, for the
+sleep-place attributor only: every field but the window, mode and place is
+filler. -/
 def stayCandidateSeg (c : StayCandidate) : Verified.Geo.DayState.Seg :=
   { startTs := c.startTs, endTs := c.endTs, mode := "stationary", place := some c.place
     -- The name stands for the mined place's centre; a sleep named after this
@@ -166,19 +131,12 @@ def sleepCandidates (e : Env) : List Verified.Geo.DayState.Seg :=
     else { c with place := (e.sleepPlace c.centroidLat c.centroidLon).getD c.place }
   (e.segments.map stateSeg).toList ++ resolved.map stayCandidateSeg
 
-/-- How far a bracketed position may sit from a known place and still name it.
+/-- How far a bracketed position may sit from a known place and still name it:
+`CLUSTER_RADIUS_M`, looser than a dwell's 25 m, because two independent
+positions (before and after the window) agreeing is what carries the claim.
 
-Looser than the 25 m a dwell snap uses, and the agreement is what buys it.
-A dwell earns its snap from many fixes concentrating on one centroid; a single
-position has no such support, so `snapClusterToPlace` rightly refuses it beyond
-the mined radius. Two independent positions — the last before the window and the
-first after it — agreeing on the same place is a different claim, and it is the
-agreement rather than either distance that carries it.
-
-100 m because that is already this pipeline's notion of "still the same place":
-`CLUSTER_RADIUS_M`. ⚠ Do not raise `DEFAULT_PLACE_RADIUS_M` or the mined 25 m to
-achieve this — those govern every dwell snap, venue attribution and the dwell
-continuation, none of which asked. -/
+⚠ Do not raise `DEFAULT_PLACE_RADIUS_M` or the mined 25 m for this: they govern
+every dwell snap, venue attribution and the dwell continuation. -/
 private def BRACKET_RADIUS_M : Float := 100
 
 open Verified.Hsmm.FloatScore (haversineMeters) in
@@ -196,36 +154,17 @@ private def snapWithin (radiusM lat lon : Float)
     | some (_, bd) => if decide (d < bd) then some (n, d) else acc) none).map (·.1)
 
 /-- The place a sleep window is bracketed by: the last known position before it
-and the last inside it (else the first after it), when both name the same place.
-`fixes` are every position the day knows — the evening before, its own, the
-next morning — so a night that ends tomorrow is bracketed by tomorrow's fixes.
+and the last inside it (else the first after), when both name the same place.
+`fixes` run from the evening before to the next morning.
 
-A fix during the sleep outranks one after it. It is where he was while
-asleep; the first fix after waking can already be down the road. 08-21: a fix 2 m
-from Home at 08:27 inside the window, the first after it 224 m off at 08:57 — the
-bracket fell silent and the ordinary rule served the night at Work.
-
-This is the case a gap bound cannot express. A phone that goes quiet at
-home and reports again from home next morning leaves no dwell inside the window
-and no candidate within six hours of it — but it is not unevidenced, it is
-constrained. `inferredEmptyDay` already reasons this way for a fully-empty day:
-"bracketed by the same place on both sides ... constrained rather than
-unevidenced". A sleep window is the same shape at smaller scale.
-
-A real night: 7 m from Home before a day-long silence, 46 m from Home after
-it, served as eight hours at Work 11.3 km away. Neither edge clears the 25 m
-dwell radius alone; together they are the strongest evidence the night has.
-
-Disagreement means silence, not a guess. If the two sides name different
-places — he went somewhere — this yields `none` and the ordinary rule decides. -/
+A fix during the sleep outranks one after it: the first fix after waking can be
+down the road. A phone quiet from home to home leaves no dwell in the window,
+yet the night is constrained, not unevidenced, as `inferredEmptyDay` reasons
+for a whole day. Disagreement yields `none`, and the ordinary rule decides. -/
 def bracketPlaceForSleep (winStart winEnd : Int) (fixes : List Verified.Geo.DayState.StayFix)
     (places : List Verified.Geo.DayState.StayKnownPlace) : Option (String × (Float × Float)) :=
-  -- A generic label is not a name. `sleepCandidates` re-resolves
-  -- `GENERIC_STAY_LABEL` through `Env.sleepPlace` into a real lodging name, and
-  -- this path does not, so admitting one would serve the placeholder where the
-  -- ordinary rule serves the guest house's name. Excluding it leaves those
-  -- nights to the path that can name them properly, the conservative half of
-  -- the trade.
+  -- A generic label is not a name: `sleepCandidates` re-resolves it into a
+  -- lodging name and this path cannot, so those nights are left to it.
   let named := places.filter fun p =>
     p.displayName.isSome && p.displayName != some GENERIC_STAY_LABEL
   let sorted := fixes.toArray.qsort (fun a b => a.ts < b.ts) |>.toList
@@ -240,11 +179,9 @@ def bracketPlaceForSleep (winStart winEnd : Int) (fixes : List Verified.Geo.DayS
     | _, _ => none
   | _, _ => none
 
-/-- The windows with every window that overlaps one with more minutes asleep
-dropped (a tie keeps the earlier). The source can mark more than one session a
-date as the main sleep: a nap beside the night, two writers' versions of one
-night, a provisional session never revised. Disjoint windows are all sleep and
-all stay. -/
+/-- The windows, dropping any that overlaps one with more minutes asleep (a tie
+keeps the earlier): a date can carry several "main" sleeps (a nap, two versions
+of one night). Disjoint windows all stay. -/
 def distinctSleepWindows (raw : List RawSleepWindow) : List RawSleepWindow :=
   let overlaps := fun (a b : RawSleepWindow) => a.startTs < b.endTs && b.startTs < a.endTs
   let beats := fun (b w : RawSleepWindow) =>
@@ -259,13 +196,9 @@ def distinctSleepWindows (raw : List RawSleepWindow) : List RawSleepWindow :=
     [{ startTs := 50, endTs := 120, tz := none, minutesAsleep := 60 },
      { startTs := 0, endTs := 100, tz := none, minutesAsleep := 60 }]).map (·.startTs) == [0]
 
-/-- `enrichSleepWindows`: the raw windows, each given the place its onset side
-points at; the decision it wraps is `derivePlaceForSleepAt`.
-
-The bracket is consulted first. Where both sides of the window agree it is
-strictly better evidence than the side-and-gap ranking, which cannot see across
-a silence at all; where they do not agree it yields `none` and the ordinary rule
-runs unchanged. -/
+/-- The raw sleep windows, each given the place its onset side points at
+(`derivePlaceForSleepAt`). The bracket goes first: where both sides agree it
+beats the side-and-gap ranking, which cannot see across a silence. -/
 def enrichSleepWindows (raw : List RawSleepWindow)
     (candidates : List Verified.Geo.DayState.Seg)
     (bracket : Int → Int → Option (String × (Float × Float))) : List SleepWindow :=
@@ -276,16 +209,9 @@ def enrichSleepWindows (raw : List RawSleepWindow)
     { startTs := w.startTs, endTs := w.endTs, tz := w.tz, minutesAsleep := w.minutesAsleep
       place := named.map (·.1), placeAt := named.bind (·.2) }
 
-/-- The one state a fully-unobserved day gets, or nothing.
-
-A no-data day is not automatically an unknown day. Bracketed by the same place
-on both sides — yesterday ended there, tomorrow is dominated by it — the day in
-between is constrained rather than unevidenced, and a multi-day stay is exactly
-the shape that produces no fixes at all. Confidence comes from how constrained
-the day is, not from how much data it has.
-
-`inferred := true` is not decoration: it is what lets the renderer say "no data"
-rather than presenting an asserted stay as an observed one. -/
+/-- The one state a fully-unobserved day gets, or nothing. Bracketed by the
+same place on both sides, the day is constrained, not unknown: a multi-day stay
+produces no fixes at all. `inferred := true` lets the renderer say "no data". -/
 def inferredEmptyDay (e : Env) : Option DayState :=
   e.bracketPlace.map fun place =>
     Verified.Geo.DayState.buildInferredStayState place e.dayTz e.dayStartTs e.dayEndTs
@@ -293,15 +219,11 @@ def inferredEmptyDay (e : Env) : Option DayState :=
 /-- A hole at least this long between two states at the same place is bridged. -/
 def BRIDGE_MIN_S : Int := 1800
 
-/-- Fill each hole of `BRIDGE_MIN_S` or more that has no fix in it and lies
-between two stationary/sleeping states at the same named place with an
-inferred stay there: the phone was quiet and the person never left (05-11:
-asleep at Home to 07:56, the first fix at Home at 11:38, and nothing served in
-between). A hole with a fix in it is not silence — what it says is the
-segments' business — and a hole between two different places stays a hole.
-Nor is the day's end a silence: a stay clipped at midnight and the next night's
-sleep leave a hole that is only the boundary, and bridging it would put a small
-"inferred" row on almost every night. -/
+/-- Fill each fixless hole of `BRIDGE_MIN_S` or more between two
+stationary/sleeping states at the same named place with an inferred stay: the
+phone was quiet and the person never left. A hole with a fix is the segments'
+business, one between different places stays a hole, and the day's end is not
+a silence (or nearly every night would gain a small inferred row). -/
 def bridgeSamePlaceHoles (states : Array DayState)
     (points : Array Verified.Geo.EpisodeGeometry.Fix) (dayEndTs : Int) : Array DayState := Id.run do
   let still := fun (s : DayState) => s.mode == "stationary" || s.mode == "sleeping"
@@ -337,16 +259,10 @@ private def reachKmh (mode : String) : Float :=
   | "train" | "plane" | "unknown" | "journey" => 200
   | _ => 0
 
-/-- A stay reached by a trip nothing saw, which what is drawn on the way could
-not have covered, is a guess until its first fix: the previous stay was at
-another place, there is no fix at all from leaving it to arriving (the phone
-silent on the way), and the moving states between, at their modes' fastest,
-fall short of the distance between the two places (a 12-minute walk
-drawn for 11 km). Where he was and when he got there are then the decoder's
-reading of steps alone: the part of the stay before its first fix is inferred
-— the best guess, marked as one (his rule) — and the rest observed; a stay with
-no fix at all is inferred whole. A trip with a fix on it was seen, and one the
-drawn travel covers (a five-minute walk between neighbouring places) stands. -/
+/-- A stay reached by a trip nothing saw, which the drawn travel could not have
+covered at its modes' fastest, is a guess until its first fix: that part is
+marked inferred (the user's rule), the rest observed, and a fixless stay is
+inferred whole. A trip with a fix, or one the drawn travel covers, stands. -/
 def markUnseenArrivals (states : Array DayState)
     (points : Array Verified.Geo.EpisodeGeometry.Fix) : Array DayState := Id.run do
   let still := fun (s : DayState) => s.mode == "stationary" || s.mode == "sleeping"
@@ -400,11 +316,8 @@ private def fx (t : Int) : Verified.Geo.EpisodeGeometry.Fix := ⟨t, 51.52, -0.1
 #guard (markUnseenArrivals (homeHosp.set! 2 { homeHosp[2]! with place := some "Home" }) #[]) ==
   homeHosp.set! 2 { homeHosp[2]! with place := some "Home" }
 
-/-- The served timeline and its geometry.
-
-Returns both because they are one decision: the episodes are 1:1 with the final
-states, so producing them from anything but the continued list would draw a day
-the timeline does not describe. -/
+/-- The served timeline and its geometry, together because the episodes are
+1:1 with the final states. -/
 def dayChain (e : Env) :
     Array DayState × Array Verified.Geo.EpisodeGeometry.Episode :=
   let windows := enrichSleepWindows (distinctSleepWindows e.sleep) (sleepCandidates e)
@@ -412,10 +325,8 @@ def dayChain (e : Env) :
       (e.prevEveningFixes ++ e.points.toList.map (fun p => { ts := p.ts, lat := p.lat, lon := p.lon })
         ++ e.morningFixes) e.stayPlaces)
   let states := (segmentsToDayStates (e.segments.map stateSeg).toList windows).toArray
-  -- The empty-day arm, tested on `states` rather than on `e.segments`: a day
-  -- with no segments can still have sleep windows, and that day is observed.
-  -- It is asked after the states are built and before the dwell continuation,
-  -- which has nothing to continue here anyway.
+  -- The empty-day arm, tested on `states` (a day with sleep windows is
+  -- observed), after the states and before the dwell continuation.
   if states.isEmpty && e.points.isEmpty then
     match inferredEmptyDay e with
     | some st => (#[st], #[])
@@ -424,11 +335,8 @@ def dayChain (e : Env) :
   let continued := markUnseenArrivals (bridgeSamePlaceHoles
     (Verified.Geo.DwellContinuation.applyDwellContinuation
       states e.segments e.dwellPlaces e.dayEndTs) e.points e.dayEndTs) e.points
-  -- City is stamped last, over the final states. The client it
-  -- replaces ran over the served list, so an inferred stay — created by the
-  -- dwell continuation, after `segmentsToDayStates` has returned — got a header
-  -- there and must get one here. Stamping it earlier silently drops exactly
-  -- those rows.
+  -- City is stamped last, over the final states, so an inferred stay the dwell
+  -- continuation creates also gets its header row.
   let segs := (e.segments.map stateSeg).toList
   let final := continued.map fun s =>
     { s with city := Verified.Geo.DayState.cityForState segs s }
@@ -437,10 +345,8 @@ def dayChain (e : Env) :
 
 /-! ## The empty-day arm
 
-These exist because no golden day can reach this. 0 of the 42 fixtures has
-zero fixes, so the corpus and the day gate both pass whether this arm works or
-not — the regression it fixes was live in production for a day and invisible to
-every gate. A `#guard` is the only thing here that can fail. -/
+No golden day has zero fixes, so no corpus gate can see this arm; these guards
+are the only check. -/
 
 private def emptyEnv : Env :=
   { segments := #[], points := #[], displayFixes := #[]

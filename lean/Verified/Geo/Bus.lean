@@ -6,30 +6,20 @@ import Verified.Fix
 
 Two independent ways to tell a bus from a taxi on the same streets:
 
-* Route matching (`matchBusRoute`) — anchor a road-vehicle leg's board and
-  alight coords to two *in-route-order* stops of a candidate route, then
-  corroborate by checking the leg's trace passed the route's *intermediate*
-  stops. Anchoring alone is not sufficient: with ~1000 routes mirrored almost
-  any short urban hop has some route with two in-order stops near its
-  endpoints, which is how a taxi got stamped "bus N22". Corroboration is
-  weighted by a speed logistic — a leg too fast to be a bus is discounted, not
-  vetoed.
+* Route matching (`matchBusRoute`): anchor a road-vehicle leg's board and
+  alight to two in-order stops of a route, then corroborate by the
+  intermediate stops its trace passed. Anchoring alone is not enough: with
+  ~1000 routes mirrored, almost any short hop has two in-order stops near its
+  ends (a taxi got stamped "bus N22"). A leg too fast for a bus is discounted
+  by a speed logistic, not vetoed.
 * Stop-pattern evidence (`detectBoardingWait`, `detectVehicleDwells`,
-  `scoreBusEvidence`) — a bus is boarded at a flag after a 45 s+ standstill and
-  dwells mid-leg at fixed public stops; a car dwells at signals. Summed as
-  weighted nats with per-signal caps, no vetoes.
+  `scoreBusEvidence`): a bus is boarded after a 45 s+ standstill and dwells at
+  public stops; a car dwells at signals. Weighted nats, capped, no vetoes.
 
-The stop/signal *resolution* (`nearbyTransitStops`), the OSM route mirror, and
-the two `annotate*` passes that spread `vehicleKind`/`wayName` onto pipeline
-records stay with the orchestrator — this module is the decision math they
-call, over inputs already resolved.
-
-Exactness: `scoreBusEvidence`, the dwell/wait detection (`Int` timestamps,
-discrete run-finding), and every ordering decision are exact. Distances enter
-through `haversineMeters` (atan2) and `pointToSegmentMeters` (hypot), and the
-speed weight through `Float.exp`, so metre values and scores are guarded to ≤1
-ULP; the verdicts they drive are pinned exactly, including both sides of the
-speed logistic's decision boundary. UNPROVEN; pinned by the `#guard`s.
+Stop resolution, the route mirror and the record writes stay with the
+orchestrator; this module is the decision math over resolved inputs. Timing and
+ordering are exact; distances and the speed weight are guarded to ≤1 ULP, with
+both sides of the logistic's boundary pinned. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.Bus
@@ -92,13 +82,9 @@ structure BusRouteMatch where
 
 /-- A board/alight coord must fall within this of a stop to anchor to it. -/
 def BUS_STOP_ANCHOR_M : Float := 120
-/-- How far the stay after a ride may lie from a stop of the route for that
-    stop to be read as the alight when the fixes cannot show one: about four
-    minutes' walk, the stretch from the stop to the door that a sparse trace
-    loses into the ride (06-09: the last precise fix is mid-ride, the next 13
-    minutes carry three fixes at 160–640 m, and the clinic sits 170 m from the
-    stop). The user's call: the app may name the stop from the route and the
-    stay that follows. -/
+/-- How far the stay after a ride may lie from a route stop for that stop to be
+    read as the alight when the fixes cannot show one: about four minutes'
+    walk, the stretch a sparse trace loses. The user's call. -/
 def BUS_STAY_ALIGHT_M : Float := 300
 /-- An intermediate stop counts as passed within this of the trace polyline. -/
 def BUS_STOP_PASS_M : Float := 120
@@ -151,10 +137,8 @@ private def nearestOnTrace (trace : Array LatLon) (stop : LatLon) (passM : Float
   return nearest
 
 /-- Fraction of the stops strictly between board and alight that the trace
-    passes within `passM`. Zero when there are none (a two-stop span has
-    nothing to corroborate — the taxi-as-bus failure) or the trace is
-    degenerate. A real bus passes ~all of them; a taxi on a different road,
-    few. -/
+    passes within `passM`; zero with none (a two-stop span corroborates nothing)
+    or a degenerate trace. A real bus passes nearly all, a taxi few. -/
 def traceCoverage (trace : List LatLon) (intermediates : List BusStop) (passM : Float) : Float :=
   if intermediates.isEmpty then 0
   else if trace.length < 2 then 0
@@ -192,10 +176,8 @@ private def bestPairFor (leg : VehicleLeg) (route : BusRoute)
   for board in boardCands do
     for alight in alightCands do
       if decide (alight.idx ≤ board.idx) then continue
-      -- Evidence = intermediate-stop coverage × speed-plausibility. Coverage
-      -- rejects a taxi that anchors two stops but drove a different road (and
-      -- a 2-stop span, which has nothing to corroborate); speed-plausibility
-      -- discounts a leg too fast to be a bus, weighted rather than vetoing.
+      -- Evidence = intermediate-stop coverage × speed plausibility: coverage
+      -- rejects a taxi on a different road, speed discounts one too fast.
       let intermediates := (route.stops.drop (board.idx + 1)).take (alight.idx - board.idx - 1)
       let score := traceCoverage leg.trace intermediates stopPassM * speedPlausibility
       if decide (score < minScore) then continue
@@ -205,10 +187,9 @@ private def bestPairFor (leg : VehicleLeg) (route : BusRoute)
       | some (b, a) => if decide (total < b.distM + a.distM) then best := some (board, alight)
   return best
 
-/-- Find the bus route the leg rode. Across routes the smallest combined
-    anchor distance wins; ties keep the earlier route. `none` ⇒ no route's
-    stop sequence admits a corroborated in-order pair, and the leg stays
-    driving (taxi/car) — never forced onto a route it did not ride. -/
+/-- Find the bus route the leg rode: the smallest combined anchor distance
+    wins, ties keep the earlier route. `none` leaves the leg driving rather
+    than forcing it onto a route. -/
 def matchBusRoute (leg : VehicleLeg) (routes : List BusRoute)
     (anchorM : Float := BUS_STOP_ANCHOR_M) (stopPassM : Float := BUS_STOP_PASS_M)
     (minCoverage : Float := BUS_MIN_INTERMEDIATE_COVERAGE)
@@ -292,11 +273,9 @@ private def centroid (run : Array Fix) : Float × Float :=
   (run.foldl (fun s p => s + p.lat) 0 / n, run.foldl (fun s p => s + p.lon) 0 / n)
 
 /--
-The standstill immediately preceding `segStartTs` — the would-be boarding
-wait. Walks backwards from the leg start through fixes in the lookback window
-while consecutive pair speeds stay under walking pace; `none` when the
-contiguous standstill is shorter than `BOARDING_WAIT_MIN_S` (rolling approach
-= taxi pattern, or no data).
+The standstill just before `segStartTs`, the would-be boarding wait: walk back
+while pair speeds stay under walking pace; `none` below `BOARDING_WAIT_MIN_S`
+(a rolling approach, or no data).
 -/
 def detectBoardingWait (fixes : List Fix) (segStartTs : Int) : Option (Int × Float × Float) := Id.run do
   -- Strictly before the leg: the segment's startTs is typically its first
@@ -332,12 +311,11 @@ def detectBoardingWait (fixes : List Fix) (segStartTs : Int) : Option (Int × Fl
   return some (durationS, lat, lon)
 
 /--
-The boarding wait for a leg whose start may sit up to `slackS` either side of
-the pull-away (the decoder's segments, whose boundaries fall on whole minutes):
-the last standstill run of at least `BOARDING_WAIT_MIN_S` that ends between
-`BOARDING_PULLAWAY_TRIM_S + slackS` before the start and `slackS` after it. A
-short dwell just inside the leg (a junction, the next stop) is passed over
-rather than taken for the wait, which the walk-back from the boundary would do.
+The boarding wait for a leg whose start may sit `slackS` either side of the
+pull-away (the decoder's whole-minute boundaries): the last standstill of
+`BOARDING_WAIT_MIN_S` or more ending between `BOARDING_PULLAWAY_TRIM_S + slackS`
+before the start and `slackS` after. A short dwell just inside the leg is
+passed over.
 -/
 def detectBoardingWaitNear (fixes : List Fix) (segStartTs slackS : Int) :
     Option (Int × Float × Float) := Id.run do
@@ -373,9 +351,9 @@ def boardingWaitAt (fixes : List Fix) (segStartTs slackS : Int) : Option (Int ×
   else detectBoardingWaitNear fixes segStartTs slackS
 
 /--
-Standstill runs inside the moving leg: maximal runs of consecutive pair speeds
-under `DWELL_MAX_SPEED_KMH` lasting ≥ `DWELL_MIN_S`. The centroid is where the
-orchestrator queries for stop/signal proximity.
+Standstill runs inside the moving leg: maximal runs of pair speeds under
+`DWELL_MAX_SPEED_KMH` lasting `DWELL_MIN_S` or more, with the centroid the
+orchestrator queries for stops and signals.
 -/
 def detectVehicleDwells (fixes : List Fix) (startTs endTs : Int) : List VehicleDwell := Id.run do
   -- `samplesInWindow`: inclusive on both ends.
@@ -436,10 +414,9 @@ private def isNear : Option Float → Bool
   | none => false
   | some m => decide (m ≤ TRANSIT_STOP_NEAR_M)
 
-/-- Sum the weighted evidence. Boarding at a stop is the strongest single
-    signal; each stop-coinciding dwell adds, capped so a crawling leg past
-    many stops cannot run away; several dwells with no stop near any of them
-    is mild taxi evidence. -/
+/-- Sum the weighted evidence: boarding at a stop is the strongest signal, each
+    stop-coinciding dwell adds (capped), and dwells far from any stop are mild
+    taxi evidence. -/
 def scoreBusEvidence (ev : BusEvidence) : BusEvidenceScore := Id.run do
   let boarding :=
     match ev.boardingWaitS with
@@ -462,9 +439,8 @@ def scoreBusEvidence (ev : BusEvidence) : BusEvidenceScore := Id.run do
 
 /-! ## Guards
 
-Distances/scores are `atan2`/`hypot`/`exp`-derived ⇒ guarded to ≤1 ULP;
-verdicts, orderings, spans and the nats sum are pinned exactly.
--/
+Distances and scores to ≤1 ULP; verdicts, orderings, spans and the nats sum
+exactly. -/
 
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 
@@ -693,21 +669,11 @@ private def E (waitS : Option Int) (stopM : Option Float) (dwells : List DwellSt
 
 /-! ## `annotateBusEvidence` — the orchestration over the scorer
 
-The pass that turns the evidence into a label. `nearbyTransitStops` is a
-function of `(lat, lon, radiusM)` the caller supplies, which is what lets the
-whole pass be reference-tested.
-
-The one piece of real logic outside the leaves is the per-dwell resolution:
-ask for everything within `TRANSIT_QUERY_RADIUS_M`, keep the requested subtype,
-take the nearest of those. That is not "the nearest stop, if it is a bus stop" —
-a traffic signal three metres away does not hide a bus stop at thirty.
-
-Exact: no arithmetic of its own beyond the duration test and the threshold
-comparison; the ULP story is entirely `scoreBusEvidence`'s.
-
-`TRANSIT_QUERY_RADIUS_M` is pinned by value and cannot be pinned by effect: it
-is handed straight to the adapter, so only the adapter can act on it, and a
-stub that honoured it would be grading the stub. -/
+`nearbyTransitStops` is a caller-supplied function of `(lat, lon, radiusM)`, so
+the pass is reference-testable. Per dwell it asks for everything within
+`TRANSIT_QUERY_RADIUS_M`, keeps the requested subtype and takes the nearest: a
+signal three metres away does not hide a bus stop at thirty. The radius is
+pinned by value only, since only the adapter acts on it. -/
 
 /-- The `nearbyTransitStops` fields this pass reads. -/
 structure TransitStop where
@@ -723,10 +689,8 @@ def TRANSIT_QUERY_RADIUS_M : Float := 50
 any stop pattern to show. -/
 def MIN_LEG_S : Int := 3 * 60
 
-/-- The pipeline segment record. This pass reads five fields and writes one; it
-names the whole thing so that
-`Verified.Geo.PassFold` can hand the same value to every pass in the cascade
-without a lossy projection at each hop. -/
+/-- The pipeline segment record, whole, so `Verified.Geo.PassFold` hands one
+value to every pass. -/
 abbrev BusSeg := Verified.Geo.SegmentMerge.Seg
 
 /-- The nearest reported distance among stops of one subtype, or `none` when
@@ -842,12 +806,9 @@ private def kinds (segs : Array BusSeg) (stops : Array TransitStop) : Array (Opt
 
 /-! #### Exactly at the threshold
 
-`DWELL_AT_STOP_AND_SIGNAL_NATS` replaces the stop credit rather than adding to
-it (0.4 instead of 0.8 — a signal is an alternative explanation for the dwell),
-so the reachable totals are a coarse grid. The only combination that lands on
-exactly `BUS_EVIDENCE_THRESHOLD_NATS` is no boarding wait plus three dwells
-scoring 0.8 + 0.8 + 0.4, which sums to exactly 2 in that order. Without it the
-`≥`-vs-`>` decision at the bar is unpinned, so the fixture is built for it. -/
+A signal replaces the stop credit (0.4 instead of 0.8), so totals are a coarse
+grid; only no boarding wait plus dwells of 0.8 + 0.8 + 0.4 lands exactly on
+`BUS_EVIDENCE_THRESHOLD_NATS`, so this fixture pins `≥` against `>`. -/
 
 /-- Three dwells and no preceding standstill, so `boarding` is 0. -/
 private def barFixes : List Fix := Id.run do
@@ -880,43 +841,24 @@ end AnnotateGuards
 
 /-! ## `annotateBusRoutes` — the orchestration over the matcher
 
-The pass that turns a match into a label. Unlike the other passes in this
-tranche it was never `async`: the candidate routes arrive as data (the
-orchestrator reads `bus_route_cache`), so there is nothing to inject and the
-whole pass ports as it stands.
+The candidate routes arrive as data (`bus_route_cache`), so nothing is
+injected. Pinned: the leg filter reads the effective mode, the fix window is
+inclusive, board and alight are its first and last fix while the trace is all
+of them, and the speed is `avgSpeed`. The early return on no routes is
+unobservable, so unpinned. -/
 
-What it decides beyond the matcher is small and all of it is pinned: the leg
-filter reads the effective mode, the fix window is inclusive at both ends, the
-board and alight are the window's first and last fix while the trace is all of
-them, and the speed handed to the matcher is the segment's `avgSpeed`.
-
-With no routes `matchBusRoute` returns `none` for every leg, so the early
-return on `routes.length === 0` is an optimisation with no observable
-consequence, and unpinnable for that reason.
-
-Exact: no arithmetic of its own — the window test is on `Int` timestamps and
-everything else is the matcher's, whose ULP story is above. -/
-
-/-- The segment fields this pass reads and the two it writes.
-
-`avgSpeed` is soft speed evidence and always present on an enriched segment, so
-an absent speed is not modelled here. The neutral arm `busSpeedPlausibility`
-keeps for one stays reachable through `matchBusRoute`, which takes an optional
-speed, and is pinned there. -/
+/-- The segment fields this pass reads and the two it writes. `avgSpeed` is
+always present on an enriched segment; the no-speed arm is pinned through
+`matchBusRoute`. -/
 abbrev BusRouteSeg := Verified.Geo.SegmentMerge.Seg
 
-/-- Name the bus route each road-vehicle leg rode. Purely additive: a leg that
-anchors and corroborates gets `vehicleKind := "bus"` and the route label, and
-everything else — wrong mode, too few fixes, no route matched — passes through
-untouched, so an empty route set makes the pass a no-op.
+/-- Name the bus route each road-vehicle leg rode: a leg that anchors and
+corroborates gets `vehicleKind := "bus"` and the route label; everything else
+passes through, so no routes is a no-op.
 
-The alight has a second reading when the fixes cannot show one. A ride
-whose last fix anchors to no stop is tried again with the centroid of the stay
-that follows it as the alight, within `BUS_STAY_ALIGHT_M` of a stop: the bus
-passed that stop and he was next seen a short walk from it. The observed
-alight is always tried first, so a leg the fixes do anchor is never re-read
-from its destination. The ride keeps its extent — the walk from the stop is
-the part of the record the trace lost, and nothing here invents it. -/
+When the last fix anchors to no stop, the centroid of the following stay is
+tried as the alight, within `BUS_STAY_ALIGHT_M` of a stop. The observed alight
+goes first, and the ride keeps its extent: nothing invents the walk. -/
 def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes : List BusRoute)
     (anchorM : Float := BUS_STOP_ANCHOR_M) (stopPassM : Float := BUS_STOP_PASS_M)
     (minCoverage : Float := BUS_MIN_INTERMEDIATE_COVERAGE)
@@ -933,13 +875,9 @@ def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes
       else
         let first := legFixes.head!
         let alight := legFixes.getLast!
-        -- Board where the user waited, not where the leg's first fix landed. A
-        -- segment's first fix is the pull-away, and on real rides it sits
-        -- 150–250 m past the stop against an anchor of 120 m, enough to read
-        -- a bus journey as `driving`. The wait is the standstill
-        -- `detectBoardingWait` already finds for the evidence pass; it leads the
-        -- trace so the pull-away stretch can corroborate stops too. With no
-        -- wait the first fix stands.
+        -- Board where the user waited, not at the first fix, which is the
+        -- pull-away 150–250 m past the stop (the anchor is 120 m). The wait
+        -- leads the trace so the pull-away can corroborate stops too.
         let (board, trace) : LatLon × List LatLon :=
           match boardingWaitAt points seg.startTs slackS with
           | some (_, la, lo) => (⟨la, lo⟩, ⟨la, lo⟩ :: legFixes.map fun p => ⟨p.lat, p.lon⟩)
@@ -990,11 +928,8 @@ private def R_END : Int := 900
 
 private def LABEL : String := "Green Park → Victoria Station · 38"
 
-/-- An ordinary bus pace, well clear of the speed logistic's decision boundary,
-so every fixture below tests what it is about rather than the speed term — which
-the four `avgSpeed` guards bracket on their own. No fixture leaves the speed to
-a default that would stand for "no speed evidence", because the pipeline never
-hands this pass one. -/
+/-- An ordinary bus pace, clear of the speed logistic's boundary, so fixtures
+test their own subject; the four `avgSpeed` guards bracket the speed term. -/
 private def BUS_PACE_KMH : Float := 14
 
 private def rdrive (mode : String := "driving") (refinedMode : Option String := none)
@@ -1012,11 +947,9 @@ private def cells (segs : Array BusRouteSeg) (fixes : List Fix) (routes : List B
 
 #guard cells #[rdrive] busFixes' [route38] == #[(some "bus", some LABEL)]
 
--- The alight the fixes cannot show. The trace loses its tail: the last fix
--- lands 430 m off the road and anchors to nothing, so on its own the leg stays
--- driving. With a stay following it 220 m from Victoria Station — 300+ m from
--- Wilton Street before it and 400 m from Vauxhall Bridge Road after — the ride
--- is read to Victoria Station.
+-- The alight the fixes cannot show: the last fix lands 430 m off the road, so
+-- the leg alone stays driving; the following stay 220 m from Victoria Station
+-- reads the ride to it.
 private def traceLostTail : List LatLon := (traceOnRoute.take 7) ++ [⟨51.4971, -0.1380⟩]
 private def lostTailFixes : List Fix := stamp traceLostTail
 private def clinicFixes : List Fix :=
@@ -1054,11 +987,9 @@ private def rwalk : BusRouteSeg := rdrive (mode := "walking") (startTs := 900) (
 -- Two fixes clear the bar and still fail to match: clearing it is not matching.
 #guard cells #[rdrive (endTs := 200)] busFixes' [route38] == #[(none, none)]
 
-/- The two-fix bar is not only guarding the index. `routeTwin` opens with two
-stops 24 m apart, so a one-fix leg anchors both ends of an in-order pair whose
-span holds no intermediate stop — coverage 0, which clears a floor of 0 because
-`0 < 0` is false. The matcher underneath does match that leg; the bar is the
-only thing between this fixture and a "bus" named off a single GPS point. -/
+/- The two-fix bar does more than guard the index: `routeTwin` opens with two
+stops 24 m apart, so a one-fix leg would anchor an in-order pair with coverage 0,
+which clears a floor of 0. The bar alone stops a "bus" named off one GPS point. -/
 #guard ((matchBusRoute ⟨⟨51.5067, -0.1428⟩, ⟨51.5067, -0.1428⟩, [⟨51.5067, -0.1428⟩], none⟩
           [routeTwin] (minCoverage := 0)).map busRouteLabel) == some "Twin A → Twin B · C1"
 #guard cells #[rdrive (endTs := 150)] busFixes' [routeTwin] (minCoverage := 0) == #[(none, none)]
