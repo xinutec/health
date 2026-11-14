@@ -1,18 +1,11 @@
-//! The reverse-geocode cache key and the wire shape.
-//!
-//! The cache these keys address is in production. A key that disagrees with the
-//! stored rows' does not fail: it misses, and re-pays Nominatim for an answer
-//! already bought. So the rounding is pinned here rather than trusted.
-//!
-//! Round-tripping against the corpus's own 795 recorded answers is
-//! `geocode_wire.rs`; this file is the arithmetic and the narrowing.
+//! The reverse-geocode cache key and the wire shape. A key off by the stored
+//! rows' rounding misses silently and re-pays Nominatim, so it is pinned here.
+//! The corpus round trip is `geocode_wire.rs`.
 
 use backend::nominatim::{Geocode, narrow, query_type, round_coord};
 
-/// The whole point of this module's key. The stored rows round a half toward
-/// +∞; `f64::round` takes it away from zero. Every longitude in this record is
-/// negative, so the two rules disagree on exactly the data in hand, and
-/// `f64::round` would miss every stored row at this coordinate.
+/// The stored rows round a half toward +∞; `f64::round` rounds away from zero,
+/// and every longitude here is negative, so it would miss every stored row.
 #[test]
 fn a_negative_half_rounds_the_way_javascript_rounds_it() {
     let lon = -0.18365_f64;
@@ -85,11 +78,8 @@ fn a_geocode_encodes_in_the_fixtures_own_field_names() {
     assert_eq!(v["category"], "highway");
 }
 
-/// The seam between the queue and the cache. A miss is recorded under
-/// `queue_key`, and the drain parses that key back into coordinates and hands
-/// them to `cache_put`, which rounds again. If rounding were not idempotent the
-/// answer would land under a key the fold never forms — a fetch paid for and an
-/// entry that stays missing, with nothing to see.
+/// The queue key is parsed back and rounded again by `cache_put`, so rounding
+/// must be idempotent, or a paid fetch lands under a key the fold never forms.
 #[test]
 fn a_queued_key_parses_back_to_the_same_cache_key() {
     for (lat, lon) in [

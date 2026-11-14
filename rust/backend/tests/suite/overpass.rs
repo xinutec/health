@@ -1,10 +1,6 @@
-//! The Overpass client's response handling.
-//!
-//! The case that matters is a missing `elements` key. Overpass omits it for a
-//! query that matched nothing, and reading that as an error would turn "this
-//! tile has no bus routes" into a tile failure — which feeds the refusal that
-//! decides whether the mirror may be rebuilt. A whole region could be declared
-//! broken because part of it is genuinely empty.
+//! The Overpass client's response handling. Overpass omits `elements` for an
+//! empty result; read as an error, a genuinely empty tile would count against
+//! the region and block a mirror rebuild.
 
 use backend::overpass::elements;
 
@@ -50,11 +46,8 @@ fn the_first_attempt_tries_every_mirror() {
 
 #[test]
 fn a_retry_skips_the_mirror_that_has_never_answered() {
-    // Not a preference — `kumi.systems` has produced zero successful tiles in
-    // every measurement taken of it: it connects, then never answers or returns
-    // 500. What it reliably does is spend FALLBACK_TIMEOUT_MS. Paying
-    // that a second time for a tile buys nothing, and the retry exists to be
-    // cheap enough that the nightly can afford it.
+    // `kumi.systems` has never answered a tile in any measurement, only spent
+    // FALLBACK_TIMEOUT_MS, so the retry skips it.
     for attempt in 1..4 {
         let urls = attempt_urls(attempt);
         assert_eq!(urls.len(), 1, "attempt {attempt}");
@@ -84,11 +77,8 @@ fn a_throttled_tile_may_be_retried() {
 
 #[test]
 fn a_banned_tile_is_not_retried() {
-    // The case that matters. During a ban the connection is refused at 46 ms:
-    // nothing answers, including `/api/status`. That makes `wait_for_slot`
-    // return 0 instantly, so a retry would fire with nothing pacing it and
-    // double the request rate into a server that has already stopped
-    // listening.
+    // During a ban every connection is refused at once, `/api/status` included,
+    // so `wait_for_slot` returns 0 and an unpaced retry would double the load.
     let banned = Outcome::AllFailed {
         errors: vec!["https://overpass-api.de/api/interpreter: error sending request".into()],
         answered: false,

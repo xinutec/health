@@ -25,10 +25,8 @@ structure Window where
 
 /-! ## Window resolution over the observation tensor
 
-A prefix sum of measured cadence for the O(1) step total, and the bracketing
-`prevGpsFix` / `nextGpsFix` with their slop (fix time outside the segment's own
-minutes). The only transcendental is `haversineMeters` (≤1 ULP); the slop and
-step arithmetic is exact. -/
+A cadence prefix sum for O(1) step totals, and the bracketing `prevGpsFix` /
+`nextGpsFix` with their slop. Exact except `haversineMeters` (≤1 ULP). -/
 
 open Verified.Hsmm.Observation (ObsRow Fix)
 open Verified.Hsmm.FloatScore (haversineMeters)
@@ -39,10 +37,9 @@ def stepPrefix (obs : Array ObsRow) : Array Float :=
   -- Starts at one entry and only grows, so the running total is always there.
   obs.foldl (init := #[0.0]) fun a o => a.push (a.back?.getD 0 + o.cadence.getD 0)
 
-/-- The caller-side `Window` for `[startIndex, segEnd]`, or `none` ("assert
-    nothing") when a bracketing fix is missing or non-advancing. `startIndex` may
-    be negative for early segments; it is clamped at 0 for the `first`/step
-    lookups. -/
+/-- The `Window` for `[startIndex, segEnd]`, or `none` ("assert nothing") when a
+    bracketing fix is missing or non-advancing. A negative `startIndex` is
+    clamped at 0 for lookups. -/
 def windowFor (obs : Array ObsRow) (pref : Array Float) (startIndex segEnd : Int) : Option Window :=
   if hse : segEnd < 0 ∨ segEnd ≥ (obs.size : Int) then none
   else

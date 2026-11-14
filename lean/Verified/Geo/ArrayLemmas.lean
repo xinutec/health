@@ -1,16 +1,10 @@
 /-!
 # Array `getD` / `setIfInBounds` lemmas
 
-The small array read-after-write facts the Lazy-Dijkstra proofs
-(`LazyDijkstra`/`LazyInv`/`LazyFuel`) lean on repeatedly: reading a
-`setIfInBounds` at a different index, at the written index, and the two
-`Bool`-specific corollaries used to track the `done` array. Kept in one
-place so the lazy chain — and the matcher passes that will route over it —
-share a single copy.
-
-`setIfInBounds` silently drops an out-of-range write, which is why
-`getD_sib_lt` needs the in-bounds hypothesis and `getD_set_true` handles
-the out-of-range case explicitly.
+Read-after-write facts the lazy Dijkstra proofs share: reading a
+`setIfInBounds` at another index and at the written one, and two `Bool`
+corollaries for `done`. `setIfInBounds` drops out-of-range writes, hence
+`getD_sib_lt`'s in-bounds hypothesis and `getD_set_true`'s explicit case.
 -/
 
 namespace Verified.Geo
@@ -53,10 +47,8 @@ theorem getD_set_true {a : Array Bool} (u v : Nat)
   · rw [if_neg huv]
     exact h
 
-/-- At an in-bounds index, `getD` does not depend on the default — the
-matcher's reconstruction reads `prev` with the sentinel default `n`, while
-the Dijkstra invariants freeze it with default `0`; both agree on the
-settled vertices (all in range). -/
+/-- At an in-bounds index `getD` ignores the default: the matcher reads `prev`
+with default `n`, the invariants with `0`, and settled vertices are in range. -/
 theorem getD_lt_indep {α : Type} {a : Array α} {i : Nat} (h : i < a.size)
     (d₁ d₂ : α) : a.getD i d₁ = a.getD i d₂ := by
   rw [Array.getD_eq_getD_getElem?, Array.getD_eq_getD_getElem?,

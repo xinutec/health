@@ -1,21 +1,10 @@
-//! The multi-day API window, through the linked Lean host.
+//! The multi-day API window, through the Lean worker. `earliest_visible` is the
+//! security boundary: a share recipient's read is capped by their window however
+//! large `days` is.
 //!
-//! One of these is a convenience and one is a security boundary. The boundary is
-//! `earliest_visible`: a share recipient's read is capped by their window
-//! however large `days` is, and getting the comparison backwards hands them the
-//! owner's whole history in a response that looks entirely normal.
-//!
-//! # ⚠ these tests are only as current as the last successful `:static` build
-//!
-//! Reversing that comparison in `Verified/ApiWindow.lean` fails four `#guard`s
-//! to compile, which is the real guard, and this file still passes, because a
-//! failed `lake build` leaves the previous `.a` in place and the host goes on
-//! calling yesterday's Lean.
-//!
-//! So a green run here is evidence about the wire, not about the rule. The
-//! rules are pinned by the `#guard`s, which cannot be stale because a wrong one
-//! is a build error. Rebuild the statics before trusting a change measured
-//! here.
+//! This checks the wire; the rules are pinned by `Verified/ApiWindow.lean`'s
+//! `#guard`s, which fail the Lean build. Rebuild before trusting a rule change
+//! measured here.
 
 use backend::lean;
 

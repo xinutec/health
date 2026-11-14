@@ -1,15 +1,7 @@
-//! `backend`'s command line, declared once with clap.
-//!
-//! The list of subcommands, their arguments and their one-line descriptions are
-//! this enum: `backend --help` renders it, so the listing cannot drift from the
-//! dispatch the way the hand-kept table did (19 of 29 before it was tested).
-//!
-//! It lives in the library, not beside `main`, so the suite can parse the exact
-//! argv production runs (`tests/suite/usage.rs`).
-//!
-//! A parse error exits 64, not clap's 2: 64 (`EX_USAGE`) is what every
-//! subcommand exited with before, and a cron reading exit codes should not see
-//! the meaning change under it. See [`parse`].
+//! `backend`'s command line, declared once with clap, so `backend --help` is
+//! the dispatch and cannot drift from it. In the library so the suite parses
+//! the exact argv production runs (`tests/suite/usage.rs`). A parse error exits
+//! 64 (`EX_USAGE`), as every subcommand always has, not clap's 2; see [`parse`].
 
 use clap::{Args, Parser, Subcommand};
 
@@ -216,11 +208,9 @@ fn parse_date(s: &str) -> Result<chrono::NaiveDate, String> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| format!("{s:?}: {e}"))
 }
 
-/// The process's argv parsed as `T` — or the process exits: 0 for `--help`, 64
-/// for anything it cannot parse (a missing subcommand included, as before).
-///
-/// Shared by the examples, several of which exit 2 to mean "the golden corpus
-/// is not on this machine, skip loudly"; clap's own 2 would read as that.
+/// The process's argv parsed as `T`, or exit: 0 for `--help`, 64 for anything
+/// unparseable. Examples use 2 for "no golden corpus here", so clap's 2 would
+/// collide.
 pub fn parse_or_exit<T: Parser>() -> T {
     T::try_parse().unwrap_or_else(|e| {
         use clap::error::ErrorKind;

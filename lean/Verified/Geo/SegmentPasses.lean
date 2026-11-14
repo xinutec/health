@@ -3,15 +3,13 @@ import Verified.Geo.PathPoint
 /-!
 # Vehicle identity
 
-`resolveVehicleIdentity` demotes the trailing `driving` leg to `vehicle` when no
-pass has claimed it. `driving` doubles as the placeholder for "a vehicle-speed
-run I have not identified yet", and an *unfinished* ride reaches the UI wearing
-the name of a car. The rule keys on incompleteness (last segment, nothing after
-it), not on absence of evidence — two user-confirmed taxis carry no road match
-either. It keys on `effectiveMode`, so a leg some earlier pass refined is judged
-by what it now is.
+`resolveVehicleIdentity` demotes a trailing unclaimed `driving` leg to `vehicle`:
+`driving` doubles as "unidentified vehicle-speed run", and an unfinished ride
+should not wear a car's name. It keys on incompleteness (last segment), not
+missing evidence (confirmed taxis have no road match either), and on
+`effectiveMode`.
 
-Wholly pure, no Float arithmetic ⇒ exact. UNPROVEN; pinned by the `#guard`s.
+Exact. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.SegmentPasses
@@ -42,12 +40,9 @@ an identified bus route. All three are read for truthiness, so an empty
 def hasVehicleClaim (s : Seg) : Bool :=
   (s.matchedPath.getD #[]).size > 0 || s.wayName.any (· != "") || s.vehicleKind.isSome
 
-/-- Demote the trailing unclaimed `driving` leg to `vehicle`. Anything with a
-segment after it has finished, and its label is the cascade's final word rather
-than a placeholder awaiting more data — so a finished ride, however thinly
-evidenced, keeps whatever the pipeline concluded. Pure (no clock), so a
-completed day replays byte-identically: its final segment is a stay or a sleep
-and this pass does nothing at all. -/
+/-- Demote the trailing unclaimed `driving` leg to `vehicle`. A leg with a
+segment after it is finished and keeps the cascade's label. No clock, so a
+completed day (ending in a stay or sleep) replays unchanged. -/
 def resolveVehicleIdentity (segments : Array Seg) : Array Seg :=
   if segments.isEmpty then segments else
   let lastIdx := segments.size - 1

@@ -2,16 +2,13 @@ import Verified.Fix
 /-!
 # Per-minute observation tensor
 
-Stitches the GPS / HR / step / sleep streams into one row per minute of a
-local day (1440, or 1380 and 1500 on DST days): per-minute median lat/lon +
-mean speed, mean HR, summed cadence, sleep-overlap `inBed`, watch-liveness
-cadence imputation, and the forward/backward nearest-fix scans.
+One row per minute of a local day (1440, or 1380/1500 on DST days) from the
+GPS, HR, step and sleep streams: median lat/lon, mean speed, mean HR, summed
+cadence, `inBed`, watch-liveness cadence imputation, and nearest-fix scans.
 
-The one thing Lean cannot do, IANA-timezone resolution (hour/day-of-week, and
-the day's UTC bounds), stays in the thin caller: this module takes `startUtc`,
-the day's length in minutes, and a per-minute `localCtx` lookup as inputs.
-Everything else is pure array logic over `median`/`mean`/sums, so it is bit-exact (no transcendentals; float
-sums fold in a fixed order). UNPROVEN; pinned by the `#guard`s.
+Time zones stay in Rust: this takes `startUtc`, the day's minutes and a
+per-minute `localCtx`. The rest is bit-exact (fixed-order float sums, no
+transcendentals). UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Observation

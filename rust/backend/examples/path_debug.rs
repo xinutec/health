@@ -1,21 +1,17 @@
-//! The decoder's score of its own path against an alternative, term by term.
-//!
-//! For every segment of the decoded path, and of that path with the caller's
-//! segments written over it: the transition in, the entry prior, the summed
-//! per-minute emissions and the duration term (`Assemble.durAt`, which holds
-//! the segment-level emissions, each of them printed after the state) — the instrument for a boundary the decode did
-//! not place: which term paid for leaving it out. The numbers are the model's
-//! own (`pathDebug` on `assemblesegments`), composed as `Spec.scoreAux`.
+//! The decoder's score of its own path against an alternative, term by term:
+//! per segment of the decoded path, and of it with the caller's segments
+//! written over, the transition in, the entry prior, summed emissions and the
+//! duration term (`Assemble.durAt`, with the segment-level emissions after the
+//! state). It shows which term paid for a boundary the decode did not place.
+//! The numbers are the model's (`pathDebug`), composed as `Spec.scoreAux`.
 //!
 //! ```text
 //! cargo run --release --example path_debug -- <YYYY-MM-DD>-$USER <alt.json>
 //! ```
 //!
-//! `alt.json`: `[{"startTs": n, "endTs": n, "state": "<stateKey>"}]`, each
-//! written over `[startTs, endTs)`. Printed: the segments of both paths within
-//! an hour of the alternative, and both totals.
-//!
-//! Exit 2 when the corpus is absent.
+//! `alt.json`: `[{"startTs": n, "endTs": n, "state": "<stateKey>"}]`, each over
+//! `[startTs, endTs)`. Prints both paths' segments within an hour of the
+//! alternative and both totals. Exit 2 when the corpus is absent.
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
