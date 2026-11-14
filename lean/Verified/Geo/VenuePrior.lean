@@ -60,8 +60,8 @@ structure VenueTypeStats where
   hours : List Float
   deriving Inhabited, BEq
 
-/-- The mined priors blob. Association lists preserve JS object insertion
-    order, which `shapeScore` reads back as the subtype-universe size. -/
+/-- The mined priors blob. Association lists keep insertion order, which
+    `shapeScore` reads back as the subtype-universe size. -/
 structure VenuePriors where
   bySubtype : List (String × VenueTypeStats)
   byCategory : List (String × VenueTypeStats)
@@ -396,7 +396,7 @@ private def bumpAt (xs : List Float) (i : Nat) (by_ : Float) : List Float :=
   xs.zipIdx.map (fun (v, j) => if j == i then v + by_ else v)
 
 /-- Add `r` visits' worth of mass at `(bucket, hour)` to `key`, appending a
-    fresh entry when absent — preserving insertion order like the JS object. -/
+    fresh entry when absent, keeping insertion order. -/
 private def bumpStats (tbl : List (String × VenueTypeStats)) (key : String)
     (bucket hour : Nat) (r : Float) : List (String × VenueTypeStats) :=
   if tbl.any (fun (k, _) => k == key) then

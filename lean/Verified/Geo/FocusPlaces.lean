@@ -67,7 +67,7 @@ def STAY_DISPLAY_NAME : String := "Stay"
 
 private def MIN_PER_DAY : Float := 24 * 60
 
-/-- Positive-mod against a period, matching JS `((x % p) + p) % p`. -/
+/-- Positive mod against a period, `((x % p) + p) % p`. -/
 private def wrapTo (x period : Float) : Float := x - Float.floor (x / period) * period
 
 /-- Local solar hour as a continuous value in `[0, 24)` — like
@@ -247,7 +247,7 @@ def hourProfileForRange (startTs endTs : Int) (lon : Float) : List Float :=
 def serializeHourProfile (profile : List Float) : String :=
   String.intercalate "," (profile.map (fun x => toString (Float.floor (x * 1000 + 0.5)).toInt64.toInt))
 
-/-- JavaScript's `Number(s)` over what `serializeHourProfile` emits: whitespace
+/-- A numeric field of a stored hour profile: whitespace
     ignored, `""` is 0, anything else `none` (NaN), which rejects the profile. -/
 private def jsNumber (s : List Char) : Option Float := Id.run do
   let t := (s.dropWhile (fun c => c == ' ')).reverse.dropWhile (fun c => c == ' ') |>.reverse
@@ -702,7 +702,7 @@ private def nightCluster : Cluster :=
 #guard (parseHourProfile (some "")).isNone
 #guard (parseHourProfile (some "1,2,3")).isNone
 #guard (parseHourProfile (some (String.intercalate "," (List.replicate 24 "x")))).isNone
--- JS `Number("")` is 0, so a row of empty fields parses to all zeros.
+-- An empty field is 0, so a row of empty fields parses to all zeros.
 #guard parseHourProfile (some (String.intercalate "," (List.replicate 24 ""))) == some (List.replicate 24 0)
 
 /-! ### Classification -/

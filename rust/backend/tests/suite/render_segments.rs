@@ -48,8 +48,7 @@ fn the_field_order_is_the_one_node_writes() {
 }
 
 /// Absent stays absent. A segment the chain never reached carries no station
-/// key at all; inserting a null here would erase a distinction node's rows make
-/// and this port has to reproduce.
+/// key at all; inserting a null would erase a distinction the stored rows make.
 #[test]
 fn an_absent_station_key_is_not_filled_in_with_null() {
     let stationary = serde_json::json!({

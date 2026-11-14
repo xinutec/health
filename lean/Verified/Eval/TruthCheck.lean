@@ -79,7 +79,7 @@ def normOpt : Option String → Option String
   | none => none
   | some s => some (norm s)
 
-/-- `w || null` — JS treats the empty string as absent. -/
+/-- `w || null`: an empty string reads as absent. -/
 private def nonEmpty (s : String) : Option String :=
   if s.isEmpty then none else some s
 
@@ -231,7 +231,7 @@ structure TRow where
 what was happening then, and a leg clipping the window's edge did not answer
 it. -/
 def stateIdxAt (states : Array StateWindow) (startTs endTs : Int) : Option Nat :=
-  -- `(startTs + endTs) / 2` in JS is a float midpoint; an odd sum lands on .5.
+  -- `(startTs + endTs) / 2` is a float midpoint; an odd sum lands on .5.
   -- Doubling the bounds instead keeps it exact and orders identically.
   let mid2 := startTs + endTs
   states.findIdx? (fun s => 2 * s.startTs ≤ mid2 && mid2 < 2 * s.endTs)

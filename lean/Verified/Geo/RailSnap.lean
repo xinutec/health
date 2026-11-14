@@ -136,8 +136,7 @@ def resolveStation (name : String) (stations : Array OsmStation) : Option Resolv
 private def directionals : List String :=
   [" Eastbound", " Westbound", " Northbound", " Southbound", " Inner Rail", " Outer Rail"]
 
-/-- Push `s` unless already present — JS `Set.add`, whose iteration order is
-    insertion order. -/
+/-- Push `s` unless already present: an insertion-ordered set. -/
 private def pushUniq (xs : Array String) (s : String) : Array String :=
   if xs.contains s then xs else xs.push s
 
@@ -279,8 +278,7 @@ def buildRailGraph (lines : Array RailWay) (cloud : FixCloud) (bridgeM : Float :
 Relaxation is on strict improvement, so among equal-cost routes the heap's pop
 order picks the winner. -/
 
-/-- Priority and vertex travel together, so one bound covers both reads —
-the two parallel arrays this used to hold shared a length only by discipline. -/
+/-- Priority and vertex travel together, so one bound covers both reads. -/
 private structure Heap where
   items : Array (Float × Nat) := #[]
   deriving Inhabited

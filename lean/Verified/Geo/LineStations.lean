@@ -66,7 +66,7 @@ private def matchLineWord (cs : Array Char) (i : Nat) : Option Nat :=
     word.zipIdx.all (fun (c, off) => match at? (k + off) with
       | some d => lower d == c
       | none => false)
-  -- Greedy in the same order JS backtracks: try "lines" first so the boundary
+  -- Greedy, as a backtracking regex: try "lines" first so the boundary
   -- test lands after the 's' rather than inside the word.
   if spells i ['l', 'i', 'n', 'e', 's'] then
     match at? (i + 5) with

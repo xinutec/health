@@ -59,7 +59,7 @@ def isVehicleModeStr (m : String) : Bool :=
   m == "train" || m == "bus" || m == "driving" || m == "cycling" || m == "plane"
 
 /-- Decoded segments to minutes — `t` steps from the raw `startTs`, not a
-minute-aligned one (`segmentsToMinutes`, `score-decoder-golden.ts:117`). -/
+minute-aligned one. -/
 def segmentsToMinutes (segs : Array Seg) : Array DecoderMinute := Id.run do
   let mut out : Array DecoderMinute := #[]
   for s in segs do
@@ -334,7 +334,7 @@ private def dm (t : Int) (m : String) (l : Option String := none)
 -- sleeping folds to stationary and is not movement.
 #guard (decoderJourneys #[dm 0 "sleeping"]).size == 0
 
--- Dominant mode: ties break to first insertion (JS Map order).
+-- Dominant mode: ties break to first insertion.
 #guard (dominantOverWindow #[dm 0 "walking", dm 60 "train" (some "L")] 0 120 "train").1 == some "walking"
 -- The dominant line counts only mode-matching minutes.
 #guard (dominantOverWindow #[dm 0 "train" (some "L1"), dm 60 "train" (some "L1"),

@@ -82,8 +82,8 @@ structure RailRun where
 
 /-! ## Line-name handling -/
 
-/-- Append preserving first-seen order and dropping repeats — a JS `Set` built by
-insertion, which is what every line collection here is. -/
+/-- Append preserving first-seen order and dropping repeats: every line
+collection here is an insertion-ordered set. -/
 private def pushUnique (xs : Array String) (x : String) : Array String :=
   if xs.contains x then xs else xs.push x
 

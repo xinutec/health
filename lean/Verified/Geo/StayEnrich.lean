@@ -46,7 +46,7 @@ open Verified.Geo.TubeHop (NearbyStation)
 
 /-! ## Local solar time -/
 
-/-- JS `%` on doubles: the truncated remainder, not Lean's `%` and not a
+/-- `%` on doubles as the truncated remainder, not Lean's `%` and not a
 floored modulo. Exact for every value here — `|a/b| < 3`, so the quotient's
 truncation and the subtraction are both exact. -/
 private def jsMod (a b : Float) : Float :=

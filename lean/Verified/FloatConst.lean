@@ -27,10 +27,10 @@ def floats (n : Nat) (x : Float) : FloatArray := Id.run do
 #guard (floats 3 1.5).data == #[1.5, 1.5, 1.5]
 #guard (floats 0 1.5).size == 0
 
-/-- `Math.floor` into an `Int`, the JS grid-cell index. -/
+/-- Floor into an `Int`, the grid-cell index. -/
 def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
 
-/-- JS `x || 1`: zero and NaN are falsy. -/
+/-- `x || 1`: zero and NaN become 1. -/
 def orOne (x : Float) : Float := if x == 0 || x.isNaN then 1 else x
 
 /-- `n.toFloat` through the 64-bit cast when `n` fits: `Nat.toFloat` goes

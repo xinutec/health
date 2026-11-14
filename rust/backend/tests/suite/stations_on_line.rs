@@ -76,7 +76,7 @@ fn the_fixture_arm_reproduces_the_recorded_answers() {
 
         // Order, not set equality. Downstream journey resolution reads
         // positional relationships out of this list, so a set-equal-but-
-        // reordered answer is a different answer — the port says so itself.
+        // reordered answer is a different answer.
         assert_eq!(
             names,
             want_names,

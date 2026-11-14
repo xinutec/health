@@ -40,7 +40,7 @@ structure Way where
   deriving Inhabited, BEq, Repr
 
 /-- One `query(lat, lon, radiusM)` the corridor fetch made. The trace is the
-point of the port: a fixture replay that saw a different set of keys would be
+point: a fixture replay that saw a different set of keys would be
 replaying different captured data. -/
 structure Read where
   lat : Float

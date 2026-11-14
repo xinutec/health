@@ -28,13 +28,13 @@ open Verified.Hsmm.Duration (GammaFit)
 open Verified.Hsmm.RouteModel (RouteGraphModel LineEdge)
 open Verified.Hsmm.StateSpace (FocusPlaceRef buildStateSpace)
 
-/-- `KNOWN_LINES` — the served state space's train lines (decode.ts). -/
+/-- `KNOWN_LINES` — the served state space's train lines. -/
 def KNOWN_LINES : List String :=
   ["Metropolitan Line", "Jubilee Line", "Victoria Line", "Piccadilly Line", "Bakerloo Line",
    "Northern Line", "Circle Line", "Hammersmith & City Line", "District Line", "Central Line",
    "Elizabeth Line"]
 
-/-- `BASELINE_DURATION_FITS` — per-mode moments-matched Gamma fits (decode.ts). -/
+/-- `BASELINE_DURATION_FITS` — per-mode moments-matched Gamma fits. -/
 def baselineFit : Mode → GammaFit
   | .stationary => ⟨0.85, 0.0043, 132⟩
   | .walking    => ⟨1.07, 0.034, 60⟩

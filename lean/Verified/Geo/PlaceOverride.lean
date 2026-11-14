@@ -49,7 +49,7 @@ def decideHsmmTrainOverride (avgSpeedKmh lineOverlapFraction : Float)
   else decide (lineOverlapFraction > roadCorridorFraction.getD 0)
 
 /-- Add `v` to key `k`'s running total, preserving first-seen (insertion) order
-    — the tie-break the JS `Map` argmax below relies on. -/
+    — the tie-break the argmax below relies on. -/
 private def bumpOrdered {K : Type} [BEq K] (acc : List (K × Float)) (k : K) (v : Float) : List (K × Float) :=
   if acc.any (fun p => p.1 == k) then acc.map (fun p => if p.1 == k then (p.1, p.2 + v) else p)
   else acc ++ [(k, v)]
@@ -344,7 +344,7 @@ private def PLACES : List (Int × PlaceLookup) := [
     #[⟨1751000000, 1751000600, "stationary", none, (some 17), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Mid Clinic"), none, none, none)]
 
--- H2a: two places holding exactly equal overlap (300 s each of a 600 s window). The argmax keeps the first — mirroring the JS Map insertion order — so place 7 wins. Under a last-wins tie-break place 9 would win and then fail the doorstep gate 1.7 km away, so the tie-break is observable through the output rather than only through the winner.
+-- H2a: two places holding exactly equal overlap (300 s each of a 600 s window). The argmax keeps the first in insertion order, so place 7 wins. Under a last-wins tie-break place 9 would win and then fail the doorstep gate 1.7 km away, so the tie-break is observable through the output rather than only through the winner.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Somewhere"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
     #[⟨1751000000, 1751000300, "stationary", none, (some 7), none, none, none, none⟩, ⟨1751000300, 1751000600, "stationary", none, (some 9), none, none, none, none⟩] PLACES).map projSeg ==
   #[("stationary", none, (some "Work"), none, none, none)]

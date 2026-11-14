@@ -40,7 +40,7 @@ def stripQualifier (s : String) : String :=
   | [] | [_] => s
   | parts => (" (".intercalate parts.dropLast).trimAscii.toString
 
-/-- Append-preserving dedup (mirrors JS `Set` insertion-order iteration). -/
+/-- Insertion-order dedup. -/
 def dedup (xs : List String) : List String :=
   xs.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) []
 
@@ -175,8 +175,7 @@ missed, and the answers depend on that.
 def GRID_CELL_DEG_LAT : Float := 0.0045
 def GRID_CELL_DEG_LON : Float := 0.007
 
-/-- Grid cell containing a coordinate. `Float.floor` then `toInt64` matches JS
-    `Math.floor` (including for negatives). -/
+/-- Grid cell containing a coordinate: floor, including for negatives. -/
 def cellOf (lat lon : Float) : Int × Int :=
   ((lat / GRID_CELL_DEG_LAT).floor.toInt64.toInt, (lon / GRID_CELL_DEG_LON).floor.toInt64.toInt)
 
@@ -195,7 +194,7 @@ Whether an edge is underground, and its length.
 -- Great-circle metres: the place snap's formula, one definition for both.
 export Verified.Hsmm.FloatScore (haversineMeters)
 
-/-- JS `Number(s)` narrowed to what an OSM `layer` value can be: an optional
+/-- An OSM `layer` value as a number: an optional
 minus sign and digits. Anything else would be `NaN`, and every comparison with
 `NaN` is false, modelled here as `none`. -/
 private def jsIntegerLayer? (s : String) : Option Float :=
@@ -282,7 +281,7 @@ structure RawStop where
 ~1.1 m: junction endpoints agree to 5 dp and fuse; a sixth would split them, a
 fourth fuse distinct ones. -/
 def nodeKey (lat lon : Float) : String :=
-  -- `toFixed` is `Option` because JS `toFixed` is undefined past 1e21. A
+  -- `toFixed` is `Option`: it is undefined past 1e21. A
   -- coordinate can never reach that, and a silent "" here would fuse every such
   -- node into one, so the fallback is the raw value rather than empty.
   let f := fun (x : Float) => (Verified.JsNum.toFixed x 5).getD (toString x)

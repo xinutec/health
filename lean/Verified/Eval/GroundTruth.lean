@@ -112,7 +112,7 @@ def stripBraceRuns (s : String) : String := Id.run do
     return (String.ofList (s.toList.takeWhile (· != '{')))
   return out
 
-/-- Is `c` a word character for `\b` purposes (JS: `[A-Za-z0-9_]`)? -/
+/-- Is `c` a word character for `\b` purposes (`[A-Za-z0-9_]`)? -/
 private def isWordChar (c : Char) : Bool :=
   c.isAlphanum || c == '_'
 

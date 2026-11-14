@@ -179,7 +179,7 @@ division is that floor. -/
 def sampleIdxs (n count : Nat) : Array Nat :=
   (Array.range count).map fun i => (i * (n - 1)) / (max 1 (count - 1))
 
-/-- Upsert into a JS `Map`: a key already present keeps its original position and
+/-- Upsert keeping insertion order: a key already present keeps its position and
 only its value is replaced. Load-bearing — the deduped ways are handed to the
 cascade in this order, and `pickBestHighway` reads the first driveable one. -/
 private def upsert (m : Array (String × NearbyWay)) (k : String) (v : NearbyWay)

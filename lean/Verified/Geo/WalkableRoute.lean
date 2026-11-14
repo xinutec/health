@@ -183,8 +183,7 @@ def snapToEdge (p : Pt) (ways : Ways) (graph : WalkGraph) : Option Snap := Id.ru
 Relaxation is on strict improvement, so the heap's pop order picks among
 equal-cost routes; another heap would draw a different, equally short path. -/
 
-/-- Node id and key travel together, so one bound covers both reads — the two
-parallel arrays this used to hold shared a length only by discipline. -/
+/-- Node id and key travel together, so one bound covers both reads. -/
 private structure Heap where
   items : Array (Nat × Float) := #[]
   deriving Inhabited

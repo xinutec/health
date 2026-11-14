@@ -47,7 +47,7 @@ structure ModePrior where
   mainlineStopShare : Float := NO_STOP_SHARE
   mainlineStopStd : Float := STOP_STD_DEFAULT
 
-/-- `UNIFORM_GPS_PRESENT_PROB` in emissions.ts. -/
+/-- `UNIFORM_GPS_PRESENT_PROB`. -/
 def uniformGpsPresentProb : Float := 0.85
 
 /-- `MODE_PRIORS`. -/

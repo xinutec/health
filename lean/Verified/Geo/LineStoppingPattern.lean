@@ -74,11 +74,11 @@ def KMH_TO_MS : Float := 1 / 3.6
 
 /-! ## `lineBaseToken` — `lineName.replace(/\s+lines?\b.*$/i, "").trim()` -/
 
-/-- JS `\s`, ASCII half. -/
+/-- `\s`, ASCII half. -/
 private def isJsSpace (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r' || c.toNat == 0x0B || c.toNat == 0x0C
 
-/-- JS `\w` — `[A-Za-z0-9_]`. `Char.isAlphanum` is already ASCII-only. -/
+/-- `\w` — `[A-Za-z0-9_]`. `Char.isAlphanum` is already ASCII-only. -/
 private def isJsWord (c : Char) : Bool := c.isAlphanum || c == '_'
 
 /-- Does this lower-cased tail begin `lines?\b`? `"linesman"` matches neither

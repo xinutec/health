@@ -60,10 +60,10 @@ structure Poi where
   inside : Bool := false
   deriving Inhabited, BEq, Repr
 
-/-- JS truthiness for a string field: absent and empty both read as false. -/
+/-- A string field's truthiness: absent and empty both read as false. -/
 private def truthy (o : Option String) : Bool := o.any (· != "")
 
-/-- The JS `??` chain: an empty string is a value and stops the chain. Distinct
+/-- The `??` chain: an empty string is a value and stops the chain. Distinct
 from {@link truthy} on purpose — see the module header. -/
 private def nullish (xs : List (Option String)) : Option String :=
   xs.foldl (fun acc x => acc.orElse fun _ => x) none
@@ -548,7 +548,7 @@ private def plainAddress : Result :=
 private def paradeReads (r : Result) : Reads := { landmarks := [trattoria, pizzaPlace], geocode := geo (some r) none }
 #guard (bestPlace (paradeReads venueAddress) (some eveningStay) none true).map placeLabel == some "L'artista"
 #guard (bestPlace (paradeReads plainAddress) (some eveningStay) none true).map placeLabel == some "The Parade"
--- Without the flag the ranking named it anyway; the flag used to override that.
+-- Without the flag the ranking names it too.
 #guard (bestPlace (paradeReads venueAddress) (some eveningStay) none false).map placeLabel == some "L'artista"
 
 /-! ### Hours resolution -/

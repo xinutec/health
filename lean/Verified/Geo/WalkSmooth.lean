@@ -110,7 +110,7 @@ def diagOfA {n : Nat} (d : Vector Float n) (wAcc : Float) (wEdge : Float := 0) :
   for h : i in [0:n] do
     let mut ltl := ZERO
     -- `i ≤ n-3`, `0 ≤ i-1 ≤ n-3`, `0 ≤ i-2 ≤ n-3` — written additively because
-    -- Nat subtraction truncates where the JS number goes negative.
+    -- Nat subtraction truncates where a signed difference would go negative.
     if i + 3 ≤ n then ltl := ltl + ONE
     if i ≥ 1 && i + 2 ≤ n then ltl := ltl + FOUR
     if i ≥ 2 && i + 1 ≤ n then ltl := ltl + ONE

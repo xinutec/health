@@ -118,7 +118,7 @@ it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
 value to every pass in the cascade without a lossy projection at each hop. -/
 abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
-/-- A JS-truthy string: `""` is falsy, so it is dropped rather than inherited. -/
+/-- A non-empty string: `""` is dropped rather than inherited. -/
 private def truthy (s : Option String) : Option String :=
   match s with
   | some "" => none

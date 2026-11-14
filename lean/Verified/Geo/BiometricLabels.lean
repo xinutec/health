@@ -302,7 +302,7 @@ private def walkSeg (mins : Int := 5) (avg : Float := 3) (lin : Float := 0.8) : 
 private def steady (perMin : Float) (mins : Int := 5) : List StepPoint :=
   (List.range mins.toNat).map (fun k => sp (T0 + Int.ofNat k * 60) perMin) ++ [sp (T0 + mins * 60) perMin]
 
-/-! ### `fx` — the reason strings go through the JS rounding rule -/
+/-! ### `fx` — the reason strings round halves up -/
 
 #guard fx 0 0 == "0"
 #guard fx 4.5 0 == "5"
