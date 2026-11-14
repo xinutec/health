@@ -1,30 +1,17 @@
-//! Candidate OSM rows from the live mirror, for the fold's asks: the
-//! production implementation of the row-source trait (the golden fixtures'
-//! [`RowSetSource`](crate::rowset_answerer::RowSetSource) is the other).
+//! Candidate OSM rows from the live mirror for the fold's asks: the production
+//! row source (the golden fixtures' is
+//! [`RowSetSource`](crate::rowset_answerer::RowSetSource)).
 //!
-//! # The SQL is a pre-filter; Lean scores
-//!
-//! The SQL selects candidates inside a bounding box and hands every one to Lean
-//! (`Verified.Geo.OsmSpatial`), which owns the distance, the order and the cap.
-//! `ST_Distance` on a LINESTRING measures to the nearest vertex, not the way, so
-//! scoring in MariaDB would be wrong.
-//!
-//! # The box must contain Lean's scoring window
-//!
-//! A row the SQL drops is a row Lean never sees, so the box may only
-//! over-include. Its half-width is `radiusM / min(111000, 111000·cos lat)` in
-//! both axes, which contains `queryLines`' degree-space window
-//! (`radiusM / (111320·cos lat)`) and `queryPoints`' metre window
-//! (`haversineAt`), widened by [`SUPERSET_MARGIN`].
-//!
-//! # Coverage
+//! The SQL only pre-filters candidates in a bounding box; Lean
+//! (`Verified.Geo.OsmSpatial`) owns distance, order and cap (MariaDB's
+//! `ST_Distance` measures a line to its nearest vertex). The box may only
+//! over-include: half-width `radiusM / min(111000, 111000·cos lat)` contains
+//! both Lean windows, widened by [`SUPERSET_MARGIN`].
 //!
 //! Before any read, [`lean::osm_covered`](crate::lean::osm_covered) decides
-//! whether the mirror holds this area for this bucket. If not, the source
-//! declines (an empty list would claim there are no roads) and records the
-//! decline for [`crate::fetch_drain`] to fetch, off the serving path. The three
-//! matcher reads (`walkableRoads`, `buildingsNear`, `drivableRoads`) go through
-//! the same gate.
+//! whether the mirror holds the area for the bucket; if not, the source declines
+//! (empty would claim there are no roads) and records it for
+//! [`crate::fetch_drain`]. The three matcher reads pass the same gate.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -99,25 +86,16 @@ fn margin_box_wkt(lat: f64, lon: f64, radius_m: f64, margin_m: f64) -> String {
     )
 }
 
-/// How much the candidate box is widened beyond `radiusM`.
-///
-/// The unwidened box clears Lean's window only by the ratio of constants in
-/// different files: 111195/111000 = 1.0018 for points (`haversineAt` on
-/// `LEAN_EARTH_R`), 111320/111000 = 1.0029 for lines. Shrinking it by 1% loses
-/// rows on the corpus (`tests/suite/mirror_source.rs`). Widening is the safe
-/// direction: an extra row costs one comparison, a missing row changes the
-/// answer.
+/// How much the candidate box is widened beyond `radiusM`. Unwidened it clears
+/// Lean's window by only 0.18–0.29%, and a 1% shrink loses rows on the corpus
+/// (`tests/suite/mirror_source.rs`); an extra row costs a comparison, a missing
+/// row changes the answer.
 const SUPERSET_MARGIN: f64 = 1.05;
 
-/// A backstop, not a cap the queries may spend.
-///
-/// The point buckets ask 50–200 m radii, so reaching this means the box is
-/// wrong: the run errors rather than scoring a truncated list ("nearest way 40 m
-/// away" would be indistinguishable from the truth).
-///
-/// The matcher reads are larger (a walk's extent plus a 400 m corridor, often
-/// 10 000–20 000 highway rows in central London) and decline here instead: a
-/// declined leg draws as a chord and the day says so (`declined_by_table`).
+/// A backstop, not a budget: the point buckets ask 50–200 m, so reaching this
+/// means the box is wrong and the run errors rather than scoring a truncated
+/// list. The larger matcher reads (often 10 000–20 000 highway rows) decline
+/// here instead, and the day reports it (`declined_by_table`).
 pub const CANDIDATE_LIMIT: i64 = 20_000;
 
 /// SQL statements this source has issued, process-wide: the denominator for any
@@ -141,12 +119,8 @@ pub fn take_db_nanos() -> u64 {
     DB_NANOS.swap(0, Ordering::Relaxed)
 }
 
-/// Rows from the live mirror. One per fold: the coverage decisions it
-/// memoises are only valid for the `now_ms` it was built with.
-/// The side of a tile the line and point reads are cached by, in degrees: about
-/// 550 m north–south and 350 m east–west in London. A walk asks for the ways
-/// around each of its fixes, metres apart, so consecutive asks share their
-/// tiles: one read and one parse per tile replace one per ask.
+/// The side of a tile the line and point reads are cached by, in degrees (about
+/// 550 × 350 m in London): a walk's asks are metres apart, so they share tiles.
 const TILE_DEG: f64 = 0.0025;
 
 /// Which mirror table a tile holds.
@@ -156,11 +130,9 @@ enum Geo {
     Points,
 }
 
-/// One feature, held as numbers: its bounding box
-/// (`[min_lat, max_lat, min_lon, max_lon]`) to pick it for an ask, and what
-/// its answer row is built from. Coordinates are kept as `f64` and spelled as
-/// the answer's bit-pattern strings only when an ask returns the feature —
-/// held as those strings, a tile cost several times the memory.
+/// One feature, held as numbers: its bounding box, to pick it for an ask, and
+/// its answer row's fields. Spelled as bit-pattern strings only when returned;
+/// held as strings, a tile cost several times the memory.
 struct CachedRow {
     mbr: [f64; 4],
     osm_id: i64,
@@ -222,6 +194,8 @@ fn boxes_meet(a: &[f64; 4], b: &[f64; 4]) -> bool {
     a[0] <= b[1] && a[1] >= b[0] && a[2] <= b[3] && a[3] >= b[2]
 }
 
+/// Rows from the live mirror, one per fold: the coverage decisions it memoises
+/// hold only for the `now_ms` it was built with.
 pub struct MirrorSource {
     pool: MySqlPool,
     /// The runtime this blocks on, captured by the caller (see
@@ -432,10 +406,8 @@ impl MirrorSource {
             .collect()
     }
 
-    /// The pre-filter box, `[min_lat, max_lat, min_lon, max_lon]`: half-width
-    /// `radiusM / min(METERS_PER_DEG_LAT, metersPerDegLon(lat))` in both axes
-    /// (see the module note). Public so `tests/suite/mirror_source.rs` can test
-    /// the predicate the SQL applies, not a reimplementation of it.
+    /// The pre-filter box, `[min_lat, max_lat, min_lon, max_lon]` (see the
+    /// module note); public so a test checks the predicate the SQL applies.
     pub fn candidate_box(lat: f64, lon: f64, radius_m: f64) -> [f64; 4] {
         const METERS_PER_DEG_LAT: f64 = 111_000.0;
         let m_per_deg_lon = METERS_PER_DEG_LAT * lat.to_radians().cos();
@@ -459,11 +431,8 @@ impl MirrorSource {
         F: std::future::Future<Output = Result<T, E>>,
         E: Into<anyhow::Error>,
     {
-        // Counted here rather than at each call site: every query this source
-        // makes goes through this one boundary, so the count cannot drift from
-        // the queries. `label` names the statement kind for the fold's ledger
-        // (`db.<label>`), so a day's SQL time can be read per query rather
-        // than as one total.
+        // Counted here, the one boundary every query passes, so the count cannot
+        // drift; `label` names the statement for the fold's ledger (`db.<label>`).
         QUERIES.fetch_add(1, Ordering::Relaxed);
         let t0 = std::time::Instant::now();
         let out = self.handle.block_on(f);
@@ -499,10 +468,9 @@ impl MirrorSource {
         Ok(&self.coverage[bucket])
     }
 
-    /// The coverage rows whose box contains `(lat, lon)`. A pre-filter, not the
-    /// rule: `decideCoverage` needs a fresh row containing the whole query box,
-    /// which contains the centre, so nothing it could accept is dropped.
-    /// `tests/suite/osm_coverage.rs` checks the verdicts agree.
+    /// The coverage rows whose box contains `(lat, lon)`: a pre-filter, since an
+    /// accepted row contains the whole query box and so its centre
+    /// (`tests/suite/osm_coverage.rs`).
     pub fn boxes_around(lat: f64, lon: f64, rows: &[CoverageRow]) -> Vec<CoverageRow> {
         rows.iter()
             .filter(|c| {
@@ -513,12 +481,8 @@ impl MirrorSource {
     }
 
     /// Whether the mirror has any row of this bucket here (`hasLocalData`): one
-    /// indexed `LIMIT 1` per table, lines first. A sibling bucket's fetch can
-    /// leave rows without a matching coverage box.
-    ///
-    /// Written out twice, not looped over table names: a statement chosen in a
-    /// loop reaches `sqlx::query` through a variable, which the schema lint
-    /// cannot check.
+    /// indexed `LIMIT 1` per table, lines first, written out per table for the
+    /// schema lint. A sibling bucket's fetch can leave rows without a box.
     fn has_local_data(&self, bucket: &str, lat: f64, lon: f64, radius_m: f64) -> Result<bool> {
         let poly = Self::mbr_box_wkt(lat, lon, radius_m);
         let in_lines = self
@@ -791,10 +755,9 @@ impl RowSource for MirrorSource {
         Ok(Some(out))
     }
 
-    /// The four line buckets `nearbyWays` needs, read together. Coverage is
-    /// checked per bucket: one the mirror cannot vouch for declines the whole
-    /// answer. Every bucket gets an entry, empty ones included: "no ways of this
-    /// kind nearby" is an answer, not a decline.
+    /// The four line buckets `nearbyWays` needs, read together; one the mirror
+    /// cannot vouch for declines the whole answer, while an empty bucket is an
+    /// answer.
     fn line_rows_multi(
         &mut self,
         buckets: &[&str],
@@ -927,11 +890,9 @@ impl RowSource for MirrorSource {
         Ok(self.rail_stations.clone())
     }
 
-    /// One reverse geocode, from `osm_cache`. Read-only: a miss is recorded for
-    /// the drain to fetch, so no Nominatim round trip sits on the serving path.
-    ///
-    /// A stored failure (`{_err, _at}`) declines whatever its age: returning
-    /// `null` would claim "nothing is named here" out of a network error.
+    /// One reverse geocode from `osm_cache`; a miss is recorded for the drain, so
+    /// no Nominatim call sits on the serving path. A stored failure declines: a
+    /// `null` would claim "nothing is named here".
     fn geocode(&mut self, lat: f64, lon: f64, zoom: i64) -> Result<Option<Value>> {
         let pool = self.pool.clone();
         let found = self.block("geocode", async move {
@@ -1028,13 +989,10 @@ pub fn parse_linestring_wkt(wkt: &str) -> Vec<(f64, f64)> {
         .collect()
 }
 
-/// Run something with a mirror-backed answerer, on a blocking thread.
-///
-/// The fold answers its asks synchronously while `sqlx` is async, so it must run
-/// on a blocking thread with a runtime handle, and `Handle::block_on` from a
-/// runtime worker aborts the process. That cannot be detected inside
-/// [`MirrorSource`] (tokio sets the context on blocking threads too), so the hop
-/// lives here, in the only public constructor pairing a pool with a handle.
+/// Run something with a mirror-backed answerer on a blocking thread: the fold
+/// answers synchronously while `sqlx` is async, and `Handle::block_on` from a
+/// runtime worker aborts. [`MirrorSource`] cannot detect that, so the hop lives
+/// in this, the only constructor pairing a pool with a handle.
 pub async fn with_mirror_answerer<F, T>(pool: MySqlPool, now_ms: i64, f: F) -> Result<T>
 where
     F: FnOnce(&mut crate::rowset_answerer::OsmAnswerer<MirrorSource>) -> Result<T> + Send + 'static,
@@ -1051,13 +1009,10 @@ where
     .context("the mirror thread panicked")?
 }
 
-/// [`fold_from_mirror`], recording every row served as the fixture's
-/// `osmRowSet` and the matcher reads' answers as its `osmTrace` sections. The
-/// recorder wraps the source, so declines are captured too: without them a
-/// replay would answer where production could not.
-///
-/// Returns `(folded, row_set, matcher_trace, geocode_section)`; the geocode
-/// section is `None` when no geocode was answered.
+/// [`fold_from_mirror`], recording every row served as `osmRowSet` and the
+/// matcher reads as `osmTrace`, declines included (else a replay answers where
+/// production could not). Returns `(folded, row_set, matcher_trace,
+/// geocode_section)`.
 pub async fn fold_from_mirror_recording(
     pool: MySqlPool,
     cap: Value,
@@ -1098,16 +1053,10 @@ impl<A: crate::lean::Answerer> crate::lean::Answerer for WalkableOnly<A> {
     }
 }
 
-/// Re-record only a golden fixture's `walkableRoads` from the live mirror.
-///
-/// The day is replayed exactly as the corpus gate replays it — its own trace,
-/// then its own row set — except that the walkable section is withheld and
-/// answered by the mirror instead. So the walk legs, and therefore the walkable
-/// questions, are the ones the gate will ask; and every other table keeps the
-/// answers the day was blessed on. A decline the gate would see stays a decline
-/// here: the mirror answers nothing but `walkableRoads`.
-///
-/// Returns the fold and the new `walkableRoads` section, in the fixture's shape.
+/// Re-record only a golden fixture's `walkableRoads` from the live mirror: the
+/// day replays as the corpus gate does with that one section withheld, so the
+/// walk questions are the gate's and every other answer stays. Returns the fold
+/// and the new section.
 pub async fn rerecord_walkable(
     pool: MySqlPool,
     fixture: Value,
@@ -1153,19 +1102,11 @@ pub async fn rerecord_walkable(
     .context("the mirror thread panicked")?
 }
 
-/// Answer, from the live mirror, only the lookups a golden fixture's own record
-/// cannot.
-///
-/// The day is replayed as the corpus gate replays it — its trace, then its row
-/// set — with the mirror last in the chain, so the mirror is asked exactly what
-/// the fixture declines: the new questions a code change asks (a stay named at
-/// a point the capturing build never asked about). Every answer the day was
-/// blessed on stays; nothing else of the day is re-read from production, so the
-/// replay measures the change and not the data's drift since capture.
-///
-/// Returns the fold, the new matcher-read and geocode answers as `osmTrace`
-/// sections, and how many map rows the mirror had to serve — which a caller
-/// must refuse, since rows belong in `osmRowSet` and are not merged here.
+/// Answer from the live mirror only what a golden fixture's record cannot: the
+/// new questions a code change asks. The mirror is last in the chain, so blessed
+/// answers stay and the replay measures the change, not drift. Returns the fold,
+/// the new `osmTrace` sections and how many map rows the mirror served, which a
+/// caller must refuse (rows belong in `osmRowSet`).
 pub async fn rerecord_unanswered(
     pool: MySqlPool,
     fixture: Value,

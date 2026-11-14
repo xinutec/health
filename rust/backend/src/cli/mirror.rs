@@ -6,12 +6,11 @@ use super::session::*;
 use anyhow::{Context, Result};
 use backend::db;
 
-/// The recent focus places' coordinates — the input to the region clustering.
+/// The recent focus places' coordinates, for the region clustering.
 ///
 /// ⚠ `centroid_lat`/`centroid_lon` are DECIMAL, so they must be cast to CHAR and
-/// parsed. Read as `f64` directly, sqlx fails; paired with a defaulting decode
-/// this is the bug that made 117 places decode to centroid 0.0 while the check
-/// printed OK.
+/// parsed: sqlx refuses them as `f64`, and with a defaulting decode every place
+/// read as 0.0 while the check printed OK.
 pub(crate) async fn mirror_focus_points(pool: &sqlx::MySqlPool) -> Result<Vec<(f64, f64)>> {
     let cutoff = chrono::Utc::now().timestamp() - MIRROR_RECENT_DAYS * 86_400;
     let rows = sqlx::query(
@@ -47,100 +46,38 @@ pub(crate) struct MirrorHarvest {
     pub(crate) failures: usize,
 }
 
-/// How long to wait between tiles, so the mirror stops rate-limiting itself.
-///
-/// The 429s were ours, not the endpoint's fault. The mirror issues 18
-/// back-to-back queries of ~5 MB each with no pacing; the first few answer in
-/// ~1.5 s and then `overpass-api.de` starts refusing. `OVERPASS_CONCURRENCY = 2`
-/// cannot help — these are already sequential, and the limit being hit is a
-/// rate, not a concurrency.
-///
-/// The number comes from the endpoint's own statement of its terms rather than
-/// from taste:
-///
-///     GET https://overpass-api.de/api/status
-///       Rate limit: 2
-///       2 slots available now.
-///
-/// Two slots, and a slot is held for the query's duration plus a cooldown that
-/// scales with its cost. A sequential walk uses one slot at a time, so the
-/// budget is spent over time, and 5 s is a pace a two-slot allowance can sustain
-/// while adding 90 s to an 18-tile run — against a 90-minute deadline.
-///
-/// Measured from the Mac, a coverage gain says nothing about the nightly
-/// cron: `scripts/prod-db.sh` tunnels the database, but the Overpass calls go
-/// out over the Mac's own network, so a dry run there never exercises the path
-/// the CronJob uses. Measured from the pod's host:
-///
-///     isis -> 162.55.144.139:443   Connection refused, 0.013 s (forced IPv4 too)
-///     amun -> overpass-api.de      200 in 0.11 s
-///     mac  -> overpass-api.de      200 in 0.25 s
-///
-/// A RST rather than a timeout, with no local rule naming the address and
-/// general egress healthy (github 200 in 0.08 s): `overpass-api.de` was refusing
-/// isis (188.165.200.180) at the far end.
-///
-/// That refusal was a ban, and it lifted; do not read the table above as a
-/// standing fact about this host. A burst of eighteen back-to-back queries
-/// against a two-slot allowance earned the block, and once `wait_for_slot`
-/// asked `/api/status` first the same cron reached 35 of 36 tiles (97%). So the
-/// endpoint was rate-limiting; slowing the job down changed nothing because it
-/// was the wrong axis.
-///
-/// The pacing stays because it is correct behaviour toward a two-slot endpoint
-/// and it is what got the Mac from 56% to 83%. It is not what fixed the cron —
-/// `wait_for_slot` is.
-///
-/// Not a fix for `kumi.systems`, which is a different failure and still dead:
-/// its `/api/status` answers, and a real query returns 500 in 0.23 s. A status
-/// endpoint replying is not an interpreter working, and reading the first as the
-/// second is what made this look like one outage
-/// ([[feedback_a_degenerate_example_cannot_show_a_convention]]).
+/// How long to wait between tiles. `overpass-api.de` allows two slots, each
+/// held for a query plus a cooldown scaling with its cost (`/api/status`), so
+/// 18 back-to-back ~5 MB queries earned refusals and once an IP ban. 5 s is a
+/// pace two slots sustain, adding 90 s to a run with a 90-minute deadline.
+/// Pacing alone did not fix the cron; asking `wait_for_slot` first did.
+/// `kumi.systems` is a separate failure: its status page answers while real
+/// queries return 500.
 pub(crate) const TILE_PACE_MS: u64 = 5_000;
 
-/// The longest one tile will wait for a compute slot.
-///
-/// Chosen against the run's deadline, not picked round. The CronJob's
-/// `activeDeadlineSeconds` is 5400 and a full plan is 18 tiles, so the worst
-/// case here is 18 x 120 s = 36 minutes of waiting — comfortably inside it even
-/// with every tile's own fetch budget on top. A larger cap would let one
-/// congested night eat the deadline and return nothing at all, which is worse
-/// than a partial refresh.
+/// The longest one tile waits for a slot, chosen against the CronJob's 5400 s
+/// deadline: 18 tiles × 120 s is 36 minutes, inside it with each fetch on top.
+/// A larger cap could let one congested night return nothing.
 pub(crate) const SLOT_WAIT_CAP_S: u64 = 120;
 
-/// How long a tile key must go unrefreshed before a run retires its rows.
-///
-/// The tile grid moves, which is what makes this necessary at all. The plan is
-/// derived from mined focus places, and `tile_key` is the south-west corner to
-/// four decimal places — so a bbox that shifts renames every tile. Rows under
-/// the old names become unreachable: the per-tile `DELETE` names keys from the
-/// current plan, so nothing matches them again, and `tile_key IS NULL` (written
-/// before the column existed) never matched anything to begin with.
-///
-/// Not caution for its own sake. A key missing from tonight's plan is either a
-/// bbox that moved for good or one that will move back when focus-place mining
-/// restores a region, and those look identical in the table. A planned tile is
-/// attempted every night it is due, and it stays due until it answers, so
-/// thirty days of silence is evidence of orphaning, not of bad luck.
+/// How long a tile key must go unrefreshed before a run retires its rows. The
+/// grid moves with the mined places (a shifted bbox renames every tile), and the
+/// per-tile `DELETE` names only current keys. A planned tile is retried every
+/// night until it answers, so thirty days of silence means orphaned, not
+/// unlucky; a region may also come back when mining restores it.
 pub(crate) const ORPHAN_RETIRE_DAYS: i64 = 30;
 
-/// How old a tile's last answer must be before a run fetches it again.
-///
-/// Stations and routes change a few times a year, so a week-old tile is
-/// almost always current; a run fetches about a seventh of the area, and a
-/// tile that is refused is due again the next night.
+/// How old a tile's last answer must be before a run fetches it again: stations
+/// and routes change a few times a year, so a run fetches about a seventh of the
+/// area, and a refused tile is due again the next night.
 pub(crate) const REFRESH_DAYS: i64 = 7;
 
 /// How old a tile's last answer must be to count as stale — two missed
 /// refreshes, which is what `Verified.Geo.OsmMirrorRefresh` judges the area on.
 pub(crate) const STALE_DAYS: i64 = 14;
 
-/// How long ago each tile last answered, in seconds, by key; absent if it never
-/// has.
-///
-/// Aged in SQL against `NOW()`, the clock that wrote `refreshed_at` (the seed
-/// copied `computed_at`, written by `CURRENT_TIMESTAMP`), so the database's time
-/// zone cancels out.
+/// How long ago each tile last answered (s), by key; absent if never. Aged in SQL
+/// against `NOW()`, the clock that wrote `refreshed_at`, so the zone cancels.
 async fn tile_ages(
     pool: &sqlx::MySqlPool,
     mode: &str,
@@ -221,13 +158,8 @@ pub(crate) async fn mark_refreshed(
     Ok(())
 }
 
-/// Fetch every tile and extract what Lean keeps.
-///
-/// The dedup rule differs by arm and is lean's, not this function's: buses
-/// keep the first tile's copy, rail the last. `node(r)` returns a relation's full
-/// stop list from any tile it touches, so both copies are complete — but they
-/// are different, and unifying them here would be changing behaviour in the
-/// shell.
+/// Fetch every tile and extract what Lean keeps. The dedup rule differs by arm
+/// and is Lean's (buses keep the first tile's copy, rail the last).
 pub(crate) async fn mirror_fetch(
     client: &reqwest::Client,
     mode: &str,
@@ -252,14 +184,9 @@ pub(crate) async fn mirror_fetch(
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(TILE_PACE_MS)).await;
         }
-        // Ask, rather than pace blind. The constant above is a guess at what a
-        // two-slot allowance sustains; `/api/status` is Overpass telling us. On
-        // a healthy run every slot is free and this costs one cheap GET per
-        // tile; when they are spent it waits exactly as long as the server said
-        // instead of firing into a refusal and spending the breaker on it.
-        //
-        // Checked before the first tile too, unlike the pace — a slot held by an
-        // earlier run is exactly the case that makes tile 1 the one refused.
+        // Ask rather than pace blind: `/api/status` says when a slot frees, so a
+        // spent allowance is waited out instead of refused (and tripping the
+        // breaker). Before the first tile too: an earlier run may hold a slot.
         backend::overpass::wait_for_slot(client, SLOT_WAIT_CAP_S).await;
         let key = lean::tile_key(tile);
         let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
@@ -278,12 +205,9 @@ pub(crate) async fn mirror_fetch(
         }
 
         let query = lean::overpass_query(mode, tile)?;
-        // A transient refusal is retried once, not surrendered: a skipped tile
-        // is a permanent hole in this run's coverage, and a 504 is a timeout,
-        // not a verdict.
-        //
-        // Whether it earns its ~6 s is not yet known — the tally below is what
-        // settles it. If the nightlies print retries that never win, drop this.
+        // A transient refusal is retried once: a skipped tile is a hole in this
+        // run's coverage, and a 504 is a timeout, not a verdict. If the nightly
+        // tally shows retries that never win, drop this.
         let mut outcome = backend::overpass::fetch_attempt(
             client,
             &query,
@@ -309,10 +233,8 @@ pub(crate) async fn mirror_fetch(
             if matches!(again, backend::overpass::Outcome::Ok(_)) {
                 retries_won += 1;
             }
-            // The first attempt's errors survive. Overwriting the outcome
-            // wholesale would drop them, which is precisely the defect the
-            // `AllFailed { errors }` vector exists to prevent — a log naming
-            // only the retry reads as a one-endpoint outage again.
+            // The first attempt's errors survive, or a log naming only the
+            // retry reads as a one-endpoint outage.
             outcome = match (outcome, again) {
                 (
                     backend::overpass::Outcome::AllFailed {
@@ -432,10 +354,8 @@ pub(crate) async fn mirror_plan(
     Ok(Some(plan))
 }
 
-/// Coverage is reported because a count cannot substitute for it: a route
-/// count is uncorrelated with the harm (a run fetching 796 of 995 routes while
-/// losing the ones the rider uses passes a count floor). What fraction of the
-/// area was refreshed is what matters.
+/// The fraction of the area refreshed: a route count passes while losing the
+/// routes that matter.
 pub(crate) fn mirror_coverage_line(succeeded: usize, total: usize) -> String {
     let pct = if total == 0 {
         0.0
@@ -499,11 +419,11 @@ pub(crate) async fn fetch_osm(dry_run: bool, limit: i64, only: Option<&str>) -> 
     Ok(())
 }
 
-/// `backend watch-fetch-queue`: the drain as a process, beside the serving pod.
-/// See `backend::fetch_drain`.
+/// `backend watch-fetch-queue`: the drain (`backend::fetch_drain`) as a process
+/// beside the serving pod.
 ///
-/// ⚠ no `migrate()` here, on purpose: `backend serve` performs it, and this
-/// starts in the same pod at the same moment.
+/// ⚠ No `migrate()` here: `backend serve` migrates, starting in the same pod at
+/// the same moment.
 pub(crate) async fn watch_fetch_queue(interval_s: u64) -> Result<()> {
     init_tracing();
     let cfg = backend::config::Config::from_env().context("reading configuration")?;

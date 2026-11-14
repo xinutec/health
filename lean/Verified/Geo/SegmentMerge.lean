@@ -26,12 +26,8 @@ abbrev Mode := String
 
 open Verified.JsNum (jsRound)
 
-/-- Per-segment HR, sleep and step aggregates — what `enrichSegmentWithBiometrics`
-(`Verified.Geo.BiometricWindows`) computes and the `biomEnrich` pass attaches.
-
-Declared here rather than beside the function that fills it in, because `Seg`
-carries one and the dependency only runs one way: the segment record is the
-leaf every pass shares, so a field of it cannot name a module that imports it. -/
+/-- Per-segment HR, sleep and step aggregates (`enrichSegmentWithBiometrics`),
+declared beside `Seg` because the record carries one and must import nothing. -/
 structure BiometricEnrichment where
   hrMean : Option Float
   hrMin : Option Float
@@ -47,12 +43,9 @@ structure BiometricEnrichment where
   stepsTotal : Option Float
   deriving Inhabited, BEq, Repr
 
-/-- The `EnrichedSegment` fields these passes read and rewrite. A wider
-projection than `Verified.Geo.SegmentPasses.Seg`: the merges have to carry the
-weighted numeric fields, and the stay passes need the centroid and focus id.
-
-`focusPlaceId`: the mined ids are numeric and only equality is tested, so
-`Int` loses nothing here. -/
+/-- The segment fields these passes read and rewrite, wider than
+`Verified.Geo.SegmentPasses.Seg`: merges carry the weighted numbers, stay passes
+the centroid and focus id (`Int`, only compared). -/
 structure Seg where
   startTs : Int
   endTs : Int
@@ -67,11 +60,9 @@ structure Seg where
   place : Option String := none
   /-- Which rule named the stay, the name it named, and where it asked. -/
   placeSource : Option Verified.PlaceSource := none
-  /-- The OSM key and value of the feature that named the stay, when the
-      namer said (`ResolvedPlace.category`, `.type_`): `("railway",
-      "train_station")` for a station building. Read by a later pass that needs
-      to know WHAT enclosed the stay without asking the namer again — a second
-      ask is a new question a golden fixture cannot answer. -/
+  /-- The OSM key and value of the feature that named the stay, e.g.
+      `("railway", "train_station")`, so a later pass knows what enclosed it
+      without a second ask, which a golden fixture could not answer. -/
   placeKind : Option (String × String) := none
   city : Option String := none
   wayName : Option String := none
@@ -80,34 +71,25 @@ structure Seg where
   centroidLat : Option Float := none
   centroidLon : Option Float := none
   focusPlaceId : Option Int := none
-  /-- Whether `linearity` means anything for this segment — whether it moved
-  farther than its own GPS error. See
-  `Verified.Geo.Segments.WindowFeatures.directionResolvable`.
-
-  Default `true`. Every existing construction omits it and must keep its
-  behaviour: "we have no reason to doubt the direction" is the status quo, and
-  a segment with no accuracy reported is not thereby suspect. -/
+  /-- Whether `linearity` means anything here: did the segment move farther than
+  its own GPS error (`WindowFeatures.directionResolvable`)? Defaults to `true`:
+  no reported accuracy is no reason to doubt the direction. -/
   directionResolvable : Bool := true
   /-- Set by the stay-split rebuilds (`Verified.Geo.StaySplit`) when a segment's
   window changed and its inherited enrichment is therefore no longer evidence
   about it. The `reenrichSplitWalks` pass sends these back through OSM naming. -/
   needsReenrich : Bool := false
-  /-- The weaker sibling of `needsReenrich`: re-derive this segment's road name
-  from its own geometry, but leave its mode alone. Set by
-  `claimStayArrivalFromWalk`, whose carve changes a walk's window but never what
-  it is, so the inherited name is stale while the inherited mode is still
-  right; the full re-derivation would cost a mode on 04-29.
-  -/
+  /-- Re-derive the road name from the segment's own geometry, leaving its mode:
+  set by `claimStayArrivalFromWalk`, whose carve changes the window but not what
+  the walk is. -/
   needsRename : Bool := false
-  /-- The bus passes' judgement of a road-vehicle leg: which kind of vehicle it
-  is. The day-state flattening gives this precedence over `refinedMode`, so a
-  pass that promotes a leg to `train` must clear it or the timeline renders the
-  train as a bus. `Verified.Geo.PlaceOverride` is the pass that does. -/
+  /-- The bus passes' verdict on a road-vehicle leg's kind. It takes precedence
+  over `refinedMode` in the day state, so a pass promoting a leg to `train` must
+  clear it (`Verified.Geo.PlaceOverride` does). -/
   vehicleKind : Option String := none
-  /-- The share of this leg's GPS samples that sit nearer a drivable road than
-  any rail — the evidence weighed against the HSMM's line support in
-  `decideHsmmTrainOverride`. `none` means no samples (an underground gap the
-  HSMM reconstructed), which cannot contradict, so the HSMM stands. -/
+  /-- The share of the leg's samples nearer a drivable road than any rail,
+  weighed against the HSMM's line support in `decideHsmmTrainOverride`. `none`
+  (no samples, an underground gap) cannot contradict. -/
   roadCorridorFraction : Option Float := none
   /-- The IANA zone the frontend renders this segment's clock times in, rather
   than the browser's. Written by the `displayTz` pass, which stays shell: the
@@ -125,28 +107,21 @@ structure Seg where
   attached only where the reconstruction is substantially shorter. Takes
   precedence over `walkMatchedPath` when present. -/
   walkSmoothedPath : Option (Array PathPt) := none
-  /-- Whether the walk annotation had building outlines for this leg's ground:
-  `some true` when the `buildingsNear` read answered (possibly
-  with no rings: ground with none), `some false` when it was declined, `none`
-  when no read was made (no ways to draw on, or the pass did not run). The
-  wall metric means something only when this is `some true`: over unmeasured
-  ground a line crosses no wall for the wrong reason. -/
+  /-- Whether the walk annotation had building outlines: `some true` when
+  `buildingsNear` answered (maybe with none), `some false` when declined, `none`
+  when not asked. The wall metric means something only for `some true`. -/
   walkBuildingsMeasured : Option Bool := none
   /-- HR, sleep and step aggregates over this segment's window, attached by the
   `biomEnrich` pass. `none` until it runs — distinct from an enrichment whose
   own fields are empty because Fitbit had nothing for the day. -/
   biometrics : Option BiometricEnrichment := none
-  /-- A debug surface, and nothing reads it. The walk matcher's
-  identity report for this leg: how much of the chosen route ran along each named
-  way, longest first. Unnamed arcs are dropped.
+  /-- A debug surface nothing reads: the walk matcher's identity report, named
+  ways longest first.
 
-  ⚠ the unit is the matcher's own and does not convert to metres — see
-  `MatchOut.wayUm`. Read these as shares; an `m` suffix would invent a precision
-  nobody measured.
+  ⚠ The unit is the matcher's own, not metres (see `MatchOut.wayUm`): read
+  these as shares.
 
-  Ungated, and deliberately wider than `wayName`. `drawMatcher` adopts a
-  route name only on an unnamed, unspliced leg inside the stray bar. A
-  diagnostic filtered the same way could not show a route riding the wrong way
+  Ungated and wider than `wayName`, so it can show a route riding the wrong way
   on a leg that kept its cascade name. -/
   walkWayUm : Array (String × Nat) := #[]
   /-- Every road a moving leg was on, longest first (`Enrich.roadsByTime`);
@@ -170,21 +145,12 @@ def WAY_LABEL_MAX_CHARS : Nat := 30
 def WAY_LABEL_MIN_COVERAGE : Float := 0.15
 def WAY_LABEL_MAX_NAMES : Nat := 3
 
-/-- Compose a way label from per-name duration contributions.
-
-Ranked longest-first (a stable sort, so equal durations keep insertion order —
-JS `Array#sort` is TimSort and `List.mergeSort` merges left-biased), filtered to
-contributors covering ≥ 15% of the total, capped at three names, then joined
-while the running label stays inside 30 characters.
-
-Note the join breaks rather than skips: once a candidate would overflow the
-budget the loop stops, so a shorter fourth-ranked name never sneaks in behind a
-long second. `none` when nothing survives, and when the durations total zero —
-which is a real case (`total === 0`), not just an empty map.
-
-LIMIT: JS `.length` counts UTF-16 code units and Lean's counts codepoints. Way
-names outside the BMP would budget differently; street names in this corpus are
-ASCII. -/
+/-- Compose a way label from per-name durations: longest first (stable, so
+ties keep insertion order), those covering 15% or more, at most three, joined
+while the label stays within 30 characters. The join stops at the first
+overflow, so a short fourth name never slips in. `none` when nothing survives
+or the durations total zero. Lengths count codepoints, so a non-BMP name would
+budget differently from UTF-16. -/
 def composeWayName (contribs : Array (String × Float)) : Option String :=
   let total := contribs.foldl (fun acc c => acc + c.2) 0
   if total == 0 then none else
@@ -204,12 +170,8 @@ def composeWayName (contribs : Array (String × Float)) : Option String :=
 /-! ## `samePlace` -/
 
 /-- Two stays are at the same place when they carry the same non-empty name.
-
-Not the same mined place. For the carved stop that comes out `Subway` beside a
-stay the same election named `O2 Centre` (05-22), the identity test would also
-merge Currys and Lidl, 57 m apart under one mined cluster on 06-24, and lose a
-confirmed row. A mined cluster is wider than a venue, so its id cannot say two
-stays are one visit; the name still can. -/
+Not the same mined place: a cluster is wider than a venue (two shops 57 m apart
+share one), and merging them lost a confirmed row. -/
 def samePlace (a b : Seg) : Bool :=
   a.place.any (· != "") && a.place == b.place
 
@@ -229,10 +191,9 @@ read from. -/
 def EXTENT_WINDOW_S : Int := 3600
 /-- Too few of the stays' fixes to read an extent from: nothing is absorbed. -/
 def EXTENT_MIN_FIXES : Nat := 5
-/-- The share of the stays' fixes the extent holds: a stay's far strays are
-~2% of its fixes and its second spot (another desk) ~14%
-(`docs/proposals/2026-11-stay-position.md`), so the 95th percentile keeps the
-spots and drops the strays. -/
+/-- The share of the stays' fixes the extent holds: far strays are ~2% of a
+stay's fixes and a second spot ~14% (`docs/proposals/2026-11-stay-position.md`),
+so the 95th percentile keeps the spots and drops the strays. -/
 def EXTENT_SHARE : Float := 0.95
 
 /-- The median, as `quantile` reads it. -/
@@ -244,15 +205,11 @@ private def quantile (xs : Array Float) (q : Float) : Float :=
   if ys.isEmpty then 0 else
   ys[min (ys.size - 1) (q * Verified.FloatConst.natToFloat ys.size).toUInt64.toNat]!
 
-/-- A run of moving segments between two stays at one place is that stay when
-it never left the place: it has no fix at all (the decoder labels a dark
-stretch by its steps: walking about the office with the phone dark), or
-every fix of it lies inside the place as the stays' own
-fixes show it on that visit — within `EXTENT_SHARE` of their distances from
-their median, each fix allowed its reported accuracy. Going out and coming
-back means leaving: steps and a few tens of metres inside the building
-(92 steps a minute, the fixes 40 m from the desk) are moving about in the
-place. Each segment of the run becomes the stay it sits in. -/
+/-- A run of moving segments between two stays at one place is that stay when it
+never left: it has no fix (a dark stretch labelled by its steps), or every fix
+lies inside the place as the stays' own fixes show it (within `EXTENT_SHARE` of
+their distances from the median, plus each fix's accuracy). Steps and a few
+tens of metres inside a building are moving about in the place. -/
 def absorbMoveInsidePlace (segments : Array Seg) (fixes : Array AccFix) : Array Seg := Id.run do
   let mut out := segments
   let mut i := 0
@@ -270,10 +227,9 @@ def absorbMoveInsidePlace (segments : Array Seg) (fixes : Array AccFix) : Array 
         if !(i > 0 && effectiveMode prev == "stationary" && samePlace prev next) then none else
         let run := fixes.filter fun f => f.ts ≥ seg.startTs && f.ts < next.startTs
         if run.isEmpty then some "no fix between two stays at" else
-        -- Inside the visit as its last hour either side shows it, or as the
-        -- whole of both stays does: a hospital visit spans buildings (its
-        -- whole centre sits away from the last hour's), and an evening at home
-        -- whose phone went quiet keeps its arrival's fixes earlier on.
+        -- Inside the visit as its last hour either side shows it, or as both
+        -- whole stays do: a hospital visit spans buildings, and a quiet evening
+        -- at home keeps its arrival's fixes.
         let insideOf := fun (own : Array AccFix) =>
           if own.size < EXTENT_MIN_FIXES then false else
           let cLat := quantile (own.map (·.lat)) MEDIAN
@@ -339,17 +295,13 @@ private def runFixes (dLat : Float) : Array AccFix :=
 
 /-! ## `mergePausesInWalks` -/
 
-/-- The longest still stretch between two walks that is a pause in the walk
-rather than a stop: of the 83 stops narrated between two walks on the
-confirmed days, the shortest is 3 minutes (a stop at a shop), and none is
-2 or less. -/
+/-- The longest still stretch between two walks that is a pause, not a stop:
+the shortest narrated stop between walks is 3 minutes. -/
 def PAUSE_MAX_S : Int := 120
 
-/-- A still stretch of at most `PAUSE_MAX_S` between two walks that touch it
-is part of one walk with them: a pause at a crossing, not a stop at the
-nearest building (his rule: pauses in a walk are one walk; only a real stop at
-a place is a stay). The three become one walk segment, named afterwards from
-all its fixes. -/
+/-- A still stretch of at most `PAUSE_MAX_S` between two walks is part of one
+walk with them (the user's rule: a pause at a crossing is not a stay). The three
+become one walk, named from all its fixes. -/
 def mergePausesInWalks (segments : Array Seg) : Array Seg := Id.run do
   let mut out : Array Seg := #[]
   let mut i := 0
