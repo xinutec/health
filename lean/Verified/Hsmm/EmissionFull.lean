@@ -8,23 +8,16 @@ import Verified.FloatConst
 # Full HSMM emission composition
 
 `emission = baseEmission + geometricFn + routeRailFn + lineProximityFn`, summed
-in that order, over the unified route-graph model and the real observation
-tensor (`ObsRow`). This is the keystone that proves the factors compose
-end-to-end: base emission (+ the reacquire-robust speed correction),
-geometric feasibility, and the two route-graph factors all consume one `ObsRow`
-and the shared model.
+in that order over the route-graph model and one `ObsRow`: the served decode's
+parameterisation.
 
-The served decode's parameterisation. The two line factors stay live on a
-minute the generator covers: switched off there, a covered fix-less ride earned
-nothing per minute and lost to `stationary` on the mode prior (06-12's Victoria
-ride shrank to one minute), and every line the generator vouched at entry scored
-identically afterwards, so a line it stopped vouching mid-ride was never charged
-(05-18, 07-14: the Metropolitan leg came out Hammersmith & City on a tie).
-Coverage still reaches the entry and duration terms. Continuity
-(`continuityContext`) is a further optional additive term. UNPROVEN; pinned by
-the `#guard`s (reference factor values, summed as the model sums them).
-Route-graph/geometric factors flow through `haversine`/`pointToPolyline`, so sums
-are ULP-close (`approx`), the accepted near-tie class.
+The two line factors stay on at minutes the generator covers: off, a covered
+fixless ride earned nothing and lost to `stationary`, and a line the generator
+stopped vouching mid-ride was never charged. Coverage still reaches the entry
+and duration terms. Continuity (`continuityContext`) is an optional extra term.
+
+UNPROVEN; pinned by the `#guard`s. Distances via `haversine`/`pointToPolyline`
+make sums ULP-close (`approx`).
 -/
 
 namespace Verified.Hsmm.EmissionFull
@@ -51,12 +44,9 @@ structure TermWeights where
   geometric : Float := 1.0
   gap : Float := 1.0
   rail : Float := 1.0
-  /-- Learned: a coordinate search on half the 43 narrated days moved it to
-      0.75 and nothing else, and on the other half it scored leg modes +2,
-      lines +1, stations +1, phantoms unchanged; on all 43, leg modes 278 → 280,
-      lines 52 → 53, stations 43 → 45, journeys and phantoms unchanged. The
-      search on the first half also went down (0.375, with the duration prior
-      at 0.75) and gained nothing on the second. -/
+  /-- Learned by coordinate search on half the narrated days and confirmed on
+      the other half: a small gain in leg modes, lines and stations, journeys
+      and phantoms unchanged. -/
   lineProximity : Float := 0.75
   continuity : Float := 1.0
   entry : Float := 1.0
@@ -89,11 +79,10 @@ def emissionRestWith
     + w.continuity * Continuity.continuityLogLikelihood s o.gps.isSome
         (o.prevGpsFix.map (fun f => (f.lat, f.lon))) continuity
 
-/-- Full per-cell emission log-probability over the model: the base emission
-    plus the geometric/rail/line-proximity terms the model sums onto it.
-    `placeCoords` resolves `s.placeId`. `continuity` is the presence-continuity
-    seed; the production caller always supplies it, and the `none` arm is the
-    chain-start and test shape rather than a flag being off (see `Continuity`). -/
+/-- Full per-cell emission log-probability: the base emission plus the
+    geometric, rail and line-proximity terms. `placeCoords` resolves
+    `s.placeId`. `continuity` is always supplied in production; `none` is the
+    chain start and the test shape (see `Continuity`). -/
 def emissionLogProbFullWith
     (modeledLines : List String) (minute : RouteModel.MinuteLines) (railEv : Float)
     (placeCoords : Std.HashMap Int (Float × Float))

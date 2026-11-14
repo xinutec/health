@@ -1,17 +1,10 @@
 /-!
 # The Overpass circuit breaker
 
-When the public Overpass mirrors start rate-limiting, every subsequent fetch
-hangs until its own timeout. A velocity request can have 25+ `ensureCovered`
-calls queued; at a concurrency of 2 and 20 s each, that is four to eight minutes
-of waiting on calls that were never going to succeed. The breaker turns that
-into a fail-fast.
-
-## The clock is a parameter, not a call
-
-Every function here takes `now` and returns the new state, so the clock is a
-parameter rather than mutable module state, which is what lets the two "already
-open" early returns below carry guards.
+When the public Overpass mirrors rate-limit, every fetch hangs until its
+timeout; the breaker fails fast instead (`overpass.rs`, the mirror crons).
+Functions take `now` and return the new state, so the clock is a parameter and
+the early returns carry guards.
 -/
 
 namespace Verified.Geo.OverpassBreaker
@@ -32,21 +25,13 @@ structure State where
 
 def initial : State := {}
 
-/-- Are we in fail-fast mode?
-
-Strictly before. At exactly `openUntilMs` the breaker is closed — `Date.now() <
-openUntilMs` — so the cooldown is a half-open interval and a fetch at the
-boundary is allowed through. -/
+/-- Are we in fail-fast mode? Strictly before `openUntilMs`: the cooldown is
+half-open, so a fetch at the boundary goes through. -/
 def isOpen (s : State) (now : Nat) : Bool := now < s.openUntilMs
 
-/-- Record one failure: a timeout, dropped connection, 5xx or 429.
-
-While open, failures are not counted — the early return means a storm during
-the cooldown cannot extend it. The breaker reopens on schedule and the next
-failure starts a fresh tally.
-
-And the tally is cleared when it trips, not merely pruned, so the following
-cooldown needs another full `FAILURE_THRESHOLD` to trip again. -/
+/-- Record one failure (timeout, dropped connection, 5xx, 429). Ignored while
+open, so a storm cannot extend the cooldown. Tripping clears the tally, so the
+next trip needs a full `FAILURE_THRESHOLD`. -/
 def recordFailure (s : State) (now : Nat) : State :=
   if isOpen s now then s
   else
@@ -59,11 +44,8 @@ def recordFailure (s : State) (now : Nat) : State :=
     else
       { s with failures := kept }
 
-/-- Record one success. Clears the tally — but only while closed.
-
-A success does not close an open breaker. The cooldown is the recovery window,
-and reopening the path on the first lucky response is what invites the storm
-straight back. -/
+/-- Record one success: clears the tally while closed. It does not close an open
+breaker; the cooldown is the recovery window. -/
 def recordSuccess (s : State) (now : Nat) : State :=
   if isOpen s now then s else { s with failures := #[] }
 
@@ -105,10 +87,8 @@ private def AFTER_SUCCESS : State :=
 #guard recordSuccess TRIPPED (T0 + 100) == TRIPPED
 #guard isOpen (recordSuccess TRIPPED (T0 + 100)) (T0 + 100) == true
 
--- Nor does a failure while open extend the cooldown. Without the early return
--- a sustained outage would hold the breaker open forever and it would never
--- retry — the failure mode is invisible because it looks like "Overpass is
--- still down".
+-- Nor does a failure while open extend the cooldown, or a long outage would
+-- hold it open forever without retrying.
 #guard (recordFailure TRIPPED (T0 + 100)).openUntilMs == TRIPPED.openUntilMs
 
 -- And after the cooldown the tally starts fresh: it takes three more.

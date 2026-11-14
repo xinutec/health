@@ -5,20 +5,12 @@ import Verified.JsNum
 /-!
 # Snapped rail paths
 
-`annotateSnappedPaths` attaches the offline-computed route geometry to a train
-leg and interpolates its time window along it; `reattachSnappedPaths` runs it
-again after the passes that relabel a ride.
+`annotateSnappedPaths` attaches cached route geometry to a train leg and
+interpolates its time window along it; `reattachSnappedPaths` reruns it after
+passes that relabel a ride. Rows arrive decoded; an undecodable one is absent.
 
-## The JSON boundary
-
-`annotateSnappedPaths` reads `rail_route_cache` rows whose geometry is a JSON
-string. `JSON.parse` and the `Array.isArray` check are shell — this port takes
-rows already decoded to a coordinate list, and a row the shell could not decode
-is simply absent. The `length ≥ 2` rejection is a real decision and stays here.
-
-Exactness: every decision is exact, and `interpolateTimes` (reused from
-`Verified.Geo.RailSnap`) carries its own ≤ 1 ULP metric. UNPROVEN; pinned by
-the `#guard`s.
+Exact except `interpolateTimes` (from `Verified.Geo.RailSnap`, ≤ 1 ULP).
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.RailReconcile
@@ -67,17 +59,10 @@ def cachedTrack (railRouteCache : Array RouteRow) (key : String) :
 #guard cachedTrack #[⟨"A → B", #[⟨0, 0⟩, ⟨1, 1⟩]⟩] "A → B" == some #[⟨0, 0⟩, ⟨1, 1⟩]
 #guard cachedTrack #[⟨"A → B", #[⟨0, 0⟩, ⟨1, 1⟩]⟩] "A → C" == none
 
-/-- Attach a train run's cached route geometry and interpolate its time window
-along it.
-
-The geometry is far too expensive to compute per request (a graph build plus a
-spatial scan), so `refresh-rail-routes` computes it offline into
-`rail_route_cache`, keyed by the run's `<board> → <alight>` label. Here it is one
-lookup, an attach, and a time interpolation. A run whose route is not yet cached
-simply keeps no `snappedPath` and the frontend draws its raw fixes — it becomes
-snapped once the cron has run. Purely additive.
-
-A geometry with fewer than two vertices is rejected: there is nothing to draw. -/
+/-- Attach a train run's cached route geometry, keyed by its `<board> → <alight>`
+label, and interpolate its time window along it. An uncached run keeps raw
+fixes until `refresh-rail-routes` runs; a geometry under two vertices is
+rejected. Purely additive. -/
 def annotateSnappedPaths (segments : Array Seg) (railRouteCache : Array RouteRow) : Array Seg :=
   let keys := segments.filterMap fun s =>
     if effectiveMode s == "train" then s.wayName.filter (· != "") else none
@@ -94,15 +79,9 @@ def annotateSnappedPaths (segments : Array Seg) (railRouteCache : Array RouteRow
             snappedPath := some (Verified.Geo.RailSnap.interpolateTimes geom
               (Float.ofInt seg.startTs) (Float.ofInt seg.endTs)) }
 
-/-- Each train run's track for its final label: the cached geometry, or none.
-
-`annotateSnappedPaths` attaches early, because walk anchoring and the final
-merge read the track; passes after it can still relabel a run — a later alight,
-a through-joined leg — and the track attached for the old label stayed on it
-(10-08: the Hendaye–Bordeaux track under "Hendaye → Gare Montparnasse", the rest
-drawn as a gap). Every track comes from the cache, so recomputing from the final
-label is exact; a label not yet cached draws its raw fixes until the nightly
-job has resolved it. -/
+/-- Each train run's track for its final label. Attached early (walk anchoring
+and the merge read it), a track can outlive a later relabel; every track is from
+the cache, so recomputing from the final label is exact. -/
 def reattachSnappedPaths (segments : Array Seg) (railRouteCache : Array RouteRow) : Array Seg :=
   segments.map fun seg =>
     if effectiveMode seg != "train" then seg

@@ -1,36 +1,21 @@
 /-!
 # Flattening client text into one log field
 
-`/api/telemetry` writes UI text the browser sent into a log line as `label=…`.
-That makes this a security boundary rather than tidiness: a newline inside a
-label forges whole log lines, including further `client-event` lines attributed
-to someone else. The log stops being evidence, which is the one thing it is for.
-
-Two character classes and a cap:
+`/api/telemetry` writes browser-sent UI text into a log line as `label=…`, so
+this is a security boundary: a newline in a label forges log lines attributed
+to someone else.
 
     raw.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")
        .replace(/\s+/g, " ").trim()
     then [...that].slice(0, max)
 
-Each part earns its place:
+The categories cover more than `\n`: `\r`, U+2028/U+2029, and `Cf` bidi
+overrides that reorder a displayed line. `\s+ → " "` collapses the rest. The
+cap counts code points, so no glyph is split.
 
-* The category set covers more than `\n`. `\r` alone moves a cursor, U+2028
-  and U+2029 end a line in some readers, and the `Cf` formatting characters
-  include bidi overrides that can reorder a line as displayed — so a label can
-  lie about which field it is without containing a newline at all.
-* `\s+ → " "` collapses what is left, including the spaces the first step
-  just produced.
-* The cap counts code points, not UTF-16 units and not bytes, so a
-  multi-byte glyph is never split down the middle into a replacement character.
-
-The ranges below are the ones a JavaScript engine's regexes matched, derived
-by testing every code point in `[0, 0x10FFFF]`, not transcribed from a Unicode
-chart, which would have meant guessing the Unicode version.
-
-So they are a snapshot of one Unicode version. A newer one could classify a
-new code point as `Cf` and this would not know. The failure direction is a
-character passing through unflattened, so the cap and the whitespace collapse
-still hold.
+The ranges were derived by testing every code point, so they are one Unicode
+version's snapshot; a newly classified `Cf` would pass through unflattened, with
+the cap and collapse still holding.
 
 Pure and total. UNPROVEN.
 -/
@@ -44,11 +29,8 @@ def CATEGORY_RANGES : List (Nat × Nat) :=
   , (69821, 69821), (69837, 69837), (78896, 78911), (113824, 113827)
   , (119155, 119162), (917505, 917505), (917536, 917631) ]
 
-/-- `\s`. Inclusive.
-
-Not the same set as above and neither contains the other. U+00A0 and the
-U+2000 block are whitespace but not control-like, so they survive the first
-replacement and are collapsed by the second. -/
+/-- `\s`, inclusive. Overlaps the set above without containing it: U+00A0 and
+the U+2000 block survive the first replacement and collapse in the second. -/
 def WHITESPACE_RANGES : List (Nat × Nat) :=
   [ (9, 13), (32, 32), (160, 160), (5760, 5760), (8192, 8202), (8232, 8233)
   , (8239, 8239), (8287, 8287), (12288, 12288), (65279, 65279) ]

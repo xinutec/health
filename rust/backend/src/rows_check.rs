@@ -1,28 +1,16 @@
-//! Render the twelve table endpoints' rows against production.
+//! Render the table endpoints' rows against production.
 //!
-//! ⚠ this is the only thing that checks the decode. `tests/suite/row_json.rs` pins the
-//! rules — which SQL type takes which JSON shape, and that the host's ISO
-//! formatter agrees with Lean's — but a `MySqlRow` cannot be constructed without
-//! a server, so no test has ever watched a DECIMAL come off the wire. That gap
-//! is not theoretical: running this is what found sqlx refusing `NaiveDateTime`
-//! for a TIMESTAMP column, which no amount of reading had suggested.
-//!
-//! It puts real DECIMAL, DATETIME and ENUM rows through the decoder, which no
-//! test can.
+//! ⚠ The only check of the decode: `tests/suite/row_json.rs` pins the rules,
+//! but a `MySqlRow` needs a server, so only this puts real DECIMAL, DATETIME and
+//! ENUM rows through the decoder.
 //!
 //! ```text
 //! scripts/prod-db.sh backend rows-check <user> <since> <date> > /tmp/rs.txt
 //! ```
 //!
-//! `prod-db.sh` forwards a port and `kubectl` writes its own chatter to
-//! stdout, so filter the file to the endpoint lines before reading it.
-//!
-//! Capture both sides in one tunnel session. The window has no upper bound,
-//! so it includes today, and today's rows are still being written: a sync
-//! landing between two captures moves `steps`, `distance_km` and `synced_at`,
-//! which reads exactly like a rendering difference. It cost one false alarm
-//! already — the two runs were half an hour apart and disagreed only on the
-//! last row of the two tables that had just been synced.
+//! `kubectl` writes chatter to stdout, so filter to the endpoint lines. Capture
+//! both sides in one session: today's rows are still syncing, and a sync
+//! between captures looks like a rendering difference.
 
 use anyhow::{Context, Result};
 use sqlx::{MySqlPool, Row};
@@ -34,11 +22,8 @@ use crate::{lean, row_json};
 pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Result<()> {
     let mut failures = 0usize;
 
-    // A fn-local literal array, not a reference to `routes::tables`' consts.
-    // `DL-SQLX-SCHEMA-TRUTH` resolves an inline or fn-local array and checks
-    // every query's tables, columns and bind arity against the replayed schema;
-    // a const path is opaque to it, and unchecked SQL inside the one command
-    // whose job is validating SQL would be the wrong place to lose that.
+    // A fn-local literal array, not `routes::tables`' consts, so
+    // `DL-SQLX-SCHEMA-TRUTH` can check every query against the schema.
     let queries: [(&str, &str); 8] = [
         (
             "activity",
@@ -108,15 +93,9 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
         failures += emit(name, row_json::rows_to_json(&rows))?;
     }
 
-    // `sleep/stages` resolves its main-sleep log first, exactly as the endpoint
-    // does — including the absent `ORDER BY`.
-    //
-    // No `ensure!` guards the stage query, and that is stronger rather than
-    // weaker: it is the route's own macro, so there is one literal and drift is
-    // not possible to write. The arrays above still compare against consts
-    // because they hold their own copies, and a copy can drift. A runtime
-    // equality check is the second-best fix for duplication; not duplicating is
-    // the first.
+    // `sleep/stages` resolves its main-sleep log first, as the endpoint does,
+    // without `ORDER BY`. The stage query is the route's own macro, so it
+    // cannot drift; the arrays above hold copies and are compared.
     let log = sqlx::query(
         "SELECT log_id FROM sleep WHERE user_id = ? AND date = ? AND is_main_sleep = 1 LIMIT 1",
     )

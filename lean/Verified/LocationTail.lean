@@ -2,32 +2,17 @@ import Verified.VelocityCache
 /-!
 # The live-map reads
 
-Three endpoints feed the Map tab, and between them they hold four constants and
-two comparisons. None of it is hard; all of it is the kind of thing that is
-wrong by one character and looks right.
+The Map tab's endpoints hold a few constants and two comparisons, each wrong
+by one character while looking right.
 
-## The tail is a tail
+`/location/tail` answers the fixes after the caller's last, filling the
+pipeline's lag with raw points: `ts > since`, the last `TAIL_MAX_POINTS`.
+Strict, or the caller's point is drawn twice; the last, not the first, or a
+long buffer never reaches the present. The cap is silent, so the endpoint
+cannot catch up from far back.
 
-`/location/tail` answers "every fix after the one you already have", so the
-classification pipeline's lag can be filled with raw points: the fixes with
-`ts > since`, the last `TAIL_MAX_POINTS` of them. Both halves are inverted
-easily:
-
-* `>` is strict. `>=` resends the point the caller named, which the map then
-  draws twice.
-* `slice(-2000)` takes the last 2000. `slice(0, 2000)` takes the first — the
-  oldest — which for a long tail means answering a request for recent movement
-  with the stale head of the buffer and never reaching the present.
-
-The cap is silent: a caller asking with an old `since` gets 2000 points and no
-indication that more were dropped, so a client cannot use this endpoint to catch
-up from arbitrarily far back.
-
-## Freshness is the same rule as the velocity cache
-
-Both caches here are ten seconds, and both are fresh iff `age < ttl`.
-[`Verified.VelocityCache`] already owns that comparison, so it is reused rather
-than restated.
+Both caches are ten seconds, fresh iff `age < ttl`, the rule
+[`Verified.VelocityCache`] owns.
 
 Pure and total. UNPROVEN; the `#guard`s pin its answers.
 -/
@@ -42,13 +27,10 @@ def LATEST_FIX_TTL_MS : Int := 10000
 /-- How long `/location/tail` may reuse its point buffer. -/
 def TAIL_TTL_MS : Int := 10000
 
-/-- The timestamps a tail request answers with, given the buffer's timestamps
-(ascending) and the caller's `since`.
-
-The reference implementation, not the serving one. A tail buffer is thousands
-of points and a host call per request would ship all of them across the FFI, so
-the host filters inline and `tests/location_tail.rs` holds it against this over
-a corpus. If the two disagree, this one is right. -/
+/-- The timestamps a tail request answers with, from ascending buffer
+timestamps and `since`. The reference: the host filters inline (shipping
+thousands of points per request costs too much) and `tests/location_tail.rs`
+holds it to this. -/
 def tailAfter (tss : List Int) (since : Int) : List Int :=
   let kept := tss.filter (fun t => t > since)
   -- `slice(-n)`: the last n, and the whole list when it is shorter than n.

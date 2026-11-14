@@ -1,18 +1,6 @@
-//! The Nextcloud app-password store.
-//!
-//! # Why there is no refresh here, and no lock either
-//!
-//! [`super::client`]'s Fitbit sibling holds a per-user mutex so that two callers
-//! crossing the expiry boundary cannot both rotate a single-use refresh token.
-//! None of that applies to an app password: it is a long-lived credential from
-//! Nextcloud's Login Flow v2 with no expiry and nothing to rotate, sent as HTTP
-//! Basic Auth on every request. That shape was chosen to end a cross-pod
-//! refresh race: the auth pod and the sync cron each noticing "expires soon",
-//! and the loser told its refresh token was already spent.
-//!
-//! So this module is CRUD and nothing else. Reads are one row by primary key.
-//! Adding a cache here would reintroduce the coherence question that removing
-//! the refresh answered.
+//! The Nextcloud app-password store: CRUD, one row by primary key, no refresh,
+//! no lock and no cache. An app password from Login Flow v2 has no expiry and
+//! nothing to rotate, which is what avoids a cross-pod refresh race.
 
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;
@@ -24,13 +12,9 @@ pub struct NcCredentials {
     pub app_password: String,
 }
 
-/// Why a Nextcloud call could not be made or did not succeed.
-///
-/// The first two are durable, user-visible states rather than failures of this
-/// run: both mean the user has to go and do something in a browser, and both
-/// are what `/api/me` reports. They are separate variants rather than one
-/// "unauthorised" because the remedies differ — one is "link an account", the
-/// other is "your app password was revoked, link it again".
+/// Why a Nextcloud call could not be made or did not succeed. The first two are
+/// user-visible states `/api/me` reports, separate because the remedies differ:
+/// link an account, or relink a revoked one.
 #[derive(Debug, thiserror::Error)]
 pub enum NcError {
     #[error("Nextcloud not linked")]
@@ -51,12 +35,8 @@ pub enum NcError {
     Other(#[from] anyhow::Error),
 }
 
-/// Load `user_id`'s credentials, refusing if absent or flagged.
-///
-/// The `needs_reauth` check is here rather than at the call site on purpose:
-/// a stored flag means the password is known-dead, and sending it anyway would
-/// spend a Nextcloud brute-force-counter increment to learn what the row
-/// already says.
+/// Load `user_id`'s credentials, refusing if absent or flagged: sending a
+/// known-dead password spends a brute-force-counter increment.
 pub async fn get(pool: &MySqlPool, user_id: &str) -> Result<NcCredentials, NcError> {
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT login_name, app_password, status FROM nc_credentials WHERE user_id = ?",
@@ -76,12 +56,9 @@ pub async fn get(pool: &MySqlPool, user_id: &str) -> Result<NcCredentials, NcErr
     })
 }
 
-/// Flag the credentials dead after Nextcloud answered 401.
-///
-/// Failing to write this must not be reported as the reason the request
-/// failed. The 401 is the finding; a flag that did not persist means the next
-/// run rediscovers it, which is a wasted call and not a wrong answer. The
-/// caller logs and returns [`NcError::ReauthRequired`] either way.
+/// Flag the credentials dead after a 401. A failed write is not the request's
+/// error: the next run rediscovers it. The caller returns
+/// [`NcError::ReauthRequired`] either way.
 pub async fn mark_needs_reauth(pool: &MySqlPool, user_id: &str) -> Result<()> {
     sqlx::query("UPDATE nc_credentials SET status = 'needs_reauth' WHERE user_id = ?")
         .bind(user_id)
@@ -91,12 +68,8 @@ pub async fn mark_needs_reauth(pool: &MySqlPool, user_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Store (or replace) a user's Nextcloud app password, marking them active.
-///
-/// ⚠ Upsert, and it must reset `status` to `active`. A user relinking after a
-/// revocation would otherwise land a fresh, working credential in a row still
-/// flagged `needs_reauth`, and every later call would refuse it — a relink that
-/// visibly succeeds and changes nothing.
+/// Store (or replace) a user's app password. ⚠ The upsert resets `status` to
+/// `active`, or a relink after revocation would succeed and change nothing.
 pub async fn store(
     pool: &MySqlPool,
     user_id: &str,

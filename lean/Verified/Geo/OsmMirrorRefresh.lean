@@ -1,49 +1,30 @@
 /-!
 # When is a route mirror stale?
 
-Both OSM route mirrors (bus routes, rail stops) cover the home region in tiles.
-A nightly run fetches only the tiles that are due — not refreshed for a week —
-and replaces each tile that answers, so a run that is refused somewhere loses
-nothing: the tiles that failed keep what they had and are due again tomorrow.
+The OSM route mirrors (bus routes, rail stops) tile the home region. A nightly
+run refetches tiles not refreshed for a week and replaces each that answers,
+so a refused tile keeps its rows and is due again tomorrow.
 
-What a run can still get wrong is to leave the cache mostly old while every
-night reports success. So the question asked after the write is about the
-area: what fraction of the planned tiles has answered recently?
+The risk is a mostly old cache with every night reporting success, so the check
+after the write is the fraction of the area answered recently. A count floor
+measured the wrong thing: it passed a run that lost the routes actually ridden
+and failed one that dropped untouched peripheral ones.
 
-A count-based floor cannot answer it, and that is measured rather than
-supposed: a run fetching 796 of 995 bus routes while losing the handful the
-rider actually used passed a count floor, and a run dropping 300 untouched
-peripheral routes failed it. The number was uncorrelated with the harm. The
-fraction of the area that is fresh is not.
-
-A failed CronJob is named by `fleet_health.py`'s `_check_cronjob_runs` within
-the hour, where a quiet success is named by nothing — so the rule fails the run.
+A failed CronJob is reported by `fleet_health.py`'s `_check_cronjob_runs`; a
+quiet success by nothing, so the rule fails the run.
 -/
 
 namespace Verified.Geo.OsmMirrorRefresh
 
-/-- The fraction of the area that must be fresh.
-
-Half: past it the cache is more old than fresh. With tiles due weekly and
-stale after two weeks, it takes a week of Overpass refusing most tiles before
-this fires, which keeps ordinary flakiness — a few tiles timing out on a few
-nights — green, so the alarm does not cry wolf and get muted. -/
+/-- The fraction of the area that must be fresh: half. With weekly refreshes and
+two-week staleness it takes a week of mostly refused tiles to fire, so ordinary
+flakiness stays green and the alarm is not muted. -/
 def FRESH_FLOOR_PERCENT : Nat := 50
 
-/-- Is too much of the area stale?
-
-`staleTiles` of `tilesTotal` planned tiles have not answered in `staleDays`
-days. `none` means the cache is fresh enough; `some why` is the sentence the
-job fails with.
-
-An empty cache is exempt. With `existing = 0` there is nothing old to be
-mistaken for current: a first run that answers on a ninth of the area has
-populated a ninth, and the next run carries on.
-
-Compared by multiplication, not by dividing first: `fresh / total * 100` in
-`Nat` truncates toward zero, so 8 of 18 (44%) would compute as 0 and 17 of 18
-(94%) as 0 too. The percentage is computed only for the message, where a
-truncated figure is honest enough. -/
+/-- Is too much of the area stale? `staleTiles` of `tilesTotal` have not answered
+in `staleDays` days; `some why` is the job's failure sentence. An empty cache
+(`existing = 0`) is exempt: a partial first run has nothing old to hide.
+Compared by multiplication, since `Nat` division truncates 44% to 0. -/
 def staleRefusal (existing staleTiles tilesTotal staleDays : Nat) : Option String :=
   if tilesTotal == 0 || existing == 0 then none
   else

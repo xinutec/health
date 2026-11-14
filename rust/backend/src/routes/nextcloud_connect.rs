@@ -1,25 +1,12 @@
 //! Linking a Nextcloud account, and pointing PhoneTrack's map at today.
 //!
-//! # Login Flow v2 is a three-party handshake
+//! Login Flow v2: `POST init` gets a login URL and poll token from Nextcloud,
+//! the user approves in their own browser, and a background poll receives the
+//! app password, stored for every later call. `status` tells the SPA the
+//! outcome, so a flow per user outlives its request.
 //!
-//! Nextcloud's Login Flow v2 exists so a long-lived app password never passes
-//! through this server's hands as a user secret. `POST init` asks Nextcloud for
-//! a login URL and a poll token; the user opens that URL and approves in their
-//! own browser; meanwhile this server polls the endpoint until Nextcloud hands
-//! back the app password, which is stored and used for every later API call.
-//!
-//! The poll runs in the background, so `init` returns immediately with a URL
-//! the user must open. `status` is how the SPA learns the outcome. That makes
-//! this the only genuinely stateful pair of endpoints in the port: there is an
-//! in-flight flow per user that outlives the request that started it.
-//!
-//! The state is process-local and deliberately not persisted. A flow is
-//! meaningless across a restart — the poll goroutine is gone, so a row saying
-//! "pending" would be a lie no one could clear. A restart mid-link means the
-//! user presses connect again, which is the correct recovery and needs no code.
-//!
-//! A new `init` replaces any previous flow for that user. Two tabs racing
-//! would otherwise leave a poll running against a token nobody will read.
+//! The state is process-local: after a restart the poll is gone, and the user
+//! presses connect again. A new `init` replaces the user's previous flow.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -68,10 +55,8 @@ impl PendingFlows {
         }
     }
 
-    /// Read the outcome, removing it unless it is still pending.
-    ///
-    /// Terminal states are read once. The SPA polls this, and leaving a
-    /// `failed` behind would make the next attempt appear to fail instantly.
+    /// Read the outcome, removing it unless pending: terminal states are read
+    /// once, or the next attempt would appear to fail instantly.
     fn take(&self, user_id: &str) -> Option<FlowResult> {
         let mut f = self.flows.lock().ok()?;
         match f.get(user_id)? {
@@ -192,9 +177,7 @@ pub async fn init(
 }
 
 /// Ask until Nextcloud says yes, the deadline passes, or it says something
-/// unrecoverable.
-///
-/// A 404 is the normal not-yet answer from this endpoint, not an error.
+/// unrecoverable. A 404 is the normal not-yet answer.
 async fn poll_until_approved(
     http: &reqwest::Client,
     init: &Initiation,
@@ -257,11 +240,9 @@ pub struct TzParams {
     tz: Option<String>,
 }
 
-/// `POST /phonetrack/sync-filter` — point PhoneTrack's map at the current day.
-///
-/// "Current day" is not the calendar day. Before 06:00 local the window still
-/// starts yesterday, because a night out belongs to the evening it began —
-/// `Verified.PhoneTrackPrefs`.
+/// `POST /phonetrack/sync-filter` — point PhoneTrack's map at the current day,
+/// which before 06:00 local still starts yesterday
+/// (`Verified.PhoneTrackPrefs`).
 pub async fn sync_filter(
     State(st): State<AppState>,
     Extension(session): Extension<UserSession>,
@@ -313,11 +294,8 @@ pub async fn sync_filter(
     }
 }
 
-/// `POST /phonetrack/sync-filter`'s answer.
-///
-/// `datemin` is an `i64` epoch second, so it needs no special number
-/// handling: integers are exact in any JSON encoder. A float column would not
-/// be; see `row_json::js_number_value` for the routes that carry them.
+/// `POST /phonetrack/sync-filter`'s answer. `datemin` is an integer epoch
+/// second, exact in any encoder.
 #[derive(Serialize)]
 pub struct SyncFilterResponse {
     pub ok: bool,
