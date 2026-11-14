@@ -13,12 +13,9 @@ Exact. UNPROVEN; pinned by the `#guard`s.
 namespace Verified.Geo.TubeHop
 
 
-/-- A rail station near a coordinate, as the OSM adapter reports it.
-
-`lat`/`lon` are optional: fixture recordings made before those fields existed
-replay without them, and a consumer that wants the station's own node coordinate
-must degrade to the query point. The rail-run line-intersection retry is the
-consumer that cares; see `Verified.Geo.RailRunAnnotate.stationCoord`. -/
+/-- A rail station near a coordinate, as the OSM adapter reports it. `lat`/`lon`
+are optional for older fixture recordings; `RailRunAnnotate.stationCoord` falls
+back to the query point. -/
 structure NearbyStation where
   name : String
   subtype : String := "station"
@@ -44,27 +41,17 @@ def isEntranceCode (name : String) : Bool :=
 def isEntranceLike (s : NearbyStation) : Bool :=
   s.subtype == "subway_entrance" || isEntranceCode s.name
 
-/-- How usable a node is as the name of a station, best (0) first.
+/-- How usable a node is as the name of a station, best (0) first:
 
-* 3 — an entrance. A gate locates the station but is not it.
-* 2 — a platform position. A `stop_position` is a point on the track inside
-  the station, and it carries the operator's name for that platform rather than
-  the place's: at St Pancras the Metropolitan platform is tagged
-  `"London St Pancras"` while the station node is `"King's Cross St Pancras"`.
-  It sits nearer the boarding fix than the station node does, so on distance
-  alone it wins, and the ride gets named after a mainline terminus the rider
-  never entered.
-* 1 — a real station of the wrong subtype, when the caller expressed a
-  preference. Only the Underground caller does, with `"subway"`: a shared site
-  offers a mainline node and a tube node, and a tube ride should be named after
-  the tube one even when the mainline node is nearer.
-* 0 — a real station, of the preferred subtype when there is one.
+* 3 — an entrance: it locates the station but is not it.
+* 2 — a `stop_position`: a platform point carrying the operator's platform
+  name (the Metropolitan's at St Pancras reads "London St Pancras"). It is
+  nearer the boarding fix, so distance alone would name the wrong station.
+* 1 — a real station of the wrong subtype when the caller prefers one (only
+  the Underground caller, with `"subway"`).
+* 0 — a real station, of the preferred subtype if any.
 
-Tier dominates distance entirely — that is the whole point. A station node
-200 m away outranks its own platform at 50 m.
-
-The `prefer` split applies only within the real-station tier: the platform test
-returns before it, so a `stop_position` of the preferred subtype is still 2. -/
+Tier dominates distance entirely. `prefer` applies only among real stations. -/
 def stationTier (s : NearbyStation) (prefer : Option String := none) : Nat :=
   if isEntranceLike s then 3
   else if s.subtype == "stop_position" then 2
@@ -72,18 +59,11 @@ def stationTier (s : NearbyStation) (prefer : Option String := none) : Nat :=
     | some p => if s.subtype != p then 1 else 0
     | none => 0
 
-/-- The full ordering `pickBestStation` takes the head of, best first. Exported
-because the realisable-alight sweep in `RailRunAnnotate` walks the whole order
-and cuts at tier ≥ 2 — it needs to tell a station node from a gate without
-restating the rule.
+/-- The full ordering `pickBestStation` takes the head of, best first, exported
+for `RailRunAnnotate`'s alight sweep, which cuts at tier ≥ 2.
 
-Ties keep input order. Rather than lean on `List.mergeSort` being left-biased,
-the index is carried in the key and compared last, which makes the order total
-and the tie-break a fact about the comparator instead of about the sort.
-
-The distance comparison is written as two strict `<` tests falling through to
-the index, not as `≠` then `<`, deliberately: a NaN distance then keeps input
-order, as a comparator returning NaN does when read as 0. -/
+Ties keep input order via the index in the key. Distance is compared with two
+strict `<` tests, so a NaN distance also keeps input order. -/
 def rankStations (stations : Array NearbyStation) (prefer : Option String := none) :
     Array NearbyStation :=
   let keyed := stations.mapIdx fun i s => (s, i)
@@ -96,10 +76,7 @@ def rankStations (stations : Array NearbyStation) (prefer : Option String := non
     else a.2 ≤ b.2).toArray.map (·.1)
 
 /-- The best node to name a station by, or `none` when the site offers nothing.
-
-Tiering demotes rather than discards, so a site of nothing but entrances still
-answers with the nearest entrance — losing the evidence entirely would be worse
-than naming it imprecisely. -/
+Tiers demote, never discard: an entrance-only site still names its station. -/
 def pickBestStation (stations : Array NearbyStation) (prefer : Option String := none) :
     Option NearbyStation :=
   (rankStations stations prefer)[0]?

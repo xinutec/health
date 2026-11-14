@@ -1,43 +1,24 @@
 /-!
 # Civil dates — the proleptic Gregorian calendar, as exact integer arithmetic
 
-Dates are everywhere in this backend and none of it was in Lean. `DayState.lean`
-records `dateBoundsUtc` and `nextDateString` as unported, `shareableDateRange`
-does its arithmetic by round-tripping through `Date.UTC`, and every route that
-takes a `YYYY-MM-DD` re-derives the same parsing. This is the shared floor.
+The shared date floor: no `Float`, no tz database, no clock. (y, m, d) ↔ day
+number is Howard Hinnant's `days_from_civil`, exact at every year on `Int`.
 
-Nothing here needs a `Float`, a timezone database, or a clock. A civil date is
-three integers, and the map between (y, m, d) and a day number is a closed-form
-integer computation — Howard Hinnant's `days_from_civil`, the algorithm behind
-every modern civil-calendar implementation. `Int` in Lean is a bignum, so it is
-exact at every year, with no 2038 and no float year drift.
+Date bugs hit one day in 1 461, which a corpus of a few months cannot show, so
+the round trip is checked exhaustively over a range of years (below); the
+guards name the boundaries.
 
-Why this is PROVED rather than tested. The failure mode of date arithmetic is
-not that it is wrong everywhere; it is that it is right for 1 460 days out of
-every 1 461. A test corpus drawn from the days this app has seen — July and
-August of one year — cannot distinguish a correct implementation from one that
-mishandles February, a century year, or a year divisible by 400. So the round
-trip is a theorem over all days in range, not a table of examples, and the
-guards below exist for the boundaries a reader wants to see named.
-
-## The era trick, since the shifts look arbitrary
-
-Shift the year so it starts in March (`m ≤ 2` borrows from the previous year).
-Then the leap day is the last day of the year rather than embedded in it, and
-month lengths from March follow the exact pattern `(153·m' + 2) / 5`. Grouping
-into 400-year "eras" — 146 097 days, which is exactly divisible by 7, so the
-Gregorian calendar repeats — makes the rest division.
-
-`1970-01-01` is day 0, matching Unix epoch days, so `dayNumber · 86400` is the
-UTC midnight timestamp and no separate epoch conversion is needed.
+The year is shifted to start in March (`m ≤ 2` borrows from the previous
+year), so the leap day ends the year and month lengths follow
+`(153·m' + 2) / 5`; 400-year eras of 146 097 days make the rest division.
+`1970-01-01` is day 0, so `dayNumber · 86400` is the UTC midnight timestamp.
 -/
 
 namespace Verified.Civil
 
-/-- Days from `1970-01-01` to `y-m-d`, proleptic Gregorian. Negative before the
-epoch. `m ∈ [1, 12]` and `d ∈ [1, monthLength y m]` are the caller's to respect;
-outside that the result is still a consistent extension, not an error, because
-every caller here parses from a validated string. -/
+/-- Days from `1970-01-01` to `y-m-d`, proleptic Gregorian, negative before the
+epoch. Out-of-range `m`/`d` give a consistent extension, not an error; callers
+parse validated strings. -/
 def daysFromCivil (y : Int) (m : Int) (d : Int) : Int :=
   -- March-based year: January and February belong to the previous one.
   let y' := if m ≤ 2 then y - 1 else y
@@ -77,10 +58,8 @@ def pad2 (n : Int) : String :=
   let s := toString n
   if s.length ≥ 2 then s else "0" ++ s
 
-/-- Four digits, zero-padded. Years outside [0, 9999] are printed unpadded
-rather than truncated: this app has no such dates, and silently producing a
-5-character "year" that later parses as something else is worse than a string
-that visibly is not a date. -/
+/-- Four digits, zero-padded. Years outside [0, 9999] print unpadded, visibly
+not a date, rather than truncated into a different one. -/
 def pad4 (n : Int) : String :=
   let s := toString n
   if s.length ≥ 4 then s else String.ofList (List.replicate (4 - s.length) '0') ++ s
@@ -89,12 +68,9 @@ def pad4 (n : Int) : String :=
 def formatDate (y : Int) (m : Int) (d : Int) : String :=
   pad4 y ++ "-" ++ pad2 m ++ "-" ++ pad2 d
 
-/-- Parse `YYYY-MM-DD` strictly: exactly three all-digit components of the right
-widths, a real month, and a day within that month's length.
-
-Stricter than `new Date(s)`, deliberately: JavaScript reads 30 February as
-2 March, and accepts an unpadded month and day. Both arrive as user input through a query
-parameter; a parser that rejects is the point. -/
+/-- Parse `YYYY-MM-DD` strictly: three all-digit components of the right widths,
+a real month, and a day within it. User input arrives through query parameters,
+so 30 February and unpadded fields are refused, not normalised. -/
 def parseDate (s : String) : Option (Int × Int × Int) :=
   match s.splitOn "-" with
   | [ys, ms, ds] =>
@@ -125,8 +101,8 @@ def midnightUtc (s : String) : Option Int :=
 
 /-! ## Guards
 
-The round trip is a theorem below; these name the boundaries a reader wants to
-see, and the ones a wrong implementation gets wrong first. -/
+The boundaries a reader wants named and a wrong implementation gets wrong
+first. -/
 
 #guard daysFromCivil 1970 1 1 == 0
 #guard daysFromCivil 1970 1 2 == 1
@@ -164,13 +140,8 @@ see, and the ones a wrong implementation gets wrong first. -/
 
 /-! ## The round trip, over every day in range
 
-`#guard` checks the examples above. This checks the 730 000-odd days from 1000
-to 3000 — every leap year, every century, every month boundary in any range this
-app can reach — by execution rather than by induction, which is the honest thing
-to write down: it is a bounded exhaustive check, not a theorem about all `Int`.
-
-A proof over all `Int` is the better artefact and is not written here. Saying so
-plainly matters, because "proved" is a claim about what the statement covers. -/
+Every day from 1000 to 3000, checked by execution: a bounded exhaustive check,
+not a theorem over all `Int`. -/
 private def roundTripsOver (lo hi : Int) : Bool :=
   let rec go (z : Int) (fuel : Nat) : Bool :=
     match fuel with

@@ -4,13 +4,9 @@
 //! count, the window, the collapse — is `Verified.Geo.Velocity.watchBatterySeries`.
 //! What is here is the query and the one conversion Lean cannot do.
 //!
-//! # `last_sync_time` is a wall clock, so the window cannot be done in SQL
-//!
-//! Fitbit sends a local time with no offset and the column stores it verbatim.
-//! Which instants a civil day covers therefore depends on the zone, and the
-//! comparison the `WHERE` can make is between wall clocks. So the query
-//! pre-filters with a generous margin and the exact `[startUtc, endUtc)` window
-//! is applied after the conversion, in Lean.
+//! Google rows carry their instant in `ts_utc`; the legacy Fitbit rows only a
+//! local `last_sync_time`, resolved in the user's zone. So the query
+//! pre-filters with a day's margin and Lean applies the exact window.
 //!
 //! # No `ORDER BY`, and that is deliberate
 //!
@@ -81,12 +77,8 @@ pub async fn load(
         let wall: chrono::NaiveDateTime = r
             .try_get("last_sync_time")
             .context("device_battery_log.last_sync_time does not decode")?;
-        // An unresolvable wall clock is `null`, not an error. A zone gap or a
-        // malformed row is a reading whose instant is unknown, and Lean drops
-        // it; that is a fact about the data, where a failed decode is a fact
-        // about this code.
-        // A row that carries its instant (Google's) needs no zone; only
-        // Fitbit's wall clock, in the rows it left, does.
+        // `ts_utc` when the row has it (Google's); else the legacy wall clock
+        // in `tz`, `null` when unresolvable, which Lean drops.
         let utc: Option<chrono::NaiveDateTime> = r
             .try_get("ts_utc")
             .context("device_battery_log.ts_utc does not decode")?;

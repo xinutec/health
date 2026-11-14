@@ -1,46 +1,19 @@
 //! `rankvenues` — read the venue ranking's own terms instead of modelling them.
+//! This test is the mode's caller, so it stays reachable. It is registered in
+//! both `dispatch` (`serve`) and `cliMain` (argv). Floats cross as plain
+//! numbers: this is read by a human, not a Lean-to-Lean hop.
 //!
-//! This test is the mode's caller, deliberately: a serve mode nothing
-//! exercises does not land. A hand-computed `shapeScore` once disagreed with
-//! what the fold served, and a model that disagrees with the artefact is worth
-//! nothing, so the mode stays reachable for the next such question.
-//!
-//! `rankvenues` is registered in both dispatch surfaces — `dispatch`
-//! (`serve`) and `cliMain` (argv). Registering only the
-//! first is how the first run of this probe failed: argv fell through to the
-//! HSMM model parser, which asks for property `T`, and the error named a field
-//! this mode has never heard of.
-//!
-//! Floats cross as plain numbers here, not `fBits`. This is read by a human and
-//! by the literals below, not a Lean-to-Lean parity hop.
-//!
-//! # ⚠ this probe does not yet reproduce the fold. Do not settle a naming
-//! # question with it.
-//!
-//! Fed the fold's own landmark bucket, the captured stay window and the same
-//! priors blob, `bestplace` agreed with the fold on one arm and disagreed on
-//! two:
-//!
-//!     blob                              probe            fold
-//!     fixture                           Pizza Union      Pizza Union
-//!     fixture + prod fast_food.visits   Pizza Union      Honest Burgers
-//!     prod                              foodilic         Honest Burgers
-//!
-//! So an input this probe does not model still differs from what `StayEnrich`
-//! passes. Candidates: the coordinate step 5a names at (the mined cluster
-//! centroid `wp.cand.centroidLat/Lon`, not the stay's), `preferResidential` as
-//! `isResidential || venueless` computes it, or `samples`.
-//!
-//! What is trustworthy for that question is the fold itself:
+//! ⚠ The probe does not reproduce the fold: on the same landmarks, stay window
+//! and priors, `bestplace` disagreed with the fold on two of three prior blobs.
+//! Some `StayEnrich` input is not modelled: perhaps the mined centroid it names
+//! at, `preferResidential`, or `samples`. Settle naming questions with the fold:
 //!
 //!     cargo run --release --example dump_day_request -- <day> > req.json
 //!     # rewrite req.env.venuePriors, then
 //!     lean/.lake/build/bin/verified_cli day < req.json
 //!
-//! whose output carries `segsSplit`/`segsEnriched`/`segsMid`/`segs`/`states`, so
-//! the stage a label changes at is readable. Fix this probe against the three
-//! rows above or delete it: a probe that disagrees with the artefact is worth
-//! nothing.
+//! whose `segsSplit`/`segsEnriched`/`segsMid`/`segs`/`states` show the stage a
+//! label changes at.
 
 use backend::lean;
 use serde_json::{Value, json};
@@ -49,10 +22,8 @@ use serde_json::{Value, json};
 fn the_ranking_reports_the_term_that_decided_it() {
     lean::init().expect("the Lean runtime must start");
 
-    // Two venues at the same place, differing only in subtype and distance. No
-    // priors and no stay: the shape and hours terms are then both absent, so
-    // distance is the only thing left that can order them, and the nearer one
-    // must win.
+    // Two venues differing only in subtype and distance, with no priors and no
+    // stay: distance alone orders them, and the nearer wins.
     let req = json!({
         "mode": "rankvenues",
         "landmarks": [
@@ -99,10 +70,8 @@ fn the_ranking_reports_the_term_that_decided_it() {
         );
     }
 
-    // The gap the probe measured, pinned so it cannot rot: at these two
-    // distances the whole geometric advantage is ~0.67 nats, while the shape
-    // term's own clamps span 9.4. A venue prior can therefore outvote a 3x
-    // distance difference, which is a fact about the clamps.
+    // At these distances the geometric advantage is ~0.67 nats while the shape
+    // term's clamps span 9.4, so a venue prior can outvote a 3x distance gap.
     let near = ranked[0]["distance"].as_f64().unwrap();
     let far = ranked[1]["distance"].as_f64().unwrap();
     assert!(
@@ -112,13 +81,9 @@ fn the_ranking_reports_the_term_that_decided_it() {
     );
 }
 
-/// The `bestplace` mode — the whole chain, not just the ranking.
-///
-/// A mode with no caller is the debt the reachability check exists to find,
-/// so `bestplace` gets one here. What it pins is the chain's two decisive
-/// gates, which the ranking alone cannot show: an enclosing landmark
-/// short-circuits everything, and without one the label comes from the ranked
-/// winner rather than the geocode.
+/// The `bestplace` mode, the whole chain, and its caller. It pins the two gates
+/// the ranking cannot show: an enclosing landmark short-circuits everything,
+/// and otherwise the label is the ranked winner, not the geocode.
 #[test]
 fn the_chain_reports_a_label_and_an_enclosure_wins_outright() {
     lean::init().expect("the Lean runtime must start");

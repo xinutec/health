@@ -19,10 +19,8 @@ pub struct HealthParams {
 }
 
 /// `GET /health` — `ok` as plain text, or a JSON picture with `?detail=1`.
-///
-/// Unauthenticated, and it stays that way: this is what an operator curls
-/// when the dashboard is broken, which is exactly when a login might be too.
-/// Nothing here names a user or a place — counts, a latency and a date.
+/// Unauthenticated, since it is curled when sign-in may be broken; it names no
+/// user or place.
 pub async fn health(
     State(st): State<AppState>,
     axum::extract::Query(p): axum::extract::Query<HealthParams>,
@@ -79,11 +77,9 @@ async fn probe(st: &AppState) -> anyhow::Result<(i64, i64, Option<String>)> {
     Ok((fp, oc, ls))
 }
 
-/// `GET /version` — the commit the running image was built from.
-///
-/// Deliberately outside `/api`: the UI footer reads it to make a stale client
-/// or a half-finished rollout visible at a glance, and a version endpoint that
-/// needs a session cannot answer when the session is what is broken.
+/// `GET /version` — the commit the running image was built from. Outside
+/// `/api` and sessionless, so the footer can show a stale client even when the
+/// session is what is broken.
 pub async fn version() -> Response {
     Json(json!({
         "sha": std::env::var("GIT_SHA").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "dev".into()),
@@ -91,28 +87,12 @@ pub async fn version() -> Response {
     .into_response()
 }
 
-/// ⚠ HTML must revalidate, and shipping without saying so cost a deploy nobody
-/// could see.
+/// ⚠ HTML must revalidate. With no `Cache-Control` a client caches
+/// heuristically and may never re-ask: a WebView ran a build several deploys
+/// old, which looks like a failed deploy. `no-cache` still allows a 304 via ETag.
 ///
-/// With no `Cache-Control` at all a client falls back to heuristic caching from
-/// `Last-Modified` and may keep the document indefinitely without asking again:
-/// an Android WebView once fetched the whole API and never requested
-/// `main-*.js`, running a build several deploys old for hours. The symptom is
-/// "the change did not deploy", which sends you to CI, the image and the
-/// rollout, all of them correct.
-///
-/// `no-cache` means "ask first", not "never keep": the ETag still turns the
-/// usual case into a 304 with no body.
-///
-/// Only text/html, and only when nothing has already spoken. This layer sees
-/// every response including the API's, so an `else` branch stamping `immutable`
-/// on whatever was left would put a year-long cache on JSON — the same bug
-/// pointing the other way.
-///
-/// A file is decided too: one whose name carries its content hash is
-/// `immutable`, and any other — an icon, the manifest, the service worker's
-/// files, which keep their names across builds — revalidates, or a WebView keeps
-/// it on heuristics. See [`cache_for`].
+/// Only text/html, and only when nothing has spoken: this layer sees API
+/// responses too. Files are decided by [`cache_for`].
 pub async fn html_must_revalidate(
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -134,10 +114,9 @@ pub async fn html_must_revalidate(
     res
 }
 
-/// What a response that said nothing about caching should say, or nothing: the
-/// page revalidates; a file (a dot in the last segment) is `immutable` when its
-/// name carries its content hash and revalidates otherwise; an error and an API
-/// answer are left alone.
+/// What a response that said nothing about caching should say: the page
+/// revalidates; a file (a dot in the last segment) is `immutable` when its name
+/// carries a content hash, else revalidates; errors and API answers are left.
 pub fn cache_for(path: &str, content_type: &str, status: StatusCode) -> Option<&'static str> {
     if content_type.starts_with("text/html") {
         return Some("no-cache");
@@ -171,26 +150,12 @@ fn is_content_hashed(name: &str) -> bool {
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 
-/// The landing page shown when no Angular build is present — at the root
-/// only.
+/// The landing page shown at the root when no Angular build is present, so a
+/// broken image says which build state it is in.
 ///
-/// A fallback for a broken image, not a feature. It says which build state
-/// the pod is in rather than showing a blank page, which is the difference
-/// between "the deploy is wrong" and "the app is broken".
-///
-/// Every other path is a 404. `ServeDir`'s fallback is reached for any
-/// file it cannot find, so without this `GET /media/nope.woff2` answers 200
-/// text/html, the explanation page, handed to a browser that asked for a
-/// font. It renders broken icons and reports nothing, on both sides: a 200 is
-/// not an error to the client and not a log line on the server.
-///
-/// `routes/mod.rs` already lists the SPA's routes by hand for exactly this
-/// reason — *"a typo'd .css or .js must still 404"* — and that decision was
-/// correct; what defeated it was the thing it fell through to.
-///
-/// The root must stay 200. `tests/suite/compression.rs` uses this body as the
-/// largest the router produces without a database and asserts 200 on `/`, and a
-/// build-less deployment still has to account for itself to whoever opens it.
+/// Every other path is a 404, or a missing font or script would get a 200
+/// HTML page, an error neither side reports. The root stays 200:
+/// `tests/suite/compression.rs` uses this body.
 pub async fn fallback_page(uri: axum::http::Uri) -> Response {
     if uri.path() != "/" {
         return (StatusCode::NOT_FOUND, "not found").into_response();

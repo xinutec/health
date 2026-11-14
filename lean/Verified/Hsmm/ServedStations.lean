@@ -3,23 +3,13 @@ import Verified.Geo.LineStations
 /-!
 # Served-station sets
 
-Does a line actually stop at a candidate station? The station chain uses this to
-refuse a (board, alight) pair the mirrored OSM route relations say the line does
-not serve: the membership test the graph's proximity-based line memberships
-cannot make, because an edge passing near a station is not the same claim as a
-service stopping at it.
+Does a line stop at a candidate station? The station chain refuses a
+(board, alight) pair the mirrored route relations say the line does not serve:
+an edge passing near a station is not a service stopping there. Pinned
+directly, not through `resolveStationChain`.
 
-Unlike the rest of the station chain, every function here is pinned directly
-rather than through `resolveStationChain`.
-
-## Hash order is safe here, and that is worth stating rather than assuming
-
-`StationChain` treats any `HashMap` iteration as suspect, because iteration
-order is unspecified. This module is the exception and for
-a checkable reason: the only iteration is `stationNameServed`'s scan over the
-served set, and it returns as soon as any element matches. The result is a
-`Bool`, so a permutation of the set can change which element matched but never
-whether one did. `Std.HashSet` is therefore faithful, not merely convenient.
+`HashSet` iteration is safe here: the one scan (`stationNameServed`) returns a
+`Bool` on any match, so order cannot change the answer.
 -/
 
 namespace Verified.Hsmm.ServedStations
@@ -31,10 +21,9 @@ open Verified.Geo.LineStations (lineBaseToken)
     with two stops) must not start penalising candidates. -/
 def MIN_SERVED_STOPS : Nat := 5
 
-/-- Containment matching (one normalised name inside the other) is only believed
-    when the shorter name is at least this long. Catches the "London St Pancras"
-    ⊂ "London St Pancras International" suffix pattern while refusing "Euston" ⊂
-    "Euston Square" — a different station, not a name variant. -/
+/-- Containment matching (one normalised name inside the other) is believed only
+    when the shorter is at least this long: "London St Pancras" ⊂ "London St
+    Pancras International" passes, "Euston" ⊂ "Euston Square" does not. -/
 def MIN_CONTAINMENT_CHARS : Nat := 10
 
 /-- Substring test, via the `splitOn` idiom `LineStations` established (this core
@@ -43,12 +32,8 @@ private def containsSub (hay needle : String) : Bool :=
   (String.splitOn hay needle).length > 1
 
 /-- Lowercase alphanumerics only: "King's Cross St. Pancras" and "King's Cross
-    St Pancras" normalise identically.
-
-    Lowercase first, then strip, so an uppercase ASCII letter survives as its
-    lowercase self. Lean's lowercasing is ASCII-only, so a character whose
-    Unicode lowercase is an ASCII letter but which is not itself ASCII (Turkish
-    `İ` → `i̇`) is stripped. No station name in the mirror contains one. -/
+    St Pancras" normalise alike. Lowercasing is ASCII-only, so a non-ASCII
+    letter is stripped; no mirrored station name has one. -/
 def normalizeStationName (name : String) : String :=
   String.ofList (name.toLower.toList.filter (fun c =>
     (c ≥ 'a' && c ≤ 'z') || (c ≥ '0' && c ≤ '9')))
@@ -66,19 +51,11 @@ structure RailStopRelation where
   stops : Array RailStop
   deriving Inhabited, Repr
 
-/-- Relations that are the line: the ref equals the line's base token, or the
-    relation's own name has that base token, case-insensitively.
-
-    Containment of the token in the ref or the name would match every Southern
-    service terminating at London Victoria for the Victoria line: 38 relations
-    and 147 stations for a line with 16. Exact: Victoria 38 → 4, Northern
-    41 → 26, Central 32 → 12; Jubilee, Circle and Metropolitan unchanged. The
-    tube carries its designation in the ref (`Victoria`); National Rail carries
-    an operator code (`SN7.2`), so a Southern relation does not look like the
-    tube line its terminus shares a name with.
-
-    An empty base matches NOTHING, mirroring `lineNamesMatching`: a `'%%'` LIKE
-    would have matched every relation in the mirror. -/
+/-- Relations that are the line: ref equal to the line's base token, or a name
+    whose base token it is, case-insensitively. Containment would give the
+    Victoria line every Southern service into London Victoria (38 relations, 147
+    stations); the tube carries its designation in the ref, National Rail an
+    operator code. An empty base matches nothing, as in `lineNamesMatching`. -/
 def railRelationsForLine (relations : Array RailStopRelation) (lineName : String) :
     Array RailStopRelation :=
   let base := (lineBaseToken lineName).toLower
@@ -108,12 +85,9 @@ def stationNameServed (served : Std.HashSet String) (stationName : String) : Boo
   if served.contains norm then true
   else if norm.length < MIN_CONTAINMENT_CHARS then false
   else
-    -- Order-independent: any match answers `true`. See the module docstring.
-    -- Not with a National Rail "London " prefix stripped:
-    -- "London King's Cross" vs the relation's "King's Cross St. Pancras" is a
-    -- real miss, but stripping the prefix on either side (length-guarded) took
-    -- the live scoreboard's stations from 15 to 7 — at the mainline complexes
-    -- the served term is what separates co-located names, and ties fall silent.
+    -- Order-independent: any match answers `true`. No "London " prefix
+    -- stripping: it lost more stations than it found, since at mainline
+    -- complexes this term separates co-located names.
     served.fold (fun acc s =>
       if acc then true
       else if min s.length norm.length < MIN_CONTAINMENT_CHARS then false
@@ -128,11 +102,10 @@ def stopIndexOf (rel : RailStopRelation) (stationName : String) : Option Nat :=
     | some s => match s.name with | some n => one n | none => false
     | none => false
 
-/-- The stations `line` calls at between two named ones, over its relations
-    (either direction; the FEWEST hops wins, since a semi-fast variant is still
-    the line). `none` when no relation of the line calls at both. The decoder's
-    twin of `LineStoppingPattern.intermediateStopCount`, over this module's
-    relation type and name rule. -/
+/-- The stations `line` calls at between two named ones, over its relations in
+    either direction, fewest hops winning (a semi-fast variant is still the
+    line). `none` when no relation calls at both. The decoder's counterpart of
+    `LineStoppingPattern.intermediateStopCount`. -/
 def intermediateCalls (relations : Array RailStopRelation) (line a b : String) :
     Option (Array RailStop) :=
   (railRelationsForLine relations line).foldl (init := (none : Option (Array RailStop))) fun acc rel =>
@@ -210,10 +183,8 @@ private def probe : Std.HashSet String :=
 -- cannot be absorbed into its neighbour by prefix.
 #guard stationNameServed probe "Euston" == false
 #guard stationNameServed probe "Euston Square" == true
--- Refused, and not for the obvious reason: "barbicanstation" is 15 chars and
--- clears the floor by itself, but the set member "barbican" is 8. The guard is
--- `min` of the two, so a long candidate cannot reach a short member however
--- cleanly it contains it. This is the case that pins `min` rather than `norm`.
+-- Refused: "barbicanstation" clears the floor, but the member "barbican" does
+-- not, and the floor applies to the shorter of the two.
 #guard stationNameServed probe "Barbican Station" == false
 #guard stationNameServed probe "Kings Cross" == false
 

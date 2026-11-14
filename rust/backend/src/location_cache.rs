@@ -1,30 +1,15 @@
-//! The two ten-second caches behind the live map.
-//!
-//! `/location/latest` and `/location/tail` both answer from PhoneTrack, and the
-//! Map tab polls both. Without a cache each poll is a nested walk of one HTTP
-//! call per device against Nextcloud, so each user's answer is kept for ten
-//! seconds.
-//!
-//! Process-local, like the velocity cache, and for the same reason: a deploy
-//! restarts the pod and that is the invalidation. Ten seconds also means the
-//! worst staleness is ten seconds, so there is nothing to invalidate by hand.
-//!
-//! # Why there is no single-flight here
-//!
-//! `velocity_cache` serialises concurrent misses because computing a day is
-//! expensive enough that two of them at once matters. These are one bounded
-//! HTTP walk, so two polls landing together do two fetches and the second wins;
-//! a lock would buy nothing worth its complexity.
+//! The two ten-second caches behind the live map: `/location/latest` and
+//! `/location/tail` are polled, and each miss walks Nextcloud once per device.
+//! Process-local; ten seconds is the worst staleness. No single-flight: a miss
+//! is one bounded HTTP walk, and two concurrent ones are harmless.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde::Serialize;
 
-/// The live marker: the freshest fix, or `None` when there is none.
-///
-/// The field order is the wire order: `preserve_order` is on, so serde emits
-/// these in declaration order, and the client reads that order.
+/// The live marker: the freshest fix, or `None`. Field order is the wire order
+/// (`preserve_order`).
 #[derive(Clone, Debug, Serialize)]
 pub struct LatestFix {
     pub lat: f64,
@@ -48,12 +33,8 @@ struct Entry<T> {
     value: T,
 }
 
-/// Per-user, TTL'd, with no eviction.
-///
-/// Unbounded in principle and bounded in practice by the user count — this is
-/// keyed by user, not by user-and-date like the velocity cache, so it cannot
-/// grow with time. If this app ever serves many users, that reasoning stops
-/// holding and this needs the LRU the velocity cache already has.
+/// Per-user, TTL'd, with no eviction: keyed by user alone, so it cannot grow
+/// with time. Many users would need the velocity cache's bound.
 pub struct LocationCache<T> {
     entries: Mutex<HashMap<String, Entry<T>>>,
 }
@@ -71,13 +52,8 @@ impl<T: Clone> LocationCache<T> {
         }
     }
 
-    /// The cached value if it is still fresh.
-    ///
-    /// Freshness is `Verified.LocationTail.cacheFresh`, which is the velocity
-    /// cache's comparison — strict at the boundary, and a future timestamp is
-    /// stale rather than eternally fresh. A host that wrote `<=` here would
-    /// serve an entry one millisecond past its promise, which is the direction
-    /// that cannot be justified to a caller.
+    /// The cached value if still fresh, by `Verified.LocationTail.cacheFresh`:
+    /// strict at the boundary, and a future timestamp is stale.
     pub fn get(&self, key: &str, now_ms: i64, ttl_ms: i64) -> Option<T> {
         let entries = self.entries.lock().ok()?;
         let e = entries.get(key)?;
@@ -97,19 +73,11 @@ impl<T: Clone> LocationCache<T> {
     }
 }
 
-/// The points a tail request answers with.
-///
-/// Mirrors `Verified.LocationTail.tailAfter`, and is not a host call:
-/// a tail buffer is thousands of points and shipping all of them across the FFI
-/// per poll would cost more than the fetch it saves. `tests/suite/location_tail.rs`
-/// holds this against Lean's over a corpus, which is the only thing stopping
-/// the two drifting.
-///
-/// Both halves invert without looking wrong. `>` is strict, so the point the
-/// caller already has is not resent and drawn twice. The cap keeps the last
-/// `TAIL_MAX_POINTS`, so a long buffer answers with the newest — taking the
-/// first would answer a live map with the stale head and never reach the
-/// present, which reads as lag rather than as a bug.
+/// The points a tail request answers with: `Verified.LocationTail.tailAfter`
+/// re-implemented here, since shipping thousands of points to Lean per poll
+/// costs more than the fetch. `tests/suite/location_tail.rs` holds the two
+/// together. `>` is strict, so the caller's last point is not resent, and the
+/// cap keeps the newest `TAIL_MAX_POINTS`, not the oldest.
 pub fn tail_after(points: &[TailPoint], since: f64) -> Vec<TailPoint> {
     let kept: Vec<TailPoint> = points
         .iter()
@@ -121,20 +89,14 @@ pub fn tail_after(points: &[TailPoint], since: f64) -> Vec<TailPoint> {
     kept[drop..].to_vec()
 }
 
-/// How long a started OAuth handshake may take to come back.
-///
-/// Ten minutes, matching the pending-login cookie. A shorter window strands a
-/// user who stops to read the consent screen; a longer one keeps a redeemable
-/// PKCE verifier alive after the person has walked away.
+/// How long a started OAuth handshake may take: ten minutes, as the pending-login
+/// cookie. Long enough to read the consent screen, short enough not to leave a
+/// PKCE verifier redeemable.
 pub const OAUTH_STATE_TTL_MS: i64 = 10 * 60 * 1000;
 
 impl<T: Clone> LocationCache<T> {
-    /// Read and remove an entry, if it is still fresh.
-    ///
-    /// Single-use, which is the point for an OAuth state: a verifier that
-    /// could be redeemed twice is a replayable authorisation. An expired entry
-    /// is removed too, so a stale one cannot linger and be redeemed after a
-    /// clock correction.
+    /// Read and remove an entry if still fresh: single-use, so an OAuth verifier
+    /// cannot be replayed. Expired entries are removed too.
     pub fn take(&self, key: &str, now_ms: i64) -> Option<T> {
         let mut entries = self.entries.lock().ok()?;
         let e = entries.remove(key)?;

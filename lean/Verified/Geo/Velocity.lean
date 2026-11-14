@@ -6,20 +6,15 @@ import Verified.Fix
 /-!
 # Velocity-owned pure kernels
 
-The velocity pipeline is mostly an orchestrator: it loads GPS/biometrics from
-the DB, resolves tz, and sequences ~40 pass modules, each with its own module
-here. This module holds the pure numeric kernels the pipeline itself owns:
+The velocity pipeline's own numeric kernels (each pass has its own module):
 
 * `localSolarHour` — solar time from a unix instant.
-* `computeRoadNearestFraction` — per-segment rail-vs-road GPS evidence
-  aggregated over a segment's sampled `nearbyWays` (a sibling of
-  `railRoadDistFromWays`).
+* `computeRoadNearestFraction` — per-segment rail-vs-road GPS evidence over a
+  segment's sampled `nearbyWays` (a sibling of `railRoadDistFromWays`).
 * `batterySeries` / `appendBatteryTail` — the battery-chart reduction.
 
-`localSolarHour` is pure integer arithmetic on the epoch (no tz):
-`utcMinutes = ⌊ts/60⌋ mod 1440`. The proximity kernels are `min`/mean over a
-filtered list, no transcendentals, exact. Battery is filter + one linear
-interpolation, rounded. UNPROVEN; pinned by the `#guard`s.
+Integer arithmetic, `min`/mean, and one rounded interpolation: exact.
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.Velocity
@@ -31,10 +26,9 @@ private def roundHalfUp (x : Float) : Float := Float.floor (x + 0.5)
 
 /-! ## Solar time -/
 
-/-- Local solar hour (0..23) at a unix-second instant and longitude. Longitude
-    stands in for tz: each 15° ≈ 1 h. Mirrors JS: `utcMinutes` from the epoch,
-    shift by `lon/15` hours, wrap into `[0,1440)` minutes, floor to the hour.
-    The `((x % m) + m) % m` normaliser equals the Euclidean floor-mod used here. -/
+/-- Local solar hour (0..23) at a unix-second instant and longitude, each 15°
+    ≈ 1 h: UTC minutes of the day, shifted by `lon/15` hours, wrapped into
+    `[0,1440)` with Euclidean mod, floored to the hour. -/
 def localSolarHour (ts : Int) (lon : Float) : Float :=
   let utcMinutes : Float := Float.ofInt ((ts / 60) % 1440)
   let localMin := utcMinutes + (lon / 15) * 60
@@ -43,9 +37,9 @@ def localSolarHour (ts : Int) (lon : Float) : Float :=
 
 /-! ## Per-segment rail-vs-road proximity
 
-Each element of `wayResults` is one sample point's `nearbyWays`. Per sample we
-take the min distance to any rail-only way and to any drivable road; then mean
-across the samples that had each kind in range (`none` when none did). -/
+Each element of `wayResults` is one sample's `nearbyWays`. Per sample, the min
+distance to a rail-only way and to a drivable road; then the mean over samples
+that had each in range (`none` if none did). -/
 
 /-- Min rail-only and min drivable-road distance within one sample's ways
     (`+∞` when absent), sharing the subtype rules of `railRoadDistFromWays`. -/
@@ -122,16 +116,10 @@ def appendBatteryTail (series : List BatterySample) (tail : Option BatterySample
 
 /-! ### The watch trace
 
-`device_battery_log` read back for one day, shaped to sit on the same axis as
-the phone's series above. A different reduction from `batterySeries`, because the
-history is different: Fitbit's devices endpoint reports only the current level at
-each device sync, so there is a handful of points a day rather than one per fix.
-
-The wall-clock → epoch conversion is not here. `last_sync_time` is a Fitbit
-wall clock with no offset, so resolving it needs tzdata; the host does that and
-puts the instant on the wire. `none` is a clock that did not resolve, and it is
-dropped rather than defaulted — a reading at a guessed instant would draw a step
-where none happened. -/
+`device_battery_log` for one day, on the phone series' axis. A different
+reduction from `batterySeries`: the watch reports a handful of levels a day, not
+one per fix. The host resolves each row's instant; `none` (an unresolved
+legacy wall clock) is dropped, not guessed. -/
 
 /-- Fitbit's pseudo-name for phone step tracking. Not a wearable, and it reports
 battery 0, so a series that keeps it draws the watch flat-lining at empty. -/
@@ -146,20 +134,10 @@ structure WatchRow where
   deviceVersion : Option String := none
   deriving Repr, Inhabited
 
-/-- The watch series for one day.
-
-Drop the phone pseudo-tracker and the unresolved clocks, keep the half-open
-window `[startUtc, endUtc)`, sort by time, then collapse.
-
-The sort is stable and the collapse depends on it. Two devices reporting at
-the same instant keep the row that came later in the input, which is the table's
-own order, not a rule about which device is right; reversing the input reverses
-which level is drawn.
-
-A run of equal levels collapses to its first reading: the flat step is already
-drawn from the point that started it. A level that returns to an earlier value is
-a real step and is kept — the comparison is against the previous kept sample
-only, never against the whole series. -/
+/-- The watch series for one day: drop the phone pseudo-tracker and unresolved
+clocks, keep `[startUtc, endUtc)`, sort stably by time, then collapse runs of
+equal levels to their first reading. Same-instant rows keep the later input row
+(the table's order). A level returning to an earlier value is a real step. -/
 def watchBatterySeries (rows : List WatchRow) (startUtc endUtc : Int) : List BatterySample :=
   let inWindow : List BatterySample :=
     rows.filterMap fun r =>

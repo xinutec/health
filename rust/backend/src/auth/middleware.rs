@@ -1,25 +1,13 @@
 //! Turning a request into a session, and refusing the ones that should be.
 //!
-//! Two ways in, tried in this order:
+//! The `session` cookie (the owner) is tried before `X-Share-Token` (a
+//! read-only forwarded link), so a stale header cannot downgrade the owner.
 //!
-//!   1. the `session` cookie — the owner on their own dashboard;
-//!   2. `X-Share-Token` — a forwarded link, read-only, windowed.
-//!
-//! The cookie wins, and the order is not arbitrary. If a session already
-//! authenticated the request, the owner is using their own dashboard and share
-//! auth is irrelevant — checking the header first would let the owner's own
-//! browser downgrade itself to read-only by holding a stale header.
-//!
-//! # ⚠ This layer authenticates. It does not authorise
-//!
-//! [`resolve`] answers "who is this", including "nobody". Refusing a request is
-//! two further steps, and they are separate because they fail differently:
-//! [`require_session`] turns "nobody" into 401, and [`require_may_proceed`] asks
-//! `Verified.Session.mayProceed` whether this session may use this method on
-//! this path — the rule that keeps a share recipient read-only.
-//!
-//! Collapsing them would mean a route that forgets one gets the other for free,
-//! which reads as safety and is not: the missing one is silent.
+//! ⚠ This layer authenticates; it does not authorise. [`resolve`] answers who
+//! is asking, possibly nobody. [`require_session`] turns nobody into 401, and
+//! [`require_may_proceed`] asks `Verified.Session.mayProceed` whether this
+//! session may use this method on this path. Kept separate so a route missing
+//! one does not silently pass on the other.
 
 use axum::extract::{OriginalUri, Request, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -36,14 +24,9 @@ use crate::state::AppState;
 /// the spelling here is documentation.
 pub const SHARE_HEADER: &str = "x-share-token";
 
-/// Who is asking, and the session cookie to send back when its session was
-/// just renewed, or `None`.
-///
-/// A failed lookup is `None`, not an error — a bad cookie and an unknown token
-/// are ordinary traffic, not faults. A database failure is an error and
-/// propagates: "the sessions table is unreachable" must not read as "you are
-/// logged out", because that answer is indistinguishable from a correct one and
-/// would silently sign everybody out during an outage.
+/// Who is asking, and the session cookie to send back when it was just renewed.
+/// A bad cookie or unknown token is `None`; a database failure is an error, or
+/// an outage would silently sign everybody out.
 pub async fn resolve(
     st: &AppState,
     jar: &CookieJar,
@@ -55,10 +38,8 @@ pub async fn resolve(
         .cfg
         .session_secret
         .as_deref()
-        // Unreachable through `serve`, which refuses to start without one. An
-        // error rather than `None`: a process serving requests with no signing
-        // key is a misconfiguration, and answering "not logged in" to every
-        // request would look like a working server with no users.
+        // Unreachable through `serve`, which refuses to start without a key. An
+        // error, not `None`: "not logged in" for everyone would look healthy.
         .ok_or_else(|| {
             anyhow::anyhow!("SESSION_SECRET is not set; this process cannot authenticate")
         })?;
@@ -94,10 +75,8 @@ pub async fn require_session(
     next: Next,
 ) -> Response {
     let now_ms = chrono::Utc::now().timestamp_millis();
-    // The share window is anchored on the owner's civil date, resolved in
-    // UTC here because the recipient's zone is not known at this point (the
-    // `tz` query parameter belongs to the route, not to authentication), so a
-    // link near midnight can differ by a day from what the viewer sees.
+    // The share window uses today's date in UTC: the viewer's zone (the
+    // route's `tz`) is unknown here, so near midnight it can be a day off.
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
     match resolve(&st, &jar, req.headers(), now_ms, &today).await {
@@ -139,25 +118,10 @@ pub async fn require_session(
 
 /// 403 when a share viewer tries anything `Verified.Session.mayProceed` refuses.
 ///
-/// ⚠ mount after [`require_session`], and this now fails closed if you do not.
-///
-/// It used to pass an extension-less request through, on the reasoning that
-/// "there is no session" is 401's job. That reasoning is sound and the
-/// behaviour was still wrong, because it made the mounting order a silent
-/// correctness condition: run this before `require_session` and a share
-/// viewer's POST arrives with no extension yet, reads as not-a-share-viewer, is
-/// allowed, and then `require_session` attaches the session and runs the route.
-/// A read-only link could write, and nothing anywhere would say so.
-///
-/// That is not hypothetical: flipping the two layers in `routes::mod` once
-/// failed zero of the eleven tests that covered this, because the test that
-/// claimed to protect the order mirrored the stack rather than importing it,
-/// and so only ever tested its own copy.
-///
-/// Refusing here costs nothing in correct operation: mounted properly,
-/// `require_session` has already answered 401 and this never sees a request
-/// without a session. Mounted wrongly, every request 500s immediately instead
-/// of one class of request being quietly over-permitted.
+/// ⚠ Mount after [`require_session`]. A request without a session is a 500
+/// here: run first, a share viewer's POST would carry no session yet, read as
+/// not a share viewer, and be allowed. Mounted correctly, `require_session` has
+/// already answered 401.
 pub async fn require_may_proceed(req: Request, next: Next) -> Response {
     let Some(session) = req.extensions().get::<UserSession>() else {
         tracing::error!(
