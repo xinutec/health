@@ -2,31 +2,23 @@ import Verified.Hsmm.FloatScore
 /-!
 # Telling a phone how hard to look for itself
 
-The Owntracks Android app posts each GPS fix here on its way to PhoneTrack, and
-the response carries a configuration patch. So this decides, on every fix, how
-often that phone should take the next one — which is a direct trade of the
-user's battery against the fidelity of their timeline.
+The Owntracks app posts each fix here on its way to PhoneTrack, and the response
+carries a config patch: on every fix this trades battery against timeline
+fidelity.
 
-This never demotes. A missing journey is a hole in the record; a flat battery
-is not. A demotion gated on standstill at a place the user lingers still cost a
-walk twice (three hours at home, then a fourteen-minute gap walking out; a
-twelve-minute standstill mid-walk, then fourteen minutes lost walking on). The
-user sets Move mode by hand; this decides how often to locate inside it, and
-escalates a phone that reports itself in Significant.
+It never demotes: a missing journey is a hole in the record, a flat battery is
+not, and standstill-gated demotion lost walks. The user sets Move mode by hand;
+this picks the interval inside it and escalates a phone in Significant.
 
 ## The cascade, in priority order
 
-1. High speed wins everywhere. Boarding a train should not wait for history
-   to accumulate; a single fix above the transit threshold escalates.
-2. Significant → Move, on any evidence of motion. Only fires when the phone
-   is actually in Significant — there is nothing to escalate from Move. With no
-   evidence the answer is still a Move profile.
-3. Refinement inside Move, once there is enough trajectory to tell walking
-   from a bus.
-4. Night. Between `NIGHT_START_H` and `NIGHT_END_H` local time a phone
-   that is not moving locates once an hour — still Move mode, so a night walk
-   is seen at the next fix and escalates like any other. The interval spares
-   data, not battery; it is not a pause.
+1. High speed wins everywhere: one fix above the transit threshold escalates.
+2. Significant → Move on any evidence of motion (only from Significant). With
+   no evidence the answer is still a Move profile.
+3. Refinement inside Move, once the trajectory tells walking from a bus.
+4. Night: between `NIGHT_START_H` and `NIGHT_END_H` a still phone locates
+   hourly, still in Move, so a night walk escalates at the next fix. It spares
+   data, not battery.
 
 Pure and total. UNPROVEN; the guards pin the thresholds and the night window.
 -/
@@ -68,10 +60,9 @@ def Profile.name : Profile → String
   | .walking => "walking"
   | .night => "night"
 
-/-- Local hours inside which a still phone locates hourly: from 23:00 up to
-    but not including 06:00. The window ends early: the last hourly fix can
-    land up to an hour after it closes, and the day's cadence must be back
-    before the first trip out. -/
+/-- Local hours in which a still phone locates hourly: 23:00 up to 06:00. It ends
+    early because the last hourly fix can land an hour later, and the day's
+    cadence must be back before the first trip out. -/
 def NIGHT_START_H : Int := 23
 def NIGHT_END_H : Int := 6
 
@@ -161,22 +152,17 @@ def computeSignals (history : List Fix) : Signals :=
       trigger := last.trigger
       monitoringMode := last.monitoringMode }
 
-/-- Is the phone in Significant mode?
-
-The phone's own `m` field is ground truth and beats our memory of what we last
-pushed — the phone may have been changed underneath us. Only when it says
-nothing do we fall back to what we know: a device we have decided for was
-pushed a Move profile, a device we have never seen may be anywhere. -/
+/-- Is the phone in Significant mode? Its own `m` field wins over what we last
+pushed. Without it, a device we decided for has Move, an unseen one may be in
+anything. -/
 def isPhoneInSignificant (monitoringMode : Option Int) (prev : Option Profile) : Bool :=
   match monitoringMode with
   | some 1 => true
   | some 2 => false
   | _ => prev == none
 
-/-- Predicate 1: a single fast reading escalates immediately.
-
-Takes the MAX of reported and computed speed, so a phone that omits `vel`
-still escalates on displacement. -/
+/-- Predicate 1: a single fast reading escalates immediately, on the max of
+reported and computed speed, so a phone omitting `vel` still escalates. -/
 def escalateOnHighSpeed (s : Signals) : Option Profile :=
   let speed := max s.reportedVelKmh s.computedVelKmh
   if speed > TRANSIT_FAST_KMH then some .transitFast
@@ -192,19 +178,12 @@ private def refineFromTrajectory (s : Signals) : Option Profile :=
        && s.straightness ≥ WALKING_MIN_STRAIGHTNESS then some .walking
   else none
 
-/-- Predicate 2: in Significant mode, any evidence of motion escalates.
+/-- Predicate 2: in Significant mode, any evidence of motion escalates: the
+button, a fix sooner than the Significant cadence (the motion sensor fired), or
+displacement above walking pace.
 
-Three independent sources, any one enough: the user pressed the button, a fix
-arrived sooner than the Significant cadence allows (the motion sensor fired), or
-there is visible displacement above walking pace.
-
-Self-gates on `m = 2`. The cascade only calls this inside the Significant
-branch, but the function is reachable on its own and a contract that quietly
-depended on its caller would invite a regression.
-
-Falls back to `transit` rather than to nothing: the point is to get Move mode
-going. Guessing a slightly-too-eager profile costs battery; guessing nothing
-costs the journey. -/
+Self-gated on `m = 2` rather than relying on the caller. Falls back to
+`transit`: too eager costs battery, nothing costs the journey. -/
 def escalateFromSignificant (s : Signals) : Option Profile :=
   if s.monitoringMode == some 2 then none
   else
@@ -225,11 +204,8 @@ def refineInMove (s : Signals) : Option Profile :=
   if s.historySpanSec < MIN_HISTORY_SPAN_FOR_REFINE_SEC then none
   else refineFromTrajectory s
 
-/-- Predicate 4: at night, a still phone locates hourly; a moving one walks.
-
-Reads the max of every speed the signals carry, so a phone that omits `vel`
-still counts as moving on displacement, and a night walk seen at an hourly
-fix is answered with the walking cadence at once. -/
+/-- Predicate 4: at night a still phone locates hourly; a moving one (max of
+every speed, so a missing `vel` still counts) gets the walking cadence at once. -/
 def nightProfile (s : Signals) : Option Profile :=
   match s.localHour with
   | some h =>
@@ -262,11 +238,9 @@ def decideTransition (s : Signals) (prev : Option Profile) : Transition :=
         | some p => .to p
         | none => .keep
 
-/-- What we decide for a device we have never seen, or one with no evidence
-either way: the gentlest Move profile.
-
-Move, not the phone's factory default of Significant: every answer is a push,
-and the first fix after a restart would push Significant onto a walking phone. -/
+/-- The profile for an unseen device or one with no evidence: the gentlest Move
+profile. Not Significant, or the first fix after a restart would push it onto a
+walking phone. -/
 def DEFAULT_PROFILE : Profile := .walking
 
 /-- The Owntracks settings for a profile: monitoring mode (always 2, Move), and
@@ -277,12 +251,9 @@ def configFor : Profile → (Int × Option Int)
   | .walking => (2, some 30)
   | .night => (2, some 3600)
 
-/-- The whole decision: signals in, a concrete profile out.
-
-Always a concrete profile, never "no change". The proxy pushes the full config
-on every fix and the phone treats it as idempotent, which is what removes the
-need for an anti-flap timer, a per-device push memory, and any state that could
-be lost — a transient failure on either side recovers on the very next fix. -/
+/-- The whole decision: signals in, a concrete profile out, never "no change".
+The full config is pushed on every fix and applied idempotently, so no anti-flap
+timer or per-device state is needed and a failure recovers on the next fix. -/
 def decideRemoteConfig (s : Signals) (prev : Option Profile) : Profile :=
   match decideTransition s prev with
   | .to p => p

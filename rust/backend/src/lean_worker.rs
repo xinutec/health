@@ -1,42 +1,24 @@
 //! The Lean process, and the pipe every decision crosses.
 //!
 //! `verified_cli serve` reads one NDJSON request per line and writes one reply
-//! per line. This module keeps a pool of those processes and drives the
-//! protocol, including the half the fold adds mid-request: a handler may write
-//! `{"ask":{"what","key"}}` and block until this side answers it on its stdin
-//! with `{"answer": row}` — or `{"answer": null}`, a decline.
+//! per line. This module pools those processes and drives the protocol,
+//! including asks: a handler may write `{"ask":{"what","key"}}` and block until
+//! it reads `{"answer": row}`, or `{"answer": null}` for a decline.
 //!
-//! # Why a process and not a linked library
+//! A process, not a linked library: serialisation is cheap (a day is ~60
+//! lookups and one 1.5 MiB request), while linking needed stderr redirection
+//! around every call and crashed when Lean was reached before its runtime was
+//! up. Lean's stderr is ours.
 //!
-//! The backend used to link the Lean archives and call them through a C shim.
-//! What that bought — no serialisation — was never the cost: a day is ~60
-//! lookups and one 1.5 MiB request, and the in-process design paid for it with
-//! a converge loop that re-sent the request 2–7 times, a `panic!`-to-stderr
-//! channel for unanswered keys with fd 2 redirected around every call, a
-//! process-wide mutex on that fd, two build scripts parsing lake's link line,
-//! and a class of silent SIGSEGV when Lean was reached before its runtime was
-//! up. All of that is one pipe now. Lean's stderr is our stderr, so what the
-//! fold prints is seen rather than captured.
+//! A pool, because asks nest: answering one may itself call Lean (`osmspatial`,
+//! `osmcoverage`) while the asking worker blocks, so a nested call takes
+//! another worker. Idle workers beyond `MAX_IDLE` are dropped, and so is one
+//! that has served `LEAN_WORKER_RECYCLE_CALLS` requests (default 500), since
+//! the fold's heap grows across days.
 //!
-//! # A pool, because asks nest
-//!
-//! Answering an ask may itself need Lean — the OSM answerer scores candidate
-//! rows through the `osmspatial` mode and gates reads through `osmcoverage` —
-//! and the worker that asked is blocked waiting for the answer. So a call takes
-//! a worker out of the pool, and a nested call takes another; the pool grows to
-//! the nesting depth (two, in practice) and never deadlocks on itself. Idle
-//! workers beyond `MAX_IDLE` are dropped when returned, so memory stays bounded,
-//! and a worker that has served `LEAN_WORKER_RECYCLE_CALLS` requests (default
-//! 500) is dropped too: the day fold's heap grows across days and a
-//! fresh process is the only reset that is known to work.
-//!
-//! # Failure is loud and local
-//!
-//! A worker that dies mid-call fails that call with what it was doing; the next
-//! call spawns a fresh one. A call that exceeds `LEAN_CALL_TIMEOUT_S` (default
-//! 600) kills its worker by pid and fails. Nothing here retries: a fold that
-//! crashed Lean once will crash it again, and the caller is the one who knows
-//! whether the request can be dropped.
+//! A worker dying mid-call fails that call; the next spawns afresh. A call over
+//! `LEAN_CALL_TIMEOUT_S` (default 600) kills its worker by pid. Nothing retries:
+//! the caller knows whether the request can be dropped.
 
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
@@ -123,15 +105,11 @@ impl Called {
 /// Idle workers kept for the next call; the rest are dropped on return.
 const MAX_IDLE: usize = 2;
 
-/// Where `verified_cli` is, in order of preference:
+/// Where `verified_cli` is, in order of preference, resolved once:
 ///
 ///   1. `$VERIFIED_CLI` — what the image sets;
-///   2. `lean/verified_cli` beside the current directory — the image's layout,
-///      for a shell in `/app` without the variable;
+///   2. `lean/verified_cli` under the current directory — the image's layout;
 ///   3. what `build.rs` built — the dev tree and the tests.
-///
-/// Resolved once; a path that changes under a running process is not a case
-/// worth handling.
 pub fn verified_cli_path() -> Result<&'static PathBuf> {
     static PATH: OnceLock<Result<PathBuf, String>> = OnceLock::new();
     PATH.get_or_init(|| {
@@ -272,22 +250,11 @@ impl Worker {
         self.send(request)?;
         let timeout = call_timeout();
         let mut asks = Vec::new();
-        // Memoised per call. The fold asks the same key more than once — a
-        // corridor sample shared by two legs, a stay named twice — and the
-        // answer is a function of the key within one request, so the second
-        // ask is answered from the first. The answerer may be a database read
-        // plus a nested Lean scoring, which is what this spares; the ask is
-        // still recorded, because how often the fold asks is a fact about the
-        // fold, not about the cache.
-        //
-        // Memoised as the reply line, not the tree. A walkable-roads answer
-        // over a London walk is 20,000 ways as a `Value` (every vertex a
-        // two-element array of bit strings, an order of magnitude over its
-        // text), and a day asks for several. Holding those trees for the whole
-        // call, plus the clone each insert took, was the fold's working set
-        // (200 MiB a fold; the third fold OOM-killed the pod). The tree lives
-        // only until it is serialised; what the memo keeps is the line Lean is
-        // sent, shared, never copied.
+        // Memoised per call: within one request an answer is a function of
+        // the key, and the fold asks some keys twice. Every ask is still
+        // recorded. The memo holds the reply line, not the `Value` tree: a
+        // walkable-roads answer as a tree is ten times its text, and holding
+        // trees made the fold's working set big enough to OOM the pod.
         let mut memo: std::collections::HashMap<Ask, (std::sync::Arc<str>, bool)> =
             Default::default();
         loop {
@@ -355,13 +322,9 @@ pub fn parse_ask(line: &str) -> Result<Option<Ask>> {
     }))
 }
 
-/// The body of `{"id":…,"result":BODY}`, textually.
-///
-/// Not parsed and re-serialised. Lean writes floats as bit-pattern strings, so
-/// a round trip through `serde_json` would be exact — but a test that compares
-/// this against `verified_cli`'s own output wants the bytes, and a copy is
-/// cheaper than a parse. `Json.compress` emits object keys in sorted order, so
-/// `"result"` is the last key and the body runs to the closing brace.
+/// The body of `{"id":…,"result":BODY}`, as text, so tests can compare bytes
+/// with `verified_cli`'s own output. `Json.compress` sorts keys, so `"result"`
+/// is last and the body runs to the closing brace.
 pub fn result_body(line: &str) -> Result<String> {
     if line.starts_with("{\"error\"") {
         #[derive(Deserialize)]

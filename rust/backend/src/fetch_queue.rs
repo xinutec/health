@@ -1,62 +1,36 @@
 //! What the serving path could not answer, so the drain beside it can fetch it.
 //!
-//! # Why a queue and not a fetch
+//! The fold declines a lookup it has no data for ("nothing is there" would be a
+//! claim), and without a record the same coordinate went unanswered on every
+//! fold. Fetching inline would put a network round trip on the serving path, so
+//! the request records and `crate::fetch_drain` fetches within seconds: the day
+//! is blank once and right on its next view.
 //!
-//! The fold reaches OSM through lookups it declines when it has no data — an
-//! honest decline, never an empty answer, because "nothing is there" is a claim
-//! about the world. Declining is right and it is also a dead end: the
-//! same coordinate went unanswered on every fold forever, because nothing
-//! recorded that anyone had asked.
+//! `kind` is `osm_cache.query_type`, so the drain writes into the cache the
+//! fold reads.
 //!
-//! Fetching inline would fix that and put a network round trip on the serving
-//! path, where the fold's latency already hurts. So the request records and the
-//! drain fetches, within seconds and off the response path: the day is blank
-//! once and right on its next view (`crate::fetch_drain`).
+//! Recording is best effort: [`record`] logs and returns `Ok` on a write
+//! failure rather than fail a page; the next fold records the miss again.
 //!
-//! # `kind` is `osm_cache.query_type`
-//!
-//! Deliberately the same vocabulary. The drain writes back into the cache the
-//! fold reads, and a queue whose names do not match what consumes it is how a
-//! queue fills with entries nothing drains.
-//!
-//! # Recording is best effort and must never fail a day
-//!
-//! A user's timeline does not depend on this table. [`record`] logs and returns
-//! `Ok` on a write failure — the alternative is a 500 on a page because a
-//! telemetry insert lost a race, and the miss will be re-recorded on the next
-//! fold anyway.
-//!
-//! # One writer
-//!
-//! Every decline — the seven answerer tables and the three matcher reads —
-//! comes through `MirrorSource`'s coverage gate, so there is one
-//! `INSERT` and one key vocabulary. The drain is `crate::fetch_drain`, which
-//! the `health-fetch` sidecar runs continuously and `backend fetch-osm` /
-//! `fetch-geocodes` run by hand.
+//! Every decline comes through `MirrorSource`'s coverage gate, the one writer.
+//! The drain runs in the `health-fetch` sidecar, or by hand as
+//! `backend fetch-osm` / `fetch-geocodes`.
 
 use anyhow::{Context, Result};
 use sqlx::{MySqlPool, Row};
 
-/// The queue `kind` for a feature bucket.
-///
-/// Namespaced. `osm_fetch_queue` already holds the geocode's `nominatim_z<n>`
-/// kinds; a bare `highway` beside those reads as a third vocabulary.
+/// The queue `kind` for a feature bucket, namespaced apart from the geocode's
+/// `nominatim_z<n>` kinds.
 #[must_use]
 pub fn queue_kind(bucket: &str) -> String {
     format!("osm_{bucket}")
 }
 
-/// The queue key for one declined question.
-///
-/// The question, not the box. Keying by box would need the box to be snapped
-/// to a grid to dedup at all, and a grid-shaped box leaves every point within
-/// its radius of a cell edge permanently uncovered — `osm_covered` wants the
-/// disc inside one box and boxes do not union. Keying by the question keeps the
-/// key exact, lets `asked_count` mean "folds that wanted this", and moves the
-/// dedup to the drain, which can ask the coverage gate itself.
-///
-/// Full precision, for `backend::rowset_answerer::decline_key`'s reason: a
-/// rounded key names a question nobody asks.
+/// The queue key for one declined question, not a box: grid-snapped boxes leave
+/// points near a cell edge uncovered, since `osm_covered` wants the disc inside
+/// one box. The key stays exact, `asked_count` counts folds that wanted it, and
+/// the drain dedups against the coverage gate. Full precision, as
+/// `rowset_answerer::decline_key`.
 #[must_use]
 pub fn queue_key(lat: f64, lon: f64, radius_m: f64) -> String {
     format!("{lat}|{lon}|{radius_m}")
@@ -75,12 +49,8 @@ pub fn parse_queue_key(key: &str) -> Option<(f64, f64, f64)> {
     Some((lat, lon, radius))
 }
 
-/// How many times a key is retried before it is left alone.
-///
-/// Not a deletion. A key removed from the queue reappears the moment the day
-/// is folded again and is retried forever — an invisible loop against a
-/// rate-limited public service. Leaving it with `attempts` past the bar keeps it
-/// visible and out of the way, which is what a human needs to see.
+/// How many times a key is retried. Past it the row stays rather than being
+/// deleted: a deleted key reappears on the next fold, an invisible retry loop.
 pub const MAX_ATTEMPTS: i32 = 5;
 
 /// One thing to fetch.
@@ -113,11 +83,8 @@ pub async fn record(pool: &MySqlPool, kind: &str, key: &str) {
     }
 }
 
-/// Keys still worth fetching, oldest-asked first, capped.
-///
-/// Ordered by `asked_count` DESC so a coordinate several days want is fetched
-/// before one a single day wanted. A FIFO drain spends a rate-limited budget on
-/// whatever happened to arrive first.
+/// Keys still worth fetching, capped, most-wanted first (`asked_count` DESC),
+/// so the rate-limited budget goes to coordinates several days want.
 pub async fn due(pool: &MySqlPool, kind: &str, limit: i64) -> Result<Vec<Pending>> {
     let rows = sqlx::query(
         "SELECT kind, fetch_key, asked_count, attempts FROM osm_fetch_queue \
@@ -155,10 +122,8 @@ pub async fn done(pool: &MySqlPool, kind: &str, key: &str) -> Result<()> {
 
 /// Record a failed attempt, keeping the key visible.
 pub async fn failed(pool: &MySqlPool, kind: &str, key: &str, why: &str) -> Result<()> {
-    // Truncated to the column width here rather than letting MariaDB do it.
-    // A non-strict server truncates silently and a strict one errors, so the
-    // same code would behave differently on two servers — and the error it
-    // would raise is about the error message, not about the fetch.
+    // Truncated here: MariaDB truncates silently or errors depending on strict
+    // mode.
     let why: String = why.chars().take(255).collect();
     sqlx::query(
         "UPDATE osm_fetch_queue SET attempts = attempts + 1, last_error = ? \
@@ -173,13 +138,9 @@ pub async fn failed(pool: &MySqlPool, kind: &str, key: &str, why: &str) -> Resul
     Ok(())
 }
 
-/// Retire a key that will fail the same way every time.
-///
-/// The difference from [`failed`] is the cause, not the count. A transport
-/// failure earns another attempt; a permanent refusal — a malformed query, an area
-/// the endpoint will not serve — is the same query next time, and spending
-/// [`MAX_ATTEMPTS`] attempts discovering that is an invisible loop against a
-/// rate-limited public service. The row stays, past the bar, carrying why.
+/// Retire a key that will fail the same way every time: a malformed query or an
+/// area the endpoint will not serve. Unlike [`failed`], no further attempts; the
+/// row stays, carrying why.
 pub async fn exhaust(pool: &MySqlPool, kind: &str, key: &str, why: &str) -> Result<()> {
     let why: String = why.chars().take(255).collect();
     sqlx::query(

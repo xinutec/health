@@ -4,27 +4,16 @@ import Verified.JsNum
 /-!
 # Is this fix on the track, or on a road?
 
-The per-minute `roadDistM` / `railDistM` the observation tensor carries, and the
-single source of truth for the rail-vs-road call. The decoder never credits a
-tube line to a fix that hugs a road, and this is what lets it tell the
-difference.
+The per-minute `roadDistM` / `railDistM` of the observation tensor, and the one
+rail-vs-road rule: the decoder never credits a tube line to a fix hugging a
+road. `nearbyWays` is an OSM query in Rust; which subtypes count, which
+distance wins, minute bucketing and the ~11 m cache key are here.
 
-## What is here and what is not
+## ⚠ Trams are not rail here
 
-`nearbyWays` is an OSM query and stays in the shell. Everything the shell does
-with the answer is here: which subtypes count, which distance wins, how fixes
-bucket into minutes, and the ~11 m cache key that collapses a stationary day to
-one lookup.
-
-## ⚠ trams are not rail here
-
-`RAIL_ONLY_SUBTYPES` excludes `tram` deliberately — mixed-traffic track runs
-down the middle of a road, so a tram way is not evidence for rail over road. It
-is the one subtype where the two categories genuinely overlap, and including it
-would make the strongest signal the decoder has ambiguous exactly where the
-ambiguity matters. Note that {@link Verified.Geo.OsmRailStops} does mirror
-trams: "which lines stop here" and "is this fix on rail not road" are different
-questions.
+`RAIL_ONLY_SUBTYPES` excludes `tram`: street track runs down the road, so a tram
+way is no evidence for rail over road. {@link Verified.Geo.OsmRailStops} does
+include trams; it asks which lines stop here, a different question.
 -/
 
 namespace Verified.Hsmm.RailRoadProximity
@@ -81,17 +70,12 @@ def railRoadDistFromWays (ways : List NearbyWay) : Proximity := Id.run do
 
 /-! ## Which minutes to ask about, and how few times to ask -/
 
-/-- One minute that had fixes: the top-of-minute timestamp and the median of the
-fixes in it.
+/-- One minute that had fixes: the top-of-minute timestamp and the
+per-coordinate median of its fixes, as the observation tensor aggregates. A mean
+would drag a platform minute toward one wild fix near a road.
 
-The median, not the mean, and it is taken per-coordinate — matching the
-observation tensor's own aggregation, so the location this asks about is the
-location the tensor will report. A mean would drag the query point toward a
-single wild fix, and the answer would be "near a road" for a minute spent on a
-platform.
-
-The bucket is the local-day minute index, so a fix outside `[startUtc, endUtc)`
-is dropped rather than clamped into the first or last minute. -/
+The bucket is the local-day minute index; fixes outside `[startUtc, endUtc)`
+are dropped, not clamped. -/
 structure MinuteFix where
   minuteTs : Int
   lat : Float
@@ -117,20 +101,16 @@ def minuteMedians (startUtc endUtc : Int) (points : List GpsPoint) : Array Minut
       , lat := median (ps.toList.map GpsPoint.lat)
       , lon := median (ps.toList.map GpsPoint.lon) })
 
-/-- The coarse cache key, ~11 m. Two minute-medians this close share one
-`nearbyWays` lookup.
-
-This is what makes the cost bearable. A stationary day is hundreds of minutes
-at one place; without it that is hundreds of identical OSM queries. Four decimal
-places is ~11 m, which is far below any distance this module distinguishes. -/
+/-- The coarse cache key, 4 decimals (~11 m), far below any distance this module
+distinguishes. Minute-medians sharing it share one `nearbyWays` lookup, so a
+stationary day is one query, not hundreds. -/
 def coordKey (lat lon : Float) : String :=
   let f := fun (x : Float) => (Verified.JsNum.toFixed x 4).getD (toString x)
   s!"{f lat},{f lon}"
 
-/-- The distinct locations a day must be asked about, in first-seen order.
-
-The shell runs one `nearbyWays` per entry and feeds each answer back through
-{@link railRoadDistFromWays}; every minute sharing a key shares that answer. -/
+/-- The distinct locations a day must be asked about, in first-seen order. Each
+answer goes through {@link railRoadDistFromWays} and serves every minute with
+that key. -/
 def distinctQueryPoints (ms : Array MinuteFix) : Array MinuteFix :=
   Id.run do
     let mut seen : Array String := #[]
@@ -142,32 +122,21 @@ def distinctQueryPoints (ms : Array MinuteFix) : Array MinuteFix :=
         out := out.push m
     return out
 
-/-- One answered query: the location the shell asked about, and the ways it
-found there.
-
-A query that failed is simply absent from `answers`. It is not sent as an
-empty list: `[]` is "nothing within 300 m", which is evidence, and a failure is
-no evidence at all. {@link proximityTable} counts the minutes left unanswered so
-the shell can say which it had. -/
+/-- One answered query: the location asked about and the ways found. A failed
+query is absent, not `[]`: `[]` is "nothing within 300 m", which is evidence.
+{@link proximityTable} counts the minutes left unanswered. -/
 structure WayAnswer where
   lat : Float
   lon : Float
   ways : List NearbyWay
   deriving Repr, Inhabited
 
-/-- Join the day's minute-medians to the shell's `nearbyWays` answers, by the
-~11 m cache key, and return the sparse per-minute table plus the number of
-minutes no answer covered.
+/-- Join the day's minute-medians to the `nearbyWays` answers by {@link coordKey}
+(here, so the key has one copy), returning the sparse per-minute table and the
+count of minutes no answer covered.
 
-The JOIN is here and not in the shell. The key that decides which minutes
-share an answer is {@link coordKey}, and a second copy of it beside the OSM
-call would be a second chance to disagree about how many queries a day needs.
-
-A minute with nothing in range is omitted, not written as `(none, none)`.
-That is the same value the consumer reads for an absent minute
-(`buildObservationTensor` defaults to `(none, none)`), so omitting it is exactly
-equivalent and keeps the table sparse. Absent means "not known to be near
-either" — never "far from both", which would be evidence against rail. -/
+A minute with nothing in range is omitted, the same as `(none, none)` to
+`buildObservationTensor`: not known near either, never "far from both". -/
 def proximityTable (ms : Array MinuteFix) (answers : Array WayAnswer)
     : Array (Int × Proximity) × Nat := Id.run do
   let mut byKey : Array (String × Proximity) := #[]
@@ -229,11 +198,8 @@ private def W (t s : String) (d : Float) : NearbyWay :=
 #guard (railRoadDistFromWays [{ type := "railway", subtype := "rail", distanceM := none }])
         == { railDistM := none, roadDistM := none }
 
--- NaN must be skipped, and the order of the ways decides whether a test can
--- see it. Lean's `min` is `if a ≤ b then a else b`, and every comparison with
--- NaN is false — so `min NaN 25` is 25 (NaN silently dropped) while
--- `min 25 NaN` is NaN (NaN silently wins). A guard written only the first way
--- passes with the finite check removed, which is how this one started.
+-- NaN must be skipped, and way order decides whether a test sees it: `min NaN 25`
+-- is 25 but `min 25 NaN` is NaN. Both orders are guarded.
 private def NAN_WAY : NearbyWay :=
   { type := "railway", subtype := "rail", distanceM := some (0.0 / 0.0) }
 #guard (railRoadDistFromWays [NAN_WAY, W "railway" "rail" 25]).railDistM == some 25

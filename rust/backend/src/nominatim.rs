@@ -1,27 +1,17 @@
-//! Reverse geocoding through Nominatim, and its cache.
-//!
-//! A captured day cannot answer the `reverseGeocode` keys from this; see
-//! [`crate::rowset_answerer`], which declines them on purpose.
-//!
-//! # The cache table already exists, and reproducing its key exactly is the point
+//! Reverse geocoding through Nominatim, and its cache. A captured day cannot
+//! answer `reverseGeocode` from this ([`crate::rowset_answerer`] declines them).
 //!
 //! `osm_cache` is keyed `(query_type, lat_rounded DECIMAL(7,4), lon_rounded
-//! DECIMAL(7,4))`, under `nominatim_z18` / `nominatim_z16`. A rounding that
-//! disagrees with the stored rows by one unit in the last place does not fail:
-//! it misses, quietly, and re-fetches something already paid for.
+//! DECIMAL(7,4))` under `nominatim_z18` / `nominatim_z16`. A rounding off by one
+//! unit misses quietly and re-fetches.
 //!
-//! ⚠ `Math.round` and `f64::round` disagree on exactly the coordinates this
-//! sees. JS rounds a half toward +∞; Rust rounds a half away from zero. On a
-//! London longitude — negative, always — `Math.round(-1836.5)` is `-1836` and
-//! `(-1836.5f64).round()` is `-1837`. [`round_coord`] spells the JS form, the
-//! same way `Verified.Geo.Enrich.cityGrid` already does for the city grid.
+//! ⚠ The stored keys round halves toward +∞ (`floor(x + 0.5)`); `f64::round`
+//! rounds away from zero and differs on every negative half, which is every
+//! London longitude. [`round_coord`] uses the stored rule, as
+//! `Verified.Geo.Enrich.cityGrid` does.
 //!
-//! # Rate limit
-//!
-//! Nominatim's usage policy is an absolute one request per second from one
-//! source, and exceeding it earns an IP-level ban — the same terms
-//! [`crate::overpass`] records for Overpass. [`MIN_INTERVAL`] is that floor;
-//! whoever drives a batch is responsible for honouring it.
+//! Nominatim allows one request per second per source, on pain of an IP ban.
+//! [`MIN_INTERVAL`] is that floor; a batch driver must honour it.
 
 use std::time::Duration;
 
@@ -39,55 +29,38 @@ pub const MIN_INTERVAL: Duration = Duration::from_secs(1);
 /// sentinel did. Long enough to survive a rate-limit recovery.
 pub const NEGATIVE_TTL: Duration = Duration::from_secs(5 * 60);
 
-/// `Math.round(n * 10000) / 10000` — 4 decimals, ~11 m, the precision
-/// `osm_cache` is declared at.
-///
-/// `floor(x + 0.5)`, not `f64::round`. See the module header: the two differ
-/// on a negative half, and every longitude here is negative.
+/// Rounded to 4 decimals (~11 m), as `osm_cache` is declared, by
+/// `floor(x + 0.5)` (see the module header).
 #[must_use]
 pub fn round_coord(n: f64) -> f64 {
     (n * 10000.0 + 0.5).floor() / 10000.0
 }
 
-/// The `query_type` a zoom is cached under: `nominatim_z18`, `nominatim_z16`.
-///
-/// Also the `kind` of an [`crate::fetch_queue`] row, on purpose — the drain
-/// writes straight back into the cache the fold reads, and two vocabularies for
-/// one thing is how a queue fills with entries nothing consumes.
+/// The `query_type` a zoom is cached under (`nominatim_z18`, `nominatim_z16`),
+/// also the [`crate::fetch_queue`] `kind`, so the drain fills the fold's cache.
 #[must_use]
 pub fn query_type(zoom: i64) -> String {
     format!("nominatim_z{zoom}")
 }
 
-/// The zoom back out of a [`query_type`], for a drain that learns which zooms
-/// were asked from the queue rather than from a list it carries.
-///
-/// The zooms are declared in `Verified.Geo.BestPlace` and
-/// `Verified.Geo.Enrich`. Restating them here would be a second source of truth
-/// for a number the fold owns.
+/// The zoom back out of a [`query_type`], so a drain learns zooms from the
+/// queue. They are declared in `Verified.Geo.BestPlace` and `Enrich`.
 #[must_use]
 pub fn zoom_of(query_type: &str) -> Option<i64> {
     query_type.strip_prefix("nominatim_z")?.parse().ok()
 }
 
-/// The `fetch_key` a queued geocode is recorded under.
-///
-/// Rounded, so two fixes 3 m apart queue one fetch rather than two against a
-/// service that allows one request per second. And rounded with the same rule
-/// the cache is keyed by, so the answer the drain writes lands where the fold
-/// looks — [`round_coord`] is idempotent, which is what makes parsing this key
-/// and re-rounding it safe.
+/// The `fetch_key` a queued geocode is recorded under, rounded by the cache's
+/// rule: nearby fixes share one fetch and the answer lands where the fold looks.
+/// [`round_coord`] is idempotent, so re-rounding a parsed key is safe.
 #[must_use]
 pub fn queue_key(lat: f64, lon: f64) -> String {
     format!("{}|{}", round_coord(lat), round_coord(lon))
 }
 
-/// One Nominatim answer, in the shape the fold's `osmTrace.reverseGeocode`
-/// section carries and `Verified.Geo.BestPlace` reads.
-///
-/// The field names are the wire format's, not Nominatim's: `displayName` from
-/// `display_name`, and `category` from `class` falling back to `category`.
-/// A golden fixture is written in these names.
+/// One Nominatim answer, in the wire names `osmTrace.reverseGeocode` and
+/// golden fixtures use: `displayName` from `display_name`, `category` from
+/// `class`, else `category`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Geocode {
     #[serde(rename = "displayName")]
@@ -111,11 +84,8 @@ struct Reply {
     address: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// Narrow one Nominatim reply.
-///
-/// `None` is a valid answer and is cached as one: Nominatim replying without a
-/// `display_name` means it knows of nothing there, which is different from the
-/// request having failed.
+/// Narrow one Nominatim reply. `None` (no `display_name`) is a valid answer,
+/// cached: Nominatim knows nothing there, unlike a failed request.
 #[must_use]
 pub fn narrow(body: &str) -> Option<Geocode> {
     let r: Reply = serde_json::from_str(body).ok()?;
@@ -148,13 +118,9 @@ struct NegSentinel {
     _at: i64,
 }
 
-/// Read one cached geocode. The outer `None` is "no row"; `Cached::Answer(None)`
-/// is a row saying nothing is there. Those are three states and all three matter.
-///
-/// The coordinate is bound as a 4-decimal string rather than an `f64`. The
-/// column is `DECIMAL(7,4)`, and sqlx's MySQL `f64` binding goes out as a double
-/// — which is the family of mismatch that fails only on real rows
-/// (`reference_sqlx_mysql_type_traps`). A decimal string compares exactly.
+/// Read one cached geocode: `None` is no row, `Cached::Answer(None)` a row
+/// saying nothing is there. The coordinate binds as a 4-decimal string: sqlx
+/// binds `f64` as a double, which mismatches `DECIMAL(7,4)` on real rows.
 pub async fn cache_get(pool: &MySqlPool, zoom: i64, lat: f64, lon: f64) -> Result<Option<Cached>> {
     let row = sqlx::query(
         "SELECT result FROM osm_cache \
@@ -174,12 +140,9 @@ pub async fn cache_get(pool: &MySqlPool, zoom: i64, lat: f64, lon: f64) -> Resul
             at_ms: neg._at,
         }));
     }
-    // `null` parses to `Answer(None)`: a cached "nothing here".
-    //
-    // A row that is neither the sentinel nor a geocode is corrupt, and must
-    // not read as "nothing is there". That default would turn a damaged cache
-    // into a permanent, silent blank at one coordinate, where an empty answer
-    // and an unmeasured one are indistinguishable.
+    // `null` parses to `Answer(None)`, a cached "nothing here". Anything else
+    // that is not a geocode is corrupt and errors, rather than becoming a
+    // permanent silent blank.
     let answer: Option<Geocode> = serde_json::from_str(&text)
         .with_context(|| format!("osm_cache holds an unreadable {} row", query_type(zoom)))?;
     Ok(Some(Cached::Answer(answer)))

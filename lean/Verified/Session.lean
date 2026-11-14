@@ -1,17 +1,12 @@
 /-!
 # Session and share-viewer rules
 
-The decisions in front of every authenticated request. What is not here, and
-deliberately: the HMAC, the CSPRNG that mints a session id, and the
-constant-time compare. There is nothing to prove about them beyond that they
-were asked for, and a Lean model of one would be fiction.
+The decisions in front of every authenticated request. The HMAC, the CSPRNG
+and the constant-time compare are not here: there is nothing to prove about
+them beyond that they were asked for.
 
-What is here is everything a wrong three-liner would silently change:
-
-* the framing of a signed cookie, which splits on the last separator;
-* when a session has expired, and which side of the boundary is still valid;
-* what a share recipient may do, which is the rule protecting the owner's
-  data from a link they forwarded.
+Here: signed-cookie framing (split on the last separator), session expiry and
+its boundary, and what a share recipient may do.
 
 Pure and total. UNPROVEN; pinned by the `#guard`s, including the framing cases.
 -/
@@ -19,19 +14,17 @@ Pure and total. UNPROVEN; pinned by the `#guard`s, including the framing cases.
 namespace Verified.Session
 
 /-- How long a session lasts unused: a month (the user's call). Every use moves
-the expiry forward (`renewedExpiry`), so a login in use never ends, and a
-forgotten browser on a borrowed machine stops working a month after its last
-visit. -/
+the expiry forward (`renewedExpiry`), so a forgotten browser stops working a
+month after its last visit. -/
 def SESSION_TTL_MS : Int := 30 * 24 * 60 * 60 * 1000
 
 /-- The expiry is rewritten only when it would move by more than this, so a page
 load is not a database write. -/
 def RENEW_INTERVAL_MS : Int := 60 * 60 * 1000
 
-/-- The cookie's `Max-Age`, in seconds: 400 days, the most a browser keeps. The
-row decides when a session ends; a cookie whose row has lapsed is answered as
-logged out. A cookie as short as the row would end a renewed session at its
-first expiry. -/
+/-- The cookie's `Max-Age`: 400 days, the most a browser keeps. The row decides
+when a session ends; a cookie as short as the row would end a renewed session at
+its first expiry. -/
 def SESSION_COOKIE_MAX_AGE_S : Int := 400 * 24 * 60 * 60
 
 /-- The renewed expiry of a session used at `nowMs`, or `none` when it would
@@ -44,16 +37,12 @@ def SESSION_COOKIE_NAME : String := "session"
 
 /-- Split a signed value into `(value, signature)`.
 
-⚠ the last separator, not the first. The signature is base64url, whose
-alphabet has no `.`, so everything before the final dot is the value and a value
-containing dots round-trips. Splitting on the first dot would hand the verifier a
-truncated value and the rest of the value as the signature — which fails closed
-for a well-formed cookie, and is the kind of near-miss that gets "fixed" by
-loosening the comparison.
+⚠ On the last separator: base64url has no `.`, so a value containing dots
+round-trips. The first dot would truncate the value and fail closed, inviting a
+"fix" that loosens the comparison.
 
-`none` when there is no separator at all. An empty value is a value: `".sig"`
-splits to `("", "sig")` and fails at the signature check, which is where it
-should fail. -/
+`none` without a separator. `".sig"` splits to `("", "sig")` and fails at the
+signature check. -/
 def splitSigned (signed : String) : Option (String × String) :=
   let cs := signed.toList
   match cs.reverse.findIdx? (· == '.') with
@@ -62,47 +51,28 @@ def splitSigned (signed : String) : Option (String × String) :=
     let idx := cs.length - 1 - k
     some (String.ofList (cs.take idx), String.ofList (cs.drop (idx + 1)))
 
-/-- Is a session row still good?
-
-Inclusive at the boundary: a row expiring exactly now is still valid. Flipping
-it would log a user out one millisecond earlier for no reason anyone could
-observe, and the boundary is the sort of thing that gets flipped by accident
-when someone "tidies" the comparison. -/
+/-- Is a session row still good? Inclusive: a row expiring exactly now is valid. -/
 def sessionIsValid (expiresAtMs nowMs : Int) : Bool := nowMs ≤ expiresAtMs
 
-/-- Paths a share recipient may POST to despite being read-only.
-
-Exactly one, and it is not an exception to the rule so much as outside its
-subject: the rule protects the owner's data, and telemetry writes to the log
-rather than the database — `POST /api/telemetry` stores nothing.
-
-It is allowed because the alternative is a blind spot exactly where problems are
-least visible. A share recipient is the one person who cannot be asked what they
-saw, and without this their whole session is invisible.
-
-Safe only because the log line names who acted. A share viewer's session
-carries the owner's user id, so the log must say `actor=share`; without that,
-opening this path makes the log claim the owner did it. -/
+/-- Paths a share recipient may POST to despite being read-only. Only telemetry,
+which writes the log, not the database: without it a recipient's session is
+invisible. Safe only because the log line says `actor=share`; the session
+carries the owner's user id. -/
 def WRITES_ONLY_TO_THE_LOG : List String := ["/api/telemetry"]
 
-/-- May this request proceed, given who is asking?
+/-- May this request proceed, given who is asking? `isShareViewer` is about the
+session; a request with no session is stopped by the caller's session gate,
+which runs first, so `true` here is not permission.
 
-`isShareViewer` is about the session, not about the token. A request with no
-session at all is not a share viewer, and this is not the check that stops it —
-that is the caller's "is there a session" gate, which must run first. Answering
-`true` here for an unauthenticated request is correct and is not permission.
-
-The method test is `≠ GET`, not a list of writing verbs. A verb nobody has
-thought of yet is refused rather than allowed, which is the direction that fails
-safe when the API grows. -/
+The method test is `≠ GET`, so a verb nobody has thought of is refused. -/
 def mayProceed (isShareViewer : Bool) (method path : String) : Bool :=
   !isShareViewer || method == "GET" || WRITES_ONLY_TO_THE_LOG.contains path
 
-/-- Paths that show where the owner is or has been: the day's timeline and
-everything the map draws.
+/-- Paths that show where the owner is or has been: the timeline and everything
+the map draws.
 
-⚠ full paths, `/api` included. The host must pass the original request path,
-not the one a nested router sees with its prefix stripped. -/
+⚠ Full paths, `/api` included: the host must pass the original request path,
+not a nested router's stripped one. -/
 def LOCATION_PATHS : List String :=
   ["/api/velocity", "/api/locations", "/api/location/latest", "/api/location/tail"]
 
