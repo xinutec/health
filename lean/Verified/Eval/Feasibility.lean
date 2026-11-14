@@ -3,61 +3,35 @@ import Verified.Fix
 /-!
 # Worldline feasibility
 
-A model-independent assertion on the output timeline: a real worldline is one
-continuous path through space-time, so some outputs are simply impossible
-regardless of how the cascade produced them. This checks the impossibilities the
-pipeline has actually emitted, on the final drawn legs, with no dependency on
-the model that built them.
+A real worldline is one continuous path through space-time, so some timelines
+are impossible however they were produced. This checks the final drawn legs for
+the impossibilities the pipeline has emitted (the user's requirement: never show
+an interpretation the data rules out):
 
-The user's requirement is exactly this module's subject: *"Correct or at least
-viable trajectory is important. It shouldn't show definitely-wrong
-interpretations that can't be right given the data."*
+* impossible-mode-kinematics: a `walking` leg sustaining vehicle pace over a real
+  distance, or a `train` leg sustaining walking pace while the wearer steps at
+  walking cadence;
+* invalid-rail-triple: `Board → Alight · Line` naming a station the line does
+  not reach;
+* rail-discontinuity: two train legs with nothing relocating between them must
+  share a station;
+* degenerate-train-leg: boarding and alighting at the same station;
+* teleport: two stays at different places with nothing between, further apart
+  than walkable in the time, beyond the fixes' noise. A stay is where its name
+  was asked (`DayState.placeAt`), else where its fixes put it.
 
-## The five invariants
+## ⚠ Zero false positives is the design constraint
 
-* impossible-mode-kinematics — a `walking` leg whose fixes sustain a
-  vehicle-paced run over a real distance (the "64 km/h walk down the rail
-  corridor"), and its symmetric twin: a `train` leg sustaining a
-  pedestrian-paced run while the wearer steps at walking cadence (the "train at
-  walking pace down the street").
-* invalid-rail-triple — a leg labelled `Board → Alight · Line` naming a
-  station that line does not reach.
-* rail-discontinuity — two train legs with nothing relocating between them
-  must share a station: you cannot step off at one and instantly board at
-  another.
-* degenerate-train-leg — a train boarding and alighting at the same station.
-* teleport — two stays at different places with nothing relocating between
-  them, further apart than he could have walked in the time between, by more
-  than the fixes' own location noise. A stay is where its name was asked for
-  (`DayState.placeAt`), else where its fixes put it.
+Each check asserts only when no innocent reading exists. Vehicle pace is
+asserted only on `walking` (a stationary leg's blackout fixes hop cell towers);
+walking pace only on `train` (buses crawl in traffic) and only when pace,
+duration, net displacement and cadence all agree, never without step data. Line
+membership is proximity-inferred and so over-inclusive, which can only miss; an
+empty list is unknown and never asserts. Rail continuity asserts only for a
+determinable station pair.
 
-## ⚠ zero FALSE positives is the design constraint, not an aspiration
-
-Every threshold here is set so the check asserts only when there is no innocent
-reading, and each conservatism is load-bearing:
-
-* Only `walking` is asserted for vehicle pace. A stationary leg's sparse
-  blackout fixes teleport in consistent pairs (cell-tower hops).
-* Only `train` is asserted for pedestrian pace. Buses and cars genuinely crawl
-  at walking pace in traffic, where a bumpy ride's phantom wrist-cadence could
-  false-positive.
-* The pedestrian invariant needs four signals to agree — pace band, duration,
-  net displacement and cadence — so a signal-stop crawl (no cadence), a platform
-  dwell (no net distance) and a brief slow patch (no duration) never assert.
-  Without step data it does not assert at all.
-* Line membership is proximity-inferred and therefore over-inclusive, so
-  absence is the strong signal; over-inclusion can only produce false
-  negatives. An empty list means the line is unknown, not that it serves
-  nothing, and never asserts.
-* Rail continuity asserts only when the station pair is determinable. A
-  bare-line leg breaks the chain rather than producing a false positive.
-
-## The distance is equirectangular, not haversine
-
-`fixDistanceM` is a flat-earth approximation with a cosine correction at the
-midpoint latitude — not the `haversineMeters` used elsewhere in this codebase.
-Substituting haversine would change every threshold comparison slightly and is
-the obvious "tidying" to make here. It is reproduced operation for operation.
+The distance (`fixDistanceM`) is equirectangular with a midpoint cosine, not
+haversine: swapping it is the obvious tidy and would move every threshold.
 -/
 
 namespace Verified.Eval.Feasibility
@@ -171,12 +145,8 @@ structure PacedRun where
   toTs : Int
   deriving BEq, Repr, Inhabited
 
-/-- The worst sustained vehicle-paced run inside a window's fixes.
-
-Extracted so a probe can ask this question on modes the invariant
-deliberately does not assert on, without restating the rule and drifting from
-it. Measuring a mode and asserting on it are different decisions; only the
-second has to be zero-false-positive. -/
+/-- The worst sustained vehicle-paced run in a window's fixes, separate so a
+probe can measure modes the invariant does not assert on without restating it. -/
 def worstVehiclePacedRun (fixes : Array Fix) : Option PacedRun := Id.run do
   let mut runStart : Int := -1
   -- The run's first fix, carried with its index so the read needs no bound.
@@ -230,14 +200,9 @@ def walkedThrough (steps : Array StepPoint) (fromTs toTs : Int) : Bool := Id.run
     | none => return false
   return true
 
-/-- A `walking` leg whose fixes sustain a vehicle-paced run over a real distance
-contains movement that is not walking — a ride tail stranded by a mis-placed
-segment boundary.
-
-Walking only. See the module header.
-
-A run the wearer stepped through at walking cadence is the fixes moving, not
-him: 10-07's morning walk drew 385 m at 29 km/h over 120 steps a minute. -/
+/-- A `walking` leg sustaining a vehicle-paced run over a real distance holds a
+ride tail stranded by a misplaced boundary. Walking only. A run the wearer
+stepped through at walking cadence is the fixes moving, not the wearer. -/
 def checkModeKinematics (legs : Array Leg) (points : Array Fix)
     (steps : Array StepPoint := #[]) : Array Violation :=
   legs.filterMap fun l =>
@@ -253,10 +218,8 @@ def checkModeKinematics (legs : Array Leg) (points : Array Fix)
             s!"not physically {l.mode}" }
 
 /-- Mean steps/min over `[startTs, endTs]` from per-minute buckets, or `none`
-when no bucket overlaps the window.
-
-No data ≠ zero cadence, and the distinction is what stops the pedestrian
-invariant asserting on a day with no step stream at all. -/
+with no bucket, which keeps the pedestrian invariant silent without a step
+stream. -/
 def meanCadenceSpm (steps : Array StepPoint) (startTs endTs : Int) : Option Float := Id.run do
   let mut total : Float := 0
   let mut overlapped := false
@@ -267,12 +230,9 @@ def meanCadenceSpm (steps : Array StepPoint) (startTs endTs : Int) : Option Floa
   if !overlapped then return none
   return some (total / max 1 (Float.ofInt (endTs - startTs) / 60))
 
-/-- The symmetric invariant: a `train` leg whose fixes sustain a
-pedestrian-paced run over a real net distance while the wearer steps at walking
-cadence contains movement that is not riding.
-
-All four signals must agree — pace band, duration, net displacement, cadence.
-See the module header for what each one rules out. -/
+/-- The converse: a `train` leg sustaining a walking-paced run over a real net
+distance while the wearer steps at walking cadence holds movement that is not
+riding. All four signals must agree. -/
 def checkVehiclePedestrianRuns (legs : Array Leg) (points : Array Fix)
     (steps : Array StepPoint) : Array Violation :=
   legs.filterMap fun l =>
@@ -310,13 +270,9 @@ def checkVehiclePedestrianRuns (legs : Array Leg) (points : Array Fix)
 
 /-! ## The rail invariants -/
 
-/-- Line → the stations it serves.
-
-Membership is proximity-inferred and therefore over-inclusive, so absence is
-the strong signal: a labelled endpoint missing from a non-empty list is a
-station nowhere near the line's tracks. Over-inclusion can only produce false
-negatives, which is what keeps this zero-false-positive. An empty list means the
-line is unknown to the mirror, not that it serves nothing, and never asserts. -/
+/-- Line → the stations it serves. Proximity-inferred, so absence is the strong
+signal (a labelled endpoint missing from a non-empty list is nowhere near the
+line); an empty list means unknown and never asserts. -/
 abbrev LineMembership := Array (String × Array String)
 
 private def norm (s : String) : String :=
@@ -350,13 +306,9 @@ def checkRailTriples (legs : Array Leg) (lineStations : LineMembership) : Array 
 
 /-! ## The teleport invariant -/
 
-/-- Where a stay's fixes put it, and how precisely: the mean weighted by
-1/accuracy², and the same weighted mean of the accuracies.
-
-The noise is not divided by √n. Indoors a phone reports the same wrong spot
-for minutes, so its errors are correlated and many fixes place a stay no better
-than its best few. Crediting √n called the two halves of one night at Home
-fifteen standard deviations apart. -/
+/-- Where a stay's fixes put it and how precisely: means weighted by
+1/accuracy². The noise is not divided by √n: indoor errors are correlated, and
+crediting √n put two halves of one night at Home fifteen σ apart. -/
 def stayLocation (fixes : Array AccFix) : Option (Fix × Float) := Id.run do
   let mut w := 0.0
   let mut lat := 0.0
@@ -406,11 +358,9 @@ def checkTeleports (legs : Array Leg) (fixes : Array AccFix) : Array Violation :
 
 /-! ## The whole check -/
 
-/-- Every feasibility violation in a drawn timeline.
-
-The rail chain: assert continuity only when both endpoints are determinable and
-nothing has relocated the user since the previous train. A leg with no
-determinable alight breaks the chain rather than being asserted across. -/
+/-- Every feasibility violation in a drawn timeline. Rail continuity is asserted
+only between determinable endpoints with nothing relocating between trains; an
+undeterminable alight breaks the chain. -/
 def checkWorldlineFeasibility (legs : Array Leg) (points : Array Fix)
     (steps : Array StepPoint) (lineStations : LineMembership)
     (accFixes : Array AccFix := #[]) : Array Violation := Id.run do
@@ -448,11 +398,9 @@ def checkWorldlineFeasibility (legs : Array Leg) (points : Array Fix)
 
 /-! ## Witnesses
 
-⚠ synthetic only: coordinates are a bare degree grid and station names
-are Greek letters, so nothing here carries a real place.
-
-`rust/backend/tests/corpus/feasibility.rs` runs it over the real corpus,
-perturbed so every invariant fires.
+⚠ Synthetic only: a bare degree grid and Greek-letter station names.
+`rust/backend/tests/corpus/feasibility.rs` runs the real corpus, perturbed so
+every invariant fires.
 -/
 
 section Witnesses

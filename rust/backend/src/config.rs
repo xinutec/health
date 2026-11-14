@@ -1,22 +1,10 @@
-//! Runtime configuration, read from the environment at startup.
+//! Runtime configuration from the environment the k8s manifests set: `DB_HOST`,
+//! `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` (composed into a URL here,
+//! rather than `life`'s single `DATABASE_URL`, so the manifests stay as they are).
 //!
-//! Reads the variables the k8s manifests set:
-//! `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`.
-//!
-//! It deliberately does not adopt `life`'s single `DATABASE_URL`, which is the
-//! house shape elsewhere: adopting it would mean changing the Deployment and
-//! the CronJobs in the same change that introduces a new binary, so a failure
-//! could be either. The URL is composed here instead, from the parts the
-//! cluster already supplies.
-//!
-//! # Every required variable is refused when absent, never defaulted
-//!
-//! This is the whole value of the layer and the one thing it must not get
-//! wrong. A config that defaults a missing password to `""` starts a process
-//! that fails later, at a connection, with an error about credentials rather
-//! than about configuration — and in a CronJob nobody is watching. So the
-//! required set errors by name, and the optional set is `Option`, and there is
-//! no third category that silently becomes an empty string.
+//! Every required variable is refused by name when absent, never defaulted: a
+//! password defaulted to `""` fails later, at a connection, with an error about
+//! credentials, in a CronJob nobody watches. Optional settings are `Option`.
 
 use anyhow::{Context, Result};
 
@@ -24,12 +12,9 @@ use anyhow::{Context, Result};
 #[derive(Clone, Debug)]
 pub struct Config {
     pub db: DbConfig,
-    /// Base URL of the Nextcloud instance, no trailing slash.
-    ///
-    /// Optional, and the option is load-bearing rather than lenience: unset
-    /// `NC_BASE_URL` is how a sync run with no PhoneTrack source is spelled.
-    /// Defaulting it to the production URL would make an unconfigured job
-    /// quietly reach for the real Nextcloud.
+    /// Base URL of the Nextcloud instance, no trailing slash. Optional on
+    /// purpose: unset `NC_BASE_URL` is a sync run with no PhoneTrack source, and a
+    /// default would make an unconfigured job reach for the real Nextcloud.
     pub nextcloud_base_url: Option<String>,
     /// Shared secrets for `/internal/*`, consumed by the coach app.
     ///
@@ -37,25 +22,15 @@ pub struct Config {
     /// list that fell back to "allow" when unset would expose another user's
     /// mined places to anyone who could reach the port.
     pub service_tokens: Vec<String>,
-    /// PhoneTrack session tokens the owntracks proxy will forward.
-    ///
-    /// Same shape and same default: unset means forward nothing. Rejecting
-    /// before touching upstream protects Nextcloud's brute-force counters and
-    /// this process's own state maps from attacker-controlled growth.
+    /// PhoneTrack session tokens the owntracks proxy will forward; unset forwards
+    /// nothing. Rejecting before upstream protects Nextcloud's brute-force
+    /// counters and this process's state maps.
     pub owntracks_tokens: Vec<String>,
-    /// Where the dashboard is served from, for building share URLs.
-    ///
-    /// Has a default rather than being an Option: `PUBLIC_BASE_URL` is unset
-    /// on the serving pod, so every share link production issues comes from
-    /// this default. A host without one would hand the user a link to nowhere.
+    /// Where the dashboard is served from, for share URLs. Defaulted, since the
+    /// serving pod does not set `PUBLIC_BASE_URL` and every share link uses it.
     pub public_base_url: String,
-    /// The HMAC key behind every session cookie.
-    ///
-    /// Optional here, required by the server. `sync` has no cookies and must
-    /// keep starting without one — a CronJob that refuses to run because the
-    /// web tier's secret is absent is an outage caused by an unrelated
-    /// dependency. `serve` demands it at startup instead, so the failure lands
-    /// on the process that actually needs it.
+    /// The HMAC key behind every session cookie. Optional here (the `sync`
+    /// CronJob has no cookies and must start without it); `serve` demands it.
     ///
     /// ⚠ No default, ever. A defaulted signing key is a key everyone knows, and
     /// the failure is silent: cookies verify, sessions work, and anyone can mint
@@ -72,17 +47,9 @@ pub struct DbConfig {
     pub database: String,
 }
 
-/// The Nextcloud base URL the focus cron uses.
-///
-/// Not `Config::nextcloud_base_url`, which is `Option` and is `None` in
-/// production because `NC_BASE_URL` is unset there. The sync path types it
-/// nullable because "no PhoneTrack source" is a real state for it; the focus
-/// cron has always fetched from the default host whether or not the variable
-/// was set.
-///
-/// Reading the shared config there would fetch zero points in the very
-/// deployment the cron has always worked in — and the result would look like a
-/// user with no location history rather than a fault.
+/// The Nextcloud base URL the focus cron uses: the default host, set or not.
+/// `Config::nextcloud_base_url` is `None` in production, so reading it here
+/// would fetch nothing and look like a user with no location history.
 pub fn focus_nc_base_url() -> String {
     std::env::var("NC_BASE_URL")
         .ok()
@@ -94,21 +61,13 @@ pub fn focus_nc_base_url() -> String {
 pub const FOCUS_DEFAULT_NC_BASE_URL: &str = "https://dash.xinutec.org";
 
 impl DbConfig {
-    /// The database settings alone, for a command that touches nothing else.
-    ///
-    /// A command should ask for what it uses. Demanding a setting it never
-    /// touches turns an unrelated deployment detail into a runtime failure, and
-    /// does it at the end of the job rather than the start — `refresh-presence-log`
-    /// once died that way on a credential the full config required, after
-    /// `decode-day` had done twelve minutes of work.
+    /// The database settings alone, for a command touching nothing else: a
+    /// command demanding a setting it never uses fails on an unrelated deployment
+    /// detail, possibly after its work is done.
     pub fn from_env() -> Result<Self> {
         let port_raw = with_default("DB_PORT", "3306");
-        // Parsed, not `unwrap_or(3306)`. `mirror.rs` falls back to the
-        // default on an unparseable value, which is right for an optional
-        // read-only mirror that may not be configured at all; it is wrong here.
-        // `DB_PORT=3306 ` or `DB_PORT=three` would silently connect somewhere
-        // other than where the manifest says, and the manifest would keep
-        // claiming otherwise.
+        // Parsed, not `unwrap_or(3306)`: `DB_PORT=three` must not silently
+        // connect somewhere other than the manifest says.
         let port: u16 = port_raw
             .parse()
             .with_context(|| format!("DB_PORT is not a port number: {port_raw:?}"))?;
@@ -121,15 +80,9 @@ impl DbConfig {
         })
     }
 
-    /// A `mysql://` URL for sqlx.
-    ///
-    /// Percent-encodes the password. A MariaDB password is an arbitrary byte
-    /// string and the ones in this cluster are generated, so `@`, `/`, `?` and
-    /// `#` all occur — every one of which terminates a URL component early and
-    /// would silently produce a different host, database or credential rather
-    /// than a parse error. `mirror.rs` sidesteps this by using
-    /// `MySqlConnectOptions` and never composing a URL; this composes one
-    /// because the pool is built from a URL, so it has to encode.
+    /// A `mysql://` URL for sqlx, with the password percent-encoded: generated
+    /// passwords contain `@`, `/`, `?` and `#`, each of which would silently
+    /// change the host, database or credential rather than fail to parse.
     pub fn url(&self) -> String {
         format!(
             "mysql://{}:{}@{}:{}/{}",
@@ -142,11 +95,8 @@ impl DbConfig {
     }
 }
 
-/// Percent-encode everything outside the RFC 3986 unreserved set.
-///
-/// Deliberately conservative — encoding a character that did not need it is
-/// harmless, and the set of characters that do need it in a userinfo component
-/// is easy to get subtly wrong in the permissive direction.
+/// Percent-encode everything outside the RFC 3986 unreserved set: encoding too
+/// much is harmless, too little silently wrong.
 fn encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -165,11 +115,8 @@ fn required(key: &str) -> Result<String> {
     std::env::var(key).with_context(|| format!("missing required env var {key}"))
 }
 
-/// An optional variable with a default.
-///
-/// An empty value is treated as absent. `DB_HOST=""` in a manifest is a
-/// mistake rather than a request for an empty hostname, and sqlx would take it
-/// and fail at connect time with a message about the network.
+/// An optional variable with a default; an empty value counts as absent
+/// (`DB_HOST=""` is a manifest mistake, not a hostname).
 fn with_default(key: &str, default: &str) -> String {
     match std::env::var(key) {
         Ok(v) if !v.is_empty() => v,
@@ -177,12 +124,9 @@ fn with_default(key: &str, default: &str) -> String {
     }
 }
 
-/// A comma-separated secret list. Absent or empty yields no tokens, which the
-/// callers read as "this surface is off".
-///
-/// Blank entries are dropped rather than kept as empty strings. A stray comma
-/// would otherwise put `""` in the allowlist, and a request with an empty token
-/// header would match it.
+/// A comma-separated secret list; absent or empty is no tokens ("this surface
+/// is off"). Blank entries are dropped, or a stray comma would allow an empty
+/// token.
 fn token_list(key: &str) -> Vec<String> {
     std::env::var(key)
         .unwrap_or_default()
@@ -202,13 +146,9 @@ fn optional(key: &str) -> Option<String> {
 }
 
 impl Config {
-    /// Read the environment. Fails with the name of the first missing variable.
-    /// A config with no environment behind it, for tests that need the shape
-    /// rather than the values.
-    ///
-    /// Every credential is empty and the database points nowhere. That is the
-    /// point: a test using this cannot accidentally reach a real service, and a
-    /// test that needs one has to say so by building its own.
+    /// A config with no environment behind it, for tests needing the shape: every
+    /// credential is empty and the database points nowhere, so a test cannot
+    /// reach a real service by accident.
     #[doc(hidden)]
     pub fn for_test() -> Self {
         Config {

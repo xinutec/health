@@ -1,15 +1,11 @@
-//! The Overpass HTTP client: IO glue for the two OSM mirrors.
+//! The Overpass HTTP client for the two OSM mirrors: which URL, what timeout,
+//! which status codes are worth a second mirror. The breaker is
+//! `Verified.Geo.OverpassBreaker`'s.
 //!
-//! The decisions this file appears to make are not made here: whether the
-//! breaker is open, and what a failure does to it, live in
-//! `Verified.Geo.OverpassBreaker`. What is left is genuinely IO: which URL,
-//! what timeout, which status codes are worth a second mirror.
-//!
-//! ⚠ the status-code rule is not "retry on !ok". A 4xx that is not 429 is
-//! permanent — a malformed query — and is returned immediately without trying
-//! the other mirror and without counting toward the breaker. Retrying a bad
-//! query on every mirror wastes the timeout budget twice and then trips the
-//! breaker for the queries that would have worked.
+//! ⚠ The status-code rule is not "retry on !ok". A 4xx other than 429 is a
+//! malformed query: returned at once, not tried on the other mirror and not
+//! counted toward the breaker, or it wastes both budgets and trips the breaker
+//! for queries that would work.
 
 use anyhow::{Context, Result, bail};
 use std::time::Duration;
@@ -19,33 +15,18 @@ use std::time::Duration;
 // dev-lint: allow-pii the contact address the mirrors ask for
 pub const USER_AGENT: &str = "health.xinutec.org (pippijn@xinutec.org)";
 
-/// Order matters: `overpass-api.de` first, the faster one, `kumi.systems`
-/// second.
-///
-/// Every mirror's failure is carried, not just the last. Keeping only the
-/// final error makes a two-endpoint outage read as a one-endpoint one, because
-/// the first mirror's failure is overwritten before anything prints it.
-///
-/// `overpass.osm.ch` is not a substitute and is deliberately absent: it
-/// answers 200 with zero elements outside Switzerland, which is
-/// indistinguishable from "no routes here" and would silently empty the mirror
-/// for a London user.
+/// `overpass-api.de` first (faster), `kumi.systems` second. Every mirror's
+/// failure is carried, so a two-endpoint outage does not read as one.
+/// `overpass.osm.ch` is excluded: outside Switzerland it answers 200 with zero
+/// elements, which would silently empty the mirror.
 const OVERPASS_URLS: [&str; 2] = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 ];
 
-/// Which mirrors attempt number `attempt` may use. Attempt 0 is the first try.
-///
-/// A retry goes to the primary alone. `kumi.systems` connects and then returns
-/// zero bytes until the cap, so a second full-mirror pass costs
-/// `FALLBACK_TIMEOUT_MS` per tile to buy nothing; primary-only keeps a retry
-/// affordable against the job's deadline.
-///
-/// It is not removed from attempt 0. Never having answered here is a reason
-/// not to pay for it twice, not proof it cannot answer — and dropping it leaves
-/// one endpoint with nothing behind it (`overpass.osm.ch` cannot be that; see
-/// [`OVERPASS_URLS`]).
+/// Which mirrors attempt number `attempt` may use (0 is the first try). A retry
+/// goes to the primary alone: `kumi.systems` connects and then sends nothing until
+/// the cap. It stays in attempt 0, so the primary has something behind it.
 pub fn attempt_urls(attempt: usize) -> &'static [&'static str] {
     if attempt == 0 {
         &OVERPASS_URLS
@@ -57,38 +38,23 @@ pub fn attempt_urls(attempt: usize) -> &'static [&'static str] {
 /// The request path's budget. The offline mirrors pass their own, larger one.
 pub const REQUEST_TIMEOUT_MS: u64 = 20_000;
 
-/// The offline mirrors' budget — well above the request path's fail-fast cap,
-/// because a 0.05-degree central-London tile legitimately returns ~5 MB and
-/// Overpass queues for a compute slot under load, holding the socket silent
-/// before it streams.
+/// The offline mirrors' budget, well above the request path's: a central-London
+/// tile is ~5 MB, and Overpass holds the socket silent while queuing for a slot.
 pub const MIRROR_TIMEOUT_MS: u64 = 90_000;
 
-/// What a mirror gets after the first one has already failed.
-///
-/// A fallback is only worth a short wait. The tile has already spent its
-/// budget on the primary, so a fallback that cannot answer promptly is not
-/// helping — it is delaying the next tile. `kumi.systems` connects and then
-/// never answers, so at the full budget it cost ~90 s per refused tile.
-///
-/// Not applied to the first mirror. Overpass's slot queuing means a
-/// legitimate primary request can sit silent well past this, and cutting it
-/// would trade a real answer for a fast failure.
+/// What a mirror gets after the first has failed: the tile has spent its budget,
+/// and `kumi.systems` cost ~90 s per refused tile at the full one. Not applied to
+/// the primary, which can legitimately sit silent in Overpass's queue.
 pub const FALLBACK_TIMEOUT_MS: u64 = 15_000;
 
 /// `overpass-api.de`'s status endpoint. Cheap, and the one they publish so a
 /// client does not have to guess.
 const STATUS_URL: &str = "https://overpass-api.de/api/status";
 
-/// What `/api/status` says about this client's compute slots.
-///
-/// Overpass publishes a concurrency LIMIT and live availability, and the
-/// limit is small (2 for this client). Firing a tile burst without regard for
-/// it earns an IP-level ban, and a fixed inter-tile sleep cannot substitute:
-/// it tracks nothing, which is why a pacing bracket came out non-monotonic.
-///
-/// When the slots are spent the endpoint names the moment the next one frees
-/// (`Slot available after: <ts>, in N seconds`), so the polite client is not a
-/// slower one — it is one that asks.
+/// What `/api/status` says about this client's compute slots. The limit is small
+/// (2), a burst earns an IP ban, and a fixed sleep tracks nothing; when slots are
+/// spent the endpoint names when the next frees (`in N seconds`), so the polite
+/// client asks.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Slots {
     /// The per-IP concurrency limit. `0` means unmetered for this client.
@@ -98,12 +64,9 @@ pub struct Slots {
     pub next_in_s: Option<u64>,
 }
 
-/// Read `/api/status`. `None` when it cannot be parsed, which is deliberately
-/// not an error: a status endpoint that changed shape must not stop the refresh.
-///
-/// The seconds are taken from `in N seconds`, not by subtracting the quoted
-/// timestamp from the local clock. A host whose clock is off would otherwise
-/// compute a negative or enormous wait out of a correct answer.
+/// Read `/api/status`; `None` when it does not parse, not an error, so a changed
+/// page cannot stop the refresh. The wait is taken from `in N seconds`, not the
+/// quoted timestamp, so a skewed local clock does not matter.
 pub fn parse_status(body: &str) -> Option<Slots> {
     let mut limit = None;
     let mut available = None;
@@ -131,11 +94,8 @@ pub fn parse_status(body: &str) -> Option<Slots> {
             }
         }
     }
-    // A body naming neither a count nor a wait is not a status page.
-    //
-    // Not `unwrap_or`, which evaluates its argument even when the Option is
-    // Some — the `return None` inside one fired on every healthy response and
-    // made a parsed "2 slots available now." read as an unparseable page.
+    // A body naming neither a count nor a wait is not a status page. Not
+    // `unwrap_or`, whose argument (a `return None`) is evaluated even on `Some`.
     let available = match available {
         Some(a) => a,
         None if next.is_some() => 0,
@@ -148,15 +108,9 @@ pub fn parse_status(body: &str) -> Option<Slots> {
     })
 }
 
-/// Ask Overpass whether it has a slot for us, and wait out the answer.
-///
-/// Returns the seconds actually slept. `cap_s` bounds it so a mirror announcing
-/// an absurd wait cannot stall the whole refresh — the caller's breaker and
-/// deadline stay in charge.
-///
-/// One status read per tile, not a poll loop. The endpoint says how long to
-/// wait, so waiting that long and proceeding is the whole protocol; asking
-/// repeatedly while we wait would be the same discourtesy in miniature.
+/// Ask Overpass whether it has a slot and wait out the answer, returning the
+/// seconds slept. `cap_s` bounds an absurd wait. One status read per tile: the
+/// endpoint says how long, so polling would be the same discourtesy.
 pub async fn wait_for_slot(client: &reqwest::Client, cap_s: u64) -> u64 {
     let res = client
         .get(STATUS_URL)
@@ -188,46 +142,29 @@ pub enum Outcome {
     /// A permanent refusal — a non-429 4xx. Not worth another mirror, and not
     /// the breaker's business.
     Permanent { status: u16 },
-    /// Every mirror failed. The caller records this against the breaker.
-    ///
-    /// One entry per mirror, in the order tried. A single string here is what
-    /// made a two-endpoint outage unreadable.
+    /// Every mirror failed (the caller records it against the breaker), one
+    /// entry per mirror in the order tried.
     AllFailed {
         errors: Vec<String>,
-        /// Did any mirror reply with an HTTP status, as opposed to failing at
-        /// the transport?
-        ///
-        /// The ban/throttle line, and it decides whether a retry is allowed.
-        /// A refused connection means the server has stopped listening, and
-        /// asking again is what earns a ban; a 429 or 5xx means it is still
-        /// talking, and asking again is fair.
-        ///
-        /// It cannot be inferred from `wait_for_slot`, which returns 0 when
-        /// `/api/status` is itself unreachable — precisely the banned case.
+        /// Did any mirror reply with an HTTP status rather than fail at the
+        /// transport? A refused connection means asking again earns a ban; a 429
+        /// or 5xx means asking again is fair. `wait_for_slot` returns 0 exactly
+        /// when the status page is unreachable too, so it cannot tell.
         answered: bool,
     },
 }
 
 impl Outcome {
-    /// May the tile that produced this be asked again?
-    ///
-    /// Lives here so the tile loop and its test read the same one. Written as
-    /// a `matches!` at the call site, a test could only restate it — and a test
-    /// that rebuilds the condition it is checking passes whatever the caller
-    /// actually does, including the opposite.
+    /// May the tile that produced this be asked again? Here so the tile loop and
+    /// its test read the same predicate rather than a restated one.
     pub fn may_retry(&self) -> bool {
         matches!(self, Outcome::AllFailed { answered: true, .. })
     }
 }
 
-/// POST one query to each mirror this attempt may use, in turn, until one
-/// answers. `attempt` is 0 for a tile's first try; see [`attempt_urls`] for why
-/// a later one is narrower.
-///
-/// This does not touch the breaker. The caller owns the breaker state because
-/// the breaker is Lean's, and threading it through here would mean holding Lean
-/// state in a `static`. The caller's loop is where `recordFailure` and
-/// `recordSuccess` belong.
+/// POST one query to each mirror this attempt may use ([`attempt_urls`]) until
+/// one answers. The breaker is Lean state the caller's loop owns, so it is not
+/// touched here.
 pub async fn fetch_attempt(
     client: &reqwest::Client,
     query: &str,
@@ -278,16 +215,9 @@ pub async fn fetch_attempt(
     Outcome::AllFailed { errors, answered }
 }
 
-/// Parse an Overpass response body into its `elements` array.
-///
-/// A missing `elements` key is an empty list, matching `data.elements ?? []`.
-/// Overpass omits it for a query that matched nothing, and treating that as an
-/// error would turn "this tile has no bus routes" into a tile failure — which
-/// then counts toward the refusal that protects the cache.
-///
-/// But a malformed one is an error, not an empty list. Defaulting there is the
-/// same defect as the DECIMAL columns that decoded to 0.0 while the check
-/// printed OK: the mirror would shrink and every signal would say it worked.
+/// Parse an Overpass response body into its `elements`. Missing `elements` is an
+/// empty list (Overpass omits it when nothing matched), but a malformed one is an
+/// error: a default would shrink the mirror with every signal saying it worked.
 pub fn elements(body: &str) -> Result<Vec<serde_json::Value>> {
     let v: serde_json::Value =
         serde_json::from_str(body).context("the Overpass response is not JSON")?;

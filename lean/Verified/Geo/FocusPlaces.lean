@@ -3,33 +3,18 @@ import Verified.Geo.Velocity
 /-!
 # Focus-place mining
 
-The whole pipeline that turns raw GPS into the user's long-term places:
+Raw GPS into the user's long-term places: `detectFocusPlaces` filters
+low-accuracy fixes, then `detectStays` (greedy radius-bounded windows),
+`clusterStays` (greedy nearest cluster, merged to a fixpoint) and `splitCluster`
+(two co-located places by time of day), then re-ids and sorts by dwell. Also
+`classifyClusterLabel`, `assignDisplayNames` (at most one Home and one Work,
+then "Stay"), the hour profiles `Verified.Geo.PlacePrior` scores against, and
+`pickWinningAmenity`.
 
-`detectFocusPlaces` = filter low-accuracy fixes → `detectStays` (greedy
-radius-bounded windows) → `clusterStays` (greedy nearest-cluster assignment
-plus a merge-to-fixpoint pass) → `splitCluster` (separate two co-located
-places by time-of-day) → re-id and sort by dwell.
-
-Plus the classification layer: `classifyClusterLabel` (home / work / hotel /
-frequent / one-off / other), `assignDisplayNames` (at most one Home and one
-Work, then a "Stay" tier), the hour-of-day dwell profiles that
-`Verified.Geo.PlacePrior` scores against, and `pickWinningAmenity`.
-
-Time of day comes from longitude (rough solar time), not a tz library, so this
-layer needs no `Intl` and is pure, with two deliberate exceptions:
-
-* `classifyCluster.reason`: a human-readable string. Only the label drives
-  behaviour, so `classifyClusterLabel` returns the decision and the display
-  string stays shell.
-* The day of a timestamp: {@link localDayIndex} returns a day number rather
-  than a `YYYY-MM-DD` string. Calendar date and day index are in bijection, so
-  the distinct count, the only thing `uniqueDayCount` exposes, is identical
-  without a civil-date conversion.
-
-Exactness: stay/cluster geometry and every gate, ordering and label decision
-are exact; `haversineMeters` (atan2) and the `cos`/`sin` circular embedding in
-`splitCluster` put those distances at ≤1 ULP. UNPROVEN; pinned by the
-`#guard`s.
+Time of day is solar, from longitude, so this needs no zone. The display
+`reason` stays shell (only the label drives behaviour), and days are indices,
+since only their distinct count is used. Exact except haversine and the
+`cos`/`sin` circular embedding (≤1 ULP). UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.FocusPlaces
@@ -40,10 +25,8 @@ open Verified.Geo.Velocity (localSolarHour)
 /-! ## Calibration -/
 
 def STAY_RADIUS_M : Float := 100
-/-- How long a dwell must last to be mined as a visit. Short enough to catch
-cafés.
-
-Not a bar on whether there is a stay in the track at all. -/
+/-- How long a dwell must last to be mined as a visit: short enough to catch
+cafés. Not a bar on whether the track has a stay. -/
 def FOCUS_VISIT_MIN_S : Int := 10 * 60
 def ACCURACY_FILTER_M : Float := 200
 def CLUSTER_RADIUS_M : Float := 150
@@ -79,8 +62,8 @@ def STAY_DISPLAY_NAME : String := "Stay"
 
 /-! ## Solar time
 
-`localSolarHour` is shared with `Verified.Geo.Velocity`. The two variants
-below are focus-places' own. -/
+`localSolarHour` is `Verified.Geo.Velocity`'s; these two variants are mining's.
+-/
 
 private def MIN_PER_DAY : Float := 24 * 60
 
@@ -126,10 +109,8 @@ private def maxDistFromCentroid (ps : List RawPoint) (lat lon : Float) : Float :
 
 /--
 Greedily extend a window while every point stays within `STAY_RADIUS_M` of its
-own median centroid; the radius check is what eventually breaks the window
-when the phone moves elsewhere. A window of ≥2 points spanning
-`FOCUS_VISIT_MIN_S` becomes a stay and the scan resumes after it;
-otherwise the scan advances one point and tries again.
+median centroid. A window of two or more points spanning `FOCUS_VISIT_MIN_S`
+becomes a stay and the scan resumes after it; otherwise the scan advances one.
 -/
 def detectStays (points : List RawPoint) : List Stay := Id.run do
   let pts := points.toArray
@@ -198,9 +179,8 @@ private def firstMergeablePair (cs : Array Cluster) : Option (Nat × Nat) := Id.
   return none
 
 /--
-Greedy assignment to the nearest in-range cluster, then merge to a fixpoint:
-greedy clustering can leave two clusters whose centroids drift within range
-only after the fact.
+Greedy assignment to the nearest in-range cluster, then merge to a fixpoint, as
+centroids can drift into range after the fact.
 -/
 def clusterStays (stays : List Stay) : List Cluster := Id.run do
   let mut clusters : Array Cluster := #[]
@@ -267,10 +247,8 @@ def hourProfileForRange (startTs endTs : Int) (lon : Float) : List Float :=
 def serializeHourProfile (profile : List Float) : String :=
   String.intercalate "," (profile.map (fun x => toString (Float.floor (x * 1000 + 0.5)).toInt64.toInt))
 
-/-- JS `Number(s)` restricted to what `serializeHourProfile` can emit plus the
-    degenerate inputs it tolerates: surrounding whitespace is ignored, the
-    empty string is 0, and anything else is `none` = `NaN` ⇒ the whole profile
-    is rejected. -/
+/-- JavaScript's `Number(s)` over what `serializeHourProfile` emits: whitespace
+    ignored, `""` is 0, anything else `none` (NaN), which rejects the profile. -/
 private def jsNumber (s : List Char) : Option Float := Id.run do
   let t := (s.dropWhile (fun c => c == ' ')).reverse.dropWhile (fun c => c == ' ') |>.reverse
   if t.isEmpty then return some 0
@@ -335,11 +313,9 @@ def sleepHoursOf (c : Cluster) : Float :=
   Float.ofInt (c.stays.foldl (fun sec s => if stayCoversDeepNight s c.centroidLon then sec + s.durationSec else sec) 0)
   / 3600
 
-/-- Actual overlap between each stay and any Fitbit sleep window. Strictly
-    more accurate than `sleepHoursOf` when Fitbit data exists: it catches
-    shifted-sleep nights the 02:00–06:00 heuristic misses, and excludes
-    "sat at home from 22:00 to 04:00 watching TV". Returns 0 with no
-    windows, so the caller can fall back. -/
+/-- Each stay's actual overlap with the recorded sleep windows: better than the
+    02:00–06:00 heuristic (it catches shifted nights and excludes a late
+    evening awake). 0 with no windows, so the caller falls back. -/
 def sleepHoursFromFitbit (stays : List Stay) (sleepWindows : List (Int × Int)) : Float :=
   if sleepWindows.isEmpty then 0
   else
@@ -375,10 +351,9 @@ private def weekdayDaytimeHours (stays : List Stay) (lon : Float) : Float := Id.
 def uniqueDayCount (stays : List Stay) (lon : Float) : Nat :=
   (stays.map (fun s => localDayIndex s.startTs lon)).eraseDups.length
 
-/-- How far a place's visits sit from it: the summed squared distance (m²) of
-    each stay's centre from the cluster's. With the visit count it is the
-    place's spread, what the decoder's listed-place centre term learns from
-    (one desk or another on different days). -/
+/-- The summed squared distance (m²) of each visit's centre from the cluster's:
+    with the visit count, the place's spread, which the decoder's listed-place
+    centre term learns from. -/
 def visitSpreadOf (c : Cluster) : Float :=
   c.stays.foldl (fun a s =>
     let d := haversineMeters c.centroidLat c.centroidLon s.centroidLat s.centroidLon
@@ -396,10 +371,8 @@ private def oneVisitAt (lat : Float) : Cluster :=
 /-! ## Classification -/
 
 /--
-`home | work | hotel | frequent | one-off | other`.
-
-Only the label drives behaviour; the human-readable `reason` stays shell (see
-the module header).
+`home | work | hotel | frequent | one-off | other`. Only the label drives
+behaviour.
 -/
 def classifyClusterLabel (c : Cluster) : String :=
   let sorted := c.stays.mergeSort (fun a b => decide (a.startTs ≤ b.startTs))
@@ -426,14 +399,14 @@ def classifyClusterLabel (c : Cluster) : String :=
   else "other"
 
 /--
-At most one Home and one Work across the user's clusters, then a "Stay" tier.
+At most one Home and one Work, then a "Stay" tier:
 
-* Home — most deep-night hours, given ≥30 days span, ≥20 unique days and ≥30
-  sleep-hours. Singular even if two clusters look home-like.
-* Work — most weekday-daytime hours (excluding Home), given ≥20 such hours;
-  a café visited 8× over two months gives ~6 h and does not qualify.
-* Stay — deep-night presence without enough history to be Home: parents'
-  flats, friends' apartments, multi-night hotels.
+* Home: most deep-night hours, given ≥30 days span, ≥20 unique days and ≥30
+  sleep-hours.
+* Work: most weekday-daytime hours apart from Home, given ≥20 of them (a café
+  visited 8× in two months gives ~6).
+* Stay: deep-night presence without the history for Home (a friend's flat, a
+  hotel).
 -/
 def assignDisplayNames (clusters : List Cluster) : List (Int × String) := Id.run do
   let mut names : Array (Int × String) := #[]
@@ -461,20 +434,11 @@ def assignDisplayNames (clusters : List Cluster) : List (Int × String) := Id.ru
   return names.toList
 
 /--
-The dominant amenity name from a weighted vote (typically dwell seconds), or
-`none` when the evidence is sparse or contested — the caller then falls back
-to per-visit OSM lookup.
-
-`weightExempt` names venues some stay saw from inside the near field
-(`VenuePrior.NEAR_FIELD_DECISIVE_M`). Such a name skips the dwell floor and
-only the dwell floor: one fix sitting on the venue establishes "you have been
-in here" as well as ten would, so a short first visit is not a reason to
-withhold the label. The majority floor still applies — being inside a venue
-says nothing about which of two contested names is right.
-
-This is the one focus-mining export no live comparison reaches
-(`ServeEntry.lean`), so its only check is the guards below, and a guard cannot
-fail for a parameter that does not exist: a rule missing here goes unnoticed.
+The dominant amenity name from a weighted vote (dwell seconds), or `none` when
+sparse or contested; the caller then looks visits up per OSM. `weightExempt`
+names venues a stay saw from inside the near field: they skip the dwell floor
+only (one fix on the venue shows you were in it), not the majority floor. No
+live comparison reaches this, so its guards are the only check.
 -/
 def pickWinningAmenity (votes : List (String × Float)) (minWeight minFraction : Float)
     (weightExempt : List String := []) : Option String := Id.run do
@@ -591,19 +555,12 @@ private def minBetweenLobeGapHours (stays : List Stay) (assign : Array Nat) (lon
   return minGap
 
 /--
-Split a cluster that conflates two co-located places — most often a daytime
-café and an evening residence under `CLUSTER_RADIUS_M` apart, fused by
-`clusterStays`.
-
-Time-of-day is the separating signal: visits are clustered by their circular
-time-of-day alone (midpoint solar hour as a unit-circle angle), then the fit
-must clear all three gates — bimodality, both lobes substantial, and the lobes
-spatially distinct. Clustering on time rather than joint (space, time) is
-deliberate: a residence's own ~100 m of indoor-GPS scatter, standardised into
-a joint feature space, overpowers the café/residence time gap on real data.
-Space earns its place as gate 3, not as a clustering dimension.
-
-One binary split per cluster; no recursion.
+Split a cluster conflating two co-located places, usually a daytime café and an
+evening residence. Visits are clustered by circular time of day alone (midpoint
+solar hour as an angle), and the split must clear three gates: bimodal, both
+lobes substantial, lobes spatially distinct. Joint space-time clustering was
+refuted: a residence's ~100 m indoor scatter overpowers the time gap. One binary
+split, no recursion.
 -/
 def splitCluster (cluster : Cluster) : List Cluster := Id.run do
   let stays := cluster.stays

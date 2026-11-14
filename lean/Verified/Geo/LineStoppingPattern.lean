@@ -1,40 +1,20 @@
 /-!
 # Stopping-pattern line disambiguation
 
-Which of two lines sharing a track did the train run on? Ask where it stopped.
-Out of Wembley Park the Metropolitan and the Jubilee run on the same rails for
-seven kilometres, so every fix supports both and `lineUnderTheTrack` drops the
-label — but the Metropolitan runs fast past four stations the Jubilee calls at,
-and that difference is in the fix stream.
+Which of two lines sharing a track did the train run on? Ask where it stopped:
+out of Wembley Park the Metropolitan and Jubilee share rails for 7 km, so every
+fix supports both, but the Metropolitan runs past four stations the Jubilee
+calls at.
 
-The question is asked as a possibility, not a fit. Counting the pauses the train
-visibly made is a lower bound on its stops; asking how many more could have
-hidden in the unobserved stretches is an upper bound. A candidate survives when
-its true intermediate-stop count falls between them, and a line is named only
-when exactly one candidate survives — so a dark ride excludes nobody and missing
-data yields silence rather than a confident guess.
+Asked as a possibility, not a fit: the visible pauses are a lower bound on the
+stops, the stops that could hide in unobserved stretches give an upper bound,
+and a line is named only when exactly one candidate's intermediate-stop count
+falls between. A dark ride excludes nobody.
 
-## What this module carries
-
-`intermediateStopCount` reaches through `railRelationsForLine` into
-`lineBaseToken` and `normalizeStationName`. All three are pure, so they are
-here rather than stubbed. The DB-backed halves (`loadAllRailStopRelations`, the
-station cache) stay shell: they are I/O, and the relation array arrives as an
-argument.
-
-## Deliberate choices
-
-* `stopBounds` reads `p.speed_kmh` directly: `FilteredPoint.speed_kmh` is
-  non-optional, so a defensive default would be unreachable.
-* `lineBaseToken`'s `/\s+lines?\b.*$/i` and `normalizeStationName`'s
-  `/[^a-z0-9]/g` are matched on ASCII only. Station and line names in the OSM
-  mirror are ASCII; a non-ASCII space or a Turkish dotted capital would not be
-  folded.
-* `floor` stays in `Float`: `atMost` is `atLeast + hidden` over floats, and
-  `intermediateStopCount` returns `Option Float` for the same reason.
-
-Exactness: every arithmetic decision is exact (one multiply, one divide, one
-add, one `floor` per gap). UNPROVEN; pinned by the `#guard`s.
+`intermediateStopCount` reaches into `lineBaseToken` and `normalizeStationName`,
+pure and so here; the relations arrive as an argument. Name matching is ASCII
+(the mirror's names are). `floor` stays in `Float` (`atMost` is `atLeast +
+hidden`). Every decision is exact. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.LineStoppingPattern
@@ -82,10 +62,9 @@ def RUNNING_KMH : Float := 25
 still carries Kalman residue from the deceleration that preceded it. -/
 def DWELL_KMH : Float := 8
 
-/-- Service brake / acceleration rate, m/s². Deliberately at the top of the
-realistic range: a higher rate means a stop fits into a shorter gap, which
-permits more hidden stops. Over-permitting yields a null; under-permitting
-yields a wrong line label. -/
+/-- Service brake and acceleration rate (m/s²), at the top of the realistic
+range: more hidden stops fit, and over-permitting yields silence where
+under-permitting yields a wrong line. -/
 def BRAKE_MS2 : Float := 1.3
 
 /-- Shortest station dwell worth calling a stop, seconds. -/
@@ -102,10 +81,8 @@ private def isJsSpace (c : Char) : Bool :=
 /-- JS `\w` — `[A-Za-z0-9_]`. `Char.isAlphanum` is already ASCII-only. -/
 private def isJsWord (c : Char) : Bool := c.isAlphanum || c == '_'
 
-/-- Does this (already lower-cased) tail begin `lines?\b`? `s?` is greedy, so
-`"lines"` is tried first and `"line"` is the backtrack — which is why
-`"linesman"` matches neither: `"lines"` is followed by `m` and `"line"` by `s`,
-both word characters. -/
+/-- Does this lower-cased tail begin `lines?\b`? `"linesman"` matches neither
+`"lines"` nor the backtracked `"line"`, each followed by a word character. -/
 private def startsWithLineWord (lowered : List Char) : Bool :=
   let boundedBy (w : List Char) : Bool :=
     w.isPrefixOf lowered &&
@@ -114,12 +91,9 @@ private def startsWithLineWord (lowered : List Char) : Bool :=
        | c :: _ => !isJsWord c)
   boundedBy "lines".toList || boundedBy "line".toList
 
-/-- The kept prefix: everything before the first whitespace run that is followed
-by `line`/`lines` at a word boundary.
-
-`\s+` is greedy and then backtracks, but backtracking inside a whitespace run
-can never help — the character after a shortened run is still whitespace, never
-`l` — so testing each maximal run is exactly what the regex engine does. -/
+/-- Everything before the first whitespace run followed by `line`/`lines` at a
+word boundary. Backtracking inside a whitespace run cannot help, so testing each
+maximal run is what the regex does. -/
 private def cutAtLineWord : List Char → List Char
   | [] => []
   | c :: tl =>
@@ -129,11 +103,10 @@ private def cutAtLineWord : List Char → List Char
       if startsWithLineWord (after.map Char.toLower) then [] else c :: cutAtLineWord tl
     else c :: cutAtLineWord tl
 
-/-- A line label stripped to the token that identifies it: `"Metropolitan Line:
-Aldgate → Amersham"` → `"Metropolitan"`. A compound label
-(`"Circle and District lines"`) keeps both words and so matches no single-line
-relation — which is why an empty result must be read as "no membership data",
-never as "serves no stations". -/
+/-- A line label stripped to its identifying token: `"Metropolitan Line:
+Aldgate → Amersham"` → `"Metropolitan"`. A compound label keeps both words and
+matches no single-line relation, so an empty result means "no membership data",
+never "serves no stations". -/
 def lineBaseToken (lineName : String) : String :=
   (String.ofList (cutAtLineWord lineName.toList)).trimAscii.toString
 
@@ -171,14 +144,10 @@ private def indexOfStop (rel : RailStopRelation) (station : String) : Int :=
 /-! ## `intermediateStopCount` -/
 
 /--
-How many stations this line calls at between the two named ones — `0` for a
-non-stop hop — or `none` when the mirror cannot say (no relation for the line,
-or none that stops at both endpoints).
-
-A relation is one direction of a service, so the endpoints may appear in either
-order and the hop count is the absolute distance between them. Where a line has
-several relations the fewest hops wins: a semi-fast variant that skips stations
-is still that line, and the question is what the observed train could have been.
+How many stations this line calls at between the two named ones (`0` for
+non-stop), or `none` when the mirror cannot say. A relation is one direction, so
+the count is the absolute hop distance; with several relations the fewest hops
+wins (a semi-fast variant is still the line).
 -/
 def intermediateStopCount (line board alight : String)
     (relations : Array RailStopRelation) : Option Float :=
@@ -211,33 +180,21 @@ private def stopsThatFit (gapS fromKmh toKmh : Float) : Float :=
   let perStopS := (fromKmh * KMH_TO_MS) / BRAKE_MS2 + DWELL_MIN_S + (toKmh * KMH_TO_MS) / BRAKE_MS2
   Float.floor (gapS / perStopS)
 
-/-- A pair with the train standing at both ends contributes nothing: those two
-observations bracket one pause, not a sequence of them, and crediting a platform
-wait with four hidden stops is how this bound stops discriminating anything. One
-standing end still counts — it just costs no braking or acceleration time. -/
+/-- A pair with the train standing at both ends brackets one pause and
+contributes nothing (else a platform wait buys four hidden stops); one standing
+end costs no braking or acceleration time. -/
 private def hiddenBetween (gapS : Float) (a b : FilteredPoint) : Float :=
   if a.speedKmh <= DWELL_KMH && b.speedKmh <= DWELL_KMH then 0
   else stopsThatFit gapS a.speedKmh b.speedKmh
 
 /--
 How many times the train could have stood still between pulling away and
-arriving, given what was observed — or `none` when it was never seen running,
-which leaves nothing to bound.
-
-The interior is delimited by the train's own motion rather than by a guard band
-on the clock: from the first fix at running speed to the last, which excludes
-the platform wait at the near end and the deceleration at the far end without
-having to guess how long either was. A pause inside that span has the train
-running on both sides of it, which is what makes it a station stop rather than
-an endpoint.
-
-Unobserved time is treated the same wherever it falls, including before the
-first running fix and after the last — the head of a ride whose GPS only came
-back halfway is exactly such a stretch, and that is what keeps a sparse ride
-from masquerading as a confidently non-stop one.
-
-`Array#sort` is TimSort and `List.mergeSort` merges left-biased, so fixes
-sharing a timestamp keep their input order in both.
+arriving, or `none` if it was never seen running. The interior runs from the
+first fix at running speed to the last, excluding the platform wait and the
+deceleration without guessing their length; a pause inside has running on both
+sides, so it is a station stop. Unobserved time counts wherever it falls, so a
+ride whose GPS came back halfway cannot pass as non-stop. Fixes sharing a
+timestamp keep input order (stable sort).
 -/
 def stopBounds (points : Array FilteredPoint) (boardTs alightTs : Int) : Option StopBounds :=
   let ride := ((points.toList.filter fun p => p.ts >= boardTs && p.ts <= alightTs).mergeSort
@@ -267,13 +224,9 @@ def stopBounds (points : Array FilteredPoint) (boardTs alightTs : Int) : Option 
 
 /--
 Which candidate line's stopping pattern the ride does not rule out, or `none`
-when it rules out fewer or more than exactly one.
-
-Deliberately willing to name a line on incomplete information — a ride that
-demonstrably ran past four stations was not the service that calls at all four.
-What it will not do is choose between candidates the ride leaves both possible;
-that is a coin toss, and a coin toss belongs in the caller's bare station-pair
-label, not in a line name.
+unless exactly one survives. It names a line on incomplete information (a ride
+that ran past four stations was not the one calling at all four), but never
+chooses between candidates the ride leaves possible.
 -/
 def pickLineByStoppingPattern (candidates : Array String) (board alight : String)
     (relations : Array RailStopRelation) (points : Array FilteredPoint)
@@ -376,8 +329,7 @@ private def rels : Array RailStopRelation := #[metRel, jubRel, metReverse]
 
 /-! ### `stopBounds`
 
-The observed 06-23 shape: a platform wait, an unbroken run with one 64 s gap,
-then arrival.
+A platform wait, an unbroken run with one 64 s gap, then arrival.
 -/
 
 private def fix (ts : Int) (kmh : Float) : FilteredPoint := { ts := ts, speedKmh := kmh }
