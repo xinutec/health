@@ -1,18 +1,15 @@
-//! The decoder's parameter record: one JSON file holding every fitted number
-//! (`examples/fit_emissions` writes it, with its provenance) and the form
-//! settings that go with them. The code holds the model's form; this file holds
-//! its numbers (`docs/design/probabilistic-principles.md`, Rule 8).
+//! The decoder's parameter record: every fitted number (written by
+//! `examples/fit_emissions`, with provenance) and the form settings that go
+//! with them. Code holds the form, this the numbers
+//! (`docs/design/probabilistic-principles.md`, Rule 8).
 //!
-//! It holds his physiology, so it never lives in this repository: the serving
-//! pod reads it from a Secret into `DECODER_PARAMS_JSON` (the record itself, a
-//! few kilobytes); the harness names a file or a per-day directory in
-//! `DECODER_PARAMS`. Neither set, a replay reads the golden record and the
-//! decode worker refuses: it would store the unfitted model's day.
+//! It holds the user's physiology, so it is not in this repository: the pod
+//! reads `DECODER_PARAMS_JSON` from a Secret, a harness names a file or per-day
+//! directory in `DECODER_PARAMS`. With neither, a replay reads the golden record
+//! and the decode worker refuses.
 //!
-//! ⚠ the secret holds one line. `scripts/prod-db.sh` mirrors the pod's
-//! environment as `NAME=VALUE` lines, so a pretty-printed record reaches a Mac
-//! replay as its first line, `{`, and every day fails to decode.
-//! `fit_emissions` writes it compact.
+//! ⚠ The Secret holds one line: `scripts/prod-db.sh` mirrors the pod's env as
+//! `NAME=VALUE` lines, so a pretty-printed record arrives as `{`.
 //!
 //! ```json
 //! { "segEmission": {…}, "transFit": {…}, "entryCounts": {…}, "fittedPriors": {…},
@@ -33,11 +30,9 @@ const GOLDEN_RECORD: &str = concat!(
     "/../../tests/golden/fits/decoder-params.json"
 );
 
-/// The record for `date`: `DECODER_PARAMS` names a file, or a directory of one
-/// record per day, `<dir>/<date>.json` (each fitted without that day,
-/// `fit_emissions --loo`); else `DECODER_PARAMS_JSON` is the record itself;
-/// else the golden record, when the golden corpus is checked out. `None`
-/// only without it: a replay then runs the fixture's frozen request alone.
+/// The record for `date`: `DECODER_PARAMS` (a file, or `<dir>/<date>.json`
+/// fitted without that day), else `DECODER_PARAMS_JSON`, else the golden
+/// record. `None` without any: a replay runs the fixture's frozen request.
 pub fn from_env(date: &str) -> Result<Option<Value>> {
     let Ok(path) = std::env::var("DECODER_PARAMS") else {
         return match std::env::var("DECODER_PARAMS_JSON") {
@@ -58,10 +53,8 @@ pub fn from_env(date: &str) -> Result<Option<Value>> {
     })?))
 }
 
-/// The golden record, when the golden corpus is checked out.
-///
-/// Its own function so the env read's absence arm holds no `?`: the deploy-env
-/// lint reads one there as "required at boot".
+/// The golden record, when checked out. Separate so the env read's absence arm
+/// has no `?`, which the deploy-env lint reads as "required at boot".
 fn golden_record() -> Result<Option<Value>> {
     match std::fs::read_to_string(GOLDEN_RECORD) {
         Ok(text) => Ok(Some(
@@ -71,11 +64,9 @@ fn golden_record() -> Result<Option<Value>> {
     }
 }
 
-/// Lay the record on a decode request: each flag and `maxD`, where the request
-/// leaves them unset — a harness arm's own setting wins.
-///
-/// A record missing any of them is an error: a missing key would decode with
-/// that part of the fit silently off.
+/// Lay the record on a decode request: each flag and `maxD` the request leaves
+/// unset (a harness arm's own setting wins). A missing key is an error, or that
+/// part of the fit would silently be off.
 pub fn apply(req: &mut Value, params: &Value) -> Result<()> {
     for k in FLAGS.iter().chain(&["maxD"]) {
         anyhow::ensure!(!params[k].is_null(), "the decoder record has no {k}");

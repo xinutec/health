@@ -3,13 +3,11 @@ import Verified.FloatConst
 /-!
 # Rail labels and step cadence for the cascade's passes
 
-The worldline pieces the passes read: the `Board → Alight · Line` label parser
-rail-snap uses, the per-minute step cadence and the pedestrian-pace bounds the
-stay splitter judges walking by. The worldline invariants themselves live in
-`Verified.Eval.Feasibility`, the one the corpus gate runs.
+The `Board → Alight · Line` label parser, the per-minute step cadence, and the
+pedestrian-pace bounds the stay splitter uses. The worldline invariants are
+`Verified.Eval.Feasibility`.
 
-Exact: string handling, comparison and one prorated sum. UNPROVEN; pinned by the
-`#guard`s.
+Exact. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.Worldline
@@ -35,19 +33,11 @@ structure RailTriple where
 
 /-! ## Helpers -/
 
-/-- Parse `Board → Alight · Line`. `none` without the station arrow; the line is
-    optional.
-
-    The order matters: the line suffix is stripped from the whole string first,
-    then the remainder is split on the station arrow. The other way round
-    accepts `"A · X → B"`, which must be rejected: after stripping ` · X → B`
-    the remainder `"A"` has no arrow left in it.
-
-    Each field is trimmed, an empty board or alight rejects the whole label
-    (`" → B"`, `"A → "` are not station pairs), and a blank line suffix
-    degrades to `none` rather than to a whitespace string. Both separators
-    split on their FIRST occurrence with the tail rejoined, so
-    `"A → B → C"` alights at `"B → C"`. -/
+/-- Parse `Board → Alight · Line`; `none` without the arrow, the line optional.
+    The line suffix is stripped first, so `"A · X → B"` is rejected. Fields are
+    trimmed; an empty board or alight rejects; a blank line is `none`. Both
+    separators split at their first occurrence, so `"A → B → C"` alights at
+    `"B → C"`. -/
 def parseRailWayName (wayName : Option String) : Option RailTriple :=
   match wayName with
   | none => none
@@ -69,15 +59,9 @@ def parseRailWayName (wayName : Option String) : Option RailTriple :=
       if b.isEmpty || a.isEmpty then none else some ⟨b, a, line⟩
 
 /-- Mean steps/min over `[startTs, endTs]` from per-minute buckets, or `none`
-    when no bucket overlaps (no data ≠ zero cadence).
-
-    A bucket counts in proportion to its overlap with the window: its steps are
-    spread over its minute, so a bucket that shares one second with the window
-    brings a sixtieth of them. Counting edge buckets whole let the minute of
-    walking AWAY from a stop vote on the stop — 05-12's seven-minute shop stop
-    read 56 steps/min (the 93 of the arrival minute and the 100 of the
-    departure minute, each overlapping by seconds) and was vetoed as walked
-    through; prorated it reads 30. -/
+    with no overlapping bucket (no data ≠ zero). Each bucket counts in
+    proportion to its overlap, so the arrival and departure minutes cannot
+    make a short stop read as walked through. -/
 def meanCadenceSpm (steps : List FeasibilityStepPoint) (startTs endTs : Int) : Option Float := Id.run do
   let mut total : Float := 0
   let mut overlapped := false

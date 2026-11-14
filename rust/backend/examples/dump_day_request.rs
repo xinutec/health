@@ -1,23 +1,14 @@
 //! Dump the fold request for one golden day, as the fold receives it.
 //!
-//! The way to get the request `rust-host-check.sh` feeds to both arms;
-//! without it the host-equivalence check would be a permanent skip.
-//!
-//! An example, not A `bin/backend` verb. The golden corpus is a test artifact,
-//! and a production CLI that reads test fixtures is the wrong shape — it would
-//! ship in the image and invite use against real data. `cargo run --example`
-//! builds with the crate, uses the library, and stays out of the release.
-//!
-//! It prints the final round's request, not the first. The fold converges over
-//! several rounds, each carrying more answer tables than the last; the bytes a
-//! second host must reproduce are the ones the last round saw.
+//! An example, not a `backend` verb: a production CLI should not read test
+//! fixtures, and examples stay out of the image.
 //!
 //! ```text
 //! cargo run --example dump_day_request -- 2026-05-14-$USER > /tmp/req.json
 //! ```
 //!
-//! Exit 2 when the corpus is absent, so a caller can tell a missing corpus
-//! from a day that failed to build.
+//! Exits 2 when the corpus (gitignored real data) is absent, so a caller can
+//! tell that from a day that failed to build.
 
 use anyhow::{Context, Result};
 use backend::osm_trace::{Sections, TraceAnswerer};
@@ -35,10 +26,7 @@ fn main() -> Result<()> {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
     let path = format!("{root}/{name}.json");
 
-    // Exit 2, not 1, when the corpus is missing. `tests/golden/days` is
-    // gitignored — it carries real coordinates, places and biometrics — so its
-    // absence is the ordinary case off this machine and must be told apart from
-    // a day that failed to build. The caller turns 2 into a loud skip.
+    // Exit 2: the corpus is absent off this machine, which is not a failure.
     let Ok(text) = std::fs::read_to_string(&path) else {
         eprintln!("dump_day_request: no golden day at {path}");
         std::process::exit(2);
@@ -62,17 +50,10 @@ fn main() -> Result<()> {
     let converged =
         backend::fold::run_day(&cap, inputs, &mut answerer).context("folding the day")?;
 
-    // A day that ran with declined asks is not a sentinel. It would
-    // still produce a request and both arms would still agree on it, so the
-    // check would pass — on a day whose fold never got its answers.
-    //
-    // But three tables are declined on purpose and must not count: the same
-    // list `tests/corpus/day.rs` holds, and for the same reason — `reverseGeocode`
-    // is a Nominatim call over coordinates the pipeline derives,
-    // `transitStops` is injected rather than computed from rows, and
-    // `nearbyLandmarks` declines where the row set cannot vouch for a coordinate.
-    // A first pass here refused this day over one of them, which would have made
-    // the sentinel unavailable for a gap that is not one.
+    // A day whose fold had declined asks is refused: it would still produce a
+    // request. Three tables decline on purpose, as in `tests/corpus/day.rs`:
+    // `reverseGeocode` (Nominatim), `transitStops` (injected), and
+    // `nearbyLandmarks` (declined where the row set cannot vouch).
     const DECLINED_ON_PURPOSE: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "transitStops"];
     let declined = converged.declined();
     let real_gaps: Vec<&backend::lean::Ask> = declined

@@ -1,14 +1,9 @@
-//! Latitude and longitude to an IANA zone, from the bundled polygon set.
-//!
-//! The only piece of the Fitbit wall-clock inference that outlived the Web API:
-//! a fix's zone, for the stays the focus refresh and the rowset answerer label.
+//! Latitude and longitude to an IANA zone, from the bundled polygon set, for
+//! the stays the focus refresh and the rowset answerer label.
 
-/// The production lat/lon → IANA lookup, backed by `tzf-rs`'s polygons —
-/// bundled, so the image needs no data file alongside the binary.
-///
-/// Rows stored before these polygons came from a coarser lookup (npm
-/// `tz-lookup`). The two agree inside a zone and can disagree within a few
-/// kilometres of a border, and a stored `tz` is never revisited.
+/// The production lat/lon → IANA lookup over `tzf-rs`'s bundled polygons. Older
+/// stored rows came from a coarser lookup that can differ within a few km of a
+/// border; a stored `tz` is never revisited.
 pub struct PolygonLookup {
     finder: tzf_rs::DefaultFinder,
 }
@@ -28,32 +23,13 @@ impl PolygonLookup {
         }
     }
 
-    /// The IANA zone containing a coordinate, or `None` for one it cannot place.
-    ///
-    /// `None` is rarer than it looks, and that is the thing to know here.
-    /// The polygons cover the oceans too, with the nautical `Etc/GMT±N` zones,
-    /// so almost every in-range coordinate gets an answer:
-    ///
-    /// ```text
-    ///   (-48.88, -123.39)  the remotest point in the Pacific  ->  Etc/GMT+8
-    ///   (0, 0)             the Gulf of Guinea                 ->  Etc/GMT
-    ///   (91, 0) / NaN      not a coordinate                   ->  "" -> None
-    /// ```
-    ///
-    /// So a GPS fix that is corrupt but still in range (a glitch dropping the
-    /// phone into the Atlantic) does not fall back to the profile zone. It
-    /// yields a confident `Etc/GMT+2` that is written into `tz` and looks like
-    /// an ordinary answer.
-    ///
-    /// `None` is therefore reached only by a value that is not a coordinate at
-    /// all. The empty string `tzf` returns for those is translated here, because
-    /// an empty string in a `tz` column would look present, parse as no zone,
-    /// and be invisible to an `IS NULL` check.
+    /// The IANA zone containing a coordinate, or `None` for a value that is not
+    /// a coordinate (out of range, NaN). The polygons cover the oceans with
+    /// `Etc/GMT±N`, so a corrupt in-range fix gets a confident zone, not the
+    /// profile's. `tzf`'s empty string becomes `None`, which `IS NULL` can see.
     pub fn zone(&self, lat: f64, lon: f64) -> Option<String> {
-        // ⚠ `tzf` takes longitude first. Every other signature in this file
-        // takes (lat, lon), so the swap happens exactly here and nowhere else.
-        // Reversed, the lookup silently answers with a different continent's
-        // zone rather than failing.
+        // ⚠ `tzf` takes longitude first; the swap happens here only. Reversed,
+        // it silently answers another continent's zone.
         let name = self.finder.get_tz_name(lon, lat);
         (!name.is_empty()).then(|| name.to_string())
     }

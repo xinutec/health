@@ -1,37 +1,21 @@
 //! Slow numeric conversions in compiled Lean, held to a baseline.
 //!
-//! # What it catches
+//! Three things compile to GMP work on every evaluation:
 //!
-//! Three things Lean compiles to arbitrary-precision (GMP) work on every
-//! evaluation, each of which has cost the walk matcher or the decoder build
-//! real time:
-//!
-//!   * `lean_float_of_nat(` — `Nat.toFloat` is `Float.ofScientific n false 0`,
-//!     the generic literal path, not a cast. Use `Verified.FloatConst.natToFloat`.
+//!   * `lean_float_of_nat(` — `Nat.toFloat` goes through `Float.ofScientific`;
+//!     use `Verified.FloatConst.natToFloat`.
 //!   * `lean_cstr_to_nat(` — a `Nat`/`UInt64` literal ≥ 2^32 is parsed from a
-//!     decimal string each time. Hoist it to a module-level `@[noinline] def`
-//!     (a literal-bodied `def` without it is inlined back).
-//!   * `l_Float_ofScientific(` — a `Float` literal inside a loop body or a
-//!     branch is rebuilt per pass. Hoist it to a module-level `def`.
+//!     string each time; hoist it to a module-level `@[noinline] def`.
+//!   * `l_Float_ofScientific(` — a `Float` literal in a loop or branch is
+//!     rebuilt per pass; hoist it to a module-level `def`.
 //!
-//! The generated C says exactly where each happens; a function whose name
-//! contains `_init_` runs once and is not counted. The check reads
-//! `lean/.lake/build/ir//*.c`, so it runs after something has built the Lean
-//! (the Rust tests do, through `build.rs`).
+//! Reads `lean/.lake/build/ir//*.c` after a Lean build; `_init_` functions run
+//! once and are not counted.
 //!
-//! # The baseline
-//!
-//! `lean/gmp-hotpaths.baseline` lists today's sites, most of them in cold code.
-//! It is held exact: a new site, or more of an existing one, fails and names
-//! the function; a site that went away also fails, so the list shrinks with the
-//! code instead of keeping stale excuses. After judging a change —
-//! fixed it, or it is genuinely cold — rewrite the list with
-//! `GMP_HOTPATHS_BLESS=1`.
-//!
-//! Generated names carry specialisation counters and hygiene hashes that move
-//! with unrelated edits; they are normalised (digits after `spec__`, `lam__`,
-//! `closed__`, `hyg_` become `N`, and any run of six or more digits becomes
-//! `H`) so the baseline names the function, not its build.
+//! `lean/gmp-hotpaths.baseline` is held exact: a new or grown site fails, and so
+//! does a vanished one. Rewrite it with `GMP_HOTPATHS_BLESS=1` after judging.
+//! Generated names are normalised (digits after `spec__`, `lam__`, `closed__`,
+//! `hyg_` become `N`; runs of six or more digits `H`).
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

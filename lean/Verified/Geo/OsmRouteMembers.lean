@@ -1,30 +1,16 @@
 /-!
 # Reading a route relation's stop sequence
 
-The common half of the two Overpass mirrors: both `refresh-rail-stops` and
-`refresh-bus-routes` walk a decoded Overpass response the same way: index the
-member nodes by id, then read each relation's stops from its members in order,
-preferring PT-v2 `stop_position` roles and falling back to platforms when a
-route is mapped without them.
+Shared by `refresh-rail-stops` and `refresh-bus-routes`: index the member nodes
+by id, then read each relation's stops in member order, preferring
+`stop_position` roles, else platforms.
 
-## ⚠ member order is the route direction
+⚠ Member order is the route direction and must not be sorted. `seq` counts the
+kept stops, so an unresolved member leaves no gap.
 
-The sequence is not sorted and must not be. OSM models each direction of a
-service as its own relation, and the member order within one relation is the
-order the vehicle calls at those stops. `seq` is assigned from the position in
-the kept list, not from the position among the members — a member that does not
-resolve leaves no gap.
-
-## The platform fallback is all-or-nothing
-
-`resolveOrderedStops` does not mix the two role sets. If `stop_position` members
-resolve to fewer than two stops the whole sequence is re-read from platforms
-instead — because a half-and-half sequence would interleave two different
-mappings of the same route and the resulting order would be neither.
-
-A route that cannot reach two stops under either set resolves to nothing. One
-stop cannot anchor a call pattern, and guessing the rest is what this whole
-mirror exists to avoid.
+The fallback is all-or-nothing: under two `stop_position` stops, the whole
+sequence is re-read from platforms, never mixed. Under two either way resolves
+to nothing.
 -/
 
 namespace Verified.Geo.OsmRouteMembers
@@ -38,12 +24,9 @@ structure Member where
   role : Option String := none
   deriving Repr, Inhabited
 
-/-- A node the mirror resolved: coordinates, and a name when OSM has one.
-
-`name` stays `none` rather than becoming `""`. An unnamed `stop_position` is
-kept deliberately — its coordinates still resolve against station footprints via
-the route graph's 150 m merge radius — and an empty string would make it look
-like a station called nothing. -/
+/-- A node the mirror resolved: coordinates, and a name if OSM has one. An
+unnamed `stop_position` is kept (its coordinates still merge into stations) with
+`name = none`, not `""`. -/
 structure ResolvedNode where
   lat : Float
   lon : Float
