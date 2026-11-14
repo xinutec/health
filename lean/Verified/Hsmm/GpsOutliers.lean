@@ -3,27 +3,18 @@ import Verified.FloatConst
 /-!
 # HMM GPS outlier filter
 
-A robust-statistics pass run on the fix stream before the observation tensor:
-for each fix, take the median position over a ±30-min window and drop the fix if
-it lies more than `MAX_DEVIATION_M` from that cluster centre — unless the fix is
-reachable from the last kept one at a speed a vehicle attains (`V_MAX_KMH`).
+Before the observation tensor: drop a fix more than `MAX_DEVIATION_M` from the
+median position of its ±30-min window, unless it is reachable from the last
+kept fix at a vehicle's speed (`V_MAX_KMH`).
 
-The median alone is right about an isolated teleport (a stale buffer, a cell
-triangulation): the cluster stays put and the rogue fix sits kilometres off it.
-It is wrong about a ride between two stays shorter than its window. There the
-window straddles both stays, its coordinate-wise median lands between them, and
-every fix on the way (the platform wait, the run at 100 km/h, the walk to the
-station) is 2 km from a point nobody was at; on the decoder days that was 35 to
-115 fixes a day, always a ride's interior, so the decoder saw every ride from
-its bookends only. The speed rescue tells the two apart: a teleport implies
-thousands of km/h from the fix before it, a ride implies tens.
+The median catches an isolated teleport, but a ride between two stays inside
+one window puts the median between them and would drop the whole ride's
+interior. The speed rescue separates them: a teleport implies thousands of
+km/h, a ride tens.
 
-Composes directly into `buildObservationTensor` (same `GpsPoint`, same
-`median`). The only transcendental is `cos` in the equirectangular distance,
-and it feeds only a deviation compared against a 2 km threshold and a speed
-against 250 km/h — so the kept-set (a discrete decision, nothing sits at the
-knife-edge) is exact even though the intermediate distance is ≤1-ULP-close.
-UNPROVEN; pinned by the `#guard`s.
+Feeds `buildObservationTensor` (same `GpsPoint`, same `median`). `cos` makes
+distances ≤1 ULP, compared only against 2 km and 250 km/h, so the kept set is
+exact. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.GpsOutliers
@@ -71,12 +62,10 @@ def farFromCluster (points : List GpsPoint) (p : GpsPoint) : Bool :=
     let medLon := median (cluster.map GpsPoint.lon)
     decide (approxDistanceMeters p.lat p.lon medLat medLon > MAX_DEVIATION_M)
 
-/-- Drop the fixes that are far from their cluster median and unreachable at
-    `V_MAX_KMH` from the fix before them — the last kept fix, or the raw one
-    before it while nothing has been kept yet; the first fix has no reference
-    and is judged by the median alone. Preserves all other fixes in input
-    order. Assumes `points` sorted by `ts` (the velocity pipeline's output), so
-    the ±window cluster is a contiguous run. -/
+/-- Drop the fixes far from their cluster median and unreachable at `V_MAX_KMH`
+    from the fix before (the last kept, or the raw previous before any is kept;
+    the first fix is judged by the median alone). Order preserved; `points`
+    sorted by `ts`, so the window is a contiguous run. -/
 def dropGpsOutliers (points : List GpsPoint) : List GpsPoint :=
   if points.length < MIN_CLUSTER_SIZE then points
   else
@@ -107,11 +96,9 @@ private def pts : List GpsPoint :=
 #guard (dropGpsOutliers [mk 0 51.5 (-0.1), mk 60 99 99, mk 120 51.5 (-0.1)]).map GpsPoint.ts
   == [0, 60, 120]
 
--- A ride between two stays inside one window: ten fixes at A, ten on the way
--- north at 36 km/h, ten at B six kilometres on. The window's median lands on
--- the way; the median rule alone dropped A entire (3 km off) and the ride's
--- first half — the speed rescue keeps every fix but A's first, which has no
--- fix before it to be reached from.
+-- A ride between two stays in one window: ten fixes at A, ten on the way at
+-- 36 km/h, ten at B 6 km on. The median lands on the way, so the median alone
+-- drops A and half the ride; the rescue keeps all but A's first fix.
 private def ride : List GpsPoint :=
   (List.range 10).map (fun (k : Nat) => mk (Int.ofNat (60 * k)) 51.50 (-0.10))
   ++ (List.range 10).map (fun (k : Nat) =>

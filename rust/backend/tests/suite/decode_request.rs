@@ -1,9 +1,6 @@
-//! The `assemblesegments` request `decode-day` actually sends.
-//!
-//! Every field on this wire is `serde_json::Value`, so nothing on the Rust
-//! side can tell a wrong shape from a right one. Lean refuses by name, which is
-//! the only check there is — and it only runs if something sends a realistic
-//! request.
+//! The `assemblesegments` request `decode-day` actually sends. Every field is a
+//! `Value`, so only Lean's by-name refusal checks the shapes, and only for a
+//! realistic request.
 
 use backend::classification_inputs::decode_places;
 use backend::lean;
@@ -111,10 +108,8 @@ fn no_places_is_an_empty_list_not_an_error() {
     );
 }
 
-/// The line list is lean's. A Rust copy would let the shell resolve stations
-/// for a different set of lines than the model has states for, and neither side
-/// would report it: extra pairs never match a state, missing ones silently drop
-/// a hard zero.
+/// The line list is Lean's: a Rust copy could resolve stations for lines with
+/// no states (never matched) or miss some (silently dropping a hard zero).
 #[test]
 fn the_known_lines_come_from_the_model() {
     setup();
@@ -124,10 +119,9 @@ fn the_known_lines_come_from_the_model() {
     assert_eq!(lines.len(), 11, "the served state space's train lines");
 }
 
-/// The hard constraint itself. A place 100 m from a Central Line station may
-/// board it; a place 40 km away may not, and the absence of its key is what says
-/// so. An empty result is therefore not a neutral one — it removes every hard
-/// zero rather than adding them.
+/// The hard constraint: a place 100 m from a Central line station may board it,
+/// one 40 km away may not (its key is absent). An empty result removes every
+/// hard zero.
 #[test]
 fn a_place_is_near_the_line_it_can_walk_to_and_no_other() {
     setup();
@@ -163,10 +157,8 @@ fn a_line_with_no_stations_yields_no_pairs() {
     );
 }
 
-/// The pairs reach the decoder as pairs. `placeNearLine` crosses as a list of
-/// `"id|line"` strings and Lean rebuilds the set; a shape the decoder could not
-/// read would be swallowed as "no place is near any line", which is the failure
-/// this whole path exists to avoid.
+/// The pairs reach the decoder as `"id|line"` strings and Lean rebuilds the set;
+/// an unreadable shape would read as "no place near any line".
 #[test]
 fn the_pairs_are_accepted_by_assemblesegments() {
     setup();
@@ -181,10 +173,8 @@ fn the_pairs_are_accepted_by_assemblesegments() {
         .expect("the decoder must accept the pairs this pipeline produces");
 }
 
-/// The chain seed is four fields, not one — the third field-shape defect on
-/// this request. `{priorPlaceId}` alone is refused. Both halves are asserted,
-/// because the refusal alone
-/// would still pass if the replacement shape were also wrong.
+/// The chain seed is four fields: `{priorPlaceId}` alone is refused, and the
+/// full shape accepted, both asserted.
 #[test]
 fn the_continuity_seed_needs_all_four_fields() {
     setup();
@@ -240,26 +230,17 @@ fn a_null_continuity_is_a_chain_start() {
     lean::assemble_segments(&r).expect("a chain start must decode");
 }
 
-/// The fifth shape defect, and the only one entirely inside this repository.
-/// `buildWireGraph` emits every coordinate as an IEEE-754 bit pattern — on
-/// purpose, because a re-rounded coordinate moves a node's 5-dp key, which is
-/// its identity. `assemblesegments` read only JSON numbers and refused the
-/// output of the entry point next door with `number expected`. Two Lean files,
-/// one wire, no agreement, and nothing between them to notice.
-///
-/// `jFloat` now takes either encoding. This sends the wire graph exactly as
-/// `lean::build_wire_graph` returns it.
+/// `buildWireGraph` emits coordinates as IEEE-754 bit patterns, since rounding
+/// would move a node's 5-dp identity key; `assemblesegments`' `jFloat` reads
+/// either encoding. This sends the graph as `lean::build_wire_graph` returns it.
 #[test]
 fn the_wire_graph_is_accepted_in_the_encoding_it_is_produced_in() {
     setup();
     let (edges, nodes) = lean::build_wire_graph(
         &[serde_json::json!({
             "id": "w1",
-            // `[latBits, lonBits]` pairs on the way in, `{lat, lon}` objects
-            // on the way out — `parse_linestring_wkt` builds the pairs and
-            // `buildWireGraph` emits the objects. The asymmetry is real; this
-            // test uses the producer's shape on both sides rather than a
-            // guess at either.
+            // `[latBits, lonBits]` pairs in (`parse_linestring_wkt`), `{lat, lon}`
+            // objects out (`buildWireGraph`): each side uses its producer's shape.
             "geometry": [
                 [backend::fold_payload::bits(51.5), backend::fold_payload::bits(-0.1)],
                 [backend::fold_payload::bits(51.51), backend::fold_payload::bits(-0.1)],

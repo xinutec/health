@@ -1,38 +1,23 @@
 /-!
 # `trimOverRouteExcursions` — the over-route detour excision
 
-The most intricate display pass, in the metric-parametric style. Two excision
-passes over a matched path against
-the GPS corridor, then a rebuild:
+Two excision passes over a matched path against the GPS corridor, then a
+rebuild, metric-parametric:
 
-1. *Spatial*: an off-corridor run (every vertex further than
-   `offM` from every fix) bracketed by on-corridor anchors is excised
-   when it travels ≥ `minStall` while the corridor position advances by
-   less than `detour` of that — the matcher invented a loop the walker
-   barely moved past. Gap-fills survive (their corridor advances in
-   step); real there-and-backs survive (the fixes polyline contains the
-   excursion, so corridor arc advances too).
-2. *Temporal*: a doubling-back over just-walked street is
-   spatially supported but its corridor position is frozen — any
-   stretch travelling ≥ `minStall` with corridor advance below `stall`
-   of it that returns near its start (net displacement < `return` of
-   the span) is excised; the *last* qualifying end wins.
+1. Spatial: an off-corridor run (every vertex beyond `offM` of every fix)
+   between on-corridor anchors is cut when it travels ≥ `minStall` while the
+   corridor advances less than `detour` of that: an invented loop. Gap-fills and
+   traced there-and-backs advance the corridor and survive.
+2. Temporal: a doubling-back over just-walked street is on-corridor but frozen:
+   a stretch travelling ≥ `minStall` with advance below `stall` that returns
+   near its start (net < `return` of the span) is cut; the last end wins.
 
-Corridor positions (`corridorPositions`) are the monotone-floor
-projections of path vertices onto the fixes polyline: per vertex, the
-strict-first-minimum projection among chords whose interpolated arc
-position is not more than `slack` behind the running floor.
+`corridorPositions` projects each vertex onto the fixes polyline, the first
+minimum among chords not more than `slack` behind the running floor. Ratios
+are exact rationals compared by cross-multiplication; the rebuild's `> 0.5 m`
+dedupe is `nearLe` (`≤`, unlike `dedupeConsecutive`'s `<`).
 
-Ratio thresholds arrive as exact rationals (`num`/`den`, compared by
-cross-multiplication — no rounding at all); the projection's arc
-interpolation is the parametric `arcPos` (the metric instantiation
-rounds it); the rebuild's `> 0.5 m` dedupe is `nearLe` (note *≤*
-semantics — `dedupeConsecutive` uses strict `<`, mirrored separately).
-
-Theorem: the pass is drop-only (`trim_sublist`) — it excises and
-dedupes, never invents or reorders. The deeper "only GPS-unsupported
-stretches are excised" statement is the guard structure of `pass1`/
-`pass2` itself, visible in the definitions.
+`trim_sublist`: the pass only drops, never invents or reorders.
 -/
 
 namespace Verified.Geo

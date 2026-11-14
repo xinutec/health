@@ -1,33 +1,19 @@
 /-!
 # `spliceRouteDetail` — the display-pass layer, part 2
 
-For each chord of the cleaned `coarse` line, re-insert the assembled route's
-vertices between the chord's endpoints when the route curves away from the
-chord by more than the detail tolerance but no more than the simplify
-tolerance. Together with `Simplify.lean`'s Douglas-Peucker guarantee this is
-the whole argument: simplify-flattened curves deviate `≤ simplifyDropM` (so they
-are restorable, and get restored), while deliberate excisions (spur removal,
-over-route trim, despiked apexes) deviate beyond it and stay excised.
+For each chord of the cleaned `coarse` line, re-insert the route's vertices
+where the route deviates from the chord by more than the detail tolerance and
+at most the simplify tolerance. With `Simplify.lean`'s guarantee, flattened
+curves (`≤ simplifyDropM`) are restored and deliberate excisions (spurs,
+over-route trims, despiked apexes) stay out.
 
-Like `Simplify.lean`, everything is parametric over the metric and the point
-type: `cd` is chord deviation, `same` is the `1e-9` coordinate match (exact
-equality once quantised), `near` is the `< 0.5 m` dedupe check, and
-`clampTs a b v` is `v` with its timestamp clamped into the chord window
-(`min(max(ts, a.ts), b.ts)`), all supplied by the arithmetic substrate and none
-needed for the theorems here.
+Parametric over the metric and point type: `cd` chord deviation, `same` the
+`1e-9` coordinate match, `near` the `< 0.5 m` dedupe, `clampTs a b v` the
+timestamp clamped into the chord window. `prev` threads the last emitted vertex.
 
-The insertion loop threads `prev` (the last emitted vertex) explicitly: the
-previous coarse vertex at window start (its chord's `a`), then the last inserted
-vertex.
-
-Theorems:
-- `splice_sound`: every output vertex is either a coarse vertex or a
-  route vertex (timestamp-clamped to its chord window) whose deviation
-  from its chord is `≤ dropM` — inserted only through a window whose
-  guard cleared, so a `> dropM` excision window inserts nothing.
-- `splice_coarse_sublist`: the coarse line survives in order — the pass
-  only inserts, never drops or reorders, so every decision layer keeps
-  consuming exactly the tuned coarse geometry.
+- `splice_sound`: every output vertex is a coarse vertex or a clamped route
+  vertex within `dropM` of its chord, so a `> dropM` window inserts nothing.
+- `splice_coarse_sublist`: the coarse line survives in order.
 -/
 
 namespace Verified.Geo
@@ -308,11 +294,9 @@ def splice (cd : π → π → π → Nat) (same near : π → π → Bool)
   else (spliceLoop cd same near clampTs route m tol dropM coarse n 1
     (indexFrom same route m (coarse 0) 0) [coarse 0]).reverse
 
-/-- Splice soundness: every output vertex is a coarse vertex,
-or a route vertex — timestamp-clamped into its chord's window — whose
-deviation from its chord is at most `dropM`. In particular a window
-whose deviation exceeds `dropM` (a deliberate excision) contributes
-nothing: what stays out, stays out. -/
+/-- Splice soundness: every output vertex is a coarse vertex or a route vertex,
+timestamp-clamped into its chord's window, within `dropM` of that chord. A
+window deviating beyond `dropM` contributes nothing. -/
 theorem splice_sound (cd : π → π → π → Nat) (same near : π → π → Bool)
     (clampTs : π → π → π → π) (route : Nat → π) (m : Nat) (tol dropM : Nat)
     (coarse : Nat → π) (n : Nat) :

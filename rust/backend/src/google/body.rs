@@ -1,22 +1,11 @@
 //! Reconcile the `body` table's weight against Google.
 //!
-//! # It DELETES, and that is what makes it worth reading carefully
-//!
-//! Every other fetcher in this crate is an upsert: run it twice and nothing
-//! changes. This one removes rows first, because the stale Fitbit values it is
-//! replacing are on the same primary key `(user_id, date)` only where Google
-//! also has a weigh-in — and Fitbit's forward fill has a row for every day,
-//! while Google has one for the days somebody actually stood on the scale. An
-//! upsert alone would leave the flat line intact between real measurements.
-//!
-//! So the window `[replaceFrom, ∞)` is cleared and the real values inserted.
-//! Rows before that boundary are older Fitbit history that Google cannot
-//! replace, and they are left alone.
-//!
-//! ⚠ The boundary comes from `Verified.Weight.replaceFrom` and an empty fetch
-//! yields `None`, on which this writes nothing. A Google outage, a revoked
-//! token and a scope change all return zero points; treating that as "replace
-//! from the beginning" would delete every weight row there is.
+//! ⚠ It deletes. Fitbit's forward fill has a row every day, Google only on
+//! weigh-in days, so an upsert would leave the flat line between measurements.
+//! The window `[replaceFrom, ∞)` is cleared and the real values inserted; older
+//! Fitbit history stays. The boundary is `Verified.Weight.replaceFrom`, and an
+//! empty fetch yields `None`, on which nothing is written: an outage must not
+//! delete every weight row.
 
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;
@@ -43,14 +32,9 @@ pub struct WeightSyncResult {
     pub fat_days: usize,
 }
 
-/// Reconcile `body` against a set of weigh-ins.
-///
-/// `apply = false` reports what it would do and writes nothing — the shape the
-/// CLI uses to show a plan before committing to it.
-///
-/// `body_fat` rides in the same transaction. It has to: the weight delete
-/// clears whole rows, body-fat column included, so writing fat separately would
-/// leave every tick a window in which it is gone.
+/// Reconcile `body` against a set of weigh-ins; `apply = false` only reports the
+/// plan. `body_fat` is written in the same transaction, since the delete clears
+/// whole rows.
 pub async fn sync_google_weight(
     pool: &MySqlPool,
     user_id: &str,
@@ -80,10 +64,8 @@ pub async fn sync_google_weight(
         return Ok(out);
     }
 
-    // One transaction. Between the delete and the inserts the window is
-    // empty, and a failure there would leave the table with a hole where the
-    // stale-but-plausible values were, worse than either endpoint, because a gap
-    // in weight reads as "did not weigh" rather than as a failed sync.
+    // One transaction: a failure between delete and insert would leave a gap
+    // that reads as "did not weigh", not as a failed sync.
     let mut tx = pool.begin().await.context("opening the weight tx")?;
 
     let del = sqlx::query("DELETE FROM body WHERE user_id = ? AND date >= ?")
@@ -125,11 +107,8 @@ pub async fn sync_google_weight(
     Ok(out)
 }
 
-/// Grams to the kilograms the column holds.
-///
-/// `weight_kg` is `DECIMAL(5,2)`, so MariaDB rounds to two places on the way
-/// in whatever this returns: 67 345 g stores as 67.35, not 67.345. The division
-/// is plain `f64`, so the column's rounding is the only rounding.
+/// Grams to kilograms; `weight_kg` is `DECIMAL(5,2)`, so MariaDB's rounding on
+/// insert is the only rounding (67 345 g stores as 67.35).
 fn kilograms(grams: i64) -> f64 {
     grams as f64 / 1000.0
 }

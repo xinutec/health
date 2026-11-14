@@ -3,33 +3,26 @@ import Lean
 /-!
 # `deadcode` — what nothing in `verified_cli` can reach
 
-Reads the compiled environment of every module in this package and walks the
-constants a body or a statement names, from `main` and `externalRoots`. Two
-kinds of command are kept for what they check rather than for what they run:
+Walks the constants each body or statement names, from `main` and
+`externalRoots`, over every module's compiled environment. Kept for what they
+check:
 
-* a theorem whose statement names a live definition, and the spec it relates
-  that definition to;
-* a `#guard`, `example` or `#eval` that names a live definition, or whose
-  fixtures (private definitions only checks use) call a live function. A check
-  makes no constant, so its references come from the build's `.ilean` files,
-  and its extent from Lean's own parser.
+* a theorem whose statement names a live definition, and the spec it relates;
+* a `#guard`, `example` or `#eval` naming a live definition, or whose fixtures
+  call one. Checks make no constant, so references come from the `.ilean`
+  files and extents from Lean's parser.
 
-A theorem or check about unreached code only is unreached with it.
-
-The compiler adds edges the terms do not show, and they are followed:
-`@[implemented_by]`, a `partial def`'s `_unsafe_rec` body, `initialize`, and
-`@[csimp]` (a reached left-hand side reaches the right).
+Compiler edges are followed: `@[implemented_by]`, `partial def`'s
+`_unsafe_rec`, `initialize`, and `@[csimp]`.
 
 Run from `lean/` after `lake build`:
 
-* no flag: each unreached command as `path:line names`, then the total; exits 1
-  when there is any;
+* no flag: each unreached command as `path:line names`, then the total; exit 1
+  if any;
 * `--count`: the number of unreached commands;
 * `--why=<name>`: the chain that reaches `<name>`;
-* `--guard-only`: definitions only a check keeps, by module — a function its
-  own guards exercise and nothing else calls, or a public test helper;
-* `--control`: the same without `main` as a root; exits 1 unless most commands
-  then come out unreached;
+* `--guard-only`: definitions only a check keeps, by module;
+* `--control`: without `main` as a root; exit 1 unless most come out unreached;
 * `--delete`: removes the unreached commands from the sources.
 -/
 
@@ -309,10 +302,8 @@ unsafe def main (args : List String) : IO UInt32 := do
   let roots := if control then externalRoots else `main :: externalRoots
   let live := grow env extra thms fix checks
     (close env extra (roots.foldl (·.insert · .anonymous) ∅) roots)
-  -- `--guard-only`: definitions that only a check keeps. A kept check makes
-  -- every name it mentions live, so a function exercised by nothing but its
-  -- own guards reads as reached; this lists them for a person to judge, since a
-  -- public test helper has the same shape.
+  -- `--guard-only`: a kept check makes what it names live, so a function only
+  -- its own guards exercise reads as reached; listed for a person to judge.
   if args.contains "--guard-only" then
     let base := grow env extra thms fix #[]
       (close env extra (roots.foldl (·.insert · .anonymous) ∅) roots)
