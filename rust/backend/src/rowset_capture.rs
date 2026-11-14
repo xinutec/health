@@ -1,24 +1,12 @@
-//! Recording what the answerer asked the mirror, as an `osmRowSet`.
+//! Recording what the answerer asked the mirror, as an `osmRowSet`, so a recent
+//! day can become a gate. `osm_trace` records the matcher reads; this records
+//! the rows the answerer serves its tables from.
 //!
-//! The row-set writer, so a recent day can become a gate, since recent
-//! days are where the defects are. `osm_trace`'s recording answerer does the
-//! three matcher-read sections; this is the other half, the rows the answerer
-//! serves its seven tables from.
-//!
-//! It wraps any [`RowSource`] and delegates, so the capture sees exactly what
-//! production asked and got, rather than a second copy of the queries.
-//!
-//! The two sides are different shapes and that is where a wrong fixture
-//! comes from. `MirrorSource` answers in `osmspatial`'s positional form —
-//! `[osmId, subtype, name, coords(bits), tags]` — while a fixture's
-//! `osmRowSet.lines` holds objects with plain floats and a `featureType` the
-//! positional form does not carry. This converts, which means the proof cannot
-//! be "the keys match": it has to be that the day comes out the same.
-//!
-//! And it records the declines. Where the mirror cannot vouch for an area
-//! it answers `None`, and a row set that dropped that would replay the day
-//! better than production runs it, blessing the gap away. See
-//! `RowSetSource::declined`.
+//! It wraps any [`RowSource`] and delegates, so it sees what production asked
+//! and got. It converts `MirrorSource`'s positional rows to the fixture's object
+//! form, so the proof is that the day replays the same, not that keys match.
+//! Declines are recorded too (`RowSetSource::declined`): dropping them would
+//! replay the day better than production and bless the gap away.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -46,13 +34,10 @@ fn tags_obj(v: Option<&Value>) -> Value {
     Value::Object(m)
 }
 
-/// What a capture accumulates. Shared with the caller, which is the whole
-/// reason it is split out.
+/// What a capture accumulates, shared with the caller.
 ///
-/// ⚠ `OsmAnswerer`'s `source` is private and must stay so — handing it out
-/// would let a caller build a second `MirrorSource` on a runtime worker, which
-/// aborts the process. So the recorder does not need an accessor on the
-/// answerer: it shares this, and the caller reads it once the fold is done.
+/// ⚠ `OsmAnswerer`'s `source` must stay private: a second `MirrorSource` built
+/// on a runtime worker aborts the process. The caller reads this after the fold.
 #[derive(Default)]
 pub struct Recorded {
     /// Deduplicated by `(featureType, osmId)` — a day asks about ~90
@@ -105,10 +90,8 @@ impl Recorded {
     /// The `osmRowSet` a fixture carries.
     pub fn row_set(&self) -> Value {
         json!({
-            // Kept for shape only: nothing reads it, and the declines below
-            // are what reproduce a gap. Emitting an empty list rather than
-            // omitting it keeps a captured fixture diffable against the older
-            // ones.
+            // Shape only: nothing reads it; emitted empty so captures diff
+            // cleanly against older fixtures.
             "coverage": Value::Object(serde_json::Map::new()),
             "points": self.points.values().cloned().collect::<Vec<_>>(),
             "lines": self.lines.values().cloned().collect::<Vec<_>>(),
@@ -122,12 +105,9 @@ impl Recorded {
         })
     }
 
-    /// The `osmTrace.reverseGeocode` section a fixture carries, or `None` when
-    /// the source answered no geocode at all.
-    ///
-    /// Omitted rather than emitted empty when nothing was answered. An empty
-    /// section is a day that asked and got nothing; an absent one is a day whose
-    /// source could not answer, and the gates grade on that difference.
+    /// The `osmTrace.reverseGeocode` section, or `None` when the source
+    /// answered no geocode. Absent (could not answer) and empty (asked, got
+    /// nothing) grade differently.
     pub fn geocode_section(&self) -> Option<Value> {
         if self.geocodes.is_empty() {
             return None;
@@ -176,11 +156,9 @@ impl Recorded {
             let Some(osm_id) = a.first().and_then(Value::as_i64) else {
                 continue;
             };
-            // A point with no coordinates travels as the NaN bit pattern, and
-            // `serde_json` cannot hold a NaN — it would serialise as `null` and
-            // come back as a missing key, which `RowSetSource` reads as "keep
-            // this row" rather than "this row is nowhere". Drop it instead: a
-            // row that cannot say where it is answers no proximity question.
+            // A point with no coordinates travels as NaN bits, which JSON
+            // turns into a missing key that `RowSetSource` keeps. Drop it: it
+            // answers no proximity question.
             let (Some(lat), Some(lon)) = (unbits(a.get(3)), unbits(a.get(4))) else {
                 continue;
             };
@@ -204,12 +182,9 @@ impl Recorded {
 }
 
 impl<S: RowSource> RowSource for RecordingSource<S> {
-    // The three matcher reads forward. The trait defaults them to a decline
-    // because a row set has no arm for them, and a recorder that inherited that
-    // default would ask the mirror nothing: every walkable-roads read declined
-    // and a moved timeline. The answers are recorded by the
-    // `RecordingAnswerer` above as `osmTrace` sections; a `None` here is a
-    // decline the replay reproduces by absence.
+    // The three matcher reads forward. The trait default declines, which
+    // would decline every read during capture. `RecordingAnswerer` records the
+    // answers; a `None` here replays as absence.
     fn walkable_roads(&mut self, lat: f64, lon: f64, radius_m: f64) -> Result<Option<Value>> {
         self.inner.walkable_roads(lat, lon, radius_m)
     }
@@ -240,11 +215,8 @@ impl<S: RowSource> RowSource for RecordingSource<S> {
         Ok(got)
     }
 
-    /// Not left to the default. The trait's default composes `line_rows` per
-    /// bucket, which would record correctly — but `MirrorSource` overrides this
-    /// with one query for four buckets, and a wrapper that fell back to the
-    /// default would ask the mirror a different question than production does.
-    /// The point of wrapping is to see what production sees.
+    /// Overridden because `MirrorSource` answers four buckets in one query;
+    /// the default would ask the mirror a different question than production.
     fn line_rows_multi(
         &mut self,
         buckets: &[&str],
@@ -260,10 +232,8 @@ impl<S: RowSource> RowSource for RecordingSource<S> {
                 }
             }
             None => {
-                // A batched decline is a decline for every bucket in it — the
-                // mirror declines the whole answer when it cannot vouch for one
-                // — so the replay has to decline each of them individually, and
-                // it will be asked individually if anything ever stops batching.
+                // The mirror declines a whole batch when it cannot vouch for
+                // one bucket, so the replay declines each bucket.
                 for b in buckets {
                     self.rec()
                         .declined
@@ -307,16 +277,10 @@ impl<S: RowSource> RowSource for RecordingSource<S> {
         Ok(got)
     }
 
-    /// The names have to be re-asked one at a time, and that is not an
-    /// oversight. This returns bare coordinate arrays — the geometry of all
-    /// the named ways, flattened — while a fixture's `railLines.ways` is
-    /// `{name, coords}` per way, and `RowSetSource` filters it by name. A
-    /// capture that recorded the flat answer could not label it, and a replay
-    /// would match nothing and answer every rail question empty.
-    ///
-    /// So the recorded mapping is built with one call per name. That is N
-    /// queries where production makes one; it is a capture path, run once per
-    /// day being captured, and correctness is worth more than its round trips.
+    /// Re-asked one name at a time: the production answer is flattened
+    /// coordinates, while a fixture's `railLines.ways` is `{name, coords}` per
+    /// way, filtered by name on replay. N queries instead of one, on a path run
+    /// once per captured day.
     fn rail_ways_named(&mut self, names: &[String]) -> Result<Option<Vec<Value>>> {
         let got = self.inner.rail_ways_named(names)?;
         if got.is_some() {
@@ -349,19 +313,13 @@ impl<S: RowSource> RowSource for RecordingSource<S> {
         Ok(got)
     }
 
-    /// Forwarded, and the default would have been silent. `RowSource`
-    /// declines geocodes by default, so a recorder that did not override this
-    /// would answer every `reverseGeocode` with a decline while wrapping a
-    /// source that could answer it — and the capture would come out looking like
-    /// a day whose geocodes are simply unavailable. Nothing downstream could tell
-    /// that apart from the truth.
+    /// Forwarded: `RowSource` declines geocodes by default, which would make a
+    /// capture look like a day without geocodes.
     fn geocode(&mut self, lat: f64, lon: f64, zoom: i64) -> Result<Option<Value>> {
         let found = self.inner.geocode(lat, lon, zoom)?;
         if let Some(answer) = &found {
-            // Plain decimals, as the older fixtures' sections are, not the bit
-            // patterns the fold's miss key uses. `fold_payload::geocode_table`
-            // converts on the way in, and a section written in bits would parse
-            // to ~4.6e18 and match nothing.
+            // Plain decimals, as older fixtures have: `fold_payload::geocode_table`
+            // converts on the way in, and bits would parse to ~4.6e18.
             self.rec()
                 .geocodes
                 .insert(format!("{lat}|{lon}|{zoom}"), answer.clone());

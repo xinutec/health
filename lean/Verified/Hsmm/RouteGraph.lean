@@ -5,16 +5,12 @@ import Verified.FloatConst
 /-!
 # Route-graph primitives
 
-Pure primitives the HSMM route factors need from the OSM route graph:
-
-  - `parseLineMemberships` — an OSM way's `name` tag → the set of tube lines it
-    carries (strip "… Eastbound", split "Circle, Hammersmith & City and
-    Metropolitan Lines"). Pure string work, EXACT.
-  - `pointToPolylineMeters`: min perpendicular distance from a point to a track
-    polyline (equirectangular projection, clamped per segment). Uses `cos` and a
-    `sqrt(x²+y²)` magnitude, ≤1 ULP from an overflow-careful hypot, so distances
-    are ULP-close (on-segment zeros stay exact), the same accepted class as
-    `haversine`.
+  - `parseLineMemberships` — an OSM way's `name` → the tube lines it carries
+    (strip "… Eastbound", split "Circle, Hammersmith & City and Metropolitan
+    Lines"). Exact.
+  - `pointToPolylineMeters`: min distance from a point to a polyline
+    (equirectangular, clamped per segment); `cos` and `sqrt` make it ≤1 ULP,
+    on-segment zeros exact.
 
 UNPROVEN; pinned by the `#guard`s.
 -/
@@ -170,12 +166,10 @@ private def geom : List LatLon := [⟨51.5, -0.1⟩, ⟨51.51, -0.1⟩, ⟨51.51
 
 /-! ## Spatial index
 
-The grid buckets every edge into every ~500 m cell any of its geometry vertices
-touches, so a proximity query (`RouteModel.edgesNearIdx`) scans only the local
-3×3 cell neighbourhood. The grid is coarse (bucketed by vertices, not swept
-segments), and that is load-bearing: it can miss an edge whose segment crosses
-the query cell while its vertices do not. Cell keys are internal, so they are
-`(Int, Int)`.
+Each edge is bucketed into every ~500 m cell one of its vertices touches, so a
+proximity query (`RouteModel.edgesNearIdx`) scans the 3×3 neighbourhood. By
+vertices, not swept segments: an edge crossing a cell without a vertex in it is
+missed, and the answers depend on that.
 -/
 
 def GRID_CELL_DEG_LAT : Float := 0.0045
@@ -195,8 +189,7 @@ def neighborCells (lat lon : Float) : List (Int × Int) :=
 
 /-! ## Per-edge attributes
 
-Whether an edge is underground and how long it is. The reference values below
-are the `attrs.underground` / `attrs.lengthM` that `buildRouteGraph` publishes.
+Whether an edge is underground, and its length.
 -/
 
 -- Great-circle metres: the place snap's formula, one definition for both.
@@ -210,27 +203,17 @@ private def jsIntegerLayer? (s : String) : Option Float :=
   if digits.isEmpty || !digits.all Char.isDigit then none
   else some (if neg then -(Float.ofNat digits.toNat!) else Float.ofNat digits.toNat!)
 
-/-- Whether an OSM way runs below the surface. A soft UNION of the four
-conventions OSM uses to mean it, plus the subtype: any `tunnel` value other than
-`"no"`, a negative `layer`, `covered=yes`, `subway=yes`, or `subtype=subway`.
-
-An unparseable `layer` means "not underground" rather than an error, because
-`NaN < 0` is false. And `covered`/`subway` test `== "yes"` exactly, so
-`covered=no` is not underground, while `tunnel` tests `!= "no"`, so
-`tunnel=building_passage` is. Both arms of that asymmetry are pinned.
-
-`tags` is an association list rather than a map because only membership and one
-value are read, and the order the shell parsed them in is irrelevant. -/
+/-- Whether an OSM way runs below the surface: any `tunnel` other than `"no"`
+(so `tunnel=building_passage` counts), a negative `layer` (unparseable is not),
+`covered=yes`, `subway=yes`, or `subtype=subway`. -/
 def isUnderground (tags : List (String × String)) (subtype : Option String) : Bool :=
   let get (k : String) : Option String := (tags.find? (·.1 == k)).map (·.2)
   if (get "tunnel").any (· != "no") then true
   else if (get "layer").any (fun l => (jsIntegerLayer? l).any (· < 0)) then true
   else get "covered" == some "yes" || get "subway" == some "yes" || subtype == some "subway"
 
-/-- Total length (m) of a polyline: the haversine sum over its legs. A geometry
-with fewer than two vertices has no leg and measures 0, unreachable through
-`buildRouteGraph`, which drops such a way before building an edge at all, so
-that arm is stated by the definition rather than pinned. -/
+/-- Total length (m) of a polyline, the haversine sum over its legs; 0 under two
+vertices, a case `buildWireGraph` never reaches. -/
 def geometryLengthM (geom : List LatLon) : Float :=
   match geom with
   | [] => 0
@@ -238,7 +221,7 @@ def geometryLengthM (geom : List LatLon) : Float :=
     (rest.foldl (fun (acc : Float × LatLon) b =>
       (acc.1 + haversineMeters acc.2.lat acc.2.lon b.lat b.lon, b)) (0, a0)).1
 
--- Pinned via `buildRouteGraph`'s published `attrs`.
+-- Recorded `attrs` values.
 private def undergroundOf (tunnel layer covered subway subtype : Option String) : Bool :=
   isUnderground
     ([("tunnel", tunnel), ("layer", layer), ("covered", covered), ("subway", subway)].filterMap
@@ -267,21 +250,16 @@ private def track : List LatLon := [⟨51.52, -0.13⟩, ⟨51.53, -0.13⟩, ⟨5
 
 #guard approx (geometryLengthM track) 2495.4471666856225
 #guard approx (geometryLengthM [⟨51.52, -0.13⟩, ⟨51.52, -0.129⟩]) 69.19008871082293
--- No leg, no length. Not reachable through `buildRouteGraph` (see the docstring).
+-- No leg, no length (unreachable through `buildWireGraph`).
 #guard geometryLengthM [⟨51.52, -0.13⟩] == 0
 #guard geometryLengthM [] == 0
 
 /-! ## Assembling the wire graph from raw OSM rows
 
-This is `buildRouteGraph` narrowed to what crosses to `parseAssemble`:
-`{id, geometry, lineMemberships, underground, startNode, endNode}` per edge and
-`{id, lat, lon, stationName, edgeIds}` per node. A cell index, per-edge
-`lengthM` and endpoint copies are rebuilt by `buildRouteGraphModel`, so shipping
-them would ship a second copy of an index the receiver constructs anyway.
-
-The shell supplies rows with the WKT already parsed (a format concern) and
-nothing else: `isUnderground`, `parseLineMemberships`, the node keying and the
-station merge all happen here. -/
+Per edge `{id, geometry, lineMemberships, underground, startNode, endNode}`, per
+node `{id, lat, lon, stationName, edgeIds}`: only what `parseAssemble` needs;
+`buildRouteGraphModel` rebuilds the cell index and lengths. Rust parses the WKT;
+underground, line membership, node keying and station merge happen here. -/
 
 /-- One OSM way as the shell hands it over. -/
 structure RawWay where
@@ -300,10 +278,9 @@ structure RawStop where
   tags : List (String × String)
   deriving Inhabited
 
-/-- ⚠ five DECIMAL places, and the identity of a node is this string. `toFixed(5)`
-is ~1.1 m of latitude: two way endpoints that meet at a junction agree to 5 dp
-and fuse into one node; a sixth place would split junctions that are the same
-place, and a fourth would fuse ones that are not. -/
+/-- ⚠ Five decimal places, and a node's identity is this string. `toFixed(5)` is
+~1.1 m: junction endpoints agree to 5 dp and fuse; a sixth would split them, a
+fourth fuse distinct ones. -/
 def nodeKey (lat lon : Float) : String :=
   -- `toFixed` is `Option` because JS `toFixed` is undefined past 1e21. A
   -- coordinate can never reach that, and a silent "" here would fuse every such
@@ -311,11 +288,9 @@ def nodeKey (lat lon : Float) : String :=
   let f := fun (x : Float) => (Verified.JsNum.toFixed x 5).getD (toString x)
   s!"{f lat},{f lon}"
 
-/-- A POI within this distance of a way endpoint is that station. Tube station
-POIs sit at the street entrance, 50-150 m from the platform-aligned endpoint of
-the underground way — the hall, escalators and gates are that far above the
-platform. 150 m is the upper end at which every London Tube POI attaches; the
-candidate generator applies a wider 250 m and lets the scorer weigh it softly. -/
+/-- A POI within this distance of a way endpoint is that station. Tube POIs sit
+at the street entrance, 50-150 m from the underground way's endpoint; every
+London Tube POI attaches at 150 m. Candidate generation uses a softer 250 m. -/
 def STATION_MERGE_RADIUS_M : Float := 150
 /-- `FloatScore.haversineMeters`' sphere, and degrees per radian. -/
 def EARTH_R_M : Float := 6371000
@@ -351,15 +326,9 @@ structure WireNode where
   deriving Inhabited
 
 /--
-Build the edge and node arrays `parseAssemble` consumes.
-
-A way with fewer than two vertices is dropped: it has no endpoints to key on,
-so it could not join the graph regardless.
-
-Node order follows first appearance of each key across the ways, because the
-receiver reads `nodes` as an ordered array (`StationChain` documents four things
-downstream that depend on it). A map iteration or a sort would reorder it while
-looking like a tidy-up.
+Build the edge and node arrays `parseAssemble` consumes. Ways under two vertices
+are dropped. Nodes are in first-appearance order: `StationChain` depends on it,
+so do not sort or iterate a map here.
 -/
 def buildWireGraph (ways : List RawWay) (stops : List RawStop) :
     Array WireEdge × Array WireNode := Id.run do
@@ -388,11 +357,9 @@ def buildWireGraph (ways : List RawWay) (stops : List RawStop) :
           idx := idx.insert k nodes.size
           nodes := nodes.push (k, p.lat, p.lon, #[w.id])
     | _, _ => pure ()
-  -- Station annotation: nearest node endpoint within the merge radius wins.
-  -- A node within the radius lies within the stop's latitude band: the
-  -- great-circle distance is never less than `R · |Δφ|` (the haversine's first
-  -- term alone), so each stop searches that band, in node order, which is
-  -- every node the full scan could pick, ties resolved the same way.
+  -- Station annotation: the nearest node endpoint within the radius wins. Such
+  -- a node lies within the stop's latitude band (distance ≥ `R · |Δφ|`), so a
+  -- band search in node order finds what a full scan would, ties included.
   let band := STATION_MERGE_RADIUS_M / EARTH_R_M * DEG_PER_RAD * BAND_SLACK
   let byLat : Array (Float × Nat) :=
     (nodes.zipIdx.map fun ((_, la, _, _), i) => (la, i)).qsort (fun a b => a.1 < b.1)

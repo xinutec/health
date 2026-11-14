@@ -37,7 +37,7 @@ def STATION_FOOTPRINT_M : Float := 200
 def STATION_LINE_RADIUS_M : Float := 250
 
 /-- A station-annotated graph node. `lat`/`lon` are the `nodeKey` string parsed
-    back to numbers, which is what `buildRouteGraph` materialises them from. -/
+    back to numbers, as `RouteGraph.buildWireGraph` builds them. -/
 structure ChainNode where
   id : String
   lat : Float
@@ -1167,7 +1167,7 @@ def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array Ob
 /-! ## Guards: a synthetic line
 
 Five stations west to east at lat 51.5, built through the real
-`buildRouteGraph`. Node coordinates are the 5-decimal `nodeKey` parsed back
+`RouteGraph.buildWireGraph`. Node coordinates are the 5-decimal `nodeKey` parsed back
 (`0.02165`); edge geometry is full precision (`0.021645543464882695`). -/
 
 /-- Edge geometry longitudes — full precision, as the WKT carried them. -/

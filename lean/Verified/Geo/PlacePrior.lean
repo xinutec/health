@@ -2,36 +2,26 @@ import Verified.Hsmm.FloatScore
 /-!
 # Probabilistic place assignment
 
-Which of the user's mined long-term clusters (`focus_places`) a stationary
-segment belongs to. `pickBestPlace` combines, in log-space:
+Which mined long-term cluster (`focus_places`) a stationary segment belongs to.
+`pickBestPlace` sums, in log space:
 
-* distance — a Gaussian at the place's stored centroid. σ is the place's
-  empirical radius, floored by a tolerance the place has earned: the floor
-  slides continuously from 40 m (seen on one day) toward 100 m (thoroughly
-  established) as visit-days accumulate. No hard "established" step.
-* visit frequency — `log(uniqueDays + 1)`; log-linear, so a place visited
-  500 times beats one visited 5 times by ~4.6, which ~3σ of distance evidence
-  can still outweigh.
-* time of day — the stay's hour profile scored against the place's mined
-  one, re-centred so a uniform (or un-mined `none`) profile scores exactly 0.
-  This separates co-located candidates a distance term cannot.
-* magnetic anchoring — inside a place's magnet radius and with positive
-  biometric coherence, a boost proportional to its magnet strength.
+* distance — a Gaussian at the centroid, σ the place's radius floored by a
+  tolerance sliding from 40 m (one day) to 100 m (well established).
+* visit frequency — `log(uniqueDays + 1)`: 500 days beats 5 by ~4.6, which
+  ~3σ of distance can still outweigh.
+* time of day — the stay's hour profile against the place's, re-centred so a
+  uniform or unmined profile scores 0. Separates co-located candidates.
+* magnetic anchoring — inside the magnet radius with positive biometric
+  coherence, a boost proportional to magnet strength.
 
-Then two hard gates the priors cannot argue past: a 3σ centroid veto (a
-stay outside the cluster is not that cluster, however strong the priors — the
-Pizza-Union-as-Work bug), and an absolute far-reach cap that stops a
-place seen on a single day from claiming a stop 118 m away (the Wembley
-"Selekt Chicken" bug). The veto relaxes under magnet × coherence, but only
-within the magnet radius and never past 2× the base 3σ.
+Two hard gates the priors cannot argue past: a 3σ centroid veto (relaxed by
+magnet × coherence inside the magnet radius, at most 2×), and a far-reach cap
+so a place seen on one day cannot claim a stop 118 m away.
 
-`snapToPlace` is the separate, simpler magnetic snap:
-pull a noisy fix onto a known centroid when it is in range, unambiguous, and
-the GPS accuracy is worse than how precisely the place is known.
+`snapToPlace` pulls a noisy fix onto a centroid when in range, unambiguous, and
+less precise than the place.
 
-Both are wholly pure, so no shell split is needed. Arithmetic and every
-ordering/veto decision are exact; `log`/`exp` put the scores at ≤1 ULP.
-UNPROVEN; pinned by the `#guard`s.
+Exact except `log`/`exp` (≤1 ULP). UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.PlacePrior
@@ -40,10 +30,8 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 
 /-! ## Calibration -/
 
-/-- The σ floor a thoroughly-established place converges to. Day-of GPS
-    clusters routinely sit 100–200 m from a known centroid (indoor multipath,
-    building corners, walking in and out), so a place we are confident about
-    must not collapse to ~0 likelihood for ordinary noise. -/
+/-- The σ floor a well-established place converges to: day-of clusters sit
+    100–200 m from the centroid (multipath, corners, walking in and out). -/
 def SIGMA_FLOOR_MAX_M : Float := 100
 /-- The floor for a place seen on a single day: it has earned no benefit of
     the doubt and cannot capture a stay merely in the same neighbourhood. -/
@@ -92,10 +80,8 @@ def effectiveSigmaM (c : PlaceCandidate) : Float :=
   let sigmaFloor := SIGMA_FLOOR_MIN_M + (SIGMA_FLOOR_MAX_M - SIGMA_FLOOR_MIN_M) * establishedness
   max sigmaFloor c.radiusM
 
-/-- Time-of-day match between a place's mined hour profile and the stay's.
-    `Σ stay[h]·log(place[h]+ε)` re-centred by the uniform baseline, so a
-    uniform — or `none` — place scores 0, concentration on the stay's hours
-    scores positive, and avoidance scores negative. -/
+/-- Time-of-day match: `Σ stay[h]·log(place[h]+ε)` minus the uniform baseline,
+    so uniform or `none` scores 0, concentration positive, avoidance negative. -/
 def hourProfileMatch (placeProfile : Option (List Float)) (stayProfile : List Float) : Float :=
   match placeProfile with
   | none => 0
@@ -109,21 +95,11 @@ def hourProfileMatch (placeProfile : Option (List Float)) (stayProfile : List Fl
 /-- Magnet strength: bounded so Home does not drown out everything else. -/
 def magnetStrength (c : PlaceCandidate) : Float := Float.log (1 + c.uniqueDays)
 
-/-- Magnet radius: constant at 30 + 2·40 = 110 m. Reach answers "could GPS
-    noise have put this stay here?", a property of the sensor, not of the
-    place — so it does not scale with visit history.
-
-    It used to multiply `effectiveSigmaM`, which grows with visit-days, giving
-    an established place a ~224 m magnet. That triple-counted establishedness
-    (it already widens the Gaussian σ and already relaxes the distance veto),
-    and let a frequently-visited place magnet a stay in the building next
-    door. The docstring it carried — "scales with the place's scatter" — was
-    never true of the data: `radiusM` is a constant 25 m on all 127 corpus
-    focus places, so `effectiveSigmaM` reduces to its establishedness floor.
-
-    The corpus separates cleanly: a stay sits ~24 m from its true building and
-    ~205 m from the neighbouring one, so the cut lies in the empty band
-    between. -/
+/-- Magnet radius, a constant 30 + 2·40 = 110 m: reach asks whether GPS noise
+    could have put the stay here, a property of the sensor, not the place.
+    Establishedness already widens σ and relaxes the veto; scaling reach too
+    let a frequent place claim the building next door. On the corpus a stay
+    sits ~24 m from its building and ~205 m from the neighbour. -/
 def magnetRadiusM (_c : PlaceCandidate) : Float :=
   MAGNET_BASE_RADIUS_M + MAGNET_SIGMA_MULTIPLIER * SIGMA_FLOOR_MIN_M
 
@@ -142,11 +118,8 @@ def scorePlaceForSegment (c : PlaceCandidate) (segLat segLon : Float)
   logLikelihood + logPriorFreq + logPriorTimeOfDay + magnetBoost
 
 /--
-Pick the `focus_place` with the highest posterior, or `none` when the best is
-below the floor (typically: everything is too far away).
-
-The distance veto runs before the argmax, so a closer in-cluster candidate
-still wins when a far one would otherwise have topped the list.
+Pick the `focus_place` with the highest posterior, or `none` below the floor.
+The distance veto runs before the argmax, so a vetoed far candidate cannot win.
 -/
 def pickBestPlace (candidates : List PlaceCandidate) (segLat segLon : Float)
     (stayHourProfile : List Float) (biometricCoherence : Option Float := none) :
@@ -157,10 +130,8 @@ def pickBestPlace (candidates : List PlaceCandidate) (segLat segLon : Float)
   for c in candidates do
     let s := scorePlaceForSegment c segLat segLon stayHourProfile biometricCoherence
     let dist := haversineMeters c.centroidLat c.centroidLon segLat segLon
-    -- Veto relaxation under magnet × coherence. The candidate must also sit
-    -- within its own magnet radius: outside it the magnet contributes nothing
-    -- anyway, so relaxing there would let a heavily-visited place steal a stay
-    -- hundreds of metres away.
+    -- Veto relaxation only within the magnet radius, where the magnet acts;
+    -- otherwise a heavily visited place could take a stay hundreds of metres off.
     let magnetFactor := if decide (dist ≤ magnetRadiusM c)
                         then min MAGNET_VETO_RELAX_MAX (1 + (magnetStrength c * bs) / MAGNET_REF_DAYS)
                         else 1
@@ -212,9 +183,8 @@ private def sortByDist (xs : List (KnownPlace × Float)) : List (KnownPlace × F
   xs.foldl (fun acc x => ins x acc) []
 
 /--
-Pull a noisy fix to a known centroid when it is in range, unambiguous, and the
-GPS uncertainty is worse than how precisely the place is known. A very precise
-fix is trusted as-is — it is better than the cluster centroid would be.
+Pull a noisy fix to a known centroid when in range, unambiguous, and less
+precise than the place. A very precise fix is trusted as is.
 -/
 def snapToPlace (lat lon : Float) (accuracy : Option Float) (places : List KnownPlace)
     (snapRadiusM : Float := SNAP_RADIUS_M) (minAccuracyToSnapM : Float := MIN_ACCURACY_TO_SNAP_M)
@@ -273,12 +243,10 @@ private def oneOff : PlaceCandidate := C 2 LAT LON 25 1 (some EVENING)
 
 /-! ### `magnetRadiusM` — constant reach
 
-`biometricCoherence` defaults to `none`, so every guard above runs with the
-magnet contributing exactly 0; the guards below pin the magnet radius and the
-boost. -/
+Every guard above runs with `biometricCoherence = none`, so the magnet adds 0;
+these pin the radius and the boost. -/
 
--- Reach does not scale with visit history. Before the fix these read 110 and
--- 230 — a 500-day place got a magnet twice as wide as a one-off's.
+-- Reach does not scale with visit history: a one-off and a 500-day place alike.
 #guard magnetRadiusM (C 1 LAT LON 25 1 none) == 110
 #guard magnetRadiusM (C 1 LAT LON 25 500 none) == 110
 

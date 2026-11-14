@@ -1,20 +1,9 @@
-//! The HTTP surface.
+//! The HTTP surface of `health.xinutec.org`: the SPA shell, the static build
+//! and every `/api` route.
 //!
-//! This is production. It serves `health.xinutec.org`: the SPA shell, the
-//! static build and every `/api` route. Treat a change here as a change to the
-//! live site.
-//!
-//! `/velocity` answers from the OSM mirror through Lean rather than MariaDB's
-//! `ORDER BY ST_Distance … LIMIT 50`; the corpus is blessed against it.
-//!
-//! # Nothing in this file decides anything
-//!
-//! That is the standing rule for the crate (`lib.rs`), and routes are where it
-//! erodes first: a handler that "just" clamps a query parameter has taken a
-//! decision, and the next reader finds the rule here rather than in Lean. So a
-//! handler in this file may parse, call, and serialise — nothing else. Where a
-//! decision is needed it comes from `verified_cli`/the Lean host, the way
-//! `shareableDateRange` now does.
+//! Handlers parse, call and serialise, nothing else (the crate rule in
+//! `lib.rs`): a decision, even clamping a parameter, comes from Lean, as
+//! `shareableDateRange` does.
 
 use axum::extract::State;
 use axum::routing::get;
@@ -37,26 +26,12 @@ pub mod tables;
 pub mod velocity;
 
 pub fn router(state: AppState) -> Router {
-    // ⚠ the layer order is the security boundary, and axum applies layers
-    // bottom-up: the last `.layer` runs first. So `require_session` is written
-    // below `require_may_proceed` and runs before it.
-    //
-    // The POST routes have landed, so this is live rather than latent.
-    // `require_may_proceed` reads the session out of the request extensions and
-    // `require_session` is what puts it there — run the wrong way round, a
-    // share viewer's POST is judged before their session exists, looks
-    // anonymous, is therefore not a share viewer, and is allowed. A read-only
-    // link would be able to rotate, retune or revoke its owner's share.
-    //
-    // The order is no longer protected by convention alone.
-    // `require_may_proceed` refuses outright when the session extension is
-    // absent, so mounting these the wrong way round breaks every request with a
-    // 500 instead of quietly over-permitting one class of them.
-    //
-    // That guard exists because a test that mirrors the stack instead of
-    // importing it cannot catch a flip of these two: one such flip failed zero
-    // of eleven tests. `tests/suite/share_route.rs` asserts it through this
-    // router.
+    // ⚠ The layer order is the security boundary. Axum applies layers
+    // bottom-up, so `require_session`, written below `require_may_proceed`,
+    // runs first and puts the session where `require_may_proceed` reads it.
+    // Reversed, a share viewer's POST would look anonymous and be allowed.
+    // `require_may_proceed` refuses a missing session with a 500, and
+    // `tests/suite/share_route.rs` asserts the order through this router.
     let api = Router::new()
         .route("/me", get(me::handler))
         .route("/velocity", get(velocity::handler))
@@ -82,11 +57,8 @@ pub fn router(state: AppState) -> Router {
         .route("/locations", get(locations::locations))
         .route("/location/latest", get(locations::latest))
         .route("/location/tail", get(locations::tail))
-        // The first write routes here. The layer order below stops being
-        // theoretical the moment these exist — see the note on it.
-        // ⚠ `/telemetry` is the one write a share recipient may make — it
-        // writes only to the log, and it is how anyone knows what a recipient
-        // saw. `Verified.Session.mayProceed` names it explicitly, by exact path.
+        // ⚠ `/telemetry` is the one write a share recipient may make: it only
+        // logs what a recipient saw. `Verified.Session.mayProceed` names it.
         .route("/telemetry", axum::routing::post(logging::telemetry))
         .route("/client-log", axum::routing::post(logging::client_log))
         .route(
@@ -125,16 +97,10 @@ pub fn router(state: AppState) -> Router {
         .route("/login", get(oauth::login))
         .route("/auth/callback", get(oauth::callback))
         .route("/logout", axum::routing::post(oauth::logout))
-        // Service-to-service, gated by a shared secret rather than a session.
-        // An empty token list rejects everything, which is the default.
-        //
-        // Composed here rather than behind a `router()` in that module, so
-        // `DL-WIRE-ROUTE-DRIFT` can resolve the route table statically. A route
-        // table nobody can check is how a path typo becomes a 404 in
-        // production.
-        // The phone's own auth is the URL token plus Basic auth, checked in
-        // the handler. No session: this comes from an Android app, not a
-        // browser.
+        // Service-to-service, gated by a shared secret, not a session; an empty
+        // token list rejects everything. Composed here so `DL-WIRE-ROUTE-DRIFT`
+        // can resolve the route table. The phone authenticates with the URL
+        // token plus Basic auth in the handler.
         .route(
             "/owntracks/{token}/{device}",
             axum::routing::post(owntracks::proxy),
@@ -148,19 +114,15 @@ pub fn router(state: AppState) -> Router {
                 .route("/recovery/history", get(internal::recovery_history)),
         )
         .nest("/api", api)
-        // Unauthenticated on purpose. `/health` is what an operator curls
-        // when the dashboard is broken, which is exactly when a login might be
-        // too; `/version` is what makes a stale client visible in the footer.
+        // Unauthenticated: `/health` is curled when sign-in may be broken, and
+        // `/version` shows a stale client in the footer.
         // dev-lint: allow-unauthenticated-route what an operator curls when sign-in is broken (above)
         .route("/health", get(site::health))
         // dev-lint: allow-unauthenticated-route the build sha, for the footer's stale-client check
         .route("/version", get(site::version))
         .with_state(state)
-        // The SPA's own routes are served the shell, so a deep link or a
-        // refresh on /settings loads the app instead of 404ing. Listed
-        // explicitly rather than catching everything: a typo'd .css or .js must
-        // still 404, or a missing asset silently becomes an HTML page and the
-        // browser reports a syntax error in what it thought was a script.
+        // The SPA's routes are served the shell, so a deep link loads the app.
+        // Listed, not a catch-all: a missing .js must 404, not become HTML.
         .route_service("/settings", index_html())
         .route_service("/settings/{*rest}", index_html())
         .route_service("/share/{token}", index_html())
@@ -172,19 +134,10 @@ pub fn router(state: AppState) -> Router {
         // Runs over everything, including the API — see the note on why it
         // only ever touches text/html.
         .layer(axum::middleware::from_fn(site::html_must_revalidate))
-        // Outermost on the response, which is why it is last: axum applies
-        // layers bottom-up, so this one sees the finished body of every route,
-        // API and static asset alike.
-        //
-        // It is not a tuning knob: without it, `/api/heartrate/intraday` for one
-        // half-finished day was 2,556,228 bytes with nothing negotiating an
-        // encoding. That response is 18,656 rows each repeating `user_id` and
-        // `tz` in full, so it is mostly a constant and compresses to a fraction.
-        //
-        // Compression is content-negotiated: a client that sends no
-        // `Accept-Encoding` still gets the identity body, so this cannot break
-        // a caller — it can only fail to help one. That is also why it is safe
-        // over `ServeDir`, which serves no pre-compressed variants here.
+        // Outermost (layers apply bottom-up), so it compresses every body.
+        // Intraday heart rate is megabytes of repeated `user_id` and `tz`.
+        // Content-negotiated, so a client without `Accept-Encoding` gets the
+        // identity body.
         .layer(tower_http::compression::CompressionLayer::new())
 }
 
@@ -209,10 +162,8 @@ async fn healthz() -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }
 
-/// Readiness: this pod can serve, which means it can reach the database.
-///
-/// `SELECT 1` and not a table read: readiness is about the connection, and a
-/// probe that reads a table starts failing when that table is migrating.
+/// Readiness: this pod can reach the database. `SELECT 1`, not a table read,
+/// so a migrating table does not fail the probe.
 async fn readyz(State(st): State<AppState>) -> AppResult<Json<Value>> {
     let one: i64 = sqlx::query_scalar("SELECT 1").fetch_one(&st.pool).await?;
     Ok(Json(json!({ "status": "ok", "db": one })))

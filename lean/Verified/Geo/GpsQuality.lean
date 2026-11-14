@@ -3,20 +3,15 @@ import Verified.FloatConst
 /-!
 # GPS quality-control pre-filter
 
-Runs before the Kalman filter: drop physically-incoherent runs of GPS fixes
-(underground / cell-tower garbage) so downstream gap-inference sees an honest
-temporal gap. An anchor walk — keep the last trusted fix as an anchor; a
-candidate reachable from it at a plausible speed is kept and becomes the new
-anchor; an unreachable-or-inaccurate-moving candidate starts a suspected garbage
-run, and a forward bridge scan finds the surfacing fix on the far side (dropping
-the run) unless the run is genuine sustained fast travel (no bridge) or
-poor-accuracy jitter that never travelled (kept).
+Before the Kalman filter, drop physically incoherent runs (underground or
+cell-tower garbage) so gap inference sees an honest gap. An anchor walk: a
+fix reachable from the anchor at a plausible speed becomes the anchor; an
+unreachable or inaccurate moving one starts a suspect run, dropped when a
+forward scan finds the fix that surfaces past it, unless it is sustained fast
+travel (no bridge) or jitter that never travelled.
 
-Pure over the track; the only transcendental is `cos` in `distanceM` (≤1 ULP),
-and every decision is a threshold well clear of the boundary on real data, so the
-kept set is exact (a subset of the input, coords unchanged — like `dropGpsOutliers`).
-Which fixes it keeps is pinned by the `#guard`s below; that it can only keep — it
-never invents or moves a fix — is a theorem, `mem_of_mem_qualityFilterGps`.
+The only transcendental is `cos` (≤1 ULP), clear of every threshold on real
+data. That it only removes fixes is a theorem, `mem_of_mem_qualityFilterGps`.
 -/
 
 namespace Verified.Geo.GpsQuality
@@ -28,13 +23,9 @@ def BRIDGE_WINDOW_S : Int := 1800
 def ACCURACY_CEILING_M : Float := 80
 def GARBAGE_MIN_SPEED_KMH : Float := 15
 def MIN_TRANSIT_DISPLACEMENT_M : Float := 800
-/-- Accuracy (m) above which a fix is not a position at all, and is dropped
-whether or not it moved. `inaccurateMotion` keeps a poor-accuracy fix that is
-going nowhere on purpose — an indoor sit reports the same cell-tower grade as a
-tube ride — but that trade holds only while the fix still says roughly WHERE you
-are. Beyond the distance at which this module distinguishes "here" from "a
-station away" (`MIN_TRANSIT_DISPLACEMENT_M`, the resolution of its own
-decision), the measurement cannot inform any question asked of it. -/
+/-- Accuracy (m) above which a fix is dropped whether or not it moved. A poor
+fix going nowhere is otherwise kept (an indoor sit looks like a tube ride), but
+beyond `MIN_TRANSIT_DISPLACEMENT_M` it no longer says where you are. -/
 def ACCURACY_UNINFORMATIVE_M : Float := MIN_TRANSIT_DISPLACEMENT_M
 open Verified.FloatConst (pi)
 
@@ -102,20 +93,13 @@ termination_by points.size - i
 
 /-! ### Frozen fixes — a position the phone kept while the person moved
 
-Underground, a phone with no sky re-reports its last position, identical to
-centimetres, while the accuracy it attaches swings. A real case: five fixes
-270 m from Finchley Road, 20 → 122 m accuracy, entered from 1.5 km away a
-hundred seconds earlier and left for Baker Street 3.2 km away a minute later;
-read as positions they surfaced a Jubilee ride at Finchley Road and invented an
-alight there. Accuracy cannot tell the run from a stay (an indoor sit reports
-the same shape) but the jumps can: nobody is still somewhere they reached and
-left at 60 km/h. Indoor frozen runs (the library, Work, the hospital) are
-entered and left by metres.
+Underground, a phone re-reports its last position to the centimetre while the
+accuracy swings; read as positions, such a run invents an alight. Accuracy
+cannot tell it from an indoor stay, but the jumps can: nobody stays at a place
+reached and left at 60 km/h, while an indoor run is entered and left by metres.
 
-The run is dropped before the anchor walk, with the accuracy-disclaimed fixes:
-kept, it would anchor the walk itself. Identity of coordinates is the test here,
-not a still radius — a café stop varies by metres, a re-report does not — so no
-cadence is needed at this stage. -/
+Dropped before the anchor walk, or it would anchor it. Identical coordinates
+are the test: a real stop varies by metres, a re-report does not. -/
 
 /-- Fixes within this of the run's first fix are the same re-reported position. -/
 def FROZEN_RADIUS_M : Float := 2
@@ -154,10 +138,8 @@ def frozenJumpRunTs (points : Array GpsPoint) : Array Int := Id.run do
     else break
   return out
 
-/-- Drop incoherent GPS runs; surviving fixes in input order. Fixes the phone
-itself disclaims go first, before anything reasons from them — including before
-the walk can make one an anchor, a bridge, or the thing a later fix is judged
-"unreachable" from; then the frozen runs it kept while moving (above). -/
+/-- Drop incoherent GPS runs, keeping input order. Fixes the phone disclaims go
+first, before the walk can use one, then frozen runs, then the walk. -/
 def qualityFilterGps (input : Array GpsPoint) : Array GpsPoint :=
   let informative := input.filter fun p =>
     match p.accuracy with | some acc => decide (acc ≤ ACCURACY_UNINFORMATIVE_M) | none => true
@@ -167,10 +149,8 @@ def qualityFilterGps (input : Array GpsPoint) : Array GpsPoint :=
 
 /-! ### What the filter can never do
 
-Every element of the output is an element of the input. The guards below pin
-what the filter keeps on particular tracks; this holds on every track, and no
-finite set of tracks could show it. The walk only ever pushes `points[i]` or
-`points[b]`, so it is an induction over the walk's own measure. -/
+Every output element is an input element, on every track. The walk only pushes
+`points[i]` or `points[b]`: induction over its measure. -/
 
 theorem mem_of_mem_walk {points : Array GpsPoint} {anchor : GpsPoint} {kept : Array GpsPoint}
     {i : Nat} {p : GpsPoint} (hp : p ∈ walk points anchor kept i) : p ∈ kept ∨ p ∈ points := by
@@ -258,12 +238,8 @@ private def frozenIndoors : Array GpsPoint := #[
 
 /-! ### Branch guards
 
-The two guards above pin the shape a real day takes. They do not reach a null
-accuracy, a duplicate timestamp, or a bridge scan that runs past its horizon,
-and real days rarely do either, so the guards below pin those edges.
-
-Every expectation below is a recorded answer, not a value reasoned about here;
-a disagreement means the filter's behaviour changed. -/
+Edges real days rarely reach: null accuracy, duplicate timestamps, a bridge scan
+past its horizon. Expectations are recorded answers. -/
 
 private def gpn (ts : Int) (lat lon : Float) : GpsPoint := ⟨ts, lat, lon, none⟩
 
@@ -275,10 +251,9 @@ private def nullAccuracy : Array GpsPoint := #[
   gpn 0 51.5 (-38.1), gpn 10 51.501 (-38.1), gpn 20 51.6 (-38.1), gpn 30 51.502 (-38.1), gpn 40 51.503 (-38.1)]
 #guard (qualityFilterGps nullAccuracy).map (·.ts) == #[0, 10, 30, 40]
 
--- `impliedSpeedKmh` → `dt ≤ 0 ⇒ 0`. Every fix survives, teleports included: a
--- fix sharing or preceding its anchor's timestamp has no defined speed, and the
--- filter treats it as reachable rather than infinite. Dividing by `dt` would
--- give `inf`, read as unreachable, and drop those fixes.
+-- `impliedSpeedKmh` → `dt ≤ 0 ⇒ 0`: a fix at or before its anchor's timestamp
+-- has no speed and is reachable, so every fix survives. Dividing would give
+-- `inf` and drop them.
 private def duplicateTs : Array GpsPoint := #[
   gp 0 51.5 (-38.1) 20, gp 0 51.6 (-38.1) 20, gp 10 51.501 (-38.1) 20, gp 5 51.7 (-38.1) 20, gp 20 51.502 (-38.1) 20]
 #guard (qualityFilterGps duplicateTs).map (·.ts) == #[0, 0, 10, 5, 20]
@@ -298,11 +273,8 @@ private def incoherentSuccessor : Array GpsPoint := #[
   gp 70 51.9 (-38.1) 20, gp 120 51.503 (-38.1) 20, gp 130 51.504 (-38.1) 20]
 #guard (qualityFilterGps incoherentSuccessor).map (·.ts) == #[0, 10, 120, 130]
 
--- `walk` → `speedUnreachable ∨ travelled`, with only the left disjunct true. A
--- teleport that returns: net displacement across the run is far under
--- MIN_TRANSIT_DISPLACEMENT_M, so `travelled` is false and the run is bridged on
--- unreachability alone. A port testing only displacement would keep the
--- teleport.
+-- `walk` → `speedUnreachable ∨ travelled`, only the left true: a teleport that
+-- returns has no net displacement and is bridged on unreachability alone.
 private def unreachableNotTravelled : Array GpsPoint := #[
   gp 0 51.5 (-38.1) 20, gp 10 51.5005 (-38.1) 20, gp 20 51.9 (-38.1) 20, gp 30 51.501 (-38.1) 20, gp 40 51.5015 (-38.1) 20]
 #guard (qualityFilterGps unreachableNotTravelled).map (·.ts) == #[0, 10, 30, 40]
@@ -318,13 +290,10 @@ private def accuracyOverCeiling : Array GpsPoint := #[
   gp 0 51.5 (-38.1) 20, gp 10 51.501 (-38.1) 20, gp 100 51.52 (-38.1) 80.001, gp 160 51.53 (-38.1) 20, gp 170 51.531 (-38.1) 20]
 #guard (qualityFilterGps accuracyOverCeiling).map (·.ts) == #[0, 10, 160, 170]
 
--- ACCURACY_UNINFORMATIVE_M: the pre-filter, which the anchor walk cannot
--- reach. Same geometry as the poor-accuracy jitter kept in `track` above (a run
--- bracketed by good fixes at one spot, going nowhere); only the stated accuracy
--- differs, and it decides. On an evening train the phone stops solving,
--- repeats one coordinate, and inflates its error bar 835 → 37,880 m. Kept, the
--- Kalman gives a ±37 km measurement no weight, coasts on its last real
--- velocity, and draws 29 km of travel that never happened.
+-- ACCURACY_UNINFORMATIVE_M: the pre-filter. Same geometry as the jitter kept in
+-- `track` above; only the stated accuracy differs. A train phone repeating one
+-- coordinate at 37,880 m accuracy would let the Kalman coast and draw 29 km of
+-- travel that never happened.
 private def gpf (ts : Int) (acc : Float) : GpsPoint := ⟨ts, 50, 5, some acc⟩
 private def disclaimed : Array GpsPoint := #[
   gpf 1000 10, gpf 1015 10, gpf 1030 10, gpf 1045 10,

@@ -3,21 +3,17 @@ import Verified.FloatConst
 /-!
 # The journey's inner pass
 
-A journey is one segment of the outer trellis; its cell is the best leg path
-over its window. For a start `s0` the best path over `[s0, e]` is `Spec.bestEnd`
-of the leg problem — `T' = maxJ`, the leg states for `S`, the first-leg prior
-for `init`, the leg matrix for `trans`, the level-free segment cell for `dur` —
-and one forward sweep from `s0` yields it for every end before `s0 + maxJ`.
-`best` runs the sweep from every start into a `maxJ × T` table the outer
-duration cell reads; `legsOf` re-runs one window with back-pointers for the
-decoded journey's legs. Unproved as code; its specification is `bestEnd`.
+A journey is one outer-trellis segment whose cell is the best leg path over its
+window: `Spec.bestEnd` of the leg problem (`T' = maxJ`, leg states, first-leg
+prior, leg matrix, level-free segment cell). One forward sweep from `s0` gives
+every end before `s0 + maxJ`; `best` sweeps from every start into a `maxJ × T`
+table, and `legsOf` re-runs one window with back-pointers. Unproved as code; its
+specification is `bestEnd`.
 
-A leg is a base state of the outer model (a walk, a line) or, for S2, a line
-with its board station: `train L from σ`. Such a leg shares its base's
-emissions, entry and transitions, may begin only at a minute the fixes put
-within reach of σ (`reachStarts`), and prices its length by the along-line
-path from σ to the station the fixes put the ride's end at (`expectedMin`),
-in place of the line's generic duration prior.
+A leg is an outer base state, or a line with its board station (`train L from
+σ`). That shares its base's emissions, entry and transitions, may begin only
+where the fixes reach σ (`reachStarts`), and prices its length by the along-line
+path to the alight station (`expectedMin`) instead of the generic prior.
 -/
 
 namespace Verified.Hsmm.Journey
@@ -98,10 +94,9 @@ structure Tables where
       calls between (`−∞` unknown); debug only, read by nothing that decides. -/
   pairPathM : FloatArray := FloatArray.empty
   pairCalls : FloatArray := FloatArray.empty
-  /-- `boardAt[l * T + t]`: a board-station leg's station against the fix of
-      the minute before `t`, relative to the best station of any leg at `t`
-      (0), so the term separates stations and never a ride from a walk; 0 for
-      a base leg. Empty: no term. -/
+  /-- `boardAt[l * T + t]`: a board-station leg's station against the previous
+      minute's fix, relative to the best station at `t`, so it separates
+      stations, never a ride from a walk; 0 for a base leg. Empty: no term. -/
   boardAt : FloatArray := FloatArray.empty
   /-- `stopActive[l * T + e]`: the evidence of the leg's passes under way at
       `e` and `stopActiveFirst` the earliest one's first minute
@@ -113,26 +108,22 @@ structure Tables where
       (`withOwn`); empty until then, and a leg without one is scored by
       `candidate`. -/
   ownSlot : Array (Option Nat) := #[]
-  /-- `own[(slot * T + e) * maxJ + (d - 1)]`: the leg's own score over `d`
-      minutes ending at `e` — emissions, entry and cell — which no start of the
-      journey changes; `−∞` where the leg would begin before the day. Laid out
-      by end minute then length, so the sweep's length loop reads it in order. -/
+  /-- `own[(slot * T + e) * maxJ + (d - 1)]`: the leg's start-independent score
+      over `d` minutes ending at `e` (emissions, entry, cell); `−∞` before the
+      day. Ordered for the sweep's length loop. -/
   own : FloatArray := FloatArray.empty
-  /-- Per board-station leg `l`, `pairOwn[l][k * maxJ + (d - 1)]`: its own score
-      over `d` minutes from its `k`-th start (`reachStarts`) — emissions, entry,
-      board term and cell, which no start of the journey changes; `−∞` past the
-      day. Empty for a free leg (`withOwn`). -/
+  /-- Per board-station leg `l`, `pairOwn[l][k * maxJ + (d - 1)]`: its score over
+      `d` minutes from its `k`-th start (emissions, entry, board term, cell);
+      `−∞` past the day. Empty for a free leg. -/
   pairOwn : Array FloatArray := #[]
   /-- `best`'s table once computed (`cell[(d - 1) * T + e]`), for the path
       debugger; empty until then. -/
   cell : FloatArray := FloatArray.empty
 
-/-- The ride-time density's width in minutes, constant, shared with the station
-    chain's duration term: fitted to the 114 paired rides the journey decodes
-    across the frozen corpus, the leg lengths the density is applied to
-    (residual rms 1.84 min). By likelihood a width proportional to the expected
-    time is 27 nats worse, and a floor with a fraction gains 2.5 for its extra
-    parameter (`lean/experiments/ride-time-fit.py`). -/
+/-- The ride-time density's width in minutes, shared with the station chain:
+    fitted to the corpus's paired rides (rms 1.84 min). A width proportional to
+    the expected time fits worse by likelihood
+    (`lean/experiments/ride-time-fit.py`). -/
 def RIDE_SIGMA_MIN : Float := 1.8
 /-- `0`, once: a literal in a branch is converted on every call. -/
 private def ZERO : Float := 0
@@ -145,10 +136,9 @@ def pairLogPdf (d expected : Float) : Float :=
   let z := (d - expected) / RIDE_SIGMA_MIN
   NEG_HALF_LOG_TWO_PI - Float.log RIDE_SIGMA_MIN - HALF * z * z
 
-/-- The leg's calling evidence: the passes whose run lies wholly inside it,
-    after its first minute and before its last — a run touching its start is
-    the wait at its board station, one touching its end its arrival — and not
-    at its own board and alight stations. -/
+/-- The leg's calling evidence: passes wholly inside it, excluding its board
+    and alight stations. A run touching its start is the wait, one touching
+    its end the arrival. -/
 @[inline] def stopTerm (tb : Tables) (l d e : Nat) : Float :=
   if tb.stopPre.size == 0 then ZERO else
   let start := e + 1 - d
@@ -174,11 +164,9 @@ def pairLogPdf (d expected : Float) : Float :=
     else base - tb.durBaseF.get! (slot * tb.maxJ + (d - 1)) + pairLogPdf (Verified.FloatConst.natToFloat d) exp
   cell + stopTerm tb l d e
 
-/-- One candidate length for leg `l` ending at `s0 + i`: the path before it
-    (the first-leg prior at `s0`, else the hoisted transition), plus the leg's
-    own score — emissions, entry, board term and cell, summed in that order
-    before the path is added, exactly as `withOwn` tables them, so a sweep with
-    the tables and one without agree to the bit. -/
+/-- One candidate length for leg `l` ending at `s0 + i`: the path before it plus
+    the leg's own score, summed in `withOwn`'s order so tabled and untabled
+    sweeps agree to the bit. -/
 @[inline] def candidate (tb : Tables) (m : FloatArray) (s0 i l d : Nat) : Float :=
   let L := tb.legs.size
   let T := tb.T
@@ -207,11 +195,9 @@ partial def bestOwnGo (m own : FloatArray) (mi oi n : USize) (best : Float) : Fl
   let cand := prev + fgetU own oi
   bestOwnGo m own (mi - 1) (oi + 1) (n - 1) (if cand > best then cand else best)
 
-/-- The free leg `l`'s best length ending at `s0 + i`, over the tabled own
-    scores (`withOwn`), lengths `1 … dMax`: those shorter than the window read
-    the path before them in `m`, and one as long as the window is the
-    journey's first leg (`firstPrev`, the first-leg prior at `s0`). `mBase` is
-    `l * w`; `ownBase` is `(slot * T + e) * maxJ`. -/
+/-- The free leg `l`'s best length ending at `s0 + i` over lengths `1 … dMax`;
+    the full-window length is the first leg (`firstPrev`). `mBase` is `l * w`,
+    `ownBase` is `(slot * T + e) * maxJ`. -/
 def bestOwn (m own : FloatArray) (firstPrev : Float) (mBase ownBase i dMax : Nat) : Float :=
   let b := bestOwnGo m own (mBase + i - 1).toUSize ownBase.toUSize (min dMax i).toUSize negInf
   if dMax < i + 1 || firstPrev == negInf then b else
@@ -247,12 +233,10 @@ partial def transGo (b1 b2 : FloatArray) (b1i : Array Nat) (trans : FloatArray) 
   let cand := va + fgetU trans ti
   transGo b1 b2 b1i trans l (ba + 1) B (ti + B) (if cand > best then cand else best)
 
-/-- What the hoisted transition needs from `pairOk`, once per table: a leg is
-    `restricted` when some leg may not follow it (a wait, which continues only
-    into a ride boarding at its station), and `into[l]` lists the restricted
-    legs that may precede `l`. Every other pair is free, and the transition's
-    price depends on the two legs' bases alone. `startersAt[t]`: the legs that
-    may begin at `t` (`reachMask`), ascending. -/
+/-- What the hoisted transition needs from `pairOk`: `restricted` legs (a wait,
+    followed only by a ride from its station), `into[l]` the restricted legs
+    that may precede `l`, and `startersAt[t]` the legs that may begin at `t`.
+    Other pairs are priced by their bases alone. -/
 structure Pre where
   restricted : Array Bool
   into : Array (Array Nat)
@@ -411,12 +395,10 @@ def sweepWith (tb : Tables) (pre : Pre) (s0 w : Nat) (withBp : Bool := true) :
     if withBp then
       for l in live do
         bpD := bpD.set! (i * L + l) (legArg tb m firstAt s0 w i l (v.get! (i * L + l)))
-    -- The hoisted transition into every leg that may begin at `e + 1`: the
-    -- best leg before it, other than itself, plus the transition between their
-    -- bases. The price depends on the bases alone, so each base's best and
-    -- second-best free leg stand for all of them (the second where the best is
-    -- the leg itself); a restricted leg is weighed only where it may precede.
-    -- The same maximum as over every pair: `x ↦ x + t` is monotone.
+    -- The hoisted transition into each leg that may begin at `e + 1`. The price
+    -- depends on bases alone, so each base's best and second-best free leg
+    -- stand for all (`x ↦ x + t` is monotone); restricted legs only where
+    -- they may precede.
     if i + 1 < w then
       let mut b1 := Verified.FloatConst.floats B negInf
       let mut b1i : Array Nat := Array.replicate B L
