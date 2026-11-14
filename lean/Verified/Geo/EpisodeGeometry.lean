@@ -3,64 +3,34 @@ import Verified.Geo.Segments
 import Verified.FloatConst
 import Verified.Fix
 /-!
-# Episode geometry — the map's half of "one day, two renderers"
+# Episode geometry
 
-The narrative renders the smoothed
-`DayState[]` sequence; `buildEpisodes` resolves a display geometry for each of
-those states, 1:1, so the map cannot draw a story the timeline does not tell.
+`buildEpisodes` resolves a display geometry for each `DayState` 1:1, so the map
+cannot draw a story the timeline does not tell. Geometry is downstream of
+classification and never feeds back.
 
-Geometry is strictly downstream of classification and never feeds back —
-depiction never re-decides what happened. That is why this module produces only
-`Episode` records and reads only already-decided fields.
+Per mode, a display policy:
 
-## What is decided here
+* train: a cached rail line (`snappedPath`) clipped to the window; for a
+  reconstructed leg (`pointCount = 0`, an underground ride) a station-to-station
+  connector with no distance cap; otherwise the raw GPS with the station join
+  points stitched on ({@link stitchTrainEnds}), since a train's GPS starts late
+  and stops early.
+* moving: road match, walk reconstruction, walk match, raw fixes, in that
+  order. Raw prefers the pre-Kalman `rawFixes`: the road-blind smoother pulls
+  the line off the path and truncates it.
+* stay: one anchor, the covering segment's centroid or the fixes' mean.
+* unknown: a connector capped at 2 km, so a gap implies no cross-city route.
 
-`resolveEpisode` is a dispatch on the state's mode, and each arm is a *display*
-policy, not a classification:
-
-* train — a cached rail line (`snappedPath`) clipped to the window wins. A
-  reconstructed leg (`pointCount = 0`, i.e. a tube ride whose window holds only
-  teleporting cell-network garbage) draws a clean station-to-station connector
-  with no distance cap, because a rail leg legitimately spans kilometres.
-  Otherwise the raw GPS, with the two station join points stitched on
-  ({@link stitchTrainEnds}) — a train's GPS commonly starts after it pulls away
-  and stops before it arrives, and without the stitch the adjacent walk bridges
-  green across the missing tail.
-* moving — four draw sources in strict precedence: road match, walk
-  reconstruction, walk match, raw fixes. The raw arm prefers the pre-Kalman
-  `rawFixes`: measured, the road-blind smoother both pulls the line off the
-  path and truncates it, so the map bridges the gap with a chord through
-  buildings.
-* stay — one anchor point, the covering segment's centroid or the mean of
-  the window fixes.
-* unknown — a connector capped at 2 km, so a no-GPS gap cannot imply a
-  cross-city route we do not have.
-
-## Two metres functions, deliberately different
-
-{@link equirectMeters} here takes `cos` at the first point and combines with
-`sqrt`; `metersBetween` (`Verified.Geo.WalkableRoute`) takes `cos` at the
-midpoint and combines with
-`hypot`. Both are in the codebase and they do not agree; this module's
-thresholds were tuned against this one.
-
-## Exactness
-
-Everything is comparison, filtering and array sequencing ⇒ exact, except
-{@link equirectMeters}'s `cos`/`sqrt` and the float mean in
-{@link centroidOf}, which are ≤1 ULP and only ever compared against metre
-thresholds (100 m stitch bar, 2 km connector cap). UNPROVEN; pinned by the
+{@link equirectMeters} (cos at the first point, `sqrt`) is not
+`metersBetween` (cos at the midpoint, `hypot`); this module's thresholds were
+tuned on the former. Exact except those ≤1 ULP metre values, compared only
+against the 100 m stitch bar and the 2 km cap. UNPROVEN; pinned by the
 `#guard`s.
 
-## Shape notes
-
-* An absent drawn path and an empty one are the same thing (the test is
-  "at least two vertices"), so they are plain `Array` here. `rawFixes` is not
-  one of those: an empty `rawFixes` is present, so it stays an `Option`.
-* Fix timestamps are `Int` — the capture path records whole UTC seconds. Drawn
-  derived vertices are not: the over-route trim and the walk corrector
-  interpolate `ts` along a chord without rounding, so {@link SPt} and the `ts`
-  {@link LatLon} carries are `Float`.
+An absent drawn path and an empty one are the same (both under two vertices),
+but an empty `rawFixes` is present, so it stays an `Option`. Fix timestamps are
+whole seconds; derived vertices' are `Float` ({@link SPt}).
 -/
 
 namespace Verified.Geo.EpisodeGeometry
@@ -73,16 +43,13 @@ open Verified.Geo (holdSpeed rejectSpikes)
 `Verified.Geo.DayState` does. -/
 abbrev Mode := String
 
-/-- Geometry provenance — the only style input the map needs. Solid for
-`raw`/`matched`, dashed for `snapped`/`tentative`, a dot for `anchor`. No
-confidence field: the only upstream confidence is classification confidence,
-which is not geometry trust. -/
+/-- Geometry provenance, the map's only style input: solid for `raw`/`matched`,
+dashed for `snapped`/`tentative`, a dot for `anchor`. No confidence field:
+classification confidence is not geometry trust. -/
 abbrev Kind := String
 
-/-- A drawn vertex. `ts` is present when the vertex came from a timestamped
-point (raw GPS, matched, or snapped) and absent for derived geometry with no
-single moment — a stay anchor (a centroid) or a connector endpoint. Surfaced so
-the map's point-inspector can show *when* a drawn vertex was. -/
+/-- A drawn vertex, with `ts` when it came from a timestamped point and none for
+a centroid or connector end; the map's point inspector shows it. -/
 structure LatLon where
   lat : Float
   lon : Float
@@ -92,18 +59,8 @@ structure LatLon where
   ts : Option Float := none
   deriving Inhabited, BEq, Repr
 
-/-- A vertex of a derived path (`snappedPath` / `matchedPath` / …), which always
-carries an interpolated timestamp.
-
-`ts` is `Float` because most interpolators that produce it do not round.
-`interpolateTimes` (`Verified.Geo.RailSnap`) does, so the snapped path is
-integral, but `slicePathByArc` (the over-route trim) and the walk escape
-interpolate `a.ts + (b.ts - a.ts) * t` and keep the fraction, so a drawn vertex
-can carry a fractional `ts`.
-
-The window filter in `clipPath` compares it against the state's integral
-bounds; a rounded model could keep or drop a vertex differently there, though
-the corpus has no such case. -/
+/-- A vertex of a derived path. `ts` is `Float`: the snapped path is integral,
+but the over-route trim and the walk escape interpolate without rounding. -/
 structure SPt where
   lat : Float
   lon : Float
@@ -160,10 +117,9 @@ structure Episode where
 
 /-! ## Constants -/
 
-/-- A no-GPS `unknown` gap longer than this (metres, straight-line) is not
-bridged — drawing a dashed line kilometres across a city would imply a route we
-do not have. A display constant, the sibling of `rejectSpikes`'s 500 m spike
-bar; not a classifier threshold. -/
+/-- A no-GPS `unknown` gap longer than this (m, straight line) is not bridged:
+a dashed line across a city would imply a route there is none of. A display
+constant, like `rejectSpikes`'s 500 m. -/
 def UNKNOWN_CONNECTOR_MAX_M : Float := 2000
 
 /-- A raw train leg whose drawn end sits more than this from its station join
@@ -208,9 +164,9 @@ def centroidOf (pts : Array LatLon) : Option LatLon :=
 
 /-! ## Pre-filters, specialised to this module's metric
 
-`Verified.Geo.Prefilter` (namespace `Verified.Geo`) owns the two recursions and their invariants
-(`holdSpeed_chain`, `rejectSpikes_sublist`); here they are only instantiated
-with the float predicates. -/
+`Verified.Geo.Prefilter` owns the recursions and their invariants
+(`holdSpeed_chain`, `rejectSpikes_sublist`); here they get the float
+predicates. -/
 
 /-- `rejectSpikes`'s predicate: a point juts out and back when the detour
 through it is both several times longer than going straight past it and a large
@@ -234,11 +190,9 @@ def speedOk (capKmh : Float) (last cur : RawFix) : Bool :=
   if dt ≤ 0 then false
   else equirectMeters last.lat last.lon cur.lat cur.lon / dt * 3.6 ≤ capKmh
 
-/-- The kinematic hold. A run of fixes that each require impossible speed (an
-underground/indoor GPS teleport, which reports good self-reported accuracy) is
-held at the last plausible position, so the leg collapses toward stationary
-instead of drawing an impossible sprint. `none` for the cap means no ceiling
-for this mode, so nothing is dropped. -/
+/-- The kinematic hold: a run of fixes each needing impossible speed (an indoor
+teleport with good self-reported accuracy) is held at the last plausible
+position. A `none` cap drops nothing. -/
 def holdImplausibleSpeed (fixes : Array RawFix) (capKmh : Option Float) : Array RawFix :=
   match capKmh with
   | none => fixes
@@ -263,14 +217,9 @@ merely touching a boundary does not cover it. -/
 def coveringSegs (segments : Array Seg) (st : State) : Array Seg :=
   segments.filter (fun s => s.startTs < st.endTs && s.endTs > st.startTs)
 
-/-- Anchor a raw train leg's geometry to its station join points. Prepend
-`from` / append `to` when present and more than `STATION_STITCH_MIN_M` from the
-existing end, so the whole leg stays train-coloured and its neighbours bridge
-from zero. The fixes in between are untouched.
-
-The two tests are sequenced, not independent: `to` is compared against the end
-of the array *after* a possible `from` prepend, so on an empty leg the second
-test sees the first's insertion. -/
+/-- Anchor a raw train leg to its station join points: prepend `from` and append
+`to` when more than `STATION_STITCH_MIN_M` from the existing end, so the leg
+stays train-coloured. `to` is compared after a possible `from` prepend. -/
 def stitchTrainEnds (raw : Array LatLon) (from? to? : Option LatLon) : Array LatLon := Id.run do
   let farFromEnd (p : LatLon) (endp : Option LatLon) : Bool :=
     match endp with
@@ -345,18 +294,13 @@ def resolveEpisode (st : State) (index : Nat) (states : Array State) (segments :
       if snapped.size ≥ 2 then return base snapped "snapped" none
     | none => pure ()
 
-    -- Boarding / alighting join points: where the previous episode left off and
-    -- where the next one begins — i.e. this leg's two stations.
-    -- `resolved` holds exactly the `index` episodes already built, so at index 0
-    -- it is empty and Nat's truncating `0 - 1 = 0` still reads out of bounds.
-    -- No index guard is needed, and adding one would be dead code.
+    -- The join points: where the previous episode ended and the next begins.
+    -- At index 0 `resolved` is empty, so the truncating `0 - 1` still misses.
     let from? := (resolved[index - 1]?).bind (fun e => e.points[e.points.size - 1]?)
     let to? := entryPoint states[index + 1]? segments points
 
-    -- A reconstructed underground leg has no real GPS for the ride. Draw a
-    -- clean connector station-to-station in train colour, so the tube leg reads
-    -- as a line between its stations and the onward walk bridges from the
-    -- alighting end. No cap (cf. the `unknown` connector): rail spans km.
+    -- A reconstructed underground leg has no ride GPS: a station-to-station
+    -- connector in train colour, uncapped since rail spans kilometres.
     if covering.any (fun s => effectiveMode s == "train" && s.pointCount == 0) then
       return base (match from?, to? with
         | some f, some t => #[f, t]
@@ -391,13 +335,9 @@ def resolveEpisode (st : State) (index : Nat) (states : Array State) (segments :
       if walkMatched.size ≥ 2 then return base walkMatched "matched" none
     | none => pure ()
 
-    -- Unmatched moving leg: draw the raw GPS, not the Kalman-smoothed points.
-    -- Measured: the road-blind smoother makes good data worse two ways — on a
-    -- road leg it swings up to ~75 m off the reliable GPS, and on a walk it
-    -- truncates, so the line stops short and the map bridges the gap with a
-    -- chord through buildings. `despike` drops lone teleports;
-    -- `holdImplausibleSpeed` then collapses a monotonic teleport run that both
-    -- despiking and the accuracy field miss.
+    -- Unmatched moving leg: the raw GPS, not the Kalman points, which swing up
+    -- to ~75 m off a road and truncate a walk. `despike` drops lone teleports
+    -- and `holdImplausibleSpeed` a monotonic teleport run.
     match rawFixes with
     | some rf =>
       let sw := rf.filter (fun p => inWindow p.ts st.startTs st.endTs)
@@ -407,11 +347,8 @@ def resolveEpisode (st : State) (index : Nat) (states : Array State) (segments :
       if rawWin.size ≥ 2 then return base (rawWin.map rawToLatLon) "raw" none
     | none => pure ()
 
-    -- Speed-plausibility filter then geometric spike rejection. The filter drops
-    -- a faster neighbour's fixes that bled across the boundary (a decelerating
-    -- train's tail landing inside the following walk at vehicle speed);
-    -- despiking drops teleports. They are complementary — the bleed is smooth
-    -- and monotonic, so despiking alone would miss it.
+    -- Speed plausibility drops a faster neighbour's smooth bleed across the
+    -- boundary (a train's tail inside the walk), which despiking cannot see.
     let plausible := match capForMode mode with
       | none => windowFixes
       | some cap => windowFixes.filter (fun p => p.speedKmh ≤ cap)
@@ -451,12 +388,9 @@ def buildEpisodes (states : Array State) (segments : Array Seg) (points : Array 
 
 /-! ## Smoke tests
 
-The reference values are recorded `buildEpisodes` answers for these scenarios.
-
-Scenario coordinates are built from the frame arithmetic rather than pasted as
-decimals, so both sides compute the same doubles instead of parsing a rounded
-literal. The frame itself is tied to the reference values by the first block
-of guards, which is what makes the constructed expectations below sound. -/
+Recorded `buildEpisodes` answers. Coordinates are built from the frame
+arithmetic, tied to the references by the first block of guards, so both sides
+compute the same doubles. -/
 
 private def lat0 : Float := 51.52
 private def lon0 : Float := -0.13

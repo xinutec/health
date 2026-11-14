@@ -3,49 +3,23 @@ import Verified.Geo.TubeHop
 /-!
 # Transit continuity for place-naming
 
-Four rules that give the place-picker the transit context it otherwise lacks.
-The venue scorer ranks what is mapped near a coordinate; it has no idea the
-user just got off a train or is about to board one, so a station forecourt
-resolves to whatever café, hotel or doughnut counter happens to be mapped
-inside the concourse.
+The venue scorer knows nothing of trains, so a station forecourt resolves to
+whatever café is mapped in the concourse. Four rules supply the context:
 
-* `stationAtTrainAlight`: a stay directly after a train, within station range,
-  is at the station just alighted at (05-22: an ambulance wait on the Finchley
-  Road forecourt read "Loft Coffee Company"). A genuine café visit has a
-  walking segment in between, so `prev` would be walking.
-* `stationsAfterAlighting`: the first stay after a train, reached across walks
-  alone, is at the station the train's own label says it alighted at, when that
-  station is in range of the stay (05-22's nineteen minutes at Finchley Road
-  after the Met, across the two-minute walk up from the platform; a change of
-  trains at Baker Street). The first rule cannot see across the walk, and under
-  the decoder's head there is one.
-* `stationsBeforeBoarding`: a stay that runs straight into a train, or is parted
-  from it only by a short walk inside the board station, and the stays before
-  it at the same station across short walks, are the wait for it (an hour in
-  Gare Montparnasse read as shop visits; 06-12 Victoria and 09-06 Stanmore
-  through the walk to the platform).
-* `stationsFromEnclosed`: a stay the station building encloses is the wait
-  whatever touches the train, and so is every stay after it at the same station
-  up to the train; named for the station the train boards at (the last five
-  minutes before Montparnasse's platform walk read "McDonald's").
+* `stationAtTrainAlight`: a stay directly after a train, within range, is at
+  the station alighted at (a café visit has a walk in between).
+* `stationsAfterAlighting`: the first stay after a train, across walks alone,
+  is at the station the train's label alighted at, when in range.
+* `stationsBeforeBoarding`: a stay running into a train, or parted from it by a
+  short walk inside the station, and the stays before it there, are the wait.
+* `stationsFromEnclosed`: a stay the station building encloses is the wait,
+  and so is every stay after it there up to the train.
 
-The station lookup is a function of `(lat, lon, radiusM)` the caller supplies,
-the TubeHop shape.
-
-Wholly exact — no trigonometry and no arithmetic beyond a duration subtraction;
-the distances arrive already computed from the adapter.
-
-## Two things the port had to get right
-
-A distance tie keeps the earlier station: the fold improves only on strict
-`<`. Station order out of the adapter is distance order, and co-located nodes at
-a big interchange tie routinely.
-
-`segments[i - 1]` at `i = 0` is `undefined` in JS, but `Nat` subtraction
-truncates to 0 and would read the stay itself — which is `stationary`, so it
-would silently answer "not a train" and look correct while meaning something
-else. Indices here are `Int` and `segAt` returns `none` outside the array, the
-same landmine `WalkAnchors` records.
+The station lookup is the caller's `(lat, lon, radiusM)` function. Exact: the
+distances arrive computed. A distance tie keeps the earlier station (strict
+`<`), since co-located nodes tie routinely. Indices are `Int` with `segAt`
+returning `none` outside the array: `Nat` subtraction at `i = 0` would read the
+stay itself, answer "not a train" and look right.
 
 UNPROVEN; pinned by the `#guard`s below.
 -/
@@ -63,10 +37,8 @@ abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 def effMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 
-/-- "You are at the station" footprint: how close a train-alighting stay must
-sit to a station node before the stay is named after it. Tight enough that a
-café you genuinely walked to (which also has a walking segment in between,
-disqualifying it anyway) is not swallowed by the station. -/
+/-- How close a train-alighting stay must sit to a station node to be named
+after it: tight enough not to swallow a café actually walked to. -/
 def STATION_AT_ALIGHT_RADIUS_M : Float := 150
 
 /-- The nearest station, or `none` for an empty list.
@@ -78,11 +50,8 @@ def nearestStation (stations : Array NearbyStation) : Option NearbyStation :=
     | some b => if s.distanceM < b.distanceM then some s else best
     | none => some s
 
-/-- The nearest station's name when it is inside `radiusM`.
-
-The radius test is redundant against an adapter that already filtered by it,
-and deliberately kept: the lookup is the caller's, so nothing here guarantees
-the filter happened. -/
+/-- The nearest station's name inside `radiusM`. The radius test is kept even
+though the adapter filters: nothing here guarantees it did. -/
 private def nameWithin (stations : Array NearbyStation) (radiusM : Float) : Option String :=
   match nearestStation stations with
   | none => none
@@ -110,27 +79,15 @@ def stationAtTrainAlight
     if effMode p ≠ "train" then none
     else nameWithin (stationsLookup lat lon radiusM) radiusM
 
-/-- A platform-to-platform interchange walk inside a large station complex. Set
-to cover genuine long transfers — King's Cross Victoria→Met is a ~10-minute
-concourse walk between separate stations of one interchange. Longer than this is
-a walk to somewhere.
-
-A weak discriminator on its own: the venue-vs-interchange call rests on the stay
-being short and within station range, which is what the stay being labelled must
-satisfy, so a short station-sited stay bracketed by trains is a change of trains
-regardless of the transfer walk's exact length. -/
+/-- A platform-to-platform interchange walk inside a station complex (King's
+Cross Victoria→Met is ~10 minutes); longer is a walk somewhere. A weak signal:
+the stay being short and in range does most of the work. -/
 def INTERCHANGE_WALK_MAX_S : Int := 720
 
-/-- Established-focus-place guard: a stay the place prior confidently assigned
-to a focus place visited on at least this many distinct days is a genuine
-destination and keeps its label even when train legs bracket it.
-
-Trains on both sides prove a journey structure, not that the stop between them
-was a platform (07-02, user-confirmed: a visit 5 m from the 6-day Hospital U
-focus place, between the morning tube and a real one-stop hop onward, was
-renamed "Warren Street" after the station 100 m away). One-off focus places stay
-overridable, so 06-29's Baker Street case, which this rule exists for, keeps
-working even if a low-evidence cluster ever mines at a platform. -/
+/-- A stay assigned to a focus place visited on at least this many days is a
+destination and keeps its label between trains: trains either side prove a
+journey, not a platform (a hospital visit beside a station was renamed for the
+station). One-off places stay overridable. -/
 def INTERCHANGE_FOCUS_GUARD_MIN_DAYS : Int := 3
 
 /-- The longest wait before boarding that is still the wait for the train:
@@ -138,10 +95,9 @@ def INTERCHANGE_FOCUS_GUARD_MIN_DAYS : Int := 3
 is somewhere the user went, and a train later is how they left it. -/
 def BOARDING_WAIT_MAX_S : Int := 90 * 60
 
-/-- The longest wait for a metro, tram or light-rail train: one comes every few
-minutes, and there is no check-in. Longer than this beside a station that is
-only those, a stay is somewhere he went: 88 minutes in a café 73 m from a
-Métro entrance had read as the station. -/
+/-- The longest wait for a metro, tram or light-rail train (frequent, no
+check-in). Longer, beside a station that is only those, is somewhere the user
+went: 88 minutes in a café by a Métro entrance had read as the station. -/
 def METRO_WAIT_MAX_S : Int := 15 * 60
 
 /-- A node that says mainline: a station or halt, not an entrance, a platform
@@ -173,36 +129,22 @@ private def stPancras : Float → Float → Float → Array NearbyStation := fun
 -- A mainline station keeps the long wait, and only its own name.
 #guard stationsForWait 0 0 (74 * 60) stPancras == #["London St Pancras International"]
 
-/-- The longest walk from the concourse to the platform that is still inside
-the station. Measured on both sides: the walks to the platform at Victoria
-(06-12) and Stanmore (09-06) are 4 and 3 minutes; the walk from Pizza Union
-along Pentonville Road to King's Cross (05-22) is 9, and every fix of it is
-within station range of a King's Cross entrance, so range alone cannot tell a
-journey to the station from a walk inside it. -/
+/-- The longest walk from concourse to platform still inside the station: 3–4
+minutes measured, against 9 for a walk along a road to King's Cross whose every
+fix is in station range, which range alone cannot tell apart. -/
 def PLATFORM_WALK_MAX_S : Int := 5 * 60
 
 /-- Boarding continuity, the mirror of `stationAtTrainAlight`: a stay that runs
-straight into a train is the wait for it, and so is every stay before it at the
-same station, across short walks (an hour inside Gare Montparnasse read "Maison
-du Chocolat", "McDonald's" and "Jardin Atlantique", the garden on the station
-roof).
+into a train is its wait, and so is every stay before it at the same station
+across short walks (an hour inside a terminus read as its shops).
 
-The anchor touches the train, as the alight rule's does: dinner at Pizza Union
-and a walk to King's Cross for the train home (05-22) is a meal, not a wait. The
-anchor is a stay, or a short walk that never leaves the range of the station the
-train boards at: the last wait on the platform is absorbed into the train as its
-boarding, which leaves the walk from the concourse to the platform touching the
-train, and the hour of waits before it read as the shops beside each. Pizza
-Union's walk sets out from outside any node of King's Cross, so it anchors
-nothing. Read right to left; a stay not in range of the chain's station closes
-the chain for everything earlier.
-
-`stationsAt i` is the caller's answer for the stay at `i`: the stations in
-range, nearest first, or none at all when the stay must keep its name (an
-established focus place). In range, not nearest: at Montparnasse a Métro
-entrance sits nearer the concourse than any node of the gare above it.
-`trainBoard i` is the station the train at `i` boards at, when its label says;
-`walkWithin i st` is whether every fix of the walk at `i` is in range of `st`. -/
+The anchor touches the train: a meal and a walk to the station is not a wait.
+It is a stay, or a short walk never leaving the board station's range (the last
+platform wait is absorbed into the train). Read right to left; a stay out of
+range closes the chain. `stationsAt i` is the stations in range of stay `i`,
+nearest first, or none when it keeps its name; in range, not nearest, since a
+Métro entrance can sit nearer the concourse than the gare. `trainBoard i` is
+where train `i` boards; `walkWithin i st` whether walk `i` stays in range. -/
 def stationsBeforeBoarding (segments : Array Seg)
     (stationsAt : Nat → Array String)
     (trainBoard : Nat → Option String := fun _ => none)
@@ -233,18 +175,11 @@ def stationsBeforeBoarding (segments : Array Seg)
       if effMode s == "stationary" then out := out.set! i (some st)
   return out
 
-/-- Boarding continuity from inside the station: a stay the station's building
-encloses is the wait whatever touches the train, and so is every stay after it
-at the same station, across short walks, up to the train (at Montparnasse the
-last five minutes before the platform walk sat at "McDonald's", its centroid
-outside every hall outline under 100 m fixes, and the stay before it was inside
-Hall 1). Forward only: a stay before entering the building is a destination of
-its own; being inside is the evidence, and it starts there. `enclosedAt i` is
-the stations in range of a building-enclosed stay at `i`, nearest first, and
-empty for every other segment; `trainBoard j` is where the train at `j` boards.
-The chain is named for the station the train ahead boards at when that is in
-range (at Montparnasse the Métro's node sits nearer the halls than the gare's,
-and the TGV says which one the wait was for) and for the nearest otherwise. -/
+/-- Boarding continuity from inside the station: a stay the building encloses
+is the wait whatever touches the train, as is every stay after it there up to
+the train. Forward only: being inside is the evidence. `enclosedAt i` is the
+stations in range of an enclosed stay `i`; the chain is named for the station
+the train ahead boards at when in range, else the nearest. -/
 def stationsFromEnclosed (segments : Array Seg)
     (enclosedAt : Nat → Array String) (stationsAt : Nat → Array String)
     (trainBoard : Nat → Option String := fun _ => none) :
@@ -283,16 +218,10 @@ def stationsFromEnclosed (segments : Array Seg)
   return out
 
 /-- Alighting continuity, the mirror of `stationsBeforeBoarding`: the first stay
-after a train, reached across walks alone, is at the station the train alighted
-at when that station is in range of it. The ride's own label says where it
-alighted (`trainAlight i`), so the stay is named for that station and not for
-the nearest; `stationsAt i` is the stations in range of the stay at `i`, or none
-when it must keep its name. The stay's position is the evidence, not the walk's:
-the fixes after surfacing from a platform sit a kilometre out at 400–3000 m
-accuracy for a minute before settling (05-22 at Finchley Road: then 25 m from
-the platform for the nineteen minutes of the wait). No bound on the stay's
-length; a stay out of range closes the chain (05-12: nine minutes' walk from
-Wembley Park to a shop 265 m from the platforms), and so does any other mode. -/
+after a train, across walks alone, is at the station its label alighted at
+(`trainAlight i`) when in range. The stay's position is the evidence, not the
+walk's: fixes surfacing from a platform sit far out at poor accuracy. No length
+bound; a stay out of range, or any other mode, closes the chain. -/
 def stationsAfterAlighting (segments : Array Seg)
     (stationsAt : Nat → Array String)
     (trainAlight : Nat → Option String) : Array (Option String) := Id.run do

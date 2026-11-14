@@ -7,27 +7,18 @@ import Verified.Geo.Metric
 /-!
 # Building-escape walk corrector
 
-The explicit, case-based reconstruction of a drawn walk line so it stops running
-through houses:
+Reconstruct a drawn walk line so it stops running through houses:
 
-1. a vertex inside a building is moved out onto the nearest street *on that
-   building's side*;
-2. a gap that is implausible — it crosses a footprint, or it is an urban block
-   cut (far off every walkable way in built surroundings) — is routed along the
-   walkable streets, or failing that around the footprint's own corners;
+1. a vertex inside a building moves out onto the nearest street on that
+   building's side;
+2. an implausible gap (crossing a footprint, or an urban block cut far from
+   every walkable way) is routed along the streets, or around the footprint's
+   corners;
 3. with no streets nearby, the GPS stands.
 
-The corrector is pure geometry end to end, so all of it is here, including the
-output records, which here (as in `DayState`) are the decision rather than a
-re-clone of an input row.
-
-Two boundary notes:
-
-* `correctWalkPathIn` takes a context built once per walk (`makeBadnessCtx`):
-  the ring boxes, the way grid and the walk graph.
-* The anchor snap distances are always computed and returned: the records
-  carry the observable numbers. Corner-debug tracing stays shell: it is an env
-  read with no effect on the geometry.
+Pure geometry, output records included (the records are the decision, as in
+`DayState`). `correctWalkPathIn` takes a context built once per walk
+(`makeBadnessCtx`), and the anchor snap distances are always returned.
 -/
 
 namespace Verified.Geo.WalkEscape
@@ -71,11 +62,10 @@ structure NearPt where
 def qRing (ring : Ring) : Array Verified.Geo.QPt :=
   ring.map fun v => Verified.Geo.QPt.ofLatLon v.lat v.lon
 
-/-- Even-odd ray cast: is `p` inside the closed polygon `ring`? Decided on the
-1e-7° integer grid, cross-multiplied exactly (`Verified.Geo.qPointInRing`, the
-matcher's own test) rather than by a float division — so the answer has no
-rounding mode, and the walk escape and the matcher agree on what is inside.
-Differs from the float ray cast only within ~1 cm of a wall. -/
+/-- Even-odd ray cast on the 1e-7° integer grid (`Verified.Geo.qPointInRing`,
+the matcher's own test), cross-multiplied exactly, so the escape and the
+matcher agree on what is inside. Differs from a float cast only within ~1 cm of
+a wall. -/
 def pointInRing (p : Pt) (ring : Ring) : Bool :=
   ring.size ≥ 3 && Verified.Geo.qPointInRing (Verified.Geo.QPt.ofLatLon p.lat p.lon) (qRing ring)
 
@@ -118,13 +108,10 @@ def containingBuilding (p : Pt) (buildings : Array Ring) : Option Ring := Id.run
 
 /-! ## Way-segment grid
 
-Grid index over way segments for the badness threshold tests ("is any way
-within `maxM`?"), which run per 2 m sample over whole legs. Cells are sized to
-the largest query radius, so a 3×3 probe is exact. Reproduced faithfully rather
-than replaced by a linear scan: the cell sizing converts metres to degrees at
-ONE reference latitude (the network's first coordinate), so the 3×3 window is
-exact only up to that `cos`-latitude approximation — a linear scan would be a
-different function, not the same one implemented better.
+A grid over way segments for the per-2 m "any way within `maxM`?" tests, with
+cells sized to the largest radius so a 3×3 probe is exact, up to the metre to
+degree conversion at one reference latitude (the network's first coordinate).
+A linear scan would be a different function, not a better implementation.
 -/
 
 /-- One way segment in a grid bucket, with its place in way order — the tie
@@ -188,11 +175,9 @@ def WaySegmentGrid.within (g : WaySegmentGrid) (p : Pt) (maxM : Float) : Bool :=
   return false
 
 /-- The nearest way segment within `maxM` of `p`, ranked as the linear scans
-    rank: least distance, then way order (`nearestWalkable`'s strict `<` keeps
-    the first). `none` when nothing is that near. ⚠ Exact only for
-    `maxM ≤ maxQueryM` — the 3×3 probe reaches exactly one cell; a caller with a
-    wider radius must scan. A segment filed in several of the nine cells is met
-    again at the same distance and order, and does not win twice. -/
+    rank (distance, then way order). `none` when nothing is that near.
+    ⚠ Exact only for `maxM ≤ maxQueryM`: the 3×3 probe reaches one cell, so a
+    wider radius must scan. -/
 def WaySegmentGrid.nearestWithin (g : WaySegmentGrid) (p : Pt) (maxM : Float) :
     Option (Proj × GridSeg) := Id.run do
   let cy := floorInt (p.lat / g.cellLat)
@@ -297,12 +282,10 @@ structure Footprint where
     network in scope. -/
 structure RingCtx where
   footprints : Array Footprint
-  /-- Footprint indices by cell of their (expanded) box — every cell the box
-      meets, in index order. A point that passes a box test lies in a cell that
-      box was filed in, so the point's own cell holds every footprint the
-      linear scans would test (`cellDeg` is in degrees, as the boxes are; no
-      metre enters). A box with a non-finite bound (an empty ring) or one too
-      large to file goes to `unfiled`, which every query also reads. -/
+  /-- Footprint indices by cell of their expanded box, every cell the box meets,
+      in index order, so a point's own cell holds every footprint a scan would
+      test. `cellDeg` is in degrees, as the boxes are. Non-finite or oversized
+      boxes go to `unfiled`, which every query also reads. -/
   cellDeg : Float := RING_CELL_DEG
   grid : Std.HashMap (Int × Int) (Array Nat) := {}
   unfiled : Array Nat := #[]
@@ -446,15 +429,11 @@ private def sampleSteps (x : Float) : Float × Nat :=
   (f, f.toUInt64.toNat)
 
 /--
-Badness length (m) of the segment `a→b` — the drawn distance implausible for a
-walk, at 2 m midpoint sampling:
-
-* Inside a footprint while more than `onWayM` off every way (a line riding a
-  mapped through-building footway is a legitimate passage, never badness), or
-* an urban block cut: farther than `offNetworkM` from every way while a
-  building sits within `buildingProxM`.
-
-Open-ground samples (off-network, no buildings near) contribute nothing.
+Badness length (m) of the segment `a→b`, the distance implausible for a walk at
+2 m sampling: inside a footprint and more than `onWayM` off every way (a mapped
+through-building footway is legitimate), or an urban block cut (beyond
+`offNetworkM` from every way with a building within `buildingProxM`). Open
+ground contributes nothing.
 -/
 def segBadnessM (a b : Pt) (ctx : BadnessCtx) : Float := Id.run do
   let segLen := metersBetween a b
@@ -480,10 +459,9 @@ def pathBadnessM (pts : Array Pt) (ctx : BadnessCtx) : Float := Id.run do
 
 /-! ## Case 2.5: geometric corner detour
 
-When the street network cannot route a crossing run around a block, the walk
-still did not go through the wall. Humans skirt a building along its perimeter,
-so the detour is derivable from the footprint itself: leave the chord at the
-wall, follow the ring's corners (offset a step outside) to the far side, rejoin.
+When the streets cannot route a crossing around a block, the walker still went
+round the wall: leave the chord at the wall, follow the ring's corners (a step
+outside) to the far side, rejoin.
 -/
 
 /-- How far outside the wall a corner-detour vertex stands (m). -/
@@ -656,9 +634,8 @@ private def timedAlong (pts : Array Pt) (cum : Array Float) (total tsA tsB : Flo
   return out
 
 /-- Repair a chord recursively: replace each pass-through with the shorter
-    crossing-free corner path around that ring, then fix the sub-chords the
-    corners created. `fuel` counts down from `CORNER_MAX_DEPTH`. `none` when no
-    crossing-free bounded path exists — dense surroundings, decline. -/
+    crossing-free corner path around the ring, then fix the new sub-chords, to
+    `CORNER_MAX_DEPTH`. `none` when no bounded crossing-free path exists. -/
 def repairChord (fuel : Nat) (a b : Pt) (ctx : RingCtx) : Option (Array Pt) :=
   match firstCrossedRing a b ctx with
   | none => some #[a, b]
@@ -697,10 +674,8 @@ def routeChordAroundBuildings (a b : Pt) (buildings : Array Ring) : Option (Arra
   if buildings.isEmpty then some #[a, b]
   else repairChord CORNER_MAX_DEPTH a b (RingCtx.ofRings buildings 0)
 
-/-- `routeChordAroundBuildings` over boxes already built — `ctx` is
-    `RingCtx.ofRings buildings 0`. A caller routing every chord of a line builds
-    them once: per chord it was a bbox for every building, 2,139 on a long walk,
-    160 times. -/
+/-- `routeChordAroundBuildings` over boxes built once (`RingCtx.ofRings
+    buildings 0`), rather than per chord. -/
 def routeChordAroundBuildingsIn (ctx : RingCtx) (a b : Pt) (buildings : Array Ring) :
     Option (Array Pt) :=
   if buildings.isEmpty then some #[a, b]
@@ -765,14 +740,11 @@ structure RunDiag where
   deriving Repr, Inhabited
 
 /--
-The full case-based corrector: densify → route the gap along the streets →
-failing that, around the footprint's corners → failing that, escape each
-interior vertex → failing that, trust the GPS.
-
-Honesty invariants, all enforced here: a reroute needs a route that is at most
-`maxDetourRatio`× the straight line and reduces the gap's crossing; the whole
-corrected line must cross less building than the input; and a correction may not
-take the leg from within its pedometer budget to beyond it.
+The full corrector: densify, route the gap along the streets, else around the
+corners, else escape each interior vertex, else trust the GPS. A reroute must be
+at most `maxDetourRatio`× the straight line and reduce the crossing; the whole
+line must cross less building than the input; and a correction may not take the
+leg past its pedometer budget.
 -/
 def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
     (opts : CorrectOptions := {}) : Array TPt × Array RunDiag := Id.run do
@@ -849,15 +821,10 @@ def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
       let dAnchorASnapM := (nearestWalkable anchorA.pt ways).map (·.distM)
       let dAnchorBSnapM := (nearestWalkable anchorB.pt ways).map (·.distM)
 
-      -- Case 2 and case 2.5 are candidates, scored against each other — not
-      -- tried in order until one sticks. Case 2's guard asks only "less
-      -- implausible than the gap", which a street route that still clips a
-      -- corner passes. Reaching case 2.5 only when case 2 fails lets a
-      -- mediocre route silently block a detour that eliminates the crossing
-      -- outright. Both are computed even when one already reaches
-      -- bad = 0: they then tie on badness and the tie-break, added length,
-      -- decides. That length is not cosmetic — enough of it trips the whole-leg
-      -- step-budget revert, which discards every correction on the leg.
+      -- Cases 2 and 2.5 compete rather than run in order: a street route that
+      -- still clips a corner passes case 2's guard and would block a detour
+      -- with no crossing at all. On a tie the shorter wins, since added length
+      -- can trip the leg's step-budget revert.
       if runBadM ≥ opts.minCrossingM then
         let straightM := metersBetween anchorA.pt anchorB.pt
         dStraightM := straightM
@@ -950,10 +917,9 @@ def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
         anchorASnapM := none, anchorBSnapM := none }
     return (drawn, diags)
 
-  -- Step-budget honesty invariant: the pedometer is the one length witness
-  -- independent of GPS, and the per-run guards cannot see compounding. Only the
-  -- under→over transition is the invented-distance signature — a leg already
-  -- over the bar (GPS-long by nature) keeps its corrections.
+  -- Step-budget honesty: the pedometer is the one length witness independent of
+  -- GPS. Only crossing from under the budget to over it is invented distance; a
+  -- leg already over keeps its corrections.
   match opts.stepBudgetM with
   | none => pure ()
   | some stepBudgetM =>
@@ -1002,10 +968,9 @@ def snapWithWay (q : Pt) (ways : Ways) : Option SnapWay := Id.run do
         best := some ⟨proj.lat, proj.lon, proj.distM, w, (i-1).toFloat + min 1 f⟩
   return best
 
-/-- `snapWithWay` for an answer that is only read within `maxM` — the way grid's
-    bounded nearest when `maxM` is inside its reach, else the scan. Beyond
-    `maxM` the scan's answer and `none` are the same answer to every caller
-    here, so the two agree where it matters. -/
+/-- `snapWithWay` for an answer only read within `maxM`: the grid's bounded
+    nearest inside its reach, else the scan. Beyond `maxM`, either is `none`
+    to every caller. -/
 def snapWithWayIn (q : Pt) (ctx : BadnessCtx) (maxM : Float) : Option SnapWay :=
   if maxM ≤ ctx.grid.maxQueryM then
     (ctx.grid.nearestWithin q maxM).map fun (proj, s) =>
@@ -1015,16 +980,10 @@ def snapWithWayIn (q : Pt) (ctx : BadnessCtx) (maxM : Float) : Option SnapWay :=
   else snapWithWay q ctx.walkable
 
 /--
-The drawing half of the mapped-passage exemption. The badness metric exempts a
-line riding an OSM way through a building, but the exemption tolerates `onWayM`
-of lateral error — which draws the walker over the buildings beside the passage.
-If a stretch is excused as riding the passage, it must be drawn riding it.
-
-Strictly scoped: a segment qualifies only when it is substantially inside
-(≥ `minCrossingM` of in-building sampled length with a way in reach), and the
-snaps must be coherent — same way, monotone along it — which is what traversing
-a passage looks like. Incoherent snaps would zigzag, so the stretch is left
-alone instead.
+The drawing half of the mapped-passage exemption: a stretch excused as riding a
+way through a building must be drawn on it, not `onWayM` beside it over the
+neighbouring buildings. Only where substantially inside (`minCrossingM` with a
+way in reach) and the snaps are coherent (same way, monotone); otherwise left.
 -/
 def snapPassagesIn (ctx : BadnessCtx) (pts : Array TPt) : Array TPt := Id.run do
   if ctx.walkable.isEmpty || ctx.ring.footprints.isEmpty || pts.size < 2 then return pts
@@ -1091,11 +1050,8 @@ def snapPassagesIn (ctx : BadnessCtx) (pts : Array TPt) : Array TPt := Id.run do
 
 /-! ## Guards
 
-Reference geometry: a 100 m × 100 m block ring of streets at a London origin,
-with footprints placed against it. Everything below is the reference output
-verbatim. The corrector's private helpers are pinned through these exported
-callers, and the records expose `segBadnessM` / `pathBadnessM` / the way grid
-as exact numbers.
+A 100 m × 100 m block of streets with footprints against it; recorded output,
+with `segBadnessM`, `pathBadnessM` and the way grid pinned as exact numbers.
 -/
 
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9
@@ -1197,10 +1153,8 @@ private def PASSAGE_WAYS : Ways := STREETS.push #[P 0 50, P 15 52, P 25 48, P 10
 
 /-! ### The indexed lookups are the linear scans
 
-Over a 5 m lattice across the reference block and 10 m outside it: the footprint
-grid answers containment and the first containing ring as the scans do, and the
-bounded way lookup agrees with `nearestWalkable` wherever the scan's answer is
-within reach — and says `none` exactly where it is not. -/
+Over a 5 m lattice across the block and 10 m outside it, the footprint grid and
+the bounded way lookup answer as the scans do, and `none` exactly beyond reach. -/
 
 private def SWEEP : Array Pt := Id.run do
   let mut out : Array Pt := #[]

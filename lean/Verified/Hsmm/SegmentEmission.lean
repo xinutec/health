@@ -7,34 +7,24 @@ import Verified.Hsmm.Packed
 /-!
 # Segment-level emissions
 
-Heart rate and fix presence are properties of a stretch, not of a minute:
-on the narrated days a minute's heart rate correlates 0.8 with the next one's,
-and a stay's fix share is almost all or nothing (indoors none, outdoors all).
-Scored minute by minute as independent draws, a small bias in either compounds
-with a segment's length without bound, and a long stay at a heart rate a few
-beats nearer a vehicle's mean decodes as a ride.
+Heart rate and fix presence are properties of a stretch, not a minute (a
+minute's heart rate correlates 0.8 with the next; a stay's fix share is nearly
+all or nothing). Scored as independent minutes, a small bias compounds with
+length, and a long stay a few beats nearer a vehicle's mean decodes as a ride.
+So each is scored under a generative model:
 
-Here each is scored under a model of how it is generated:
+* Heart rate: the segment's mean is drawn around the mode's (`hrTau`), minutes
+  scatter around it (`sigmaW`) with lag-1 correlation `rho`, giving
+  `nEff = n·(1−ρ)/(1+ρ)` and a closed-form marginal in count, sum and sum of
+  squares. Asleep minutes have their own term.
+* Fix presence: a per-mode chain (`obsMinute`), so a regime change costs one
+  switch. Without a chain the share is Beta(`fixA`, `fixB`) and the sequence
+  scores the beta-binomial, which splits a stay going from dark to lit.
+* Net displacement between the bracketing fixes: lognormal speed for a ride,
+  lognormal metres for a stay, plus a flat share `eps` up to `uMaxKmh`, so it is
+  evidence, never a veto. It replaces `SegmentEvidence` for fitted modes.
 
-* Heart rate. The segment's mean is a draw around the mode's mean (spread
-  `hrTau`), the minutes scatter around the segment's mean (`sigmaW`), and
-  neighbouring minutes are correlated (`rho`), which shrinks the minutes to
-  `nEff = n·(1−ρ)/(1+ρ)` independent ones. The marginal likelihood of the
-  segment's minutes has a closed form in their count, sum and sum of squares.
-  Asleep minutes keep the per-minute term (`Emissions`).
-* Fix presence switches between regimes (indoors none, outdoors every
-  minute), so it is part of a chain per mode (`obsMinute`): a regime change
-  costs one switch, not the segment. Without a chain for the mode, the
-  segment's fix share is a draw from Beta(`fixA`, `fixB`) and its sequence
-  scores the beta-binomial's `B(k+a, n−k+b) / B(a, b)` — which reads a stay
-  that goes from dark to lit as two stays, and splits it.
-* Net displacement between the fixes bracketing the segment: a ride's net
-  speed is lognormal, a stay's displacement in metres is lognormal, and every
-  mode keeps a share `eps` spread evenly over net speeds up to `uMaxKmh` (a
-  round trip, a bad fix), so the term is evidence and never a veto. It takes
-  the place of `SegmentEvidence` for the modes it has parameters for.
-
-Parameters are fitted on the narrated runs. A mode with none asserts nothing.
+Parameters are fitted on the narrated runs; a mode with none asserts nothing.
 -/
 
 namespace Verified.Hsmm.SegmentEmission
@@ -74,21 +64,17 @@ structure SleepParams where
   sigmaW : Float
   rho : Float
   /-- The spread of a night's lag-1 heart-rate differences. Set, the night's
-      level DRIFTS: the term is the night mean's prior and the differences'
-      likelihood, and a night is not cheaper split. Zero: one constant level
-      per segment, the form before. -/
+      level drifts (the night mean's prior plus the differences' likelihood),
+      so a night is not cheaper split; zero is one constant level. -/
   diffSd : Float := ZERO
   deriving Inhabited
 
 /-- The journey state's parameters (`Params.journey`). -/
 structure JourneyParams where
-  /-- The longest journey the inner pass considers, in minutes; a longer one
-      decodes as two with a stay between. A table size, not a behaviour: a
-      journey's length is priced by its fitted duration prior, and this bound
-      is set so that no decoded journey reaches it — the decode corpus checks
-      the longest decoded journey against it, so a binding bound is a loud
-      failure there, never a trip silently scored in pieces. The sweep's cost
-      grows with its square, which is why it is not simply large. -/
+  /-- The longest journey the inner pass considers (minutes); longer decodes as
+      two. A table size, not a behaviour: the duration prior prices length, and
+      the decode corpus fails loudly if a journey reaches this. The sweep grows
+      with its square. -/
   maxJ : Nat
   /-- `log P(mode)` of a journey's first leg, per leg mode. -/
   firstLeg : List (Mode × Float)
@@ -106,17 +92,14 @@ structure JourneyParams where
   deriving Inhabited
 
 /-- The train generator's evidence at a train leg's first minute, fitted
-    (`fitTrainLine`) at the narrated legs' first minutes:
+    (`fitTrainLine`):
 
 * `vouchedShare`: `P(the generator vouches the ride's own line)`; a vouched
-  line scores `log vouchedShare`, the others share the rest evenly. Vouched
-  lines share the station pair the generator found, so the decode tells them
-  apart by their own evidence and the chain names the line — a best path sees
-  one line, where a split among them would charge it `log v`.
-* `covered` / `uncovered`: `log P(covered | a train leg starts) − log
-  P(covered | a leg of another mode starts)`, and the same uncovered — the
-  generator's coverage as evidence of the mode, once per leg (per minute it
-  would count one window many times). -/
+  line scores `log vouchedShare`, the rest share the remainder, and the chain
+  names among vouched lines.
+* `covered` / `uncovered`: the log ratio of coverage at a train leg's start to
+  coverage at another mode's, once per leg (per minute would recount one
+  window). -/
 structure TrainLine where
   vouchedShare : Float
   covered : Float
@@ -138,41 +121,30 @@ structure Params where
   pairBoundaryMeanKmh : Option Float := none
   /-- The boundary pair's outlier share, uniform over 0–`uMaxKmh`. -/
   pairBoundaryEps : Option Float := none
-  /-- A minute as one of three classes — no fix, a fix within `RAIL_NEAR_M` of a
-      railway, a fix elsewhere — scored given the minute before by a 3×3 chain
-      per mode (rows: the class before). It carries fix presence and rail
-      adjacency together; a mode it lists is not scored by the segment's
+  /-- A minute as no fix, a fix within `RAIL_NEAR_M` of a railway, or a fix
+      elsewhere, scored by a 3×3 chain per mode on the minute before: fix
+      presence and rail adjacency together. A listed mode skips the
       beta-binomial. -/
   obsChain : List (Mode × Array (Array Float)) := []
-  /-- Asleep minutes' heart rate per segment, one physiology for every state:
-      the night's mean a draw around `hrMean` (spread `hrTau`), the minutes
-      around it (`sigmaW`, lag-1 `rho`). Replaces the per-minute asleep term,
-      whose mean depended on the state (a known place's 58, any other's own),
-      so a night at Home wanted to become a placeless stay at waking. -/
+  /-- Asleep minutes' heart rate per segment, one physiology for every state
+      (`hrMean`, `hrTau`, `sigmaW`, `rho`). A state-dependent per-minute mean
+      made a night at Home want to become a placeless stay at waking. -/
   asleep : Option SleepParams := none
-  /-- A stay at no listed place has a centre: a latent with a prior from where
-      the listed places are — a Gaussian of this bandwidth (metres) around each
-      — integrated out once per segment (`centreScore`). Replaces the
-      per-minute off-network term, which charged a per-segment fact on every
-      lit minute and so grew with the stay's length. -/
+  /-- A stay at no listed place has a latent centre with a Gaussian prior of
+      this bandwidth (m) around each listed place, integrated out once per
+      segment (`centreScore`), so the cost does not grow with the stay. -/
   unlistedCentre : Option Float := none
-  /-- Moving about inside the listed place a stay is at
-      (`Assemble.stayMoveTable`): the chance a still minute is followed by a
-      moving one, and a moving one by another. A spell comes back (the stay
-      begins and ends still); a moving minute's steps are scored as a walk's;
-      the place, the position and the levels stay the stay's. -/
+  /-- Moving about inside the stay's listed place (`Assemble.stayMoveTable`):
+      the chances a still minute is followed by a moving one and a moving by a
+      moving. A moving minute's steps score as a walk's; place and levels stay. -/
   stayMove : Option (Float × Float) := none
-  /-- What the train generator knows at a train's start (`TrainLine`): with it
-      a transition into a train gives the even split over train states back,
-      and the entry scores the line and the coverage. Without it a train's
-      line is the even split alone. -/
+  /-- What the train generator knows at a train's start (`TrainLine`); without
+      it a train's line is an even split. -/
   trainLine : Option TrainLine := none
-  /-- The journey state (`Assemble` adds one when this is set): a journey is
-      one segment of the outer trellis whose cell is the best leg path over
-      its window (`Journey`), with the heart-rate and fix-presence level drawn
-      once per journey (`byMode`'s `unknown` entry) and its duration from the
-      `unknown` duration fit. `firstLeg`/`lastLeg`: `log P(mode)` of a
-      journey's first and last leg, narrated. -/
+  /-- The journey state: one outer-trellis segment whose cell is the best leg
+      path over its window (`Journey`), with levels drawn once per journey
+      (`byMode`'s `unknown`) and the `unknown` duration fit. `firstLeg` and
+      `lastLeg` are the narrated `log P(mode)` of its first and last leg. -/
   journey : Option JourneyParams := none
   deriving Inhabited
 
@@ -194,11 +166,9 @@ structure Prefix where
   posWX : Array Float := #[ZERO]
   posWY : Array Float := #[ZERO]
   posWRR : Array Float := #[ZERO]
-  /-- The awake runs — maximal stretches of minutes not in bed — as
-      `[runStart, runEnd)` minute indices, and per minute the run holding it
-      (for a minute in bed, the run after). A sleep resets the awake
-      heart-rate level: a segment's level term is one per run it spans
-      (`Stats.runs`), not one over them all. -/
+  /-- The awake runs, `[runStart, runEnd)` minute indices, and per minute its
+      run (the next one, in bed). A sleep resets the awake heart-rate level, so
+      a segment pays one level term per run it spans. -/
   runStart : Array Nat := #[]
   runEnd : Array Nat := #[]
   runOf : Array Nat := #[]
@@ -387,25 +357,15 @@ def hrMarginal (sigmaW rho hrMean hrTau n sum sq : Float) : Float :=
 def hrScore (p : Params) (m : ModeParams) (st : Stats) : Float :=
   hrMarginal p.sigmaW p.rho m.hrMean m.hrTau st.hrN st.hrSum st.hrSq
 
-/-- A stay at no listed place, its centre integrated out: the fixes scatter
-    around a centre `μ` (each at its own weight `w = 1/σ²`), `μ` a draw from
-    the prior — an unlisted place is near a listed one, a Gaussian of
-    bandwidth `h` around each of the `K` places (on the narrated days every
-    lit stay beyond 150 m of a listed place lies within 700 m of one; `h` is
-    their root-mean-square in the fit artefact). With `W = Σw`, `x̄` the
-    weighted centroid and `S` the weighted scatter about it,
+/-- A stay at no listed place, its centre `μ` integrated out: fixes scatter
+    around `μ` at weight `w = 1/σ²`, and `μ` is a Gaussian of bandwidth `h`
+    around each of the `K` listed places (lit stays beyond 150 m of a place lie
+    within 700 m of one). With `W = Σw`, weighted centroid `x̄` and scatter `S`,
     `∫ Π N(x; μ, 1/w) (1/K) Σ_k N(μ; P_k, h²) dμ
-       = e^{−S/2} · (2π/W) · (1/K) Σ_k N(x̄; P_k, h² + 1/W)`,
-    in the same frame as the listed place's per-minute term (the per-fix
-    normalisers dropped). A long stay pays its scatter and one Occam factor;
-    a short stop pays about what the per-minute term charged it. `0` with no
-    lit minute or no listed place.
-
-    The tail: each fix is an outlier with the listed place's per-minute floor
-    (`PLACE_DISTANCE_FLOOR`), so the segment is at least the floor times its
-    lit minutes — the mixture's lower bound with every fix an outlier. Without
-    it a stay hypothesis spanning a day's travel is quadratic in the distance
-    and overflows the packed trellis. -/
+       = e^{−S/2} · (2π/W) · (1/K) Σ_k N(x̄; P_k, h² + 1/W)`.
+    `0` with no lit minute or no place. Each fix is floored at
+    `PLACE_DISTANCE_FLOOR`, or a stay spanning a day's travel would overflow
+    the packed trellis. -/
 def centreScore (st : Stats) (h : Float) (places : Array (Float × Float))
     (anchored : Bool := false) : Float :=
   if st.posW ≤ ZERO || places.isEmpty then ZERO else
@@ -469,25 +429,18 @@ parameters `q`. -/
     else logNormalDensity (dist / KM_M / hours) q.mu q.sigma / (hours * KM_M)
   Float.log ((ONE - q.eps) * main + q.eps / (p.uMaxKmh * hours * KM_M))
 
-/-- Every fitted mode's displacement density of a window, in `p.disp`'s
-    order, and the flat component: what `dispPosteriorScore` normalises over.
-    It depends on the window and the length alone, so the duration cells
-    build it once per `(d, e)` for every class (`dispPosteriorFrom`). -/
+/-- Every fitted mode's displacement density of a window, in `p.disp`'s order,
+    and the flat component; built once per `(d, e)` for every class. -/
 def dispVector (p : Params) (d : Nat) (w : SegmentEvidence.Window) : FloatArray × Float := Id.run do
-  -- A mode with no fitted displacement (a plane, a bicycle) is the flat
-  -- component alone: anywhere within `uMaxKmh` over the segment's span, so
-  -- a one-minute "flight" that went nowhere is not a free bridge between
-  -- two stays.
+  -- A mode with no fitted displacement is the flat component alone, so a
+  -- one-minute "flight" that went nowhere is no free bridge between stays.
   let flat := Float.log (ONE / (p.uMaxKmh * (Verified.FloatConst.natToFloat d / MIN_PER_H) * KM_M))
   let mut vals := FloatArray.emptyWithCapacity p.disp.length
   for (m, q) in p.disp do
     vals := vals.push (dispScoreWith p m q d w)
   return (vals, flat)
 
-/-- The posterior of `mode` from a built `dispVector`: the state's own
-    density (the first entry of its mode, else the flat component) against
-    the log-sum over the fitted modes and the flat component, summed in the
-    same order every time. -/
+/-- The posterior of `mode` from a built `dispVector`, summed in a fixed order. -/
 def dispPosteriorFrom (p : Params) (mode : Mode) (v : FloatArray × Float) : Float := Id.run do
   let (vals, flat) := v
   let n := vals.size
@@ -562,12 +515,9 @@ private def pDispT : Params :=
   let b := dispPosteriorFrom pDispT m dvNaN
   (a.isNaN && b.isNaN) || a == b
 
-/-- `log f_mode(D) − log Σ_m f_m(D)` over the modes with a fitted displacement:
-    the posterior of the mode given the segment's net displacement under a flat
-    prior over those modes. A density per segment is about `−log(scale)` for
-    any displacement, so every extra segment paid for existing; this is at most
-    `0` and about `0` for a displacement typical of the mode; a mode with no
-    fit votes as the flat component. `0` without bracketing fixes. -/
+/-- `log f_mode(D) − log Σ_m f_m(D)`: the mode's posterior given net
+    displacement under a flat prior. A raw density charged every extra segment
+    about `−log(scale)`; this is at most `0`. `0` without bracketing fixes. -/
 def dispPosteriorScore (p : Params) (mode : Mode) (d : Nat) (w : Option SegmentEvidence.Window) : Float :=
   match w with
   | none => ZERO
@@ -608,9 +558,9 @@ def score (p : Params) (mode : Mode) (st : Stats) : Float :=
 
 /-! ### Tabulated
 
-Every count in a segment's statistics is a whole number no larger than the
-day, so the log-gamma and logarithm terms are tabulated once per day per mode;
-a cell then costs a few lookups. `scorePrepared` equals `score` (guarded). -/
+Every count is a whole number no larger than the day, so the log-gamma and log
+terms are tabulated per day per mode. `scorePrepared` equals `score`
+(guarded). -/
 
 structure ModeTable where
   mode : Mode

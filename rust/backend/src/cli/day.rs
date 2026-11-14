@@ -5,19 +5,14 @@ use anyhow::{Context, Result};
 use backend::lean::Answerer;
 use backend::{classification_inputs, config::Config, db, lean, sync_state};
 
-/// Print the day's DB inputs as JSON, for diffing against a golden fixture's
-/// `inputs`.
-///
-/// `backend check` proves each query executes; this shows whether it reads the
-/// right thing, since a query can run, return rows and read the wrong column.
+/// Print the day's DB inputs as JSON, to diff against a golden fixture's
+/// `inputs`: `backend check` proves a query runs, this shows what it reads.
 ///
 ///   scripts/prod-db.sh backend inputs "$USER" <date> > /tmp/rust.json
 ///   jq -S '{sleepWindows, hsmmDecode}' tests/golden/days/<date>-$USER.json
 ///
-/// Only the per-day fields compare cleanly: `sleepWindows` and `hsmmDecode`
-/// are fixed history for a past day, while `busRouteCache`, `railStopsCache`,
-/// `railRouteCache`, `knownPlaces` and `venuePriors` are global or re-mined,
-/// so a difference there is drift.
+/// Only per-day fields compare cleanly (`sleepWindows`, `hsmmDecode`); the
+/// caches, places and priors are global or re-mined.
 ///
 /// ⚠ Real location data on stdout. Redirect to /tmp, never into the repo:
 /// both health repos are public.
@@ -57,13 +52,8 @@ pub(crate) async fn inputs(user: &str, date: &str, display_tz: Option<&str>) -> 
     Ok(())
 }
 
-/// Print the capture and battery trace the head computes from a fixture's inputs.
-///
-/// `backend check` proves the stages run; this prints what a diff can be
-/// taken of.
-///
-/// Diff the text, not through `jq`: jq parses both sides to doubles, so
-/// `25.0 == 25` and a rendering difference reads as clean.
+/// Print the capture and battery trace the head computes from a fixture's
+/// inputs. Diff the text, not through `jq` (`25.0 == 25`).
 pub(crate) fn head(fixture: &str) -> Result<()> {
     let text = std::fs::read_to_string(fixture).with_context(|| format!("reading {fixture}"))?;
     let parsed: serde_json::Value =
@@ -88,12 +78,9 @@ pub(crate) fn head(fixture: &str) -> Result<()> {
     Ok(())
 }
 
-/// Run a whole day from a golden fixture: inputs → head → request → fold.
-///
-/// The chain end to end with no database. The fold's asks are answered from
-/// the fixture's recorded trace first and its OSM row set second, as the
-/// corpus gates replay. This prints the timeline; `tests/corpus/day.rs`
-/// compares it against `expected.velocity`.
+/// Run a whole day from a golden fixture with no database: inputs → head →
+/// request → fold, asks answered from the recorded trace then the row set, as
+/// the corpus does. `tests/corpus/day.rs` compares against `expected.velocity`.
 pub(crate) fn day(fixture: &str) -> Result<()> {
     let text = std::fs::read_to_string(fixture).with_context(|| format!("reading {fixture}"))?;
     let parsed: serde_json::Value =
@@ -159,13 +146,10 @@ pub(crate) fn day(fixture: &str) -> Result<()> {
     Ok(())
 }
 
-/// Build `/velocity`'s response for one day, from production.
-///
-/// The route's gate (auth, the share window, parameter validation) is
-/// `tests/suite/velocity_route.rs` and does not run here: this calls the
-/// handler's assembly directly. What it covers needs a database and the OSM
-/// mirror: that the day assembles, with every key the frontend reads present
-/// and populated. The clip is applied, so the body is what a request gets.
+/// Build `/velocity`'s response for one day from production, calling the
+/// handler's assembly directly (the route's gate is
+/// `tests/suite/velocity_route.rs`): does the day assemble with every key the
+/// frontend reads? The clip is applied.
 ///
 /// ⚠ Real location data on stdout. Redirect to /tmp, never into the repo:
 /// both health repos are public.
@@ -248,28 +232,16 @@ pub(crate) async fn velocity(
     Ok(())
 }
 
-/// Does the live mirror answer a golden day's OSM questions the way its captured
-/// row set does?
-///
-/// A count of answered keys is not evidence: a swapped `lat`/`lon` in the box
-/// WKT or a misspelled `feature_type` both answer "no ways within 50 m",
-/// well-formed and wrong, and the coverage gate checks areas, not queries. So
-/// this asks both sources the same questions. The fixture's rows came from this
-/// mirror, so they should agree; when they do not, the fields that moved tell
-/// a defect from OSM drift.
-///
-/// Drift looks like `name`/`subtype` changes, more on older days, with no
-/// `distanceM` moved. A defect looks different: a wrong box or bucket answers
-/// empty, and a coordinate read by the wrong path moves every distance.
-///
-/// Reports counts, never content: the answers carry street and venue names
-/// where the user stood, and both health repos are public.
+/// Does the live mirror answer a golden day's OSM questions as its captured row
+/// set does? A count of answered keys proves nothing (a swapped `lat`/`lon`
+/// answers "no ways", well-formed and wrong), so both sources get the same
+/// questions. Drift moves `name`/`subtype`, more on older days; a defect empties
+/// answers or moves every distance. Reports counts only: the answers name
+/// places the user stood, and both health repos are public.
 pub(crate) async fn mirror_check(fixture: &str) -> Result<()> {
-    /// The tables a row source can answer. `nearbyWays` spells no radius in its
-    /// key; the answerer uses the default.
-    ///
-    /// `nearbyLandmarks` belongs here: without it this check reported full
-    /// agreement while every stay's landmarks answered empty.
+    /// The tables a row source can answer (`nearbyWays` uses the default
+    /// radius). Without `nearbyLandmarks` the check passed while every stay's
+    /// landmarks answered empty.
     const TABLES: [&str; 4] = [
         "nearbyWays",
         "nearbyStations",
@@ -351,15 +323,9 @@ pub(crate) async fn mirror_check(fixture: &str) -> Result<()> {
             .map_or(&[], Vec::as_slice)
     }
 
-    /// Which fields moved between two answers of the same width.
-    ///
-    /// Two explanations, calling for opposite work:
-    ///
-    ///   * only `distanceM`: the arms read the stored coordinate by different
-    ///     paths (a text rendering of a `DOUBLE` against `ST_X`/`ST_Y` in the
-    ///     binary protocol), a defect here;
-    ///   * `name`, `subtype` or `osmId`: OSM moved since the capture, nothing
-    ///     to fix.
+    /// Which fields moved between two answers of the same width: only
+    /// `distanceM` is a defect here (two paths reading the stored coordinate);
+    /// `name`, `subtype` or `osmId` is OSM drift since the capture.
     fn moved_fields(want: &serde_json::Value, got: &serde_json::Value) -> Vec<String> {
         let mut fields = std::collections::BTreeSet::new();
         for (w, g) in rows_of(want).iter().zip(rows_of(got)) {
@@ -439,21 +405,11 @@ pub(crate) async fn mirror_check(fixture: &str) -> Result<()> {
     Ok(())
 }
 
-/// Run a day from the production database, either measuring the OSM gap or
-/// answering it from the mirror.
-///
-/// The offline `day` runs a fixture, which carries an `osmRowSet` and an
-/// `osmTrace`; production has neither, only an adapter.
-///
-/// `day-live` folds with `NoAnswers`, which declines everything: the keys it
-/// reports are what a live answerer must supply. Its timeline uses defaults
-/// for every key listed, so it is not a day to judge.
-///
-/// `day-mirror` walks with [`mirror_source::MirrorSource`]. What it still
-/// reports is the residue: areas nobody has fetched, plus the tables rows
-/// cannot answer (see `rowset_answerer`'s catch-all).
-///
-/// Its timeline is not a re-bless candidate; the corpus is what re-blesses.
+/// Run a day from the production database. `day-live` folds with `NoAnswers`,
+/// declining everything, so it reports what a live answerer must supply (its
+/// timeline is not one to judge). `day-mirror` walks the mirror and reports
+/// the residue: unfetched areas and tables rows cannot answer. Neither is a
+/// re-bless candidate; the corpus is.
 ///
 /// ⚠ Real location data on stdout. Redirect to /tmp, never into the repo:
 /// both health repos are public.
@@ -524,10 +480,8 @@ pub(crate) async fn day_live(
     for (table, n) in &by_table {
         eprintln!("  {table}: {n}");
     }
-    // `bestPlace` has an expected decline: the fold asks a stay's naming
-    // question once before `tzAt` resolves its zone and again after, and the
-    // early blank ask is declined. Split out, "4 unanswered" reads as "4 early
-    // asks, none missed".
+    // `bestPlace` has an expected decline (the blank ask before `tzAt`
+    // resolves), reported apart so it does not read as a miss.
     let early = declined
         .iter()
         .filter(|m| m.what == "bestPlace" && m.key.split('|').nth(4).is_none_or(str::is_empty))
@@ -539,12 +493,9 @@ pub(crate) async fn day_live(
     Ok(())
 }
 
-/// Render `/locations` for one day and print it.
-///
-/// What this exercises is floats and order: each fix carries lat, lon,
-/// altitude, speed and accuracy as JSON numbers (the reason
-/// `Verified.RowShape` refuses DOUBLE columns), and devices are concatenated
-/// before a stable sort by `ts`, so equal timestamps expose the device order.
+/// Render `/locations` for one day: floats (every fix's lat, lon, altitude,
+/// speed and accuracy) and order (devices concatenated, then stably sorted, so
+/// equal timestamps expose device order).
 pub(crate) async fn locations_check(user: &str, date: &str) -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
@@ -597,13 +548,10 @@ pub(crate) async fn locations_check(user: &str, date: &str) -> Result<()> {
     Ok(())
 }
 
-/// Write a golden fixture for one day from the live database and the OSM
-/// mirror: `{meta, inputs, expected}` as `tests/golden/days` holds them.
-///
-/// The inputs are what `day-live` loads. The fold runs against the mirror with
-/// every answer recorded: the three matcher reads become `osmTrace`, the rows
-/// behind the other tables `osmRowSet`, the declines ride with them, and the
-/// timeline becomes `expected.statesOut`, the oracle the day corpus replays.
+/// Write a golden fixture for one day from the live database and the mirror:
+/// `{meta, inputs, expected}`. The fold runs against the mirror recording every
+/// answer (matcher reads as `osmTrace`, other rows as `osmRowSet`, declines with
+/// them) and the timeline becomes `expected.statesOut`.
 ///
 /// ⚠ Real location data in the file. `tests/golden` is gitignored and its
 /// inner repository has no remote: commit there before overwriting a day, so a
@@ -699,25 +647,15 @@ pub(crate) async fn capture_day(
     Ok(())
 }
 
-/// Several days through the serving path, in one process.
-///
-/// The Lean arena never returns memory to the OS, so a process's high-water is
-/// set by the heaviest thing it has done. Measuring that needs several
-/// different days without a restart, under Linux cgroup accounting: a Job,
-/// running the production image. The serving pod folds too rarely to show it.
-///
-/// It has to be this binary: a debug image would be a different artefact
-/// for a memory question. Read-only, and still a production actor: it takes
-/// connections and read locks like any client.
-///
-/// Repeat a day at the end to prove the ratchet: a high-water tracking the
-/// current day would fall back on a light one. It does not.
+/// Several days through the serving path in one process, for memory: the Lean
+/// arena never returns memory, so the high-water is the heaviest day's, which
+/// only a production-image Job under cgroup accounting shows. Read-only but a
+/// production actor (connections, read locks). Repeat a day at the end: the
+/// high-water does not fall back on a light one.
 pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
     backend::lean::init().context("starting the Lean runtime")?;
-    // The fold needs the database and nothing else. The config once demanded
-    // a credential this never read, and the first Job died on it; a
-    // measurement job must also never hold what could write a health stream,
-    // which is the posture every other batch verb refuses.
+    // The fold needs the database and nothing else; a measurement job must hold
+    // no credential that could write a health stream.
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
@@ -779,12 +717,9 @@ pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
 }
 
 /// `recapture-walkable`: re-record only a golden fixture's `walkableRoads` from
-/// the live mirror, in place. Every other answer and every input stays
-/// the frozen record; see [`backend::mirror_source::rerecord_walkable`].
-///
-/// Reads today's mirror, so it brings in every OSM edit to those ways since
-/// the day was frozen. Adjudicate what moves before blessing; never bless a
-/// `wayName` move unread.
+/// the live mirror, in place ([`backend::mirror_source::rerecord_walkable`]).
+/// This brings in every OSM edit since the capture: read what moves before
+/// blessing, a `wayName` move especially.
 pub(crate) async fn recapture_walkable(user: &str, fixture_path: &str) -> Result<()> {
     backend::lean::init().context("starting the Lean runtime")?;
     let cfg = backend::config::Config::from_env().context("reading configuration")?;

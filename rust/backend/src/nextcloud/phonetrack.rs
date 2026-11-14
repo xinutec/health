@@ -1,27 +1,13 @@
 //! PhoneTrack GPS fixes.
 //!
-//! One Nextcloud user has sessions, each session has devices, and each device
-//! has points. There is no endpoint that returns points across devices, so a
-//! range fetch is a nested walk: one HTTP call per device per chunk.
+//! A Nextcloud user has sessions, sessions have devices, devices have points,
+//! and no endpoint spans devices, so a range fetch is one HTTP call per device
+//! per chunk.
 //!
-//! # What this feeds, and why that raises the stakes on a partial failure
-//!
-//! These fixes were the evidence the Fitbit wall-clock inference used to decide
-//! which zone a row was recorded in — a decision written into `tz` and
-//! `ts_utc` columns and never revisited. They are still the day's track.
-//!
-//! A device whose fetch fails contributes zero points, which is exactly
-//! what a device that was switched off contributes. Returning the survivors
-//! alone would make a travel day whose only fixes came from the one device
-//! that failed indistinguishable from a day spent at home, and the rows would
-//! be stamped with the profile zone, confidently and wrongly.
-//!
-//! This port does not paper over that by failing the whole fetch, because the
-//! partial answer really is better than none for the common case of one stale
-//! device on an account with two. What it does instead is stop throwing away the
-//! count: [`TrackFetch`] carries `failed_devices` out, so the caller can say so
-//! in a log line that names a number rather than leaving the evidence scattered
-//! across per-device warnings nobody correlates.
+//! A device whose fetch fails contributes zero points, just like a device that
+//! was switched off, so a travel day could read as a day at home. The partial
+//! answer is kept (one stale device of two is common), but [`TrackFetch`]
+//! carries `failed_devices` out so the caller logs a number.
 
 use anyhow::Context;
 use serde::Deserialize;
@@ -31,10 +17,8 @@ use super::client::NextcloudClient;
 use super::credentials::NcError;
 use crate::lean;
 
-/// One GPS fix as PhoneTrack stores it.
-///
-/// Every field past the position is nullable because PhoneTrack takes what the
-/// phone offered — an indoor fix has no speed, a desktop client has no battery.
+/// One GPS fix as PhoneTrack stores it. Everything past the position is
+/// nullable: an indoor fix has no speed, a desktop client no battery.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawTrackPoint {
     /// Unix seconds.
@@ -47,16 +31,9 @@ pub struct RawTrackPoint {
     pub battery: Option<f64>,
 }
 
-/// Halve an inclusive window of whole seconds, or `None` when it is already one
-/// second wide.
-///
-/// The two halves cover the input exactly — no gap and no overlap. Both
-/// bounds are inclusive, so the split has to be `[a, mid]` and `[mid + 1, b]`. Splitting at `mid` on both
-/// sides would re-fetch whatever sits exactly on the boundary, and moving the
-/// low end instead would drop it.
-///
-/// `hi` is strictly narrower than the input, which is what makes the
-/// caller's loop terminate rather than split a two-second window forever.
+/// Halve an inclusive window of whole seconds into `[a, mid]` and `[mid + 1,
+/// b]`, no gap and no overlap, or `None` when it is one second wide. `hi` is
+/// strictly narrower, so the caller's loop terminates.
 pub fn split_window(a: i64, b: i64) -> Option<((i64, i64), (i64, i64))> {
     if b <= a {
         return None;
@@ -70,19 +47,12 @@ pub fn split_window(a: i64, b: i64) -> Option<((i64, i64), (i64, i64))> {
 pub struct TrackFetch {
     /// Ascending by `ts`.
     pub points: Vec<RawTrackPoint>,
-    /// Devices whose points call failed and were skipped.
-    ///
-    /// Not an error count to be summed and forgotten. A non-zero value means
-    /// `points` is a subset of the day, and every consumer that reads absence as
-    /// evidence is now reading it wrongly.
+    /// Devices whose points call failed and were skipped. Non-zero means
+    /// `points` is a subset, and absence in it is not evidence.
     pub failed_devices: usize,
-    /// Windows that came back at the cap and could not be split any further
-    /// because they were already one second wide.
-    ///
-    /// The only remaining way to lose points here, and it is now counted
-    /// instead of invisible. Splitting resolves every ordinary case; this is
-    /// over 10 000 fixes inside a single second from one device, which is not a
-    /// capture rate but a fault. Non-zero means `points` is a subset.
+    /// Windows that came back at the cap while one second wide, the one
+    /// remaining way to lose points (over 10 000 fixes in a second is a fault,
+    /// not a rate). Non-zero means `points` is a subset.
     pub capped_windows: usize,
 }
 
@@ -95,18 +65,10 @@ struct WireDevice {
 #[derive(Debug, Deserialize)]
 pub struct Session {
     id: i64,
-    /// Absent for a session nothing has ever posted to. `Option` and not
-    /// `#[serde(default)]` into an empty map: "no devices yet" and "devices
-    /// omitted from this response" would otherwise both read as zero devices,
-    /// and only one of them is a fact about the account.
-    ///
-    /// `BTreeMap`, and the order is the point. The range fetch
-    /// concatenates points device by device and then sorts by timestamp with a
-    /// stable sort, so points sharing a timestamp keep whatever order this walk
-    /// produced. A `HashMap` randomises iteration per process, which would make
-    /// that order differ between two runs of the same binary on the same day,
-    /// and duplicated timestamps are real (95 in one day's 1465 points).
-    /// Sorting by device key gives determinism, which is the requirement.
+    /// Absent for a session nothing has posted to; `Option`, so "no devices
+    /// yet" and "devices omitted" stay distinct. A `BTreeMap` for determinism:
+    /// points are concatenated per device and stably sorted by timestamp, and
+    /// equal timestamps are real, so device order must not vary between runs.
     #[serde(default)]
     devices: Option<std::collections::BTreeMap<String, WireDevice>>,
 }
@@ -122,10 +84,8 @@ struct WirePoint {
     batterylevel: Option<f64>,
 }
 
-/// The sessions listing, which is an object keyed by session token.
-///
-/// Only the values matter here — the token is the caller's own secret and
-/// nothing downstream keys on it.
+/// The sessions listing, an object keyed by session token; only the values are
+/// kept.
 pub fn parse_sessions(body: &str) -> anyhow::Result<Vec<Session>> {
     // `BTreeMap` for the same reason as `Session::devices` — this map's values
     // become `self.sessions`, which the range fetch walks in order.
@@ -134,12 +94,8 @@ pub fn parse_sessions(body: &str) -> anyhow::Result<Vec<Session>> {
     Ok(map.into_values().collect())
 }
 
-/// One device's points, in PhoneTrack's wire shape.
-///
-/// Not sorted here. A single device's points arrive ordered, but the range
-/// fetch concatenates several devices and several chunks, so the sort belongs
-/// where the concatenation happens or it would be a sort per device that still
-/// left the whole unsorted.
+/// One device's points in PhoneTrack's wire shape. Not sorted: the range fetch
+/// sorts once after concatenating devices and chunks.
 pub fn parse_points(body: &str) -> anyhow::Result<Vec<RawTrackPoint>> {
     let wire: Vec<WirePoint> =
         serde_json::from_str(body).context("decoding a phonetrack points response")?;
@@ -157,11 +113,8 @@ pub fn parse_points(body: &str) -> anyhow::Result<Vec<RawTrackPoint>> {
         .collect())
 }
 
-/// A client plus the user's session/device list, built once and reused.
-///
-/// The list costs a credential read and an HTTP call. A 180-day tz-inference
-/// window is 26 chunks, and paying that per chunk is 26 times the cost for an
-/// answer that does not change within a run.
+/// A client plus the user's session/device list, built once per run: the list
+/// costs a credential read and an HTTP call per chunk otherwise.
 pub struct PhoneTrack {
     client: NextcloudClient,
     sessions: Vec<Session>,
@@ -197,13 +150,9 @@ impl PhoneTrack {
             .sum()
     }
 
-    /// Fetch every device's points between two dates, inclusive of both
-    /// midnights.
-    ///
-    /// The bounds are UTC midnights from [`lean::midnight_utc`], not local
-    /// ones, for a reason worth stating: the window exists to find fixes near a
-    /// wall clock whose zone is unknown, so resolving its bounds in a local zone
-    /// would need the answer the fetch is being run to produce.
+    /// Fetch every device's points between two dates, both midnights included.
+    /// UTC midnights: the window finds fixes near a wall clock of unknown zone,
+    /// so it cannot be bounded in a local one.
     pub async fn fetch_range(
         &self,
         pool: &MySqlPool,
@@ -215,14 +164,8 @@ impl PhoneTrack {
         self.fetch_window(pool, min_ts, max_ts).await
     }
 
-    /// The same walk, bounded by explicit Unix seconds.
-    ///
-    /// Exists because not every window is date-aligned. The day loader asks
-    /// for four ranges and only one of them starts at a midnight: the others
-    /// are `<date>T12:00:00Z` cut-offs and an 18-hour battery-tail look-ahead
-    /// off the local day end. `fetchTrackPointsRange` takes strings and lets
-    /// `new Date(...)` parse either shape; splitting the bound resolution out
-    /// here is the same thing said in a type.
+    /// The same walk bounded by explicit Unix seconds, since not every window is
+    /// date-aligned (the day loader's noon cut-offs and battery-tail look-ahead).
     pub async fn fetch_window(
         &self,
         pool: &MySqlPool,
@@ -230,13 +173,8 @@ impl PhoneTrack {
         max_ts: i64,
     ) -> Result<TrackFetch, NcError> {
         let mut out = TrackFetch::default();
-        // Every device at once, in a fixed order. One request per device per
-        // window, awaited one after the other, was the day's `load.phonetrack`
-        // — 0.5 to 1.2 s on the pod, a round trip at a
-        // time. The requests are independent GETs under basic auth, so they go
-        // out together; the results are read back in the order the devices
-        // were listed, so the stable sort below sees the same insertion order
-        // and fixes at an equal timestamp come out as they always did.
+        // Every device at once (they are independent GETs), read back in the
+        // listed order so the stable sort sees the same insertion order.
         let devices: Vec<(i64, i64)> = self
             .sessions
             .iter()
@@ -259,11 +197,8 @@ impl PhoneTrack {
                     out.points.extend(points);
                     out.capped_windows += capped;
                 }
-                // A revoked app password is not a per-device problem and
-                // must not be swallowed device by device: every other call
-                // fails the same way, and the durable answer the user needs
-                // ("relink Nextcloud") would be buried under a warning per
-                // device. It propagates.
+                // A revoked app password is not a per-device problem: it
+                // propagates, so the user sees "relink Nextcloud" once.
                 Err(e @ (NcError::ReauthRequired | NcError::NotLinked)) => return Err(e),
                 Err(e) => {
                     out.failed_devices += 1;
@@ -281,25 +216,13 @@ impl PhoneTrack {
     /// One device's points for `[min_ts, max_ts]`, splitting when the response
     /// comes back at the cap.
     ///
-    /// ⚠ PhoneTrack truncates at `maxPoints` and says nothing. A full
-    /// response is shaped exactly like a device that happened to record that
-    /// many, so the tail is lost in silence. This reads the symptom — a
-    /// response of exactly the cap — rather than predicting a capture rate, and
-    /// so it is right whether or not any device is fast enough today. The
-    /// arithmetic that motivated it: a 7-day chunk at one fix per minute is
-    /// 10 080 points from a single device, against a 10 000 cap.
+    /// ⚠ PhoneTrack truncates at `maxPoints` and says nothing: a full response
+    /// looks like a device that recorded exactly that many. This reads the
+    /// symptom (a response at the cap) rather than predicting a capture rate.
     ///
-    /// The halves do not overlap. The bounds are inclusive at both ends,
-    /// so `[a, mid]` and `[mid + 1, b]` cover `[a, b]` exactly, with no gap and no repeated fix.
-    ///
-    /// Iterative, not recursive, because an async fn that calls itself
-    /// needs boxing; the stack here is the recursion made visible. It
-    /// terminates: every split strictly narrows a window of whole seconds, and
-    /// a window one second wide is not split again.
-    ///
-    /// The returned count is windows that were at the cap and one second wide,
-    /// which is the only case that still loses points — over 10 000 fixes in a
-    /// single second from one device, which is a fault rather than a rate.
+    /// Iterative, since an async fn calling itself needs boxing; it terminates
+    /// because every split narrows a window of whole seconds. Returns the count
+    /// of capped one-second windows, the only case still losing points.
     async fn fetch_device_window(
         &self,
         pool: &MySqlPool,
@@ -353,11 +276,6 @@ impl PhoneTrack {
     }
 }
 
-/// The per-request point cap.
-///
-/// PhoneTrack truncates at this rather than paginating, and there is no field
-/// in the response saying it did. The arithmetic is uncomfortably close: a
-/// 7-day window at one fix per minute is 10 080 points from a single device,
-/// over this cap. Whether real capture rates reach that is not measured, and
-/// silent truncation would look like a quiet day rather than a lost tail.
+/// The per-request point cap. PhoneTrack truncates at it silently, and a 7-day
+/// window at one fix a minute is 10 080 points from one device.
 const MAX_POINTS: i64 = 10_000;
