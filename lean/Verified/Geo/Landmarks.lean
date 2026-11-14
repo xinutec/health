@@ -1,41 +1,21 @@
 /-!
 # Naming the venue a stay is at
 
-This turns OSM features near a stay into the candidate venues the picker ranks.
-It is what puts a venue name — a restaurant, a hospital — on a timeline instead
-of a bare "stationary", so a gap here is not a missing optimisation — it is a
-place the person went, unnamed.
-
-## One feature can be several landmarks
+Turns OSM features near a stay into the candidate venues the picker ranks: a
+gap here is a place the person went, left unnamed.
 
 Each of `amenity`, `tourism`, `leisure`, `shop`, `place` spawns its own entry,
-so a feature tagged both `amenity=cafe` and `tourism=attraction` appears twice.
-That is deliberate: the picker scores them independently and resolves precedence
-itself. Collapsing them here would decide, silently, which of the two a person
-meant.
+so a cafe that is also an attraction appears twice and the picker decides.
 
-## The enclosing-institution override, and why it is narrow
+A large institution whose footprint contains the stay outranks nearer points,
+or a stay deep in a hospital is named after the nearest pharmacy. The
+point-only radius fallback is for a hospital mapped as a point alone: a
+university's campus eateries are destinations, and a polygon already has the
+precise `encloses` test.
 
-A stay deep inside a hospital campus would otherwise be named after whatever
-tiny point POI sits nearest the noisy GPS centroid — a hairdresser, a pharmacy.
-So a large institution whose footprint contains the stay outranks nearer points.
-
-The point-only radius fallback is restricted to a hospital mapped as a point,
-and the restriction is the whole design:
-
-* a long sedentary stay by a hospital node is the hospital (04-29);
-* a university or college has campus eateries you visit as destinations: a
-  Greek restaurant next to LSHTM is the restaurant, not the university (05-14);
-* a polygon already carries the precise `encloses` signal, so the loose radius
-  must not widen it.
-
-A railway station's building is the other enclosing institution: an hour inside
-Gare Montparnasse read "Maison du Chocolat", "McDonald's" and "Artisanal", the
-shops of its gallery, and no rule about the train could reach them. The outline
-settles it: inside the station building is at the station. Outline only, and a
-station mapped as a point gets no radius: the nodes of a large station
-(entrances, platforms) spread hundreds of metres, and dinner at Pizza Union is
-within 150 m of a King's Cross entrance (05-22).
+A railway station's building is the other enclosing institution, so an hour
+inside a station is not named after its shops. Outline only: a large station's
+nodes spread hundreds of metres, and a radius would claim nearby restaurants.
 
 Pure and total. UNPROVEN; the guards pin the thresholds and the tag order.
 -/
@@ -48,12 +28,9 @@ def LARGE_INSTITUTION_SUBTYPES : List String := ["hospital"]
 def STATION_BUILDING : String × String := ("railway", "train_station")
 
 /-- Open spaces where being inside the outline names a stay nothing else names:
-from the middle of a park every venue is far and every edge is out of range
-(lying on the grass in Cristina Enea, 130 m from its outline, the stop had no
-name). A fallback, not an enclosing institution: as one it beat the lodging rule
-and renamed 04-29's confirmed hotel stay after the palace garden beside it.
-Outline only: a park mapped as a point says nothing about where it ends.
-`encloses` is the true inside test for a closed way. -/
+from the middle of a park every venue is far. A fallback, not an enclosing
+institution, which would beat the lodging rule for a hotel beside a garden.
+Outline only (`encloses`); a point says nothing about where a park ends. -/
 def ENCLOSING_OPEN_SPACES : List (String × String) :=
   [("leisure", "park"), ("leisure", "garden"), ("natural", "beach")]
 
@@ -70,15 +47,12 @@ picker's tie-break; reordering it renames places. -/
 def LANDMARK_TAG_KEYS : List String := ["amenity", "tourism", "leisure", "shop", "place"]
 
 /-- Tags whose named features are places the venue tags above miss:
-`(key, values, the type they read as)`. The mirror's fetch asks for this list
-(`venuetags`) and files the features as landmarks; without it they arrived, or
-were never fetched, and no stay could be named after them.
+`(key, values, the type they read as)`. The mirror fetches by this list
+(`venuetags`) and files them as landmarks.
 
-* `building=hotel`: a hotel mapped as the building alone (a San Sebastián stay
-  was named after the pizzeria next door). Read as the `tourism=hotel` it
-  stands for, so the lodging rule sees it.
-* `natural=beach`: La Concha, where an afternoon on the beach came out as a
-  stop with no name, the nearest named thing a car park. -/
+* `building=hotel`: a hotel mapped as its building alone, read as
+  `tourism=hotel` so the lodging rule sees it.
+* `natural=beach`: otherwise a beach afternoon is named after a car park. -/
 def VENUE_TAGS : List (String × List String × String) :=
   [("building", ["hotel"], "tourism"), ("natural", ["beach"], "natural"),
    ("building", ["train_station"], "railway")]
@@ -111,12 +85,9 @@ structure Landmark where
 private def tagOf (tags : List (String × String)) (k : String) : Option String :=
   (tags.find? (fun p => p.1 == k)).map (·.2)
 
-/-- Should this landmark outrank nearer point POIs?
-
-`amenity` only, `hospital` only, and the radius fallback for points only; the
-one other institution is a railway station's building (`STATION_BUILDING`), by
-outline alone. See the module note — each narrowing is a specific day that went
-wrong. -/
+/-- Should this landmark outrank nearer point POIs? `amenity=hospital`, with the
+radius fallback for points only, or a railway station's building
+(`STATION_BUILDING`) by outline. See the module note. -/
 def isEnclosingInstitution (type_ subtype : String) (distanceM : Float)
     (encloses isPoint : Bool) : Bool :=
   if (type_, subtype) == STATION_BUILDING then encloses && !isPoint
@@ -129,11 +100,8 @@ def isEnclosingInstitution (type_ subtype : String) (distanceM : Float)
 def filterLandmarks (ls : List Landmark) : List Landmark :=
   ls.filter (fun l => !(l.type_ == "tourism" && POI_MARKER_TOURISM.contains l.subtype))
 
-/-- Turn features into ranked candidates.
-
-An unnamed feature is skipped entirely. A landmark with no name cannot name a
-place, and carrying it would let the picker choose "" over a real venue further
-away. -/
+/-- Turn features into ranked candidates. Unnamed features are skipped, or the
+picker could choose "" over a real venue further away. -/
 def shapeLandmarks (points lines : List Feature) : List Landmark :=
   -- ⚠ points first, then lines — the order feeds a stable sort below, so it is
   -- the tie-break between a node and a way at the same distance.

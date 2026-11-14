@@ -6,19 +6,15 @@ import Verified.Hsmm.Observation
 import Verified.Hsmm.LineProximity
 import Verified.Hsmm.ChainContext
 /-!
-# Unified route-graph model + fully Lean-computed route-rail factor
+# Route-graph model and the route-rail factor
 
-Composes the route-graph query primitives (`edgesNearIdx`, `pathExistsOnLine`,
-`pointToPolylineMeters`, `parseLineMemberships`-derived memberships, `haversine`)
-into the route-rail emission term — the first factor whose route-graph facts
-(`linesPresent` / `linesUnderground` at each bookend fix, and per-line
-connectivity) are computed in Lean rather than taken as caller-resolved booleans.
+Composes the route-graph primitives (`edgesNearIdx`, `pathExistsOnLine`,
+`pointToPolylineMeters`, line memberships, `haversine`) into the route-rail
+emission term: lines present and underground at each bookend fix, and per-line
+connectivity.
 
-The shell supplies parsed edges (id, geometry, line memberships, underground
-flag, and the `toFixed`-derived node ids that define adjacency, the
-graph-structure boundary); everything downstream is pure Lean. No caches: pure
-recompute, since a cache keyed by rounding would affect only the hit rate, never
-results. UNPROVEN; pinned by the `#guard`s.
+Rust supplies parsed edges with their node ids; everything after is Lean, with
+no caches. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.RouteModel
@@ -108,10 +104,9 @@ def toConnGraph (g : RouteGraphModel) : RouteConnectivity.Graph :=
   let lines := g.edges.foldl (fun m e => m.insert e.id e.lineMemberships) {}
   { endpoints, lines, nodeEdges := g.nodeEdges }
 
-/-- The part of an observation `routeRailEvidence` reads: the fix present or
-    not, and the fixes bracketing the minute. Two minutes with the same key get
-    the same value for every state — every minute of one fix-less gap shares
-    it — so the model build memoises on it. -/
+/-- The part of an observation `routeRailEvidence` reads: fix present, and the
+    fixes bracketing the minute. Every minute of one fixless gap shares it, so
+    the model build memoises on it. -/
 def railKey (o : ObsRow) : Bool × Option Int × Option Int :=
   -- A bracketing fix is the minute aggregate at its timestamp, so the
   -- timestamp names it.
@@ -135,16 +130,11 @@ def routeRailEvidence (g : RouteGraphModel) (cg : RouteConnectivity.Graph)
           else if next.ts - prev.ts > MAX_GAP_DURATION_S then 0.0
           else if haversineMeters prev.lat prev.lon next.lat next.lon < MIN_GAP_DISTANCE_M then 0.0
           else
-            -- A walked minute inside the gap is an interchange (06-09:
-            -- Victoria → King's Cross, a step burst, King's Cross → Baker
-            -- Street, all dark). The ride this minute belongs to then reaches
-            -- only one bookend, the one on its side of the walk, so the line
-            -- is asked to be present and underground there alone, and the
-            -- end-to-end connectivity (which only a line spanning the whole gap
-            -- could pass: the Circle, on both rides) is not asked. A minute
-            -- walked on both sides (a platform descent after the fix, then the
-            -- interchange) keeps the whole-gap rule: scoring it as bookend-less
-            -- costs 06-09 its first ride's mode.
+            -- A walked minute inside a dark gap is an interchange. A ride minute
+            -- then reaches only the bookend on its side of the walk, so the line
+            -- must be present and underground there alone, and end-to-end
+            -- connectivity is not asked. A minute walked on both sides keeps
+            -- the whole-gap rule, or the first ride loses its mode.
             let pe := computeFixLineEvidence g prev.lat prev.lon
             let ne := computeFixLineEvidence g next.lat next.lon
             let lineAt := fun (e : FixLineEvidence) =>
@@ -197,12 +187,10 @@ private def train : State := ⟨.train, none, some "Test Line"⟩
 
 /-! ## Line-proximity factor over the model
 
-The other GPS-present train term: boost when the fix sits on the modelled line's
-corridor, penalise when the line is modelled but the fix is off it (or is
-road-nearer). `lineModeled` (line appears anywhere in the graph) and `lineNear`
-(a line edge within `NEAR_M`) are computed in Lean; road/rail distances arrive
-on the observation (caller-computed proximity). Delegates the pure decision to
-`LineProximity.lineProximityFactor`. -/
+The other GPS-present train term: a boost when the fix is on the line's
+corridor, a penalty when the line is modelled but the fix is off it or nearer a
+road. `lineModeled` and `lineNear` (an edge within `NEAR_M`) come from the graph;
+the decision is `LineProximity.lineProximityFactor`. -/
 
 def NEAR_M : Float := 250
 
@@ -216,12 +204,9 @@ def linesWithinRadius (g : RouteGraphModel) (lat lon radiusM : Float) : List Str
   (edgesNearIdx g lat lon radiusM).foldl (fun acc i =>
     g.edges[i].lineMemberships.foldl appendDistinct acc) []
 
-/-- What `lineProximityFactor` asks of the graph at one minute, which is the
-    same for every state at that minute: the lines within `NEAR_M` of the fix,
-    and whether ANY railway edge is (the graph holds every railway way,
-    memberships only for the named lines). Empty and `false` without a fix.
-    Computed once per minute by the model build instead of
-    once per state per minute. -/
+/-- What `lineProximityFactor` asks of the graph at one minute, the same for
+    every state: the lines within `NEAR_M` of the fix and whether any railway
+    edge is. Empty and `false` without a fix. Computed once per minute. -/
 structure MinuteLines where
   linesNear : List String
   railNear : Bool
@@ -274,12 +259,10 @@ private def lpNullObs : ObsRow := { lpObs 51.50 (-0.10) none none with gps := no
 
 /-! ## Chain-context routing over the model
 
-The exit→entry chain factor: geometric feasibility of a segment change from where
-the previous segment ended (`prevGpsFix`). Entering/leaving a place pays on the
-fix↔place distance; boarding `train @ L` pays on the exit anchor↔L-track distance.
-σ widens with fix staleness. The penalty kernels are `ChainContext.stayPenalty` /
-`boardingPenalty`; this composes them over the model's per-line edges (with bbox
-rejection) and caller-provided place coordinates. -/
+The exit→entry chain factor: whether a segment change is feasible from where
+the previous one ended (`prevGpsFix`). A place pays on fix↔place distance,
+boarding `train @ L` on fix↔track distance, σ widening with staleness. Composes
+`ChainContext.stayPenalty`/`boardingPenalty` over per-line edges. -/
 
 def LINE_MISS_DIST_M : Float := 5000
 private def piC : Float := 3.141592653589793
@@ -328,10 +311,9 @@ def isMovingMode : Mode → Bool
   | .walking | .cycling | .driving | .train | .plane => true
   | _ => false
 
-/-- The place-anchored boarding penalty of a pair, when the pair has one: `toS`
-    a named train line with edges, `fromS` a place with coordinates. It does not
-    depend on the minute, so `buildTransitions` computes it once per pair and
-    hands it to `chainContextFrom` for every `t`. -/
+/-- The place-anchored boarding penalty of a pair (`toS` a line with edges,
+    `fromS` a place with coordinates). Minute-independent, so computed once per
+    pair. -/
 def chainPlaceBoard (edgesByLine : Std.HashMap String (List LineEdge))
     (placeCoords : Std.HashMap Int (Float × Float)) (fromS toS : State) : Option Float :=
   if toS.mode == .train then
@@ -348,12 +330,9 @@ def chainPlaceBoard (edgesByLine : Std.HashMap String (List LineEdge))
     | none => none
   else none
 
-/-- What the chain term asks of one minute that does not depend on the pair:
-    the stay penalty from the minute's last fix to a place,
-    and the fix-anchored boarding penalty for a line — each 0 without a
-    previous fix. `chainMinute` computes them on
-    demand; the transition build tables them once per minute
-    (`chainMinuteTabled`) instead of once per pair per minute. -/
+/-- The pair-independent chain answers for one minute: the stay penalty from
+    its last fix to a place and the fix-anchored boarding penalty for a line,
+    0 without a fix. Tabled once per minute (`chainMinuteTabled`). -/
 structure ChainMinute where
   stayAt : Int → Float
   boardFixAt : String → Float
@@ -383,10 +362,8 @@ def chainMinuteTabled (edgesByLine : Std.HashMap String (List LineEdge))
   { stayAt := fun pid => (stays.get? pid).getD (cm.stayAt pid)
     boardFixAt := fun l => (boards.get? l).getD (cm.boardFixAt l) }
 
-/-- The fix-dependent half of a minute's chain answers: the fix's distance to
-    each line and to each place. They depend on the fix alone, and every minute
-    of a gap reads the same `prevGpsFix`, so the transition build computes them
-    once per distinct fix rather than once per minute. -/
+/-- A fix's distance to each line and place. Every minute of a gap reads the
+    same `prevGpsFix`, so these are computed once per distinct fix. -/
 structure FixDists where
   fx : Observation.Fix
   lineD : Std.HashMap String Float
@@ -403,10 +380,8 @@ def fixDists (edgesByLine : Std.HashMap String (List LineEdge))
       | some (plat, plon) => m.insert pid (haversineMeters fx.lat fx.lon plat plon)
       | none => m) {} }
 
-/-- `chainMinuteTabled`, reading the distances from `fd` when it was computed
-    for this minute's own `prevGpsFix`; otherwise exactly `chainMinuteTabled`.
-    Same penalties of the same distances and the same slop, so the same values
-    — a fix `fd` was not built for falls through rather than being trusted. -/
+/-- `chainMinuteTabled`, reading distances from `fd` when it was built for this
+    minute's `prevGpsFix`; any other fix falls through, so values are identical. -/
 def chainMinuteTabledD (edgesByLine : Std.HashMap String (List LineEdge))
     (placeCoords : Std.HashMap Int (Float × Float)) (places : List Int) (lines : List String)
     (fd : Option FixDists) (o : ObsRow) : ChainMinute :=

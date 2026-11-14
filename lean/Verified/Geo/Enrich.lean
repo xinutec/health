@@ -7,30 +7,14 @@ import Verified.Fix
 Sample along the leg, aggregate the ways near it, refine the mode, name the road,
 tag the city.
 
-## Why this is in the fold at all
+It is in the fold because `vehicleSplit` carves a hidden ride out of a walk
+late, and the on-foot remainders inherit enrichment from a window spanning the
+ride; `reenrichSplitWalks` sends them back through here. It reads `mode`,
+`avgSpeed` and `maxSpeed`, so `walkRemainder` recomputes those first, or the
+walk is judged on the ride's speeds.
 
-The enrichment stage runs once per moving segment, ~30 passes before the
-cascade, and is not the fold's business. But `vehicleSplit` carves a hidden
-ride out of a walk long after it, leaving two on-foot remainders whose
-inherited enrichment was derived from a window that spanned the ride (07-12's
-walk down Upper Street was labelled "Euston Road" because its parent had begun
-at King's Cross, across a tube ride). `reenrichSplitWalks` sends those
-remainders back through this function, so the fold needs it.
-
-It reads `mode`, `avgSpeed` and `maxSpeed`, so a remainder's kinematics must be
-recomputed before it is re-enriched — otherwise the cascade is handed the ride's
-speeds and duly reaches the ride's conclusion about a walk. `walkRemainder` does
-that, upstream in the same pass list.
-
-## What is here and what stays shell
-
-`nearbyWays` and `reverseGeocode` are lookups; the caller supplies them. Every
-decision taken on their answers is here.
-
-The cascade reads neither rail/road proximity nor biometrics, so neither is
-computed here.
-
-UNPROVEN; the guards pin its answers.
+`nearbyWays` and `reverseGeocode` are lookups the caller supplies; every
+decision on their answers is here. UNPROVEN; the guards pin its answers.
 -/
 
 namespace Verified.Geo.Enrich
@@ -42,19 +26,12 @@ open Verified.Geo.RefineMode (sampleIdxs dedupNearestWays refineModeLegacyCascad
 
 /-! ## City, from two reverse geocodes -/
 
-/-- The `address` object of a Nominatim reverse-geocode.
+/-- The `address` object of a Nominatim reverse-geocode: the five city-like
+fields `extractCity` walks, and the rest the venue namers read
+(`Verified.Geo.BestPlace`). One record, as the response has one shape.
 
-The five city-like fields are what `extractCity` walks; the rest are what the
-venue namers read (`Verified.Geo.BestPlace`). One record rather than two
-projections, because the two consumers read the same response and a second
-record would drift against it — the fix series get projected per consumer
-because they are pure input, but this one has a canonical shape upstream and
-keeping that shape is what makes the wire encoding auditable.
-
-Nominatim omits a field it has no value for, and can also return it empty.
-`hasSpecificVenue` tests truthiness (an empty string is absent) while
-`nominatimVenueName` takes the first present field (an empty string is present,
-and wins). Both are modelled as they are written. -/
+A field can be absent or empty: `hasSpecificVenue` treats empty as absent, while
+`nominatimVenueName` takes the first present field, empty included. -/
 structure Address where
   amenity : Option String := none
   tourism : Option String := none
@@ -122,10 +99,9 @@ def N_SAMPLES : Nat := 5
 is 16 rather than the building-level 18 the venue namers use. -/
 def CITY_ZOOM : Int := 16
 
-/-- `Math.round(n * 1000) / 1000` — a ~110 m grid. Raw endpoints never repeat
-between days, so keying the city lookup on them paid live Nominatim on every
-fresh compute; habitual endpoints now share one cell forever. The cost is a city
-boundary crossing a cell, which the both-endpoints-must-agree rule absorbs. -/
+/-- A ~110 m grid (halves up) for the city lookup key, so habitual endpoints
+share a cached cell instead of a live Nominatim call per day. A boundary
+crossing a cell is absorbed by requiring both endpoints to agree. -/
 def cityGrid (n : Float) : Float := Float.floor (n * 1000 + 0.5) / 1000
 
 /-- How many fixes of one leg `roadsByTime` asks the ways at, at most: every
@@ -136,13 +112,9 @@ def ROAD_SAMPLES_MAX : Nat := 240
 abbrev Pt := Verified.GeoFix
 
 /-- A railway names a train leg only when it lies near at least half the leg's
-    sampled points. The pick is the nearest railway merged across the samples,
-    so on a long ride that leaves the mapped network one sample's railway could
-    name the whole leg: a Eurostar from St Pancras read "Circle, Hammersmith &
-    City and Metropolitan Lines", the tube under King's Cross, near its first
-    sample only. A tube ride's samples all sit on its line and keep their name;
-    the unsupported name is dropped, not replaced, and the leg stays a train.
-    Any other pick passes. -/
+    sampled points: the pick is the nearest railway merged across samples, so a
+    long ride leaving the mapped network could take one sample's tube line. An
+    unsupported name is dropped and the leg stays a train; other picks pass. -/
 def railNameSupported (r : Verified.Geo.RefineMode.ModeRefinement) (wayResults : Array (Array NearbyWay)) :
     Option String :=
   match r.wayName with
@@ -165,15 +137,10 @@ private def trainPick : Verified.Geo.RefineMode.ModeRefinement :=
   #[#[rw "Circle Line"], #[rw "Circle Line"], #[rw "Circle Line"], #[], #[]] == some "Circle Line"
 #guard railNameSupported { trainPick with mode := "driving" } #[#[], #[], #[]] == some "Circle Line"
 
-/-- Enrich one moving segment from its own geometry.
-
-`none` when the leg has no points; the caller leaves such a leg alone.
-
-Note what is unconditional and what is not. `refinedMode`, `refinedReason` and
-`wayName` are always written, including `wayName := none`, which is the pass
-clearing an inherited label it can no longer justify. `city` and
-`roadCorridorFraction` are written only when the new answer is present; a leg
-that fails to resolve a city keeps whatever it had rather than being blanked. -/
+/-- Enrich one moving segment from its own geometry; `none` for a leg with no
+points. `refinedMode`, `refinedReason` and `wayName` are always written (`none`
+clears an inherited label); `city` and `roadCorridorFraction` only when present,
+so an unresolved city keeps the old one. -/
 def enrichMovingSegment
     (waysLookup : Float → Float → Array NearbyWay)
     (geocode : Float → Float → Int → Option Address)
@@ -218,12 +185,10 @@ def enrichMovingSegment
     roadCorridorFraction := roadCorridorFraction.orElse fun _ => seg.roadCorridorFraction }
 
 
-/-- A leg's roads by time: at every k-th fix the nearest named highway, each
-weighted by the seconds to the next sampled fix (the last by the seconds to
-`endTs`), summed per name: `composeWayName`'s input, the label the matcher
-writes. A five-sample pick names whichever road its samples fell on, so the
-same walk would be labelled by its fix set ("Euston Underpass" over one stage's
-42 fixes, "Euston Road" over the decoder's 35). -/
+/-- A leg's roads by time, `composeWayName`'s input: at every k-th fix the
+nearest named highway, weighted by the seconds to the next sampled fix (the last
+to `endTs`), summed per name. Picking by sample count would name the same walk
+differently for different fix sets. -/
 def roadsByTime (waysLookup : Float → Float → Array NearbyWay) (pts : Array Pt) (endTs : Int) :
     Array (String × Float) :=
   let n := pts.size

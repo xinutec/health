@@ -2,33 +2,24 @@ import Verified.Eval.GroundTruth
 /-!
 # Ground-truth journey structure
 
-The `score-decoder` gate compares ten counts per day against
-`tests/golden/decoder-scoreboard.json`. Every one of them is computed from
-journeys — a maximal run of consecutive movement legs — on the ground-truth side
-and the decoder side. This is the ground-truth side, and it is what
-`scoreJourneys`, `scoreStations` and `countPhantomRides` all rest on.
+The `score-decoder` gate compares per-day counts against
+`tests/golden/decoder-scoreboard.json`, all computed from journeys (maximal runs
+of movement legs). This is the ground-truth side, under `scoreJourneys`,
+`scoreStations` and `countPhantomRides`.
 
-## The rows arrive resolved
+Rows arrive as `JRow` with unix `startTs`/`endTs`: Rust resolves the civil
+times `Verified.Eval.GroundTruth` stops at.
 
-`Verified.Eval.GroundTruth` stops at civil time, because resolving a wall clock
-in a named zone needs the tz database. So this takes `JRow`, a row whose
-`startTs`/`endTs` are already unix seconds, and the shell does the conversion.
-
-## The rules, and every one of them is load-bearing
-
-A `correct` row and a `wrong` row both contribute legs. The cell is always the
-truth, so a `wrong` row is a real leg the pipeline is known to miss — excluding
-it would silently drop the very legs the score exists to demand.
+`correct` and `wrong` rows both contribute legs: the cell is the truth, so a
+`wrong` row is a real leg the pipeline misses.
 -/
 
 namespace Verified.Eval.Journeys
 
 open Verified.Eval.GroundTruth
 
-/-- The audit rows are written to the minute, so a gap inside one minute between
-two rows is rounding, not unaudited time. The rows' own resolution, not a
-tuning number: what bounds a journey is a stay or unaudited time the day does
-not board a ride from, or a sleep. -/
+/-- Audit rows are written to the minute, so a gap under a minute between rows
+is rounding, not unaudited time. -/
 def ROW_MINUTE_S : Int := 60
 
 /-- One contiguous stretch of one movement mode. -/
@@ -102,35 +93,20 @@ private def closeRun (current : Array Leg) : Option Journey :=
 
 /-- Build the ground-truth leg and journey structure from resolved audit rows.
 
-Six rules, and each exists because something went wrong without it:
-
-1. Unaudited time between rows (beyond the rows' minute) is a stay the
-   narrator did not write, and rule 3 decides it — except straight after a
-   ride, where it is the platform the day alights onto (05-15's and 06-17's two
-   minutes between the train and the walk out). The audit tables are sparse —
-   they need not list every stay — so two trips hours apart with no stay row
-   between them would otherwise concatenate into one impossible demand.
-2. `unclear`, or a cell that did not parse, flushes. It cannot assert
-   continuity, so it cannot hold a journey together.
-3. A stay (or unaudited time) the day boards a ride from is the wait for
-   it — a pause, however long and whatever it is called; a stay the day walks
-   or drives away from bounds the journey; a sleep bounds it. A platform
-   wait does not split a journey — the narrator writes it as a stationary row,
-   placeless or named after the station (05-18's one minute "@ Baker Street"
-   between two trains), and the signal has waits of four to fourteen minutes.
-   No place name is read: a visit is what the day leaves on foot. (A fixed
-   five-minute length, and a name-based rule, both failed: the latter merged
-   the decoder's unnamed visits where the narrator's were split.)
-4. Stations come only from definite rows (`correct`/`wrong`). A `partial`
-   cell's `From → To` is approximate by declaration.
-5. Rows naming the same mode, line and station pair within 60 s extend the
-   leg rather than adding another. One physical ride can span several audit
-   rows when the pipeline lies about leg boundaries (a correct head row plus
-   wrong tail rows); counting them separately would demand the fragmentation as
-   the truth shape.
-6. A journey needs at least one definite leg to be emitted. A `partial` row
-   extends a journey — the mode is right, only a detail like the line is
-   imperfect — but a run of only-partial movement is too uncertain to assert. -/
+1. Unaudited time between rows is a stay rule 3 decides, except straight after
+   a ride, where it is the platform alighted onto. Tables are sparse, so trips
+   hours apart would otherwise concatenate.
+2. `unclear`, or an unparsed cell, flushes: it cannot assert continuity.
+3. A stay (or unaudited time) the day boards a ride from is a wait and does not
+   split the journey; a stay left on foot or by car bounds it, as does a sleep.
+   No place name is read: a name-based rule and a fixed five-minute length
+   both mis-split.
+4. Stations come only from definite rows (`correct`/`wrong`); a `partial`
+   cell's `From → To` is approximate.
+5. Rows with the same mode, line and station pair within 60 s extend one leg,
+   or a pipeline's fragmented ride would become the truth shape.
+6. A journey needs a definite leg. `partial` rows extend one, but an
+   only-partial run is too uncertain to assert. -/
 def groundTruthJourneys (rows : Array JRow) : Array Journey := Id.run do
   let mut journeys : Array Journey := #[]
   let mut current : Array Leg := #[]
@@ -201,9 +177,8 @@ def groundTruthJourneys (rows : Array JRow) : Array Journey := Id.run do
 
 /-! ## Witnesses
 
-Synthetic, because the real narratives are gitignored; the shapes match the
-corpus, where the rules yield 92 journeys and 228 legs. These pin the six rules
-individually so a failure names one.
+Synthetic (the real narratives are gitignored), in the corpus's shapes. Each
+rule is pinned separately, so a failure names it.
 -/
 
 section Witnesses
@@ -264,10 +239,8 @@ private def shape (js : Array Journey) : List (Int × Int × List String) :=
         #[w 0 100 .correct .train, wp 100 160 "Baker Street", w 160 260 .correct .train])
        == [(0, 260, ["train", "train"])]
 
--- ...a stay the day walks away from ends it, however short, named or not —
--- also a wait the day walks away from to the platform (06-12's Victoria
--- forecourt): without geometry, the referee cannot tell it from Home, and a
--- rule that waited for the ride merged every trip that begins at a visit.
+-- ...a stay the day walks away from ends it, however short, named or not, even
+-- a wait left on foot: without geometry it cannot be told from Home.
 #guard shape (groundTruthJourneys
         #[w 0 100 .correct .walking, wp 100 160 "Home", w 160 260 .correct .walking])
        == [(0, 100, ["walking"]), (160, 260, ["walking"])]
@@ -301,10 +274,8 @@ private def shape (js : Array Journey) : List (Int × Int × List String) :=
 #guard lineOf .bus (some "38") == some "38"
 #guard lineOf .walking (some "Metropolitan") == none
 
--- Rule 5 — one physical ride can span several audit rows when the pipeline
--- lies about leg boundaries. Rows naming the same mode, line and station pair
--- within 60 s extend the leg; counting them separately would demand the
--- fragmentation as the truth shape.
+-- Rule 5 — rows naming the same mode, line and station pair within 60 s
+-- extend one leg.
 #guard shape (groundTruthJourneys
         #[w 0 100 .correct .train (some "Met") (some "A") (some "B"),
           w 130 200 .wrong .train (some "Met") (some "A") (some "B")])

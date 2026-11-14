@@ -1,34 +1,16 @@
-//! The three live-map reads.
+//! The three live-map reads, from PhoneTrack over Nextcloud: `/locations` (one
+//! day's fixes), `/location/latest` (the marker) and `/location/tail` (the
+//! trajectory since the caller's last point).
 //!
-//! `/locations` is one day's fixes, `/location/latest` is the marker, and
-//! `/location/tail` is the raw trajectory since the caller's last point. All
-//! three come from PhoneTrack over Nextcloud, and all three share one error
-//! taxonomy that is a product decision rather than plumbing.
+//! Errors are a product decision: not linked is `[]`/`null` with a 200, since
+//! the frontend prompts linking from `/api/me` and a 4xx would raise the
+//! generic error banner. Reauth-required is a 409 `nextcloud_reauth_required`,
+//! which the client turns into the relink banner. Anything else is a 400; the
+//! client keys off it.
 //!
-//! # Not-linked is not an error
-//!
-//! An account with no Nextcloud link answers `[]`/`null` with a 200, not
-//! a failure. The frontend surfaces the "link your Nextcloud" call to action
-//! from `/api/me`, and a 4xx here would instead fire the generic error banner
-//! over a state that is merely unconfigured.
-//!
-//! Reauth-required is different and gets a 409 with a structured
-//! `nextcloud_reauth_required` code, because the client interceptor watches for
-//! exactly that to raise the relink banner. Collapsing it into the not-linked
-//! case would leave a user with a revoked app password looking at an empty map
-//! and no way to learn why.
-//!
-//! Anything else is a 400. Odd (a Nextcloud outage is not the caller's
-//! fault and 502 would describe it better), but the client keys off the
-//! status, so it stays.
-//!
-//! # The share window is checked against today, not the request
-//!
-//! `/location/latest` and `/location/tail` answer about now. A share
-//! recipient whose window ended last week must not see a live marker, so both
-//! test today against the window rather than any date in the request. There is
-//! no date parameter to check on the tail at all, so a host that skipped this
-//! would leak the owner's current position to every expired link.
+//! `/location/latest` and `/location/tail` check the share window against
+//! today, not the request: the tail has no date, and an expired link must not
+//! see the owner's current position.
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -45,14 +27,9 @@ use crate::nextcloud::phonetrack::PhoneTrack;
 use crate::state::AppState;
 use crate::{lean, location_cache, row_json};
 
-/// One fix as `/locations` serves it.
-///
-/// Built by hand rather than derived, because every float has to go through
-/// `row_json::js_number_value`. A derived `Serialize` writes `120.0` where
-/// JavaScript writes `120`, which is a different response for the same fix —
-/// measured, 8,790 bytes across one day.
-///
-/// Key order is the wire order; `preserve_order` is what makes that hold.
+/// One fix as `/locations` serves it, built by hand so every float goes through
+/// `row_json::js_number_value` (`120`, not `120.0`). Key order is the wire
+/// order (`preserve_order`).
 fn wire_point(p: &crate::nextcloud::phonetrack::RawTrackPoint) -> Value {
     json!({
         "ts": p.ts,
@@ -75,12 +52,9 @@ pub struct TailParams {
     since: Option<String>,
 }
 
-/// The shared refusal shape. `None` for the not-linked body means the caller
-/// supplies it, since `/locations` answers `[]` and `/location/latest` `null`.
-/// `not_linked` is generic so callers can hand over a typed empty body rather
-/// than `json!([])`. A hand-built literal at the call site lives in the
-/// handler's own body, which is where dl-wire-untyped-response looks — so the
-/// helper being typed is not enough on its own.
+/// The shared refusal shape; the caller supplies the typed not-linked body
+/// (`[]` or `null`), since dl-wire-untyped-response checks each handler's
+/// own body.
 fn nc_error_response<T: Serialize>(e: &NcError, not_linked: T, message: &'static str) -> Response {
     match e {
         NcError::NotLinked => Json(not_linked).into_response(),
@@ -122,18 +96,9 @@ async fn outside_window(session: &UserSession, date: &str) -> anyhow::Result<boo
 
 /// Open PhoneTrack for this user.
 async fn open(st: &AppState, user_id: &str) -> Result<PhoneTrack, NcError> {
-    // An unset `NC_BASE_URL` falls back to the default; it does not mean
-    // "not linked". `NC_BASE_URL` is empty on the serving pod, so the default
-    // is what makes the live map work in production.
-    //
-    // Treating unset as not-linked here — which is what this first did — would
-    // have answered every caller with an empty map and a 200, indistinguishable
-    // from an account that genuinely has no Nextcloud. Nothing would have
-    // failed; the map would just have been blank.
-    //
-    // The sync path's `None` is a different question and keeps its meaning:
-    // there, unset legitimately means "do not do PhoneTrack tz inference".
-    // `DAY_NEXTCLOUD_BASE_URL` carries that same split.
+    // An unset `NC_BASE_URL` (as on the serving pod) uses the default; it does
+    // not mean "not linked", which would serve every caller a blank map. The
+    // sync path's `None` means something else: skip PhoneTrack tz inference.
     let base = st
         .cfg
         .nextcloud_base_url
@@ -156,12 +121,8 @@ fn fix_json(fix: Option<&LatestFix>) -> Value {
     }
 }
 
-/// One point of `/location/tail`. Three keys only: `{lat, lon, ts}`.
-///
-/// `JsNumber`, not `f64`. This route's floats are coordinates, and a plain
-/// `f64` field prints `120.0` where the encoder this replaced printed `120` —
-/// the divergence `row_json` exists to prevent. `js_number_wire.rs` pins that
-/// the two agree.
+/// One point of `/location/tail`: `{lat, lon, ts}`. `JsNumber`, so coordinates
+/// print as `row_json` does (`js_number_wire.rs` pins it).
 #[derive(Serialize)]
 pub struct TailPointOut {
     pub lat: row_json::JsNumber,
@@ -298,10 +259,8 @@ pub async fn tail(
         Err(e) => return internal(&e),
     }
 
-    // `since` absent is 0, and anything unparseable is NaN, against which
-    // every `p.ts > since` is false, so the answer is an empty tail rather than
-    // the whole buffer. Mapping a bad value to 0 here would do the opposite and
-    // dump 2000 points.
+    // `since` absent is 0; unparseable is NaN, which no `p.ts` exceeds, so the
+    // tail is empty rather than all 2000 points.
     let since = match p.since.as_deref() {
         None => Some(0.0_f64),
         Some(s) => {

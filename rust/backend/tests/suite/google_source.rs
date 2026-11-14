@@ -2,10 +2,8 @@
 
 use backend::google::source::{Owner, STREAMS};
 
-/// Exactly one owner per stream. The biometric tables are
-/// `ON DUPLICATE KEY UPDATE`, so two writers means the last job to run wins and
-/// the value flips with scheduling. That reads as instrument noise, not as a
-/// source conflict, and is very hard to trace back.
+/// Exactly one owner per stream: the biometric tables upsert, so two writers
+/// flip the value with scheduling, which reads as instrument noise.
 #[test]
 fn no_stream_is_listed_twice() {
     let mut seen = std::collections::HashSet::new();
@@ -54,10 +52,8 @@ fn no_writer_without_an_owned_stream() {
     }
 }
 
-/// A computed stream is still one stream. `skin_temperature` is written from
-/// two Google fields subtracted, which is a different shape from every other
-/// writer — and exactly the kind of special case that gets flipped in the
-/// roster while the writer is still a TODO.
+/// A computed stream is still one stream: `skin_temperature` is two Google
+/// fields subtracted, a shape unlike every other writer.
 #[test]
 fn skin_temperature_is_google_owned_and_written() {
     use backend::google::source::has_writer;
@@ -69,26 +65,18 @@ fn skin_temperature_is_google_owned_and_written() {
     assert!(has_writer("skin_temperature"));
 }
 
-// No per-stream pins here. A test naming one stream as Fitbit-owned has to be
-// deleted the day that stream moves, writer first. The generic pairing tests
-// below (`every_google_owner_has_a_writer` and its converse) assert the
-// invariant such a pin would be standing in for.
+// No per-stream pins: the pairing tests below (`every_google_owner_has_a_writer`
+// and its converse) assert the invariant without naming a stream.
 
-/// The cutover is history now, and pinned. The Fitbit writer assigned every
-/// column up to it and Google from it; moving it would put the two writers'
-/// rows on the same days after the fact, where the stored values' provenance
-/// no longer matches the roster's record.
+/// The cutover is pinned: Fitbit wrote every column before it and Google from
+/// it, and moving it would mislabel the stored rows' provenance.
 #[test]
 fn the_cutover_is_pinned() {
     assert!(backend::google::sync::DAILY_ACTIVITY_CUTOVER >= "2026-09-01");
 }
 
-/// The assertion above is about a string, not about behaviour. It cannot fail
-/// on the day the writer is supposed to start, because it does not run the
-/// writer's decision. Before the cutover `sync_daily_activity` logs "before the
-/// cutover, nothing to write" on every run, so the branch that writes never
-/// executes in production or in a test — the guard is only ever observed
-/// refusing. These drive it.
+/// The assertion above is about a string. Before the cutover the writing branch
+/// never ran anywhere, so these drive the writer's decision itself.
 mod the_cutover_opens_exactly_once {
     use backend::google::sync::cutover_window;
     use chrono::NaiveDate;
@@ -98,19 +86,16 @@ mod the_cutover_opens_exactly_once {
             .expect("the cutover constant parses")
     }
 
-    /// The day before. `end` is tomorrow, the cutover day, which equals `start`,
-    /// and a half-open window of zero width must be refused rather than fetched.
-    /// This is the ordering that can fail; a test only on 09-02 would pass with
-    /// the comparison written either way.
+    /// The day before: `end` (tomorrow, the cutover) equals `start`, and a
+    /// zero-width window is refused. Only this side can catch a flipped
+    /// comparison.
     #[test]
     fn closed_on_the_day_before() {
         assert_eq!(on(2026, 8, 31), None);
     }
 
-    /// The day it must start. If this is `None` the migration silently does
-    /// nothing on the day it was scheduled for, and `daily_activity` keeps
-    /// whatever Fitbit last left — which looks identical to a healthy table
-    /// until someone reads the dates.
+    /// The day it must start; `None` here would leave `daily_activity` on
+    /// Fitbit's last rows, indistinguishable from healthy.
     #[test]
     fn open_on_the_cutover_day_itself() {
         let (start, end) = on(2026, 9, 1).expect("the writer owns 2026-09-01");
@@ -129,11 +114,9 @@ mod the_cutover_opens_exactly_once {
     }
 }
 
-/// The `list` walk has no date window, so its days are filtered by a
-/// lexicographic compare against the cutover string. That is sound only while
-/// every date reaching it is zero-padded, so this pins the producer as well as
-/// the predicate: an unpadded month sorts wrong and the day is dropped with no
-/// error anywhere.
+/// The `list` walk has no date window, so days are filtered by string compare
+/// against the cutover. Sound only for zero-padded dates, so this pins the
+/// producer too: an unpadded month sorts wrong and the day silently drops.
 mod the_string_filter_is_sound_because_the_producer_pads {
     use backend::google::health::day_of_list_point;
     use backend::google::sync::owned_by_google;
@@ -146,10 +129,8 @@ mod the_string_filter_is_sound_because_the_producer_pads {
         assert!(!owned_by_google("2023-04-15"));
     }
 
-    /// Single-digit month and day, which is exactly where padding decides the
-    /// answer. The first of a month parsed out of the API's integer fields must
-    /// come back zero-padded; unpadded, it sorts wrong against the cutover and
-    /// the migration's first day vanishes without a trace.
+    /// Single-digit month and day, where padding decides the answer: the first
+    /// of a month from the API's integer fields must come back zero-padded.
     #[test]
     fn a_single_digit_date_comes_back_padded_and_passes_the_filter() {
         let pt = serde_json::json!({
@@ -166,22 +147,10 @@ mod the_string_filter_is_sound_because_the_producer_pads {
     }
 }
 
-/// The two writers must partition the table. Two writers in one job, one
-/// writing five columns and the other then assigning all twelve seconds later,
-/// error nowhere and lose no row (Fitbit's numbers are real), so a migration
-/// would read as verified while its write path never once survived to the
-/// table.
-///
-/// A partition has exactly two ways to break and both are silent, which is why
-/// they are pinned here rather than left to the SQL:
-///
-///   * a column in neither list is written by nobody past the cutover, and goes
-///     NULL for ever without an error;
-///   * a column in both is assigned by both writers again, and the last job to
-///     run wins — the overlap the cutover exists to prevent.
-///
-/// The Fitbit writer is gone with the Web API; its half of the
-/// contract is now `ENDED_COLUMNS`, the columns that end with it, by decision.
+/// The two writers must partition the table. Both ways to break are silent: a
+/// column in neither list goes NULL past the cutover, and a column in both is
+/// written twice, last job winning. The Fitbit writer is gone; its half is
+/// `ENDED_COLUMNS`, the columns that end with it.
 mod the_two_writers_partition_daily_activity {
     use backend::google::sync::{ENDED_COLUMNS, GOOGLE_OWNED_COLUMNS};
 
@@ -276,10 +245,9 @@ mod step_minutes {
         assert_eq!(m["2026-09-30 13:51:00"].1, 12);
     }
 
-    /// The archive keeps the minutes whose wall clock falls in `[from, until)`,
-    /// the clock the stored series is keyed by, so it meets Fitbit's history at
-    /// exactly the stored first minute whatever the offsets around it. The fetch
-    /// is a day wider either side; those minutes are dropped here.
+    /// The archive keeps minutes whose wall clock is in `[from, until)`, the key
+    /// of the stored series, so it meets Fitbit's history at the stored first
+    /// minute whatever the offsets. The fetch is a day wider either side.
     #[test]
     fn the_archive_keeps_minutes_by_wall_clock_date() {
         use backend::google::sync::archive_minutes;
@@ -535,10 +503,9 @@ mod google_points {
     }
 }
 
-/// Active minutes per day from Google's `active-minutes` rollup: the
-/// replacement for Fitbit's lightly/fairly/very active columns, which the
-/// summary card's "active minutes" reads. Moderate + vigorous equals Fitbit's
-/// fairly + very on every day compared.
+/// Active minutes per day from Google's `active-minutes` rollup, replacing
+/// Fitbit's activity columns for the summary card. Moderate + vigorous matched
+/// Fitbit's fairly + very on every day compared.
 mod active_minutes {
     use backend::google::health::active_minutes_of_rollup_point;
     use serde_json::json;
