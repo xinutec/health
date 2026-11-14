@@ -1,28 +1,20 @@
 //! The schema, applied at startup.
 //!
-//! ⚠ The array index is the version number. `schema_migrations` records which
-//! indices have run, so inserting a statement anywhere but the end renumbers
-//! every later migration: applied ones look unapplied and re-run, and the new
-//! one is recorded under a version that already exists, never applied, while
-//! the log says "schema is up to date". Append only, forever. The repeats and
-//! placeholders below are what breaking this rule has cost.
+//! ⚠ The array index is the version number, recorded in `schema_migrations`.
+//! Inserting anywhere but the end renumbers every later migration: applied ones
+//! re-run and the new one is recorded but never applied. Append only.
 //!
-//! MariaDB DDL is not transactional, so a half-applied statement stays
-//! half-applied; the advisory lock stops two pods racing during a rolling
-//! deploy.
+//! MariaDB DDL is not transactional; the advisory lock stops two pods racing
+//! during a rolling deploy.
 
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;
 
 /// Apply anything not yet recorded in `schema_migrations`.
 pub async fn migrate(pool: &MySqlPool) -> Result<()> {
-    // An advisory lock: MariaDB DDL is non-transactional and a rolling deploy
-    // can put two pods here at once.
-    //
-    // One pinned connection for the lock's lifetime. `GET_LOCK` and
-    // `RELEASE_LOCK` are per-connection, so as two pool queries the release can
-    // land on another connection as a silent no-op, and a server process holds
-    // `health_migrate` forever; the next pod then cannot start.
+    // An advisory lock, on one pinned connection: `GET_LOCK` and
+    // `RELEASE_LOCK` are per-connection, and a release on another pool
+    // connection is a silent no-op that blocks the next pod forever.
     let mut conn = pool
         .acquire()
         .await
@@ -56,11 +48,9 @@ pub async fn migrate(pool: &MySqlPool) -> Result<()> {
 }
 
 async fn apply(pool: &MySqlPool) -> Result<()> {
-    // A fn-local literal array, not a module const: `DL-SQLX-SCHEMA-TRUTH`
-    // replays an inline or fn-local array as the schema and type-checks every
-    // other query in this crate against it. A const path is opaque to it.
-    //
-    // Oldest first; the index is the version. Append only.
+    // A fn-local literal array, not a const: `DL-SQLX-SCHEMA-TRUTH` replays it
+    // as the schema and type-checks the crate's queries against it. Oldest
+    // first; the index is the version. Append only.
     let migrations: [&str; 100] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
@@ -488,19 +478,12 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // a tile that failed while the summary reads like a healthy refresh.
         r#"ALTER TABLE rail_stops_cache ADD COLUMN IF NOT EXISTS tile_key VARCHAR(32) NULL"#,
         r#"ALTER TABLE rail_stops_cache ADD INDEX IF NOT EXISTS idx_rail_stops_tile (tile_key)"#,
-        // `is_main_sleep` does not belong in an identity key. Google writes a
-        // session in progress with no `metadata/mainSleep` (read as `false`),
-        // and once scored the revision no longer matches its row, so it can
-        // only insert a contradictory twin. One person cannot begin two sleeps
-        // at the same instant, so the start instant is the identity. The
-        // collapse below is a guard; production had no duplicate starts.
+        // The sleep identity is the start instant: `is_main_sleep` changes
+        // once Google scores a session, so keying on it inserts a twin. The
+        // collapse below is a guard.
         //
-        // ⚠ Versions 69-72 are burned. These four sleep statements were first
-        // inserted mid-array, so a database recorded 69-72 without applying
-        // them (re-running four idempotent `IF NOT EXISTS` statements instead).
-        // The placeholders consume those numbers so the real statements get
-        // fresh versions; `schema_migrations` is not edited by hand. Append
-        // below them, never above.
+        // ⚠ Versions 69-72 are burned placeholders: these statements were once
+        // inserted mid-array and a database recorded those numbers unapplied.
         r#"DO 0"#,
         r#"DO 0"#,
         r#"DO 0"#,
@@ -524,25 +507,13 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
    WHERE s.log_id <> dup.keep_id"#,
         r#"ALTER TABLE sleep ADD UNIQUE INDEX IF NOT EXISTS uniq_sleep_user_start (user_id, start_time)"#,
         r#"ALTER TABLE sleep DROP INDEX IF EXISTS uniq_sleep_user_start_main"#,
-        // ⚠ A deliberate repeat of index 76; do not tidy it away. Databases
-        // that ran an earlier build recorded version 77 without applying what
-        // now sits there, so this must live at 78. `IF EXISTS` makes it safe on
-        // a fresh database.
+        // ⚠ A deliberate repeat of index 76: some databases recorded 77 without
+        // applying it. `IF EXISTS` makes it safe on a fresh database.
         r#"ALTER TABLE sleep DROP INDEX IF EXISTS uniq_sleep_user_start_main"#,
-        // The mined prior as it stood at an anchor date, so a past day is named
-        // from what was known then.
-        //
-        // A separate table, not a column on `venue_type_priors`: it wants a
-        // different primary key, and an additive table leaves the old row and
-        // its read path untouched for a pod predating it.
-        //
-        // `as_of` is a DATE: the day the mining window ended, the grain a
-        // day-level read asks for. A timestamp would allow two snapshots a day
-        // with no rule for which one the day means.
-        //
-        // Mining re-clusters from scratch, so re-running it changes what past
-        // days were called even with no new evidence; freezing each run keeps
-        // a past label stable.
+        // The mined prior as of an anchor date, so a past day is named from
+        // what was known then: mining re-clusters from scratch. Its own table
+        // (different key, old read path untouched); `as_of` is a DATE, the day
+        // the mining window ended, one snapshot per day.
         r#"CREATE TABLE IF NOT EXISTS venue_type_prior_snapshots (
     user_id     VARCHAR(64) NOT NULL,
     as_of       DATE NOT NULL,
@@ -551,19 +522,11 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, as_of)
   )"#,
-        // Append only; see the header.
-        //
-        // What the serving path could not answer, so a job can fetch it later.
-        // The fold declines rather than guesses, and without a record the same
-        // coordinate went unanswered on every fold.
-        //
-        // `kind` is `osm_cache.query_type` for the geocode kinds
-        // (`nominatim_z16`, `nominatim_z18`): the drain writes straight back
-        // into the cache the fold reads, in one vocabulary.
-        //
-        // `attempts` and `last_error` let a key that cannot be fetched stop
-        // being retried while staying visible; deleting it would bring it back
-        // on the next fold, an invisible loop against a rate-limited service.
+        // What the serving path could not answer, for a job to fetch later; the
+        // fold declines rather than guesses. `kind` is `osm_cache.query_type`
+        // for geocodes, so the drain writes into the cache the fold reads.
+        // `attempts`/`last_error` stop retrying a dead key while keeping it
+        // visible, instead of a loop against a rate-limited service.
         r#"CREATE TABLE IF NOT EXISTS osm_fetch_queue (
     kind        VARCHAR(32) NOT NULL,
     fetch_key   VARCHAR(160) NOT NULL,
@@ -668,11 +631,9 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     tcx         MEDIUMTEXT NULL,
     PRIMARY KEY (user_id, point_id)
   )"#,
-        // A landmark box remembers the venue-tag vocabulary it was fetched
-        // under (`osm_mirror::venue_vocab`): a box fetched before a tag joined
-        // has none of that tag's features, and counting it as coverage would
-        // keep them out for 180 days. A read under another vocabulary does not
-        // see it.
+        // A landmark box remembers its venue-tag vocabulary
+        // (`osm_mirror::venue_vocab`): a box fetched before a tag joined lacks
+        // its features and must not count as coverage under the new vocabulary.
         r#"ALTER TABLE osm_coverage ADD COLUMN IF NOT EXISTS vocab VARCHAR(16) NULL"#,
         // A walk's drawn result, keyed by a hash of every input the drawing
         // reads and by the code that drew it (`walk_memo`). Rows of another
@@ -692,10 +653,9 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // (`MirrorSource::rail_line_names`); a composite index serves it from
         // the index alone instead of a row scan.
         r#"ALTER TABLE osm_lines ADD INDEX IF NOT EXISTS idx_osm_lines_type_name (feature_type, name)"#,
-        // When each tile of a route mirror last answered (`cli::mirror`): a
-        // refresh fetches only the tiles that are due. Its own table because a
-        // tile can answer and own no rows — a relation crossing several tiles
-        // is stored under one of them.
+        // When each route-mirror tile last answered (`cli::mirror`), so a
+        // refresh fetches only due tiles. Its own table: a tile can answer and
+        // own no rows.
         r#"CREATE TABLE IF NOT EXISTS osm_mirror_tile (
     mode VARCHAR(8) NOT NULL,
     tile_key VARCHAR(32) NOT NULL,
@@ -714,10 +674,8 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // decode is stale once they reach further. NULL on the rows written
         // before it, which read as stale and are decoded again once.
         r#"ALTER TABLE decoded_days ADD COLUMN IF NOT EXISTS inputs_through BIGINT NULL"#,
-        // The Fitbit Web API is closed and its client is gone; nothing reads
-        // the per-user token table or the device roster it kept (the watch's
-        // battery is `device_battery_log`, written from Google). Dropped on
-        // his word, a dump taken first.
+        // The Fitbit Web API client is gone and nothing reads its token table
+        // or device roster (battery is `device_battery_log`, from Google).
         r#"DROP TABLE IF EXISTS tokens"#,
         r#"DROP TABLE IF EXISTS devices"#,
     ];

@@ -1,20 +1,12 @@
-//! The backend entrypoint.
+//! The backend entrypoint: `backend <subcommand>`, listed by `backend --help`
+//! (`argv.rs`). The subcommands live under `cli/`. The three production ones:
 //!
-//! `backend <subcommand>` — `backend --help` for the list (`argv.rs`). The dispatch is
-//! here; what each subcommand does lives under `cli/`, grouped by what it
-//! touches. The three that carry production:
+//!   check  — prove config and pool against the real database. Read-only.
+//!   sync   — the Google Health ingestion: weight, then every roster stream.
+//!   serve  — the HTTP server, run by `health-auth`.
 //!
-//!   check  — read the config, open the pool, and prove both against the real
-//!            database. READ-ONLY, so it is safe to point at production.
-//!   sync   — the Google Health ingestion: weight, then every stream of the
-//!            roster, for the one user the Google account belongs to.
-//!   serve  — the HTTP server. The server: `health-auth` runs this and nothing
-//!            else does.
-//!
-//! `sync` logs every stream's outcome and fails soft per stream: one
-//! unreachable endpoint must not stop the rest. So a run can exit 0 having
-//! written no rows, and `backend freshness` asks the outcome question
-//! instead, on its own schedule.
+//! `sync` fails soft per stream, so a run can exit 0 having written nothing;
+//! `backend freshness` checks the outcome on its own schedule.
 
 use anyhow::{Context, Result};
 use backend::{
@@ -114,14 +106,9 @@ async fn main() -> Result<()> {
         C::RefreshRailRoutes { window_days } => {
             refresh_rail_routes(window_days.unwrap_or(RAIL_DEFAULT_WINDOW_DAYS)).await
         }
-        // The nightly HSMM decoder.
-        //
-        // The date is positional: a numeric second argument is a day count,
-        // anything else a date.
-        //
-        // `--dry-run` decodes and prints, writing nothing; the write
-        // overwrites `(user_id, date)`, so a checking run would destroy the
-        // row it checks against.
+        // The nightly HSMM decoder. A numeric second argument is a day count,
+        // anything else a date. `--dry-run` writes nothing: the write
+        // overwrites `(user_id, date)`, the row a check compares against.
         C::DecodeDay {
             user,
             when,
@@ -212,12 +199,10 @@ async fn main() -> Result<()> {
 
 /// Run one Google Health ingestion pass: weight, then every stream.
 ///
-/// ⚠ It does not migrate the schema: two processes racing to apply migrations
-/// is worse than a missing one, and the server migrates on every start. So
-/// this must not be the first thing run against a fresh database.
+/// ⚠ It does not migrate: the server migrates on every start, and two racing
+/// migrators are worse than none. Never run this first on a fresh database.
 ///
-/// The zone lookup is built once: `tzf-rs` decompresses its polygon set on
-/// construction, the expensive part, and is then queried per fix.
+/// The zone lookup is built once: `tzf-rs` decompresses its polygons then.
 async fn sync() -> Result<()> {
     cli::init_tracing();
 
@@ -231,10 +216,7 @@ async fn sync() -> Result<()> {
     Ok(())
 }
 
-/// Serve the HTTP surface.
-///
-/// Production's server, answering `health.xinutec.org`. It binds `AUTH_PORT`,
-/// which the manifest sets; the 8081 default is for local runs.
+/// Serve the HTTP surface on `AUTH_PORT` (set by the manifest; 8081 locally).
 async fn serve() -> Result<()> {
     cli::init_tracing();
 
@@ -323,15 +305,9 @@ async fn serve() -> Result<()> {
     Ok(())
 }
 
-/// Prove the config and the pool against the real database, and read nothing
-/// anybody's privacy depends on.
-///
-/// Nothing in a unit test executes SQL, and compiling says nothing about bind
-/// order, credentials, or whether the schema is what the code thinks.
-///
-/// It prints counts, never values: the row and distinct-key counts prove
-/// `sync_state` is reachable and decodes, without putting anyone's data on a
-/// terminal.
+/// Prove the config and the pool against the real database: bind order,
+/// credentials and schema, which no unit test or compile checks. Prints counts,
+/// never values.
 async fn check() -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;
     println!(
@@ -352,10 +328,8 @@ async fn check() -> Result<()> {
         .context("SELECT 1")?;
     println!("db: SELECT 1 -> {one}");
 
-    // That the session zone pin actually took. Asserting it rather than
-    // trusting `after_connect` to have run: a pool option that silently did not
-    // apply would leave every DB-clock timestamp off by the server's offset,
-    // and nothing else in this binary would notice.
+    // Assert the session zone pin took: a pool option that did not apply would
+    // shift every DB-clock timestamp, and nothing else would notice.
     let tz: String = sqlx::query_scalar("SELECT @@session.time_zone")
         .fetch_one(&pool)
         .await
@@ -378,20 +352,16 @@ async fn check() -> Result<()> {
         .context("counting sync_state keys")?;
     println!("sync_state: {rows} row(s), {keys} distinct key(s)");
 
-    // The typed read path, through the same function scheduled work will use.
-    // A key nobody stores, so the answer is a known `None` and this asserts the
-    // absent case decodes rather than the present one — the case a wrong column
-    // type would still pass.
+    // The typed read path, on a key nobody stores: asserts the absent case
+    // decodes, which a wrong column type would still pass.
     let missing = sync_state::get(&pool, "\u{0}no-such-user", "\u{0}no-such-key").await?;
     if missing.is_some() {
         anyhow::bail!("sync_state::get returned a value for a key that cannot exist");
     }
     println!("sync_state: absent-key read decodes as None");
 
-    // The day-input loaders. Counts, not contents: this runs against production
-    // and the rows are real places and movement. The point is that the SQL
-    // executes: column names, bind order, the decode of every DECIMAL and
-    // nullable.
+    // The day-input loaders, counted not printed (real places): proves column
+    // names, bind order and every DECIMAL and nullable decode.
     // dev-lint: allow-pii the one account the service holds
     let user = std::env::var("CHECK_USER").unwrap_or_else(|_| "pippijn".into());
     let places = classification_inputs::known_places(&pool, &user).await?;
@@ -440,12 +410,9 @@ async fn check() -> Result<()> {
         len(&places) - zero_centroids
     );
 
-    // The watch-battery trace, here for its decodes, which fail only on real
-    // rows: `battery_level` is `TINYINT UNSIGNED` and `last_sync_time` a
-    // `DATETIME` that sqlx will not hand back as text.
-    //
-    // Asserts levels are not all zero: a failed decode defaulted to 0 draws a
-    // watch empty at every sync, a well-formed chart a row count passes.
+    // The watch-battery trace, for its decodes (`TINYINT UNSIGNED` level,
+    // `DATETIME` sync time), which fail only on real rows. All-zero levels mean
+    // a decode defaulted to 0.
     let home_tz = sync_state::home_tz(&pool, &user).await?;
     let latest: Option<(Option<chrono::NaiveDateTime>,)> =
         sqlx::query_as("SELECT MAX(last_sync_time) FROM device_battery_log WHERE user_id = ?")
@@ -479,10 +446,8 @@ async fn check() -> Result<()> {
         }
     }
 
-    // The same hazard one column over: `hour_profile` is a comma-separated
-    // per-mille list, and read as JSON every profile decodes as absent. A
-    // place has no profile before it is mined, so some nulls are right; all
-    // nulls is a format error.
+    // `hour_profile` is a comma-separated per-mille list; read as JSON every
+    // profile is absent. Some nulls are right (unmined), all nulls are not.
     let profiled = places.as_array().map_or(0, |a| {
         a.iter()
             .filter(|p| p["hourProfile"].as_array().is_some_and(|h| h.len() == 24))
@@ -497,10 +462,8 @@ async fn check() -> Result<()> {
     }
     println!("inputs[{user}]: hour profiles with 24 buckets: {profiled}");
 
-    // These need a date, chosen from the data: the newest day with a
-    // current-version decode. A hardcoded day would rot into "production is
-    // empty"; this one makes `hsmm_decode` non-null by construction, so a
-    // loader returning null for every day shows.
+    // The newest day with a current-version decode, so `hsmm_decode` is
+    // non-null by construction and a loader returning null shows.
     let check_date: Option<String> = sqlx::query_scalar(
         "SELECT DATE_FORMAT(MAX(date), '%Y-%m-%d') FROM decoded_days \
          WHERE user_id = ? AND classifier_version = ?",
@@ -564,11 +527,9 @@ async fn check() -> Result<()> {
         );
     }
 
-    // Sleep windows are the only loader here that computes rather than copies:
-    // `start_time` is a wall clock and the timestamp comes from a tz conversion.
-    // A conversion that silently produced nothing reads as 0 (1970), and an
-    // inverted window reads as a plausible-looking pair of numbers, so both are
-    // named. A day with no main sleep is legitimate and is not an error.
+    // Sleep windows go through a tz conversion. A conversion that produced
+    // nothing reads as 0 (1970) and an inverted window looks plausible, so
+    // both are named. No main sleep is legitimate.
     for w in sleeps.as_array().into_iter().flatten() {
         let (a, b) = (
             w["startTs"].as_i64().unwrap_or(0),
@@ -625,12 +586,9 @@ async fn check() -> Result<()> {
         anyhow::bail!("{dead_bpm} heart-rate minute(s) decoded to 0 bpm — nobody survives that");
     }
 
-    // PhoneTrack: the only input that is not SQL and needs the network. Last,
-    // so a Nextcloud outage cannot hide a database problem.
-    //
-    // Zero fixes is not a working fetch: a revoked app password, a wrong base
-    // URL and a phone left at home all return an empty array. So this asserts
-    // fixes on a day with a decode, which the decoder built from GPS.
+    // PhoneTrack, the one network input, last so a Nextcloud outage cannot
+    // hide a database problem. Zero fixes is not a working fetch (a revoked
+    // app password returns `[]` too), so it asserts fixes on a decoded day.
     let base_url = cfg
         .nextcloud_base_url
         .clone()

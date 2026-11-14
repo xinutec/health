@@ -5,40 +5,24 @@ import Verified.FloatConst
 /-!
 # Point-to-point routing on the walkable network
 
-The case-2 primitive of the building-escape corrector: when a drawn walk's chord
-cuts through a building block and no vertex sits inside the block to push
-(sparse fixes), the honest line goes around the block along the streets. This
-answers exactly that — the shortest walkable path between two GPS-anchored
-points.
+The building-escape corrector's case 2: when a walk's chord cuts a block and no
+vertex lies inside to push, route around it along the streets, the shortest
+walkable path between two GPS-anchored points. Not the Viterbi matcher: routing
+between trusted endpoints is stable where matching a noisy fix cloud is not.
 
-Deliberately not the Viterbi matcher. Routing between two known endpoints is
-stable; it is global matching over a whole noisy fix cloud that invents wrong
-routes. The graph is used only for what it is good for: connectivity around an
-obstacle between two trusted points.
+Endpoints snap onto the nearest way edge as a spliced virtual node, so a
+mid-street start does not detour to a junction.
 
-Both endpoints snap onto the nearest way edge — a virtual node spliced into the
-edge, not the nearest graph node — so a mid-street start does not first detour
-to a distant junction.
+`buildWalkGraph` fuses way coordinates by `nodeKey` (`toFixed(7)`,
+`Verified.JsNum`). Node coordinates and edge lengths use the first coordinate
+fused into a node; `snapToEdge` projects onto each way's raw coordinates. Mixing
+them moves projections by up to ~1 cm.
 
-## Fusion
+`none` means no street path and the caller trusts the GPS: no way within
+`snapRadiusM`, a disconnected network, or a route over `maxRouteM`.
 
-`buildWalkGraph` fuses way coordinates into graph nodes by `nodeKey`, a
-`toFixed(7)` string (`Verified.JsNum`), so this module takes the raw way list
-and needs nothing pre-computed. The distinction the fusion demands is live in
-the code: node coordinates are the first way coordinate that mapped to them and
-edge lengths use those, while `snapToEdge` projects onto each way's own raw
-coordinates — mixing the two would move every projection by up to ~1 cm.
-
-Every `none` returned here is an honest "there is no street path", and the
-caller falls back to trusting the GPS: no way within `snapRadiusM`, a
-disconnected network, or a route longer than `maxRouteM` (a longer "shortest"
-path is a dishonest detour for a walk-leg gap, not a route).
-
-Exactness: the Dijkstra ordering, the heap, the splice arithmetic and every gate
-are exact. `metersBetween` uses `sqrt(dx²+dy²)`, which may differ from an
-overflow-careful hypot by ≤1 ULP, and that feeds edge weights and `distM`; the
-`cos` in the local projection is likewise ≤1 ULP. UNPROVEN; pinned by the
-`#guard`s.
+Exactness: ordering, heap, splice and gates are exact; `metersBetween` and the
+projection's `cos` are ≤1 ULP. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.WalkableRoute
@@ -196,10 +180,8 @@ def snapToEdge (p : Pt) (ways : Ways) (graph : WalkGraph) : Option Snap := Id.ru
 
 /-! ## Binary min-heap
 
-Reproduced element-for-element rather than replaced with a sorted structure:
-Dijkstra relaxes on strict improvement, so among equal-cost routes the winner
-is decided by which node the heap pops first. A different heap would pick a
-different — equally short but visibly different — path. -/
+Relaxation is on strict improvement, so the heap's pop order picks among
+equal-cost routes; another heap would draw a different, equally short path. -/
 
 /-- Node id and key travel together, so one bound covers both reads — the two
 parallel arrays this used to hold shared a length only by discipline. -/
@@ -272,13 +254,10 @@ structure RouteOptions where
   deriving Inhabited
 
 /--
-Shortest walkable path from `a` to `b`:
-`[snapped-a, …graph nodes…, snapped-b]`, or `none`.
-
-`ways` must be in way-iteration order: it fixes node numbering and breaks the
-snap tie. `graph` is `buildWalkGraph ways`: a caller routing several gaps over
-one network builds it once (`routeOnWalkable` builds it per call, which costs the
-building-escape corrector ~450 ms a call on a 5,000-way network).
+Shortest walkable path from `a` to `b`, `[snapped-a, …graph nodes…, snapped-b]`,
+or `none`. `ways` order fixes node numbering and the snap tie. `graph` is
+`buildWalkGraph ways`, built once by a caller routing several gaps (~450 ms per
+build on a 5,000-way network).
 -/
 def routeOnWalkableIn (graph : WalkGraph) (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
     Option (Array Pt) := Id.run do
@@ -320,17 +299,10 @@ def routeOnWalkableIn (graph : WalkGraph) (a b : Pt) (ways : Ways) (opts : Route
       -- Nested rather than `continue`d — see the heap's note.
       if !(settled[id]'hid.1) then
       settled := settled.set id true hid.1
-      -- Frontier past the bound: stop searching, but keep what is already
-      -- settled. Answering `none` here reported "no walkable path exists" for a
-      -- destination whose route was already known and admissible — the far
-      -- splice node of a long destination edge can sit hundreds of metres out,
-      -- so the search must overshoot the bound to settle it. `maxRouteM` bounds
-      -- the route, and that bound is enforced on the total below.
-      --
-      -- Safe to read `dist` for unsettled nodes after this break: Dijkstra
-      -- settles in increasing key order, so anything still unsettled when a key
-      -- K is popped has final distance ≥ K > maxRouteM, and the total check
-      -- rejects it.
+      -- Frontier past the bound: stop, keeping what is settled. The far splice
+      -- node of a long destination edge can lie beyond `maxRouteM` while the
+      -- route is admissible; the bound is enforced on the total below. Nodes
+      -- still unsettled have distance > `maxRouteM` and fail that check.
       if key > opts.maxRouteM then break
       if (settled[to.nodeA]?.getD false) && (settled[to.nodeB]?.getD false) then break
       for (toId, w) in graph.adj[id]'hid.2 do
@@ -341,10 +313,8 @@ def routeOnWalkableIn (graph : WalkGraph) (a b : Pt) (ways : Ways) (opts : Route
             prev := prev.set toId (Int.ofNat id) ht.2
             heap := heap.push toId nd
 
-  -- Total cost of arriving at `to`'s edge via either of its splice nodes.
-  -- An off-range splice node read `posInf` through the `!` default of 0.0?
-  -- No: the `!` default is 0, which would have made a phantom route of cost
-  -- `to.toA`. `getD posInf` is the honest reading — no node, no route.
+  -- Total cost of arriving at `to`'s edge via either splice node. An absent
+  -- node reads `posInf`, not 0, which would invent a route of cost `to.toA`.
   let viaA := (dist[to.nodeA]?.getD posInf) + to.toA
   let viaB := (dist[to.nodeB]?.getD posInf) + to.toB
   if !viaA.isFinite && !viaB.isFinite then return none
@@ -491,10 +461,9 @@ private def ptsApprox (a : Array Pt) (b : List Pt) : Bool :=
 
 /-! ### The bound is on the route, not on the search
 
-One straight street with a junction at 2D (~125 m) and a far end at 8D (~499 m).
-The destination sits just past the junction, on the long second edge, so its far
-splice node is ~374 m out — Dijkstra has to overshoot the bound to settle it,
-even though the route itself is ~128 m and admissible. -/
+One street, junction at 2D (~125 m), far end at 8D (~499 m). The destination
+is just past the junction, so its far splice node is ~374 m out while the route
+is ~128 m. -/
 
 private def e2 : Pt := ⟨LAT0, LON0 + 2 * D⟩
 private def e8 : Pt := ⟨LAT0, LON0 + 8 * D⟩

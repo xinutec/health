@@ -7,54 +7,24 @@ import Verified.Geo.Segments
 /-!
 # The road-match pass
 
-Attach a street-matched geometry to every road-vehicle leg the matcher can
-confidently place. Purely additive: it never rewrites the mode or the raw fixes,
-only adds `matchedPath` for the map to draw instead of the raw polyline.
+Attach a street-matched geometry (`matchedPath`) to every road-vehicle leg the
+matcher can confidently place. Additive: mode and raw fixes are untouched.
 
-Like the walk pass this is an orchestrator, and what is unpinned is everything
-between the leaves: which legs are eligible, which fixes reach the matcher, what
-the leg reads from the mirror, and whether the drawn line changes.
+The matcher and the mirror read are injected, so the guards pin the
+orchestration rather than `Verified.Geo.Match.qMatchRoadSegment`. Everything
+else is the real leaf: `rejectSpikes`, `Segments.MAX_SPEED_FOR_MODE`,
+`OsmCorridor` and `DisplayGate.matchImprovesDisplay`.
 
-## What is injected, and what is not
+Reads are leg by leg; a leg that bails before the fetch (wrong mode, or under
+`MIN_LEG_FIXES` after cap and despike) reads nothing, and the trace pins that.
 
-The matcher is supplied by the caller. Its Lean counterpart is
-`Verified.Geo.Match`'s `qMatchRoadSegment`, the quantised arm; wiring it in
-directly would make these guards assert the matcher instead of the
-orchestration. The mirror read is supplied for the usual reason: it is the
-shell.
+Three asymmetries the guards pin:
 
-Everything the pass decides with is the real Lean leaf — the spike rejection
-(`Verified.Geo.rejectSpikes` under `EpisodeGeometry.spikeAt`), the speed cap
-(`Segments.MAX_SPEED_FOR_MODE`), the corridor fetch
-(`Verified.Geo.OsmCorridor`) and the display gate
-(`Verified.Geo.DisplayGate.matchImprovesDisplay`). Only the two shell values are
-stubs.
-
-## The read trace is strictly leg-by-leg
-
-Unlike the walk pass, which fires every eligible leg's read up front so the DB
-round-trips overlap, this pass is a plain sequential `for … await`: leg *i*'s
-reads all happen before leg *i+1*'s. A leg that bails before the fetch — wrong
-mode, or under `MIN_LEG_FIXES` after the cap filter and despike — reads
-nothing, so its absence from the trace is itself pinned.
-
-## Three asymmetries the guards pin
-
-1. The cap filter is per-mode and mostly absent. `MAX_SPEED_FOR_MODE` has no
-   entry for `driving` or `bus`, so those legs keep every in-window fix however
-   fast; only `cycling` is capped, at 35 km/h. The filter runs before the
-   despike, so a fast outlier is removed by the cap rather than surviving as a
-   spike.
-2. The matcher and the gate see the same fixes but different objects. The
-   matcher gets the despiked fixes with timestamps; the gate compares the raw
-   drawn line against the matched line as bare coordinates. A match that keeps
-   the geometry but moves the times cannot change the gate's verdict.
-3. `ways.length === 0` bails before the matcher. An empty corridor is not
-   "the matcher found nothing" — it never runs, which is why a leg over
-   unmapped ground makes exactly one read and no match attempt.
-
-The `ROAD_MATCH_DEBUG` branch is a `console.error` diagnostic with no effect on
-the returned segments and is not modelled.
+1. Of the road modes only `cycling` has a `MAX_SPEED_FOR_MODE` cap (35 km/h);
+   `driving` and `bus` keep every fix. The cap runs before despiking.
+2. The matcher gets despiked timestamped fixes; the gate compares bare
+   coordinates, so moved times cannot change its verdict.
+3. An empty corridor bails before the matcher: one read, no match attempt.
 
 UNPROVEN; pinned by the `#guard`s.
 -/
@@ -137,9 +107,8 @@ def despike (pts : Array Fix) : Array Fix :=
 /-! ## The pass -/
 
 /--
-Attach `matchedPath` to every road-vehicle segment whose leg the matcher can
-confidently place. Returns a new segment array; the input is not mutated. The
-state is the mirror read trace, in call order.
+Attach `matchedPath` to every road-vehicle segment the matcher can confidently
+place. The state is the mirror read trace, in call order.
 -/
 def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array Fix) :
     Verified.Geo.OsmCorridor.TraceM (Array Seg) := do
@@ -163,11 +132,8 @@ def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array
         let ways? ← corridorWays env.drivableRoads
           (clean.map fun p => ({ lat := p.lat, lon := p.lon } : Pt))
           ROAD_SAMPLE_STEP_M ROAD_SAMPLE_RADIUS_M
-        -- A declined corridor and an empty one leave the leg raw alike, and
-        -- they should: there is no network to match against either way. The
-        -- difference the type now carries is spent upstream, where the host
-        -- records the declined discs so the ground is fetched — not
-        -- here, where acting differently would mean inventing a road.
+        -- A declined corridor and an empty one both leave the leg raw: there is
+        -- nothing to match. The host records declined discs for fetching.
         let ways := ways?.getD #[]
         if ways.isEmpty then
           out := out.push seg
@@ -194,14 +160,9 @@ def annotateRoadMatches (env : Env) (segments : Array Seg) (points : Array Fix) 
 /-! ## Guards
 
 Every number below is a recorded answer on the same fixture, at full double
-precision.
-
-The two shell values are oracle tables, not stubs that re-derive an answer.
-`stubRoads` holds every `(lat, lon, radius)` the reference was asked about;
-`stubMatcher` holds every fix array the reference matcher was handed. A query
-outside either table is a query this arm never made: the roads table answers
-`some #[]` and the matcher table answers `MISS`, a far-off vertex that no
-output guard can accept. Neither can silently agree with a wrong caller.
+precision. `stubRoads` and `stubMatcher` are oracle tables of every query the
+reference made; anything else gets `some #[]` or `MISS`, which no output guard
+accepts.
 -/
 
 section Guards
@@ -322,14 +283,10 @@ private structure MatchEntry where
   fixes : Array MPt
   path : Option (Array MPt)
 
-/-- The answer a table MISS returns: a line 2 km southwest of every fixture,
-which no output guard accepts. Deliberately local rather than at (0, 0):
-`DisplayGate.NearGrid.nearestDist` scans rings outward to the occupied
-bounding box, so a null-island sentinel would make the gate scan ~90,000 rings.
-
-A miss is a second net, not the only one: the matcher key is derived from the
-same despiked fix set that builds the corridor track, so any divergence in the
-fixes already shows up in the read trace guard before it reaches here. -/
+/-- The answer a table miss returns: a line 2 km southwest of every fixture.
+Not at (0, 0): `NearGrid.nearestDist` scans rings out to the occupied box, ~90,000
+of them from null island. A second net: diverging fixes already show in the read
+trace. -/
 private def MISS : Array MPt := #[m 51.487 (-0.16) 0.0, m 51.487 (-0.159) 0.0]
 
 private def MATCHES : Array MatchEntry := #[

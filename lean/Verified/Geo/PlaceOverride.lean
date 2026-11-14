@@ -1,22 +1,20 @@
 import Verified.Hsmm.FloatScore
 import Verified.Geo.SegmentMerge
 /-!
-# HSMM→pipeline place-override decision leaves
+# HSMM→pipeline place override
 
-`applyHsmmPlaceOverride` overlays the HSMM's place / train-line picks onto the
-heuristic pipeline's segments. The whole pass is here now — see "The pass itself"
-below; this section is its decision leaves:
+`applyHsmmPlaceOverride` overlays the HSMM's place and train-line picks onto the
+pipeline's segments (see "The pass itself"). Its decision leaves:
 
 * `decideHsmmTrainOverride` — the weighted movement→train call (HSMM line
   support vs GPS road-following; not a veto).
-* `findDominantTrainLineName` / `findDominantStationaryPlaceId`: the
-  max-temporal-overlap winner over the HSMM segments across a pipeline
-  segment's window (insertion-order tie-break).
-* `doorstepConsistent`: the doorstep gate. A place whose centroid is >1.5 km
-  from the stay's own GPS is a teleport, not a refinement.
+* `findDominantTrainLineName` / `findDominantStationaryPlaceId`: the HSMM
+  segment with most overlap across a pipeline segment's window (first wins).
+* `doorstepConsistent`: a place whose centroid is >1.5 km from the stay's own
+  GPS is a teleport, not a refinement.
 
-Overlap/argmax are exact integer/discrete; the doorstep gate reuses the shared
-`haversineMeters` (≤1 ULP). UNPROVEN; pinned by the `#guard`s.
+Exact, except the doorstep gate's `haversineMeters` (≤1 ULP). UNPROVEN; pinned by
+the `#guard`s.
 -/
 
 namespace Verified.Geo.PlaceOverride
@@ -62,10 +60,9 @@ private def argmaxFirst {K : Type} (acc : List (K × Float)) : Option (K × Floa
     | none => some p
     | some b => if decide (p.2 > b.2) then some p else some b) none
 
-/-- Rail line the HSMM gives the most train-overlap-seconds across `[segStart,
-    segEnd)`, with that overlap as a fraction of the segment duration. `none`
-    when no train-with-known-line segment overlaps. Assumes time-sorted HSMM
-    segments (true by construction). -/
+/-- Rail line the HSMM gives the most train overlap across `[segStart, segEnd)`,
+    with that overlap as a fraction of the segment. `none` when no train with a
+    known line overlaps. HSMM segments are time-sorted by construction. -/
 def findDominantTrainLineName (segStart segEnd : Int) (hmm : List HmmSeg) :
     Option (String × Float) := Id.run do
   let mut counts : List (String × Float) := []
@@ -108,15 +105,9 @@ def doorstepConsistent (segLat segLon placeLat placeLon : Float) : Bool :=
 
 /-! ## Guards
 
-Historical note on the leaf guards below. Their reference values were first
-produced by a verbatim reimplementation of the two private helpers inside the
-harness — my transcription checked against my transcription, which a shared
-misreading passes. The harness no longer contains those copies: the composite
-guards further down drive the real exported `applyHsmmPlaceOverride`, and they
-reach the same leaves (H2/H3 the place argmax and its window, H16 the line
-argmax, H16a/H16b the overlap fraction bracketed through the caller's own
-threshold). These leaf guards are kept because they are cheaper to read, and
-they are now corroborated rather than self-certified. -/
+The composite guards below drive the real `applyHsmmPlaceOverride` and reach the
+same leaves (H2/H3 the place argmax, H16 the line argmax, H16a/H16b the overlap
+fraction), corroborating these cheaper leaf guards. -/
 
 #guard decideHsmmTrainOverride 25 0.9 (some 0.2) == true
 #guard decideHsmmTrainOverride 5 0.9 (some 0.2) == false
@@ -146,33 +137,21 @@ private def placeHmm : List HmmSeg := [
 
 /-! ## The pass itself
 
-The output records are the answer here, not a decision about them, so the pass
-is Lean's, and it is wholly pure: `places` is a lookup table, not I/O.
-
-Three arms, dispatched on the effective mode:
+Pure: `places` is a lookup table. Three arms on the effective mode:
 
 * `stationary` → the place override, gated by the doorstep test;
-* already `train` → left alone, deliberately. The pipeline's own line
-  attribution is finer-grained than per-line route-graph evidence, so
-  train-vs-train is not adjudicated here;
+* already `train` → left alone: the pipeline's line attribution is finer than
+  per-line route evidence;
 * anything else → the weighted movement→train promotion.
 
-## Probe survivors
+Of 33 perturbations, three do not fire, each for a reason:
 
-33 perturbations, 30 fire. The three that do not, each with a reason rather than
-a shrug:
-
-* `lineOverlapFraction ≤ 0` vs `< 0`. Provably the same answer. `counts`
-  only ever receives overlaps the `overlap > 0` test admitted, so any fraction
-  reaching this line is strictly positive; and at exactly 0 the `<` form falls
-  through to `0 > 0`, which is false too. Separating them needs a negative
-  `roadCorridorFraction`, and that field is a share of samples in [0, 1].
-* The `seg.place == some name` short-circuit. A pure performance guard:
-  removing it writes the value the segment already holds. No output can move.
-* The doorstep bar's `≤` vs `<`. Needs a haversine landing exactly on
-  1500.0 m — the same knife-edge as elsewhere in this port (one latitude ULP
-  moves the output ~7.9e-10 m against an output ULP near 1e-13 m). The constant
-  is bracketed on both sides: H7a at ~1.2 km overrides, H7 at ~3.2 km refuses.
+* `lineOverlapFraction ≤ 0` vs `< 0`: only positive overlaps reach it, and at 0
+  both forms are false.
+* The `seg.place == some name` short-circuit: removing it rewrites the same
+  value.
+* The doorstep bar's `≤` vs `<`: needs a haversine of exactly 1500.0 m. The
+  bar is bracketed instead: H7a at ~1.2 km overrides, H7 at ~3.2 km refuses.
 -/
 
 open Verified.Geo.SegmentMerge (Seg effectiveMode)
@@ -184,11 +163,8 @@ structure PlaceLookup where
   lon : Option Float
   deriving Inhabited, BEq, Repr
 
-/-- Generic clustering-bucket markers assigned by `assignDisplayNames`. These
-are not venue labels: they identify a
-cluster's kind (you sleep here sometimes) without naming the venue. The
-pipeline's `bestPlace` lookup has already resolved a real venue name, and the
-override must not overwrite it with the bucket marker. -/
+/-- Generic cluster-kind markers from `assignDisplayNames`, not venue names; the
+override must not replace a venue `bestPlace` already resolved with one. -/
 def GENERIC_BUCKET_LABELS : List String := ["Stay"]
 
 /-- `places.get(id)`. -/
@@ -209,12 +185,9 @@ def maybeOverridePlace (seg : Seg) (hmm : List HmmSeg) (places : List (Int × Pl
         if GENERIC_BUCKET_LABELS.contains name then seg
         else if seg.place == some name then seg
         else
-          -- The doorstep gate. Skipped when the stay has no centroid: a
-          -- truly GPS-dark stay legitimately anchors via the prior, and it is
-          -- only when the stay's own GPS says otherwise that the override is a
-          -- teleport rather than a refinement.
-          -- The claim is the place's: its name under its own rule, at its own
-          -- position (as `StayEnrich`'s Home/Work arm records it).
+          -- The doorstep gate, skipped for a stay with no centroid: a GPS-dark
+          -- stay legitimately anchors via the prior. The claim is the place's
+          -- name and position, as `StayEnrich`'s Home/Work arm records it.
           let askedAt := match place.lat, place.lon with
             | some pLat, some pLon => some (pLat, pLon)
             | _, _ => none
@@ -231,13 +204,9 @@ def maybeOverrideMovementToTrain (seg : Seg) (hmm : List HmmSeg) : Seg :=
   | some (line, overlapFraction) =>
     if !decideHsmmTrainOverride seg.avgSpeed overlapFraction seg.roadCorridorFraction then seg
     else
-      -- Both `mode` and `refinedMode`, so the override sticks through to the
-      -- display (which reads `refinedMode ?? mode`). The reason is replaced
-      -- because the pipeline's biometric/cadence reasoning no longer applies.
-      -- `vehicleKind` must go for the same reason and one more: it is the bus
-      -- passes' judgement of the leg as a road vehicle, and the day-state
-      -- flattening ranks it above refinedMode — left in place it renders this
-      -- train as a bus.
+      -- Both `mode` and `refinedMode`, since the display reads
+      -- `refinedMode ?? mode`. The reason no longer applies, so it is replaced;
+      -- `vehicleKind` goes too, or day-state flattening renders the train as a bus.
       { seg with
         mode := "train", refinedMode := some "train",
         refinedReason := some s!"hsmm route evidence — {line}",
