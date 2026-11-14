@@ -1,35 +1,19 @@
 import Verified.Geo.OsmRouteMembers
 
 /-!
-# Which bus relations are worth mirroring, and when it is safe to write them
+# Which bus relations are worth mirroring
 
-`refresh-bus-routes` mirrors OSM `route=bus` relations with their ordered stop
-lists into `bus_route_cache`: the ingestion half of the bus matcher.
+`refresh-bus-routes` mirrors OSM `route=bus` relations with their ordered stops
+into `bus_route_cache`, for the bus matcher.
 
-The pure decision in the bus route cache is here too.
+⚠ Two deliberate differences from the rail arm ({@link Verified.Geo.OsmRailStops}):
 
-## ⚠ This arm and the rail arm disagree twice, on purpose
+1. Buses require `ref`, the rider-facing number; rail accepts `ref` or `name`.
+2. Buses keep the first tile's copy of a relation, rail the last. Both copies
+   are complete (`node(r)`), so neither is wrong, but merging the two would
+   change behaviour.
 
-They are near-identical crons over the same tiling, so the differences read as
-oversights until you check them. They are not:
-
-1. Buses require `ref`; rail accepts `ref` or `name`. A bus route without a
-   rider-facing number ("38") cannot be named to a user. A tube relation
-   frequently has no `ref` at all, so requiring one there would drop most of the
-   Underground. See {@link Verified.Geo.OsmRailStops}.
-
-2. Buses keep the first tile's copy of a relation; rail keeps the last. The
-   bus loop is `if (!byRelation.has(id)) set(...)`, the rail loop is a bare
-   `set(...)`. `node(r)` returns a relation's full stop list from any tile it
-   touches, so both copies are complete and neither arm is wrong — but they are
-   different, and merging them into one would change behaviour while claiming
-   to share code.
-
-## Whether a run failed
-
-Neither arm decides it alone: a run writes the tiles that answered, and whether
-too much of the area has gone stale is `Verified.Geo.OsmMirrorRefresh`'s rule,
-the same for both.
+Whether a run failed is `Verified.Geo.OsmMirrorRefresh`'s rule, shared.
 -/
 
 namespace Verified.Geo.OsmBusRoutes
@@ -55,20 +39,14 @@ structure BusRoute where
   stops : Array RouteStop
   deriving Repr, Inhabited, BEq
 
-/-- The Overpass QL the mirror runs for one tile. As with rail, `node(r)` returns
-each matched route's full stop list, so a route is mirrored end to end even when
-only its middle crosses the cell.
-
-Coordinates arrive already rendered, for the reason given in
+/-- The Overpass QL the mirror runs for one tile; `node(r)` returns each route's
+full stop list. Coordinates arrive rendered, as in
 {@link Verified.Geo.OsmRailStops.buildRailStopsOverpassQuery}. -/
 def buildBusRouteOverpassQuery (minLat minLon maxLat maxLon : String) : String :=
   s!"[out:json][timeout:180];relation[route=bus]({minLat},{minLon},{maxLat},{maxLon});out body;node(r);out body;"
 
-/-- Keep the routes that can be both named and anchored.
-
-An empty `ref` is no ref: OSM does carry empty `ref` tags, and testing
-`isNone` alone would admit a route whose rider-facing number is the empty
-string. -/
+/-- Keep the routes that can be named and anchored. An empty `ref` is no ref:
+OSM carries empty `ref` tags. -/
 def extractBusRoutes (rels : Array RawRelation) (nodes : Array (Nat × ResolvedNode))
     : Array BusRoute := Id.run do
   let mut out : Array BusRoute := #[]

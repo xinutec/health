@@ -4,13 +4,9 @@ import Verified.Civil
 # Share links
 
 A share token gives an unauthenticated recipient read access to a user's last N
-days. Generating the token reads the CSPRNG, which is IO and stays in Rust; the
-window arithmetic and the clamp are total functions guarding what a recipient
-can see, how far back a link reaches, so they live here. A `days_back` reaching
-0 or below silently disables a share; one past the maximum hands out more
-history than the settings UI can express.
-
-The date arithmetic is `Verified.Civil`'s.
+days. Minting reads the CSPRNG in Rust; the window arithmetic and clamp are
+here. `days_back ≤ 0` would silently disable a share; past the maximum it would
+expose more than the settings UI can express. Dates are `Verified.Civil`'s.
 -/
 
 namespace Verified.Share
@@ -20,20 +16,15 @@ def SHARE_DAYS_MIN : Int := 1
 /-- Upper bound on a share window — matches the settings UI's input max. -/
 def SHARE_DAYS_MAX : Int := 365
 
-/-- Compose the public URL sent to a recipient.
-
-Strips one trailing slash. Not `trimRight '/'`: a base URL of
-`https://h.example//` is a configuration mistake, and collapsing it would hide
-the mistake behind a URL that works. -/
+/-- Compose the public URL sent to a recipient, stripping one trailing slash. A
+doubled slash is a configuration mistake left visible. -/
 def buildShareUrl (baseUrl : String) (token : String) : String :=
   let trimmed := if baseUrl.endsWith "/" then (baseUrl.dropEnd 1).toString else baseUrl
   trimmed ++ "/share/" ++ token
 
-/-- Inclusive `[from, to]` date range for a share with this `days_back`.
-
-`today` is the most recent date the recipient may see. `none` for `daysBack ≤ 0`,
-which the caller treats as "share disabled", and `none` when `today` does not
-parse, rather than a `"NaN-NaN-NaN"` string reaching the database. -/
+/-- Inclusive `[from, to]` date range for a share with this `days_back`, `today`
+the latest date visible. `none` for `daysBack ≤ 0` (share disabled) or an
+unparseable `today`. -/
 def shareableDateRange (today : String) (daysBack : Int) : Option (String × String) :=
   if daysBack ≤ 0 then none
   else match Verified.Civil.parseDate today with
@@ -44,29 +35,19 @@ def shareableDateRange (today : String) (daysBack : Int) : Option (String × Str
       some (Verified.Civil.formatDate fy fm fd, today)
 
 /-- Validate and clamp a requested window to `[SHARE_DAYS_MIN, SHARE_DAYS_MAX]`.
-
-Takes an `Option Int`: whether the input is a finite integer at all is the
-deserialiser's question. `none` in means `none` out, so the caller keeps its
-choice between defaulting (on create) and rejecting (on update). -/
+`none` in is `none` out, so the caller chooses to default (create) or reject
+(update). -/
 def clampShareDaysBack (value : Option Int) : Option Int :=
   match value with
   | none => none
   | some v => some (max SHARE_DAYS_MIN (min SHARE_DAYS_MAX v))
 
-/-- May a share-viewer see this date?
+/-- May a share-viewer see this date? Inclusive `[from, to]`, as
+{@link shareableDateRange} produced. String comparison is chronological for
+`YYYY-MM-DD` and never fails.
 
-The window is inclusive at both ends, and it is the same `[from, to]`
-{@link shareableDateRange} produced — a viewer who may see the boundary day must
-be able to load it.
-
-String comparison, deliberately: `YYYY-MM-DD` orders lexicographically as it
-does chronologically, and parsing first would add a failure mode. A malformed
-date sorts somewhere and is refused or admitted consistently; it never throws.
-
-⚠ The default is refusal at the call site, not here. This answers "is it in the
-window" for a caller that has already established there is a window; a session
-with no share-viewer is not a share-viewer with an empty window, and conflating
-them would silently open every date. -/
+⚠ The caller must first establish there is a share window: no share-viewer is
+not an empty window, and conflating them opens every date. -/
 def dateInShareWindow (date «from» to : String) : Bool :=
   «from» ≤ date && date ≤ to
 

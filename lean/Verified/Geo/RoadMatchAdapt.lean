@@ -5,45 +5,21 @@ import Verified.Geo.WalkMatchAdapt
 /-!
 # `RoadMatchAdapt` — `RoadMatchAnnotate.Env.matcher`, backed by the real matcher
 
-The road twin of `WalkMatchAdapt`, for the same reason: the pass takes its
-matcher as an `Env` field, and the matcher it wants is
+The road counterpart of `WalkMatchAdapt`, bridging to
 `Verified.Geo.Match.qMatchRoadSegment`.
 
     Env.matcher       Array MPt → Array Way → Option (Array MPt)
     qMatchRoadSegment Array QPt → Array QWay → Array (Array QPt)
                         → Option QMatchResult
 
-# Two differences from the walk adapter, both load-bearing
+Unlike the walk adapter, way names cross: `ROAD_QPROFILE`'s way-switch penalty
+is the turn prior, so dropping them would change the route. The result is
+`path`, the line both drawn and gated (`QMatchResult` has no `coarsePath`).
+There is no building layer (`#[]`): a vehicle on a street needs none.
 
-Names cross. `WalkMatchAdapt` drops them and says why: `WALK_QPROFILE`
-charges nothing for a way change, so a walk way's name decides nothing. The road
-profile is where that field came from — `ROAD_QPROFILE`'s way-switch penalty is
-the turn prior — so dropping a name here would silently change the route. `Way`
-carries one and `QWay` wants one, so it is a straight copy; `osmId` and
-`subtype` are read by the corridor fetch upstream and by nothing the matcher
-does, so they stop here.
-
-The result is `path`, not `coarsePath`. `RoadMatchAnnotate` hands
-`matchImprovesDisplay` the same line it draws (`road-match-annotate.ts:115`
-passes `result.path`), unlike the walk pass, which gates on `coarsePath` and
-draws the finer line. `QMatchResult` has no `coarsePath` to confuse it
-with — its second field is `routeDetail` — so this is one field, taken whole.
-
-# Buildings
-
-The road matcher gets no impassable layer: a vehicle on a mapped street does not
-need one, and `buildingsNear` is never read on a road leg. `#[]` here is that
-absence, not a shortcut.
-
-# The quantisation, and where it is adjudicated
-
-Same 1e-7° grid and the same rounding rule as the walk arm; the conversions are
-`WalkMatchAdapt`'s, imported rather than copied, because a second copy of a
-rounding rule that disagrees with the first on negative ties is precisely the
-defect that file's header exists to prevent.
-
-So the quantised arm is judged by the corpus gates; do not quiet a divergence by
-widening an accepted delta.
+The 1e-7° conversions are `WalkMatchAdapt`'s, imported so the negative-tie
+rounding has one copy. The corpus gates judge this arm; do not widen an
+accepted delta to quiet a divergence.
 -/
 
 namespace Verified.Geo.RoadMatchAdapt

@@ -2,32 +2,16 @@ import Verified.Civil
 /-!
 # The raw recovery picture
 
-`/internal/recovery` answers another service — coach — with three daily streams
-and, for each, the freshest value plus the baseline it should be judged against.
+`/internal/recovery` gives coach three daily streams, each with its freshest
+value and baseline. No readiness score: coach owns that judgment, and two
+scorers would disagree about what a bad day is.
 
-Deliberately unopinionated. There is no readiness score here and there must
-not be: health does not know what readiness means, and coach owns that judgment.
-If both apps scored it they would drift on what a bad day is, and the athlete
-would be told two different things.
+`recoveryAsOf` takes a day, not today: coach's ledger judges a past session
+against what it asked that morning, eased when under-recovered.
 
-## Why a past morning is anyone's business
-
-Coach's prediction-error ledger judges each logged session against what it asked
-that day, and it asks for less when the athlete was under-recovered. Without
-knowing that, full compliance with an eased ask reads as falling short — a badly
-slept night recorded as the athlete failing, which then holds their progression
-back. So the ledger must be able to ask what was known on a given morning, which
-is why `recoveryAsOf` takes the day rather than assuming today.
-
-## The empty-baseline case is not zero
-
-With one reading and nothing behind it, the baseline mean is the reading
-itself and `n` is 0 — not a mean of zero. A zero mean would make the first
-reading look enormously above baseline; this way any z-score the caller computes
-is 0, which is the honest "no information yet". `n` is what tells them so.
-
-The variance divides by `n`, not `n - 1`: this is the population of days
-observed, not a sample drawn from a larger one.
+With one reading the baseline mean is that reading and `n` is 0, so a z-score
+is 0, "no information yet", not huge. Variance divides by `n`: the population
+of observed days.
 
 Pure and total. UNPROVEN.
 -/
@@ -36,10 +20,8 @@ namespace Verified.Recovery
 /-- Days of trailing history a baseline is drawn from. -/
 def BASELINE_DAYS : Int := 28
 
-/-- Widest range `/recovery/history` will answer in one call.
-
-A refusal, not a truncation. Answering a 10-year request with 400 days would
-look like a complete answer to a caller who asked for more. -/
+/-- Widest range `/recovery/history` answers in one call. Wider is refused, not
+truncated into something that looks complete. -/
 def MAX_SPAN_DAYS : Int := 400
 
 /-- One day's reading. `none` is a no-wear night, which is dropped rather than
@@ -79,11 +61,8 @@ def latestAndBaseline (series : List Daily) : Option Stat :=
       let variance := (base.foldl (fun acc v => acc + (v - mean) * (v - mean)) 0.0) / n.toFloat
       some { latest, mean, sd := variance.sqrt, n := Int.ofNat n }
 
-/-- The readings on or before `day`, no older than the baseline window.
-
-Both ends matter. Without the upper bound a query about a past morning would
-see the future; without the lower bound the baseline would creep wider the
-longer the account has existed, and an old reading would quietly still count. -/
+/-- The readings on or before `day`, within the baseline window: no future for
+a past morning, and no baseline widening with account age. -/
 def withinBaseline (series : List Daily) (day : String) : List Daily :=
   match Verified.Civil.parseDate day with
   | none => []

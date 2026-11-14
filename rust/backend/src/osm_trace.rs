@@ -1,29 +1,17 @@
-//! Answering the fold from a golden fixture's recorded `osmTrace`.
+//! Answering the fold from a golden fixture's recorded `osmTrace`, the answers
+//! production gave on capture day, per table, keyed by question. A replay asks
+//! the trace first and the `osmRowSet` ([`crate::rowset_answerer`]) for the
+//! rest, so a day replays against the roads it was blessed on.
 //!
-//! A fixture carries two things the fold can be answered from: `osmRowSet`, the
-//! raw mirror rows the answerer scores through Lean
-//! ([`crate::rowset_answerer`]), and `osmTrace`, the answers production gave on
-//! the day it was captured — one section per table, keyed by the question. This
-//! is the second: a replay asks the trace first and the row set for whatever the
-//! trace does not hold, so a day replays against the roads it was blessed on.
+//! The answerer tables are keyed as the fold spells them (bit patterns joined
+//! by `|`) and matched exactly. The matcher reads (`walkableRoads`,
+//! `buildingsNear`, `drivableRoads`) are keyed by decimal coordinates and
+//! matched to 1e-9° and 1e-6 m, since `Float.cos` differs by an ULP between
+//! runtimes on some corridor centres.
 //!
-//! # Two kinds of key
-//!
-//! The seven answerer tables are keyed as the fold spells them — bit patterns
-//! joined by `|` — and matched exactly. The three matcher reads
-//! (`walkableRoads`, `buildingsNear`, `drivableRoads`) are keyed by the
-//! coordinates as decimal text and matched quantised, to 1e-9° and 1e-6 m,
-//! because the two arms that wrote and read them compute a corridor centre one
-//! ULP apart on ~0.5% of rows (`Float.cos` differs between runtimes) and a
-//! disc's address is not a 17-digit quantity. Production is unaffected either
-//! way: a live mirror answers by distance, not by key.
-//!
-//! # Presence of a section is not presence of a trace
-//!
-//! A fixture can carry all three matcher sections as empty objects. Count the
-//! entries ([`TraceAnswerer::has_walk_capture`]) before calling a day measurable
-//! for walks; a harness that never answers the walk reads measures the matcher
-//! by not running it.
+//! Sections can be present and empty: count entries
+//! ([`TraceAnswerer::has_walk_capture`]) before calling a day measurable for
+//! walks.
 
 use std::collections::HashMap;
 
@@ -355,10 +343,8 @@ impl<A: Answerer> Answerer for RecordingAnswerer<A> {
             parse_bits_key(&ask.key),
             MatcherRead::parse(&ask.what),
         ) {
-            // Full precision: the key is parsed back by `parse_text_key` and
-            // quantised; a rounded format would land in a different bucket
-            // than the live lookup and the replay would miss every key it had
-            // just captured.
+            // Full precision: `parse_text_key` quantises it, and a rounded
+            // format would land in another bucket than the live lookup.
             self.sections
                 .entry(ask.what.clone())
                 .or_insert_with(|| Value::Object(Map::new()))
@@ -369,12 +355,9 @@ impl<A: Answerer> Answerer for RecordingAnswerer<A> {
     }
 }
 
-/// What a capture was taken under, for stamping into a fixture's `meta`.
-///
-/// A fixture that does not record these cannot notice them moving. Each
-/// one changes what the mirror is asked or what it may return, and none of
-/// them is part of any key a fixture holds — so a change to one alters
-/// production and alters nothing a gate replays.
+/// What a capture was taken under, for a fixture's `meta`. Each changes what
+/// the mirror is asked or returns without being in any key, so unrecorded, a
+/// change alters production and no replay.
 #[must_use]
 pub fn capture_inputs() -> Value {
     json!({
@@ -386,11 +369,8 @@ pub fn capture_inputs() -> Value {
     })
 }
 
-/// Refuse a fixture captured under inputs this build no longer uses.
-///
-/// Absent is not a mismatch. The fixtures captured before this existed
-/// carry no stamp and must keep working. Only a stamp that is present and
-/// different is a refusal.
+/// Refuse a fixture captured under inputs this build no longer uses. An absent
+/// stamp (older fixtures) passes; only a present, different one refuses.
 pub fn check_capture_inputs(meta: &Value) -> Result<(), String> {
     let Some(stamped) = meta.get("captureInputs").and_then(Value::as_object) else {
         return Ok(());

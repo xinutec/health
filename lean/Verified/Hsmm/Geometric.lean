@@ -22,21 +22,16 @@ structure GpsFix where
 
 /-! ## The gap term
 
-At a minute without a fix, the fixes bracketing its gap say how far the day
-moved in the dark: `d` metres in `dt` seconds. Whatever state holds the minute
-must have covered at least that straight line. The term is the probability that
-it could: the mode's own speed distribution (`ModePrior.speedMean` /
-`speedStd`, the same table the speed emission reads and the fitter learns),
-truncated at zero, carried over `dt` and widened by both fixes' noise, survives
-`d`. Mixed with an outlier tail, because a bracketing fix can be wrong — but
-only by so much: the chance falls off with the distance the outlier would have
-to explain.
+The fixes bracketing a dark gap moved `d` metres in `dt` seconds, so the state
+holding a minute in it must have covered that line. The term is the
+probability it could: the mode's speed distribution (`ModePrior.speedMean` /
+`speedStd`), truncated at zero, over `dt`, widened by both fixes' noise,
+surviving `d`, mixed with an outlier tail that falls off with the distance an
+outlier would explain.
 
-The gap's log-likelihood is shared out over its dark minutes, so a gap held
-whole by one mode pays it once, and a gap shared with a ride charges each of
-its minutes a share. There is no gap-length cutoff, no per-mode ceiling and no
-clamp: a short gap is dominated by fix noise and asserts little; a long one by
-the speed spread. -/
+The log-likelihood is shared over the gap's dark minutes. No gap-length
+cutoff, per-mode ceiling or clamp: fix noise dominates short gaps, the speed
+spread long ones. -/
 
 /-! Measured on the decoder corpus's fixes, each against the midpoint of
 neighbours that agree with each other: 99% lie within 31 m (a per-axis σ of
@@ -91,15 +86,11 @@ def gapTerm (s : State) (hasFix : Bool) (prevFix nextFix : Option GpsFix)
 
 /-! ## The place term
 
-A stay at a known place during a dark minute: the day got from the previous fix
-to the place in the time since, and from the place to the next fix in the time
-left. Each leg needs only that some travel mode covers it: the best mode's
-survival. Which mode it was is the travel minutes' own states to pay for, so
-the mode prior is not charged here again. The two legs multiply.
-
-Ground modes only, the mainline among them. A plane reaches anywhere in a night, so with it a stay at
-Home 1,300 km from the morning's first fix went free, and the decode put the
-night there; no plane state pays for that flight, because none is decoded. -/
+A stay at a known place in a dark minute: the day reached the place from the
+previous fix and the next fix from the place in the time available. Each leg
+takes the best mode's survival (the travel minutes pay for which mode); the two
+multiply. Ground modes only: with planes a far-away Home is reachable overnight
+with no flight decoded. -/
 
 private def TRAVEL_MODES : Array Mode := #[.walking, .cycling, .driving, .train]
 

@@ -2,37 +2,23 @@ import Verified.JsNum
 /-!
 # One day's decoded segments → one `presence_log` row
 
-`computeRow`: phase 1 of `docs/proposals/2026-06-presence-continuity.md`.
+`computeRow` (`docs/proposals/2026-06-presence-continuity.md`, phase 1)
+re-expands the stored `HmmSegment[]` to per-minute attribution and rolls the
+day up: the known place holding the most minutes, and the end-of-day state the
+next day's continuation reads.
 
-The HSMM's output is per-minute and is compacted to `HmmSegment[]` for storage.
-This re-expands it to per-minute attribution and rolls the day up: which known
-place held the most minutes, and what state the day ended in — the seed the next
-day's continuation reads.
+A tie keeps the first place seen (insertion-ordered array, strict `>`): a real
+decision about a real day. A zero-minute segment is skipped, so a day of only
+sub-30 s segments has `totalMinutes = 0` and produces no row.
 
 Pure and total. UNPROVEN; the guards pin the thresholds and the tie-break.
-
-## Two things that are not arithmetic
-
-A tie keeps the first place seen: places are accumulated in insertion
-order and picked with a strict `>`, so two places with equal minutes resolve to
-whichever the day's segments mentioned first. That is a real decision about a
-real day, not an artefact, and it is why this carries an insertion-ordered array
-rather than a hash map. The same trap is open on the PhoneTrack device map.
-
-A zero-minute segment is skipped entirely, before it can contribute to the
-denominator. `Math.round` sends anything under 30 seconds to zero, so a day of
-nothing but sub-30s segments has `totalMinutes = 0` and produces no row rather
-than a row claiming 0% of nothing.
 -/
 
 namespace Verified.PresenceLog
 
-/-- The end-of-day posterior for a stay at a known place that consumed the day's
-final minute.
-
-A conservative baseline, not a measurement: the HSMM does not emit per-segment
-posteriors yet, and this is the magnitude the design's worked example assumes.
-When it does, this constant goes and the value is read. -/
+/-- The end-of-day posterior for a stay at a known place holding the day's final
+minute: a conservative baseline from the design's worked example, until the
+HSMM emits per-segment posteriors. -/
 def END_OF_DAY_BASELINE_POSTERIOR : Float := 0.95
 
 /-- One compacted HSMM segment, as `decoded_days` stores it. -/
@@ -54,21 +40,14 @@ structure Row where
   endOfDayPosterior : Float
   deriving Inhabited, Repr
 
-/-- Minutes a segment contributes.
-
-`Math.round`, not truncation, and clamped at zero — a segment whose end
-precedes its start contributes nothing rather than a negative that would corrupt
-the denominator. -/
+/-- Minutes a segment contributes: rounded, clamped at zero, so an inverted
+segment cannot corrupt the denominator. -/
 def minutesOf (s : Segment) : Int :=
   max 0 (Verified.JsNum.jsRoundInt (Float.ofInt (s.endTs - s.startTs) / 60.0))
 
-/-- The key a segment's minutes accumulate under: its place when it is a
-stationary stay, and `none` for everything else.
-
-`none` is a real bucket, not an absence. Non-stationary minutes and stays with
-no known place both land there, and they count toward the denominator — which is
-what makes `dominantFraction` honest about how much of the day was not at the
-dominant place. -/
+/-- The key a segment's minutes accumulate under: its place for a stationary
+stay, else `none`. `none` is a real bucket in the denominator, so
+`dominantFraction` counts time away from the dominant place. -/
 def keyOf (s : Segment) : Option Int :=
   if s.mode == "stationary" then s.placeId else none
 

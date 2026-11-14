@@ -2,38 +2,19 @@ import Verified.Fix
 /-!
 # Which train legs are worth a route fill
 
-A train leg is drawn on rails only when its `<board> → <alight>[ · <line>]` label
-has a row in `rail_route_cache`. The nightly job computes those from history, so
-a key first ridden today draws raw until tomorrow. `unsnappedTrainRoutes` is the
-scan that closes the gap from the serving path: it names the legs a background
-worker should fill, and nothing else.
+A train leg is drawn on rails only when its `<board> → <alight>[ · <line>]`
+label has a `rail_route_cache` row, which the nightly job writes, so a label
+first ridden today draws raw. `unsnappedTrainRoutes` names the legs a
+background worker should fill; the geometry is Rust's.
 
-Only the scan is here. Computing the geometry is `computeRailRoute`, which is
-two OSM corridor queries and a snapper — shell work, and it stays shell.
-
-## The clauses, each of which fails silently if it is wrong
-
-* `refinedMode ?? mode` — the refined mode decides, in both directions. A leg
-  refined away from train is not a candidate; one refined into train is.
-* no label, no candidate — the label is the cache key.
-* already snapped, no candidate — it is on rails already, and re-filling
-  would recompute a row the nightly job owns with better evidence.
-* the fix window is inclusive at both ends.
-* legs sharing a key pool their fixes. The same route ridden twice in a day
-  is one route.
-
-The retained window is the first leg's, not the union. A second leg
-contributes its fixes and discards its own `[startTs, endTs]`, deliberately:
-the window is what the snapper reads as the leg to lay on the corridor, and a
-union spanning two separate rides would name a journey nobody took.
-
-Order is the order the day was walked, not sorted by key or by time. The
-queue is drained in this order, so a change here reorders the fills.
-
-A leg with no fixes in its window is still a candidate. The label is the
-cache key, and thin or absent corridor evidence is `computeRailRoute`'s problem —
-it refuses rather than guessing. Dropping such a leg here would silently
-withdraw the one thing that could still route it from the line fallback.
+* `refinedMode ?? mode` decides, in both directions.
+* No label, no candidate: the label is the cache key.
+* Already snapped, no candidate: the nightly row has better evidence.
+* The fix window is inclusive at both ends.
+* Legs sharing a key pool their fixes, keeping the first leg's window: a union
+  across two rides would name a journey nobody took.
+* Order is the day's, and the queue drains in it.
+* A leg without fixes is still a candidate: the line fallback may route it.
 
 Pure and total. UNPROVEN; the `#guard`s pin its answers.
 -/
@@ -104,8 +85,7 @@ def unsnappedTrainRoutes (segments : List FillSegment) (points : List Fix) : Lis
 
 /-! ## Guards
 
-Every expectation is a recorded `unsnappedTrainRoutes` answer on the same
-input. -/
+Expectations are recorded `unsnappedTrainRoutes` answers. -/
 
 private def PTS : List Fix :=
   [ { ts := 100, lat := 51.5, lon := -0.1 }

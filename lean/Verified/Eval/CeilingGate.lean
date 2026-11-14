@@ -1,33 +1,17 @@
 /-!
 # The one-way ceiling
 
-The count-shaped sibling of `FloorGate`. Where a floor records what the pipeline
-gets right and may only grow, a ceiling records standing defects as a per-day
-count and may only shrink: the physically-impossible legs of
-`Verified.Eval.Feasibility`, and the train legs labelled with a line that does
-not serve their stations. A day emitting more than its committed
-count is a regression; fewer is an improvement to re-bless.
+`FloorGate`'s count-shaped sibling: standing defects per day that may only
+shrink (`Verified.Eval.Feasibility`'s impossible legs, train legs on a line
+not serving their stations). More is a regression; fewer is re-blessed.
 
-## ⚠ silence is not zero, and this is the module that keeps getting it wrong
+⚠ Silence is not zero. `current[date] ?? 0` would score a day that never ran
+as fixed and invite a re-bless, so `measured` is separate and an unmeasured day
+is named, never scored. `attempted` names a zero-ceiling day that stopped
+replaying, where a new defect would otherwise hide.
 
-`current[date] ?? 0` cannot tell a day with no defects from a day that never
-ran, and against a non-zero ceiling the second reads as the first: the day drops
-out of the failures and into `improvedDays`, and the run then invites a re-bless
-on the strength of it. A change that breaks a fixture and worsens that day would
-report as an improvement — the one direction a ratchet must never get wrong. So
-`measured` is a separate argument and a day outside it is named, never scored.
-
-`attempted` closes the other half. Without it the sweep is the union of the two
-baselines, and a day at ceiling zero appears in neither — so a day carrying no
-standing debt that quietly stops replaying is named nowhere. That is where a new
-defect hides best: it cannot regress a ceiling it is no longer measured against.
-
-## Blessing takes the minimum, not the current counts
-
-A bless that wrote current counts wholesale would let a run that fixed four
-days and left one red silently raise that day's ceiling, and the standing
-failure would vanish from the gate. A run may fix some days without fixing all
-of them; blessing the wins must not also bless the losses.
+Blessing takes the per-day minimum, so fixing some days cannot raise another's
+ceiling.
 -/
 
 namespace Verified.Eval.CeilingGate
@@ -76,18 +60,10 @@ def gateCeiling (committed current : Ceiling) (measured attempted : Array String
     else if now < was then improvedDays := improvedDays + 1
   return { regressed, improvedDays, unmeasured }
 
-/-- Merge a fresh run into the committed ceiling, keeping the ratchet one-way:
-`min(committed, current)` per day.
-
-A day missing from the committed baseline has a ceiling of zero — that is how
-the gate reads it everywhere else, so a newly-offending day cannot be blessed in
-by omission either. `committed = none` is the distinct bootstrap case (no
-baseline file at all): nothing to ratchet against, so the current counts
-establish the first ceiling.
-
-A day absent from `measured` counted nothing and keeps what it had: reading
-silence as zero would record a fix nobody observed and drop that day to the
-strictest ceiling there is, on no evidence. -/
+/-- Merge a fresh run into the committed ceiling: `min(committed, current)` per
+day. A day missing from the baseline has ceiling zero; `committed = none` (no
+file) bootstraps from current. A day absent from `measured` keeps its ceiling:
+silence is not a fix. -/
 def ratchetDownCounts (committed : Option Ceiling) (current : Ceiling)
     (measured : Array String) : Ceiling := Id.run do
   let com := committed.getD #[]

@@ -3,47 +3,29 @@ import Verified.Civil
 /-!
 # Google Health weigh-ins: which one speaks for a day, and what they replace
 
-The two decisions that govern which numbers end up in the `body` table, both
-wrong silently; the HTTP, the pagination and the SQL stay in Rust.
+Google gives sparse, timestamped weigh-ins; the legacy Fitbit feed gave a
+forward-filled series that froze when its upstream died. For the window Google
+covers, the Fitbit rows are deleted and the real ones inserted; older history
+stays. HTTP, paging and SQL are in Rust.
 
-## Why there is a replacement at all
-
-Google gives real, sparse, individually timestamped weigh-ins. The legacy Fitbit
-feed gave a forward-filled daily series that froze when its upstream died, so
-the table holds a flat line that looks like data. For the window Google covers,
-the Fitbit rows are deleted and the real measurements inserted; older Fitbit
-history is left alone.
-
-⚠ So `replaceFrom` names a DELETE boundary. Too early and it destroys history
-Google cannot replace; too late and the stale flat line survives inside the
-window. It is derived from the data rather than configured, which is why it is
-here and not a constant.
+⚠ `replaceFrom` is a DELETE boundary: too early destroys history Google cannot
+replace, too late keeps the flat line. It is derived from the data.
 -/
 
 namespace Verified.Weight
 
-/-- One weigh-in as Google reports it.
-
-`grams` is an integer because that is how Google stores it; the conversion to
-kilograms happens at the write and is not a decision. `ts` is the RFC-3339
-instant, used only to order two weigh-ins that fall on the same civil date. -/
+/-- One weigh-in as Google reports it: integer `grams`, and the RFC-3339 `ts`,
+used only to order two weigh-ins on one date. -/
 structure Weigh where
   date : String
   grams : Int
   ts : String
   deriving Repr, BEq, Inhabited
 
-/-- Keep one weigh-in per civil date — the latest by `ts` — sorted by date.
-
-`ts` is compared as a string, correct only while every timestamp shares one
-format and offset: `2026-01-01T13:00:00+01:00` is the same instant as
-`2026-01-01T12:00:00Z` and compares greater. Google returns Z-normalised
-instants; if that changes, a day weighed twice picks the wrong weigh-in
-silently.
-
-The comparison is strict, so a tie keeps the first: `ts` is empty when a point
-has no `physicalTime`, so such points on one date all tie. An empty `ts` sorts
-below every real one, so a timestamped weigh-in beats an untimestamped one. -/
+/-- Keep one weigh-in per civil date, the latest by `ts`, sorted by date. `ts`
+compares as a string, correct while Google returns Z-normalised instants.
+Strict, so ties keep the first; an empty `ts` (no `physicalTime`) sorts below
+every real one. -/
 def dedupeByDate (ms : List Weigh) : List Weigh :=
   let step := fun (acc : List Weigh) (m : Weigh) =>
     match acc.find? (fun w => w.date == m.date) with
@@ -54,12 +36,8 @@ def dedupeByDate (ms : List Weigh) : List Weigh :=
   (ms.foldl step []).mergeSort (fun a b => a.date ≤ b.date)
 
 /-- The date from which stored weight is replaced: the earliest deduped day.
-
-`none` for an empty fetch, and that is the whole guard. ⚠ An empty result must
-not be read as "replace from the beginning of time" — a Google outage, a revoked
-token or a scope change all produce zero points, and treating that as a boundary
-would delete every weight row the table has. The caller writes nothing on
-`none`. -/
+⚠ `none` for an empty fetch, and the caller then writes nothing: an outage or
+revoked token returns zero points, which must not delete every row. -/
 def replaceFrom (ms : List Weigh) : Option String :=
   (dedupeByDate ms).head?.map (·.date)
 
