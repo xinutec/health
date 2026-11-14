@@ -3,15 +3,10 @@ import Verified.Hsmm.Quantize
 /-!
 # Posterior marginals over the decoder's own trellis
 
-The Viterbi path says what the day most likely was; this says how sure it is.
-Forward–backward over exactly the packed tensors the verified decode reads
-(`PData`): the same segmental model — a segment pays `init` or the transition
-at its start, `entry` there, its emissions, and its duration prior at its last
-minute, and two consecutive segments differ in state — with log-sum-exp where
-the decode takes a maximum.
-
-It runs in `Float`, outside the verified envelope, and decides nothing the
-decode decides: what it returns is, per minute, each state's posterior mass.
+How sure the decode is: forward–backward over the same packed tensors
+(`PData`) and segmental model as the verified decode, with log-sum-exp where it
+takes a maximum. In `Float`, outside the verified envelope, deciding nothing:
+per minute, each state's posterior mass.
 -/
 
 namespace Verified.Hsmm.Posterior

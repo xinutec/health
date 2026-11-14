@@ -4,16 +4,12 @@ import Verified.Hsmm.StopCalls
 /-!
 # The stations a day's fixes pass
 
-A minute's position is the median of its fixes, and at speed a minute covers a
-kilometre, so a station a train runs through is seldom within reach of any one
-minute: it is passed where it lies within `StationChain.STATION_PASS_M` of the
-straight path between two consecutive minutes' positions (06-12: four of the
-five Jubilee-only stations between Wembley Park and Finchley Road were within
-reach of no minute of a Metropolitan ride, all five of its path). A pass is a
-run of consecutive such minutes; its observation is the slowest minute whose own
-position is within reach — a train calling there stands in it — else the speed
-between the two positions either side, at which the train went by. A minute
-without a fix of its own has no position and ends a run.
+A minute's position is its fixes' median, and a train covers a kilometre a
+minute, so a through station is rarely near any one minute. It is passed where
+it lies within `StationChain.STATION_PASS_M` of the straight path between
+consecutive minutes' positions. A pass is a run of such minutes; its
+observation is the slowest minute within reach (a calling train stands there),
+else the speed between the positions either side. A fixless minute ends a run.
 -/
 
 namespace Verified.Hsmm.StationStops

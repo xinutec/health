@@ -3,11 +3,9 @@ import Verified.Rail.Certify
 /-!
 # `#guard` parity: Dijkstra vs the exhaustive oracle
 
-Every check runs inside `lake build`. The oracle enumerates all simple
-paths, so instances stay tiny (like the HSMM oracle guards). Checked per
-seeded random graph: the port and the oracle agree on reachability, the
-port's settled distance equals the oracle minimum, and the returned path
-is a well-formed `src → dst` path attaining exactly that cost.
+Per seeded random graph, inside `lake build`: reachability agrees, the settled
+distance equals the oracle minimum, and the path is a well-formed `src → dst`
+path attaining it. Instances stay tiny.
 -/
 
 namespace Verified.Rail.Tests
@@ -33,11 +31,9 @@ private def mkG (seed n m : Nat) : Graph := Id.run do
       adj := adj.setIfInBounds b ((adj.getD b #[]).push (a, w))
   return ⟨adj⟩
 
-/-- One src/dst check: reachability agrees; on `some`, the settled
-distance is the oracle minimum and the path is valid and attains it.
-`dijkstraC == dijkstra` is now a theorem (`dijkstraC_eq_dijkstra` in
-`LoopInv.lean`, given in-range adjacency — `mkG` graphs satisfy it);
-the check stays as a smoke test of the executable path. -/
+/-- One src/dst check: reachability agrees; on `some`, the distance is the
+oracle minimum and the path attains it. A smoke test of the executable path;
+`dijkstraC_eq_dijkstra` is the theorem. -/
 private def check (g : Graph) (src dst : Nat) : Bool :=
   dijkstraC g src dst == dijkstra g src dst &&
     match dijkstra g src dst, oracleDist g src dst with

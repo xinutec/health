@@ -2,15 +2,9 @@ import Verified.Hsmm.FloatScore
 /-!
 # Quantise
 
-The bridge from the float scoring to the integer trellis: `round(x · 2²⁰)`, with
-`-∞` mapped to the `null`/`none` sentinel the packed decoder reads as a hard
-zero. `Math.round` is round-half-toward-+∞, i.e. `floor(y + 0.5)` — pinned by the
-tie `#guard`s below. Scores here are far below `2⁵²`, so `floor(y+0.5)` and
-`Math.round(y)` never diverge.
-
-The value is returned as an integer-valued `Float` (`none` for `-∞`); packing it
-into the trellis's `Nat`/`Int` representation is a mechanical follow-on.
-UNPROVEN; bit-exact.
+Float scores to the integer trellis: `floor(x · 2²⁰ + 0.5)` (ties up, pinned by
+the tie `#guard`s), with `-∞` as `none`, the hard-zero sentinel. Returned as an
+integer-valued `Float`. UNPROVEN; bit-exact.
 -/
 
 namespace Verified.Hsmm.Quantize

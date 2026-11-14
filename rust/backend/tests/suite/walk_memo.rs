@@ -1,15 +1,7 @@
-//! A remembered walk is the drawn walk.
-//!
-//! The fold keys each walk's drawn result by a hash of what the drawing reads
-//! and, on a later fold, takes it from the host instead of drawing it. That is
-//! only correct if the key misses nothing the drawing reads. Here a day is
-//! replayed twice through an in-memory store: the first replay draws every walk
-//! and hands each result over, the second takes every walk from the store. The
-//! two days must be identical, and the second must actually have skipped the
-//! drawing — otherwise the test would pass on a store nobody read.
-//!
-//! The days are the golden fixtures, which live only on the machine that
-//! captures them; without them this says so and checks nothing.
+//! A remembered walk is the drawn walk: a day replayed twice through an
+//! in-memory store, the second replay taking every walk from it, must come out
+//! identical, and must actually have skipped the drawing. Needs the golden
+//! fixtures; without them it says so.
 
 use std::path::{Path, PathBuf};
 

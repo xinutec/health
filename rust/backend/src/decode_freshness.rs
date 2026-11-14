@@ -2,12 +2,11 @@
 //! stale day waits in.
 //!
 //! A decode records `inputs_through`: the earliest of the day's end, the
-//! watch's last sync (the step stream is complete only up to it) and the moment
-//! it ran. It is stale once the inputs reach further — today as fixes arrive,
-//! a past day when the watch syncs the steps it had not yet sent — and missing
-//! when no row carries the current `CLASSIFIER_VERSION`. A served read of such a
-//! day queues it (`osm_fetch_queue`, kind `decode`); `watch-decode-queue`
-//! decodes what the reads asked for, then the newest stale day it holds.
+//! watch's last sync (steps are complete only to it) and when it ran. It is
+//! stale once inputs reach further, and missing without a current
+//! `CLASSIFIER_VERSION` row. A served read queues such a day (`osm_fetch_queue`,
+//! kind `decode`); `watch-decode-queue` decodes requested days, then the newest
+//! stale one.
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;
 
@@ -67,10 +66,8 @@ pub async fn freshness(
     })
 }
 
-/// Where the day's stored decode had data to (`inputs_through`), any version —
-/// the decode a read serves is the newest the day has (`hsmm_decode`). Past it
-/// the decoder filled minutes it never saw. `None` without a decode or a
-/// recorded horizon.
+/// The newest stored decode's `inputs_through`, any version: past it the decoder
+/// filled minutes it never saw. `None` without a decode or a recorded horizon.
 pub async fn decoded_through(pool: &MySqlPool, user_id: &str, date: &str) -> Result<Option<i64>> {
     let row: Option<Option<i64>> = sqlx::query_scalar(
         "SELECT inputs_through FROM decoded_days WHERE user_id = ? AND date = ?",

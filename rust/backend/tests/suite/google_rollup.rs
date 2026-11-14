@@ -1,15 +1,10 @@
-//! The rollup's civil-day keying and its chunking arithmetic.
-//!
-//! The HTTP half is not tested here — it needs the live API. What is testable
-//! is the part that silently files data on the wrong day, which is the failure
-//! that would survive a green build and show up as a chart shifted by one.
+//! The rollup's civil-day keying and chunking, which can file data on the wrong
+//! day while every build stays green. The HTTP half needs the live API.
 
 use backend::google::health::{DailyValue, day_of_rollup_point};
 
-/// The day is `civilStartTime`. The rollup also carries `civilEndTime`, which
-/// for a one-day window is the following midnight — the exclusive bound. Keying
-/// on it files every value one day late, and a whole series shifted by one still
-/// looks like plausible data.
+/// The day is `civilStartTime`; `civilEndTime` is the exclusive next midnight,
+/// and keying on it shifts a whole series by a plausible-looking day.
 #[test]
 fn the_day_is_the_start_not_the_end() {
     let pt = serde_json::json!({
@@ -64,10 +59,9 @@ fn the_sum_field_is_per_type() {
     );
 }
 
-/// Google quotes some numeric fields and not others, per field rather than per
-/// stream. `dailyRestingHeartRate.beatsPerMinute` is a string; 1258 points were
-/// silently dropped by `as_f64()` and the stream reported as zero days, which
-/// reads as "Google does not carry resting heart rate".
+/// Google quotes some numeric fields, per field rather than per stream
+/// (`dailyRestingHeartRate.beatsPerMinute` is a string); a numeric read drops
+/// them silently.
 #[test]
 fn a_quoted_number_is_read_not_dropped() {
     use backend::google::health::numeric;

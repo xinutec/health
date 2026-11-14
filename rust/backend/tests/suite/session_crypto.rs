@@ -1,15 +1,6 @@
-//! The signing half of auth — the part that is not in Lean.
-//!
-//! # The expected signatures come from the reference, not this implementation
-//!
-//! Every string below is a recorded signature, not this code's output. That
-//! matters because the failure modes here are all silent: base64url output is
-//! unpadded, so a version that pads produces a perfectly well-formed signature
-//! that never matches; HMACing the wrong bytes produces the same shape as
-//! HMACing the right ones.
-//!
-//! These are not a compatibility requirement; they are the available oracle for
-//! whether this HMAC is the one intended.
+//! The signing half of auth, not in Lean, against recorded signatures, not
+//! this code's output: padding base64url or HMACing the wrong bytes yields a
+//! well-formed signature that never matches.
 
 use backend::auth::session::{mint_id, sign_value, verify_value};
 

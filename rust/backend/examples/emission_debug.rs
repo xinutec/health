@@ -1,10 +1,8 @@
-//! The decoder's per-minute emissions over a window of one frozen decoder day.
-//!
-//! For each minute: the observation the tensor holds, the state the decode
-//! chose, and the best-scoring state of every mode with its emission and entry
-//! log-probabilities — the instrument for a minute that went to the wrong mode,
-//! as `dump_decode_request` with `chainDebug` is for a wrong line. The numbers
-//! are the model's own (`Assemble.emitAt`, `entryAt`), not a re-derivation.
+//! The decoder's per-minute emissions over a window of one frozen decoder day:
+//! per minute, the observation, the decoded state, and every mode's best state
+//! with its emission and entry log-probabilities (`Assemble.emitAt`,
+//! `entryAt`). For a minute given the wrong mode, as `dump_decode_request` with
+//! `chainDebug` is for a wrong line.
 //!
 //! ```text
 //! cargo run --release --example emission_debug -- <YYYY-MM-DD>-$USER <fromTs> <toTs>

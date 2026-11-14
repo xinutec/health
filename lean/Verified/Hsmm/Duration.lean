@@ -13,12 +13,10 @@ namespace Verified.Hsmm.Duration
 
 open Verified.Hsmm.Emissions (Mode)
 
-/-- `HARD_FLOOR_LOG_PROB`: what a segment shorter than its mode's
-    `minDurationByMode` scores. A hand number, and it stands in for a term:
-    the fitted one-minute share of each mode's narrated rows is −4.5 (walk) to
-    −6.1 (stay), and under those a stepped minute inside a stay at the same
-    place becomes a one-minute walk on eight corpus days — the stay's inside is
-    what this floor is masking, not a duration fact. -/
+/-- `HARD_FLOOR_LOG_PROB`: what a segment shorter than `minDurationByMode`
+    scores. A hand number standing in for a term: at the fitted one-minute
+    shares a stepped minute inside a stay becomes a one-minute walk, so the
+    floor masks the stay's inside, not a duration fact. -/
 def HARD_FLOOR_LOG_PROB : Float := -10
 
 /-- `DEFAULT_MIN_DURATION_BY_MODE` (minutes). -/

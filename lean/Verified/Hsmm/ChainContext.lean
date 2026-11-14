@@ -1,16 +1,11 @@
 /-!
 # Chain-context penalty kernel
 
-The staleness-widened geometric penalty at the heart of the exit→entry chain
-factor (and shared in shape with `segment-evidence`): `−z²/2` with σ widened in
-quadrature by fix staleness, clamped. This kernel uses only `sqrt`/`*`/`/`/`-`
-(all IEEE correctly rounded), so it is bit-exact across implementations; the
-≤1-ULP wobble only enters upstream where `haversineMeters` supplies `distM`.
-
-Here: the kernel + the place-noise / line-noise wrappers. The decision
-routing (which penalty applies for a given from→to transition, and the
-route-graph distances it feeds in) is a thin follow-on that composes these over
-caller-resolved distances. UNPROVEN; bit-exact, pinned by the `#guard`s.
+The exit→entry chain factor's penalty: `−z²/2` with σ widened in quadrature by
+fix staleness, clamped, plus the place-noise and line-noise wrappers. Only
+correctly rounded operations, so bit-exact; ULP wobble enters only through
+`haversineMeters` upstream. Routing it over transitions is `RouteModel`'s.
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.ChainContext

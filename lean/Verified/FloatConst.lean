@@ -1,10 +1,8 @@
 /-!
-# Float constants and the small JS-shaped helpers, once
+# Float constants and small helpers, once
 
-`pi`, the two infinities, `Math.floor` into an `Int`, JS `x || 1`, and
-`Math.hypot` were restated privately in up to twenty-three modules — the same
-doubles and the same bodies every time (both spellings of π round to the same
-double). One home, no imports, so any module can open it.
+`pi`, the two infinities, floor into an `Int`, `x || 1`, and `hypot`, with no
+imports so any module can open them.
 -/
 
 namespace Verified.FloatConst
@@ -35,12 +33,9 @@ def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
 /-- JS `x || 1`: zero and NaN are falsy. -/
 def orOne (x : Float) : Float := if x == 0 || x.isNaN then 1 else x
 
-/-- `n.toFloat`, through the 64-bit cast when `n` fits. `Nat.toFloat` is
-`Float.ofScientific n false 0`, the generic literal path: Nat arithmetic and
-GMP on every call, which was a third of the decode build's busy samples and a
-tenth of the walk matcher's. For `n < 2^63` that
-path shifts by zero and calls `UInt64.toFloat`, so the two agree; it is
-`opaque`, so no theorem can say so — the guard sweep below pins it instead. -/
+/-- `n.toFloat` through the 64-bit cast when `n` fits: `Nat.toFloat` goes
+through `Float.ofScientific` and GMP on every call. Below `2^63` the two agree;
+it is `opaque`, so the guard sweep below pins that instead of a theorem. -/
 def natToFloat (n : Nat) : Float :=
   let w := n.toUInt64
   if w.toNat == n then w.toFloat else n.toFloat

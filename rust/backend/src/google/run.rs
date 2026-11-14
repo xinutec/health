@@ -6,13 +6,9 @@
 //! high-water mark.
 use sqlx::MySqlPool;
 
-/// Run the whole ingestion once.
-///
-/// Inert without `GH_CLIENT_ID` / `GH_CLIENT_SECRET` / `GH_REFRESH_TOKEN`
-/// and `GH_USER_ID`, and that silence is deliberate — the sync runs on hosts
-/// where Google is not set up. It is logged at debug rather than warn so it
-/// does not cry wolf, which does mean a credential that goes missing looks
-/// like a host that never had one.
+/// Run the whole ingestion once. Inert, logged at debug, without
+/// `GH_CLIENT_ID` / `GH_CLIENT_SECRET` / `GH_REFRESH_TOKEN` and `GH_USER_ID`:
+/// some hosts have no Google, though a lost credential then looks the same.
 pub async fn run(pool: &MySqlPool, http: &reqwest::Client) {
     weight(pool, http).await;
     streams(pool, http).await;

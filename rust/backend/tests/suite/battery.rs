@@ -1,16 +1,7 @@
-//! The battery trace's marshalling, on synthetic rows.
-//!
-//! Nothing else covers this. A corpus replay needs the golden days; this
-//! needs neither them nor a database, and it reaches the case a replay cannot:
-//! a PhoneTrack row with no `battery` key at all.
-//!
-//! That gap is measured, not assumed. Sending `0` instead of `null` for an
-//! absent reading left all 42 golden days agreeing, because every row the
-//! loader produces carries the key. A branch no fixture reaches is a branch
-//! only a written test can hold.
-//!
-//! The algorithm is not under test here: `Verified.Geo.Velocity.batterySeries`
-//! is `#guard`ed. What is under test is which rows cross the wire and how.
+//! The battery trace's marshalling, on synthetic rows, reaching what a replay
+//! cannot: a PhoneTrack row with no `battery` key (every captured row has one,
+//! so sending `0` for it passed the corpus). The algorithm is
+//! `Verified.Geo.Velocity.batterySeries`'s `#guard`s; this is the wire.
 
 use backend::head::battery_series;
 use serde_json::{Value, json};

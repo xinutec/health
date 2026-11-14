@@ -3,15 +3,11 @@ import Verified.Hsmm.Oracle
 /-!
 # Per-segment score decomposition
 
-The two helpers the optimality chain rests on when it reasons about a single
-segment's contribution: `segScore` — everything one segment `⟨s, d⟩` pays
-(init-or-transition, entry, emissions, duration prior) — and `scoreAux_cons`,
-which splits a segmentation's score into its first segment's `segScore` plus
-the tail's score. The forward DP (`Forward.lean`), the trellis
-(`Trellis.lean`), and the decoder (`Decode.lean`) all decompose through these.
-
-The optimality equivalence itself runs through the *forward* DP
-(`Forward.forwardBest_eq_oracleBest`), not a backward recurrence.
+`segScore` is what one segment `⟨s, d⟩` pays (init or transition, entry,
+emissions, duration), and `scoreAux_cons` splits a score into the first
+segment's plus the tail's. `Forward`, `Trellis` and `Decode` decompose through
+these; optimality itself goes through the forward DP
+(`Forward.forwardBest_eq_oracleBest`).
 -/
 
 namespace Verified.Hsmm

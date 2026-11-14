@@ -1,16 +1,9 @@
-//! `lean::relation_route` — the `relationroute` mode's production caller.
+//! `lean::relation_route`, the `relationroute` mode, through the Rust function
+//! `refresh-rail-routes` calls when the mirror has no connected track for a long
+//! ride: it routes over the relation's own ways, bridging near-touching ones.
 //!
-//! `refresh-rail-routes` reaches for it when the mirror holds no connected
-//! track between a long ride's stations: the route relation's own ways are
-//! routed over, near-touching ways bridged. The job runs nightly against
-//! Overpass, so nothing in a test can drive it; this drives the mode through
-//! the same Rust function the job calls.
-//!
-//! The geography is invented — no tracked test carries a real place: two ways
-//! running north from the origin that do not share a node.
-//!
-//! One `#[test]`: `lean::init()` starts a runtime, and tests racing on it
-//! flake (see `rail_snap.rs`).
+//! Synthetic: two ways running north from the origin, sharing no node. One
+//! `#[test]`: `lean::init()` starts a runtime parallel tests would race on.
 
 use backend::fold_payload::bits;
 use serde_json::json;
