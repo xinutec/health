@@ -20,9 +20,9 @@ visits; continue the stay while P ≥ a floor. The whole module ports:
 
 UNPROVEN; pinned by the `#guard`s below.
 
-⚠ Those guards are the only record of the original answers, and nothing
-re-derives them. Treat a change to one as a change to the specification rather
-than as a correction to a transcription.
+⚠ Those guards are the only record of these answers, and nothing re-derives
+them. Treat a change to one as a change to the specification rather than as a
+correction to a transcription.
 
 ⚠ A continuation shorter than `MIN_CONTINUATION_S` is not spliced, so the guard
 that would pin a one-second inferred stay pins its refusal, and says so where it

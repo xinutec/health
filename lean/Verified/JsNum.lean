@@ -25,7 +25,7 @@ integers `m, e`, so `|x| · 10^f = m · 10^f · 2^e` is a dyadic rational, and
 precisely the "ties to the larger" rule, since a tie makes `N/D + 1/2` an
 integer. Lean's `Nat` is a bignum, so the whole computation is exact.
 
-Not ported: the `|x| ≥ 10^21` arm, which defers to `ToString(x)` — the
+Not implemented: the `|x| ≥ 10^21` arm, which defers to `ToString(x)` — the
 shortest-round-trip printer, a separate algorithm (Ryu/Grisu) with no consumer
 here. {@link toFixed} returns `none` there rather than guessing, and every call
 site in this codebase (coordinates, distances, durations) is far below it.
@@ -289,7 +289,7 @@ private def chk (x : Float) (f : Nat) (expect : String) : Bool := toFixed x f ==
 #guard chk (-99.99999999) 7 "-100.0000000"
 #guard chk 0.9999999999 7 "1.0000000"
 
--- Display precisions used by the ported `reason` / `detail` strings.
+-- Display precisions used by the `reason` / `detail` strings.
 #guard chk 1234.56789 1 "1234.6"
 #guard chk (-1234.56789) 1 "-1234.6"
 #guard chk 1234.56789 2 "1234.57"

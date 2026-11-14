@@ -26,8 +26,7 @@ A recipient asking for 365 days gets their window and nothing more.
 history, and the response looks entirely normal** — same shape, same columns,
 just more of them. There is no error to notice.
 
-Pure and total. UNPROVEN; the `#guard`s pin the original implementation's
-answers.
+Pure and total. UNPROVEN; the `#guard`s pin its answers.
 -/
 namespace Verified.ApiWindow
 

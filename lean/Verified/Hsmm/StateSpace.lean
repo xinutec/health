@@ -3,11 +3,8 @@ import Verified.Hsmm.Emissions
 # HSMM state-space enumeration
 
 The served decode's hidden state at each minute is a `(mode, place, line)` tuple
-with structural constraints. This is the line-only enumeration that the served
-path uses (`decode.ts` calls `buildStateSpace` with no `railEdges`, so the
-per-edge Phase-1 states — and their `trainEdgeId` — never arise here; that lives
-in the separate `route-aware-decoder.ts`, off the flip path). Faithful to the
-served path, so the Lean `State` (mode/placeId/lineName) matches exactly.
+with structural constraints. This is the line-only enumeration: a train state
+names a line, never a rail edge.
 
 Pure enumeration + dedup by `stateKey`, no geometry: a structural resolver, not
 a scoring kernel. Ordering and first-occurrence dedup are pinned. UNPROVEN;

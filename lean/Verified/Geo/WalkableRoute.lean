@@ -23,9 +23,8 @@ to a distant junction.
 ## Fusion
 
 `buildWalkGraph` fuses way coordinates into graph nodes by `nodeKey`, a
-`toFixed(7)` string. That was shell work until `toFixed` was ported exactly
-(`Verified.JsNum`); it is Lean's now, so this module takes the raw way list and
-needs nothing pre-computed. The distinction the fusion demands is still live in
+`toFixed(7)` string (`Verified.JsNum`), so this module takes the raw way list
+and needs nothing pre-computed. The distinction the fusion demands is live in
 the code: node COORDINATES are the first way coordinate that mapped to them and
 edge lengths use those, while `snapToEdge` projects onto each way's own RAW
 coordinates — mixing the two would move every projection by up to ~1 cm.
@@ -107,9 +106,7 @@ private def DEDUPE_M : Float := 0.5
 
 /-- Build the walkable graph: one node per distinct way coordinate, an
     undirected edge per consecutive pair. Ways connect where they share a
-    junction coordinate — `toFixed(7)` equality, ported exactly in
-    `Verified.JsNum`, which is what makes this fusion Lean's job and not the
-    shell's. -/
+    junction coordinate: `toFixed(7)` equality (`Verified.JsNum`). -/
 def buildWalkGraph (ways : Ways) : WalkGraph := Id.run do
   let mut nodes : Array Pt := #[]
   let mut adj : Array (Array (Nat × Float)) := #[]

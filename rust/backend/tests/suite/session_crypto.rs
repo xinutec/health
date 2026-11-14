@@ -2,8 +2,8 @@
 //!
 //! # ⚠ The expected signatures come from the reference, not this implementation
 //!
-//! Every string below is the original `signValue`'s output. That matters
-//! because the failure modes here are all silent: base64url output is
+//! Every string below is a recorded signature, not this code's output. That
+//! matters because the failure modes here are all silent: base64url output is
 //! unpadded, so a version that pads produces a perfectly well-formed signature
 //! that never matches; HMACing the wrong bytes produces the same shape as
 //! HMACing the right ones.

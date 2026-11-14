@@ -10,10 +10,10 @@ import Verified.Hsmm.SegmentEmission
 Bundles the resolved per-day context (observation tensor, state space, route-graph
 model, train-generator coverage, place maps, duration fits, C4 flags, continuity)
 and produces the five per-cell model callbacks — `emitAt`/`entryAt`/`initAt`/
-`transAt`/`durAt` — by composing the ported factor kernels exactly as
-`buildHsmmModel` (decode.ts) wires them. Feeding these through `Assembly`'s
-`buildCellTensor`/`buildVector` (with `quantize`) yields the integer tensors the
-verified trellis reads — the whole model, built in Lean from parsed inputs.
+`transAt`/`durAt` — by composing the factor kernels. Feeding these through
+`Assembly`'s `buildCellTensor`/`buildVector` (with `quantize`) yields the
+integer tensors the verified trellis reads — the whole model, built in Lean
+from parsed inputs.
 
 The callbacks add no new arithmetic over the composition layer: each is a lookup
 into the bundled maps (`isCovered ts`, `placeCoords`, the mode's `baselineFit`)

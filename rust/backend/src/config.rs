@@ -20,10 +20,7 @@
 
 use anyhow::{Context, Result};
 
-/// What the sync job needs. Mirrors `loadSyncConfig` in `config.ts` — the
-/// entrypoint this replaces first — rather than the fuller `loadConfig` the
-/// HTTP server uses. The server's own fields (session secret, service tokens,
-/// allowed Owntracks tokens) arrive with the server, not before it.
+/// The backend's settings, read once from the environment.
 #[derive(Clone, Debug)]
 pub struct Config {
     pub db: DbConfig,

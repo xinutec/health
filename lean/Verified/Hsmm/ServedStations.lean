@@ -14,8 +14,8 @@ rather than through `resolveStationChain`.
 
 ## Hash order is safe here, and that is worth stating rather than assuming
 
-Three places in `StationChain` turned out to read iteration order, so the rule
-there is to treat any `HashMap` as suspect. This module is the exception and for
+`StationChain` treats any `HashMap` iteration as suspect, because iteration
+order is unspecified. This module is the exception and for
 a checkable reason: the only iteration is `stationNameServed`'s scan over the
 served set, and it returns as soon as any element matches. The RESULT is a
 `Bool`, so a permutation of the set can change which element matched but never

@@ -1,5 +1,4 @@
-//! Reconcile the `body` table's weight against Google. Port of
-//! `body.ts`.
+//! Reconcile the `body` table's weight against Google.
 //!
 //! # It DELETES, and that is what makes it worth reading carefully
 //!

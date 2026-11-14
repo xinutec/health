@@ -6,8 +6,8 @@
 //!   1. Lean's type → shape table, including the one that reads wrong;
 //!   2. that the host's inline ISO formatter agrees with Lean's, because the
 //!      serving path does NOT call Lean per value and could otherwise drift;
-//!   3. that `days` coercion matches `Number()`, against outputs measured from
-//!      zod itself rather than from memory.
+//!   3. that `days` coercion matches JavaScript's `Number()`, on recorded
+//!      answers rather than ones from memory.
 //!
 //! ⚠ What is NOT here: encoding an actual row. A `MySqlRow` cannot be built
 //! without a server, so nothing in this file has ever seen a DECIMAL come off
@@ -140,10 +140,10 @@ fn date_renders_as_a_full_timestamp() {
     assert_eq!(format_date_iso(nd), "2026-08-22T00:00:00.000Z");
 }
 
-/// `days` coercion, against what zod actually returned.
+/// `days` coercion.
 ///
-/// ⚠ Every expectation here is the original `daysParam` schema's answer, not
-/// derived from reading documentation.
+/// ⚠ Every expectation here is a recorded answer, not derived from reading
+/// documentation.
 #[test]
 fn days_coercion_matches_number() {
     init();
@@ -160,8 +160,8 @@ fn days_coercion_matches_number() {
         // ⚠ EMPTY IS NOT ABSENT. `Number("")` is 0, which is below the minimum,
         // so `?days=` is a rejection and not the 30-day default.
         ("", None),
-        // Measured against zod: it trims, reads hex, and takes an exponent or a
-        // trailing ".0" as an integer.
+        // `Number()` trims, reads hex, and takes an exponent or a trailing ".0"
+        // as an integer.
         (" 7 ", Some(7)),
         ("0x10", Some(16)),
         ("1e2", Some(100)),

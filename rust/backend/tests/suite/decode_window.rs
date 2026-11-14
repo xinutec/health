@@ -56,9 +56,7 @@ fn ordered_most_recent_first() {
 }
 
 /// ⚠ The date list is derived from UTC, NOT from the user's home_tz — the tz is
-/// used for the day's BOUNDS, not for choosing which dates to decode.
-/// `decode-day.ts` uses `setUTCDate` for the same reason, and matching it is
-/// what keeps the two arms decoding the same set near midnight.
+/// used for the day's bounds, not for choosing which dates to decode.
 #[test]
 fn dates_come_from_utc_not_the_local_day() {
     // 00:30 UTC on the 25th is still the 25th in London (BST, UTC+1 — 01:30),

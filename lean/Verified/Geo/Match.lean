@@ -113,7 +113,7 @@ namespace Verified.Geo
 
 /-- The clamped foot on the 1e-7° grid, the fraction as the exact
 rational `tn/td`, and `qDist` to the foot — `qChordDist`'s body, foot
-kept (`match-twin.ts` `qProject`). -/
+kept. -/
 structure QProj where
   la : Int
   lo : Int
@@ -1730,8 +1730,8 @@ def WALK_QPROFILE : QMatchProfile :=
     simplifyTolUm := 5000000, buildingCrossFactor := 25, buildingSupportUm := 15000000
     nameBorrowUm := 30000000 }
 
-/-- `ROAD_PROFILE` (`road-match.ts`) in the pinned representation — the
-original road tuning, of which `WALK_QPROFILE` is a delta.
+/-- The road tuning in the pinned representation, of which `WALK_QPROFILE` is a
+delta.
 
 Two fields no walk guard exercises. `wayContinuityNats := 5` is the road
 turn prior: a way change costs 5 nats, which is what keeps a drive on the

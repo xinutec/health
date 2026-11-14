@@ -177,7 +177,7 @@ def pickBestPlace (candidates : List PlaceCandidate) (segLat segLon : Float)
   | some (_, score) => if decide (score < POSTERIOR_FLOOR) then return none else return best
   | none => return none
 
-/-! ## Magnetic place-snap (`place-snap.ts`) -/
+/-! ## Magnetic place-snap -/
 
 /-- A known cluster to snap onto. -/
 structure KnownPlace where

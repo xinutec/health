@@ -12,8 +12,8 @@
 //! coordinate precision, where 1e-7° is what the match gate adjudicates.
 //!
 //! `tests/suite/fold_payload.rs` compares the encoding byte for byte against
-//! frozen output of the original encoder: in mostly pass-through data, a wrong
-//! field name is a well-formed request the fold answers anyway.
+//! frozen output: in mostly pass-through data, a wrong field name is a
+//! well-formed request the fold answers anyway.
 
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};

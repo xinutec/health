@@ -4,8 +4,7 @@ import Verified.Fix
 /-!
 # Bus cluster
 
-Two independent ways to tell a bus from a taxi on the same streets, both
-ported here in full:
+Two independent ways to tell a bus from a taxi on the same streets:
 
 * **Route matching** (`matchBusRoute`) — anchor a road-vehicle leg's board and
   alight coords to two *in-route-order* stops of a candidate route, then

@@ -60,11 +60,8 @@ pub fn parse_wall_clock(s: &str) -> Option<NaiveDateTime> {
 ///   * nonexistent (spring forward) → read on the offset in force AFTER the
 ///     jump. `2026-03-29 01:30` is 00:30 UTC.
 ///
-/// ⚠ MEASURED AGAINST THE PRODUCTION TYPESCRIPT, NOT DERIVED. The first version
-/// of this function guessed the other way on both — earlier-instant for
-/// ambiguous, pre-transition for the gap — which is the defensible reading and
-/// disagrees with what is in the database. Running `wallClockToUtcString` over
-/// the two 2026 London transitions is what settled it.
+/// ⚠ The defensible reading is the other way on both (earlier instant,
+/// pre-transition offset), and it disagrees with the rows already stored.
 ///
 /// ⚠ The gap is not monotonic: `01:00` maps to `00:00` UTC while the preceding
 /// `00:45` maps to `00:45`. That is a real property of the post-transition

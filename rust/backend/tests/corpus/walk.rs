@@ -174,7 +174,7 @@ fn named_walk_windows(date: &str, tz: &str) -> Vec<(i64, i64, String)> {
 }
 
 /// Names of every enforceable window overlapping the leg — `w.end > start &&
-/// w.start < end`, the original's half-open overlap.
+/// w.start < end`, a half-open overlap.
 fn accepted_names(windows: &[(i64, i64, String)], start: i64, end: i64) -> Vec<String> {
     let mut names: Vec<String> = windows
         .iter()

@@ -4,9 +4,8 @@ import Verified.FloatConst
 # Duration log-probabilities
 
 Per-mode segment-duration model in Lean `Float`: a Gamma log-pdf evaluated via
-a Lanczos `log Γ`, and the per-mode physical-floor override. UNPROVEN;
-arithmetic mirrors `duration-dist.ts` exactly (the Lanczos coefficients, the
-`z < 0.5` reflection), pinned bit-for-bit by the `#guard`s against the exported
+a Lanczos `log Γ` (with the `z < 0.5` reflection), and the per-mode
+physical-floor override. UNPROVEN; pinned bit-for-bit by the `#guard`s on
 `logDurationProb`.
 -/
 

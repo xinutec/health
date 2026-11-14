@@ -331,7 +331,7 @@ def checkRailTriples (legs : Array Leg) (lineStations : LineMembership) : Array 
     match parseRailWayName l.wayName with
     | none => continue
     | some rail =>
-      -- ⚠ TRUTHINESS: the original tests `rail.line`, so an empty line is absent.
+      -- An empty line name counts as no line.
       match rail.line with
       | none => continue
       | some line =>

@@ -23,10 +23,8 @@ fn an_absent_hour_profile_is_null_not_empty() {
 
 #[test]
 fn a_real_hour_profile_is_comma_separated_per_mille_integers() {
-    // ⚠ THIS IS THE FORMAT, and the first version of the loader got it wrong.
-    // `serializeHourProfile` writes `round(f * 1000)` joined by commas into a
-    // VARCHAR — reading it as JSON made every one of production's 117 profiles
-    // decode to empty while the loader reported success.
+    // ⚠ The format: `round(f * 1000)` joined by commas into a VARCHAR. Read as
+    // JSON, every profile decodes to empty and the loader still reports success.
     //
     // Taken from a real stored value rather than invented, because inventing
     // one is what produced the JSON tests this replaces.

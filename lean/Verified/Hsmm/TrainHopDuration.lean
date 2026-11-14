@@ -13,8 +13,8 @@ segment takes a flat 0-nat prior. Every other case is exactly the per-mode
 
 The mode-indexed fit / floor lookups and the `tsAt`+`isTrainCovered` resolution
 are caller-side; this module is the pure decision over the resolved `covered`
-boolean and the resolved `fit` / floors. It reuses the ported `logDurationProb`
-kernel, so its parity story is that kernel's (exact on tested inputs). UNPROVEN;
+boolean and the resolved `fit` / floors. It reuses the `logDurationProb`
+kernel, so its exactness is that kernel's. UNPROVEN;
 pinned by the `#guard`s.
 -/
 

@@ -24,19 +24,11 @@
 //! grades one journey, and a trip the pipeline split in two is scored on its
 //! larger half with the rest counted as uncovered.
 //!
-//! # The port's evidence
+//! `JOURNEY_DUMP=<path>` writes the `(gt, states)` pairs this harness feeds
+//! Lean.
 //!
-//! `journey-score.ts` was recovered at `06346bd^` and run over the SAME
-//! `(gt, states)` pairs this harness feeds Lean (dump them with
-//! `JOURNEY_DUMP=<path>`): 28 days, 92 journeys, every field of every result
-//! plus the pipeline journeys themselves — **920 comparisons, 0
-//! disagreements**. Eight ablations of the Lean; five move that count, and the
-//! three that do not are silent for reasons measured off this corpus and
-//! written down in `Verified/Eval/JourneyShape.lean`.
-//!
-//! ⚠ And the floor is the second, independent oracle: a committed count of
-//! reconstructed journeys, with nothing regressed, nothing newly held and
-//! nothing dropped.
+//! ⚠ The floor is the oracle: a committed count of reconstructed journeys, with
+//! nothing regressed, nothing newly held and nothing dropped.
 //!
 //! # The split
 //!

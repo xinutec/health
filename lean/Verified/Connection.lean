@@ -13,8 +13,7 @@ nobody taught it about is reported to the user as fine.
 The one thing it does refuse is ABSENCE: no row is `not_linked`, which is what
 the frontend turns into its "connect your account" prompt.
 
-Pure and total. UNPROVEN; the `#guard`s pin the original implementation's
-answers.
+Pure and total. UNPROVEN; the `#guard`s pin its answers.
 -/
 namespace Verified.Connection
 

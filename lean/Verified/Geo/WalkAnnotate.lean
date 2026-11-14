@@ -59,8 +59,7 @@ Every eligible leg's `walkableRoads` read is fired before any leg's
 back non-empty. Both facts are pinned by the read trace: a fixture replay that
 saw a different call order would be seeing different captured keys.
 
-UNPROVEN; the guards pin reference values taken from the original
-implementation.
+UNPROVEN; the guards pin recorded reference values.
 -/
 
 namespace Verified.Geo.WalkAnnotate
@@ -803,8 +802,8 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
 
 /-! ## Guards
 
-The reference numbers are the original implementation's output on the same
-fixture, at full double precision, including the centroid dust
+The reference numbers are recorded output on the same fixture, at full double
+precision, including the centroid dust
 (`51.501099999999994`) that pins the summation order.
 
 The stubs discriminate: the OSM read answers only at the exact

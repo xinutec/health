@@ -8,9 +8,9 @@ import Verified.FloatConst
 # Full HSMM emission composition
 
 `emission = baseEmission + geometricFn + routeRailFn + lineProximityFn`, summed
-in `buildHsmmModel` order, over the unified route-graph model and the real
-observation tensor (`ObsRow`). This is the keystone that proves the ported factors
-compose end-to-end: base emission (+ the reacquire-robust speed correction),
+in that order, over the unified route-graph model and the real observation
+tensor (`ObsRow`). This is the keystone that proves the factors compose
+end-to-end: base emission (+ the reacquire-robust speed correction),
 geometric feasibility, and the two route-graph factors all consume one `ObsRow`
 and the shared model.
 

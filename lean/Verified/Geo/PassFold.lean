@@ -222,8 +222,7 @@ def LINES_AT_POINT_DEFAULT_RADIUS_M : Float := 100
 /-! ## The two passes with no module of their own
 
 Every other entry names a function some module owns. These two are written
-inline in `velocity.ts`, so they are written here — they are pass BODIES, not
-wiring, and they belong to the fold in the same way. -/
+here: they are pass bodies, not wiring, and belong to the fold in the same way. -/
 
 /-- Fixes covering a segment's window. `samplesInWindow`: INCLUSIVE both ends,
 the pipeline's dominant reading. -/

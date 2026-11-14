@@ -7,7 +7,7 @@ quadrature by fix staleness, clamped. This kernel uses only `sqrt`/`*`/`/`/`-`
 (all IEEE correctly rounded), so it is bit-exact across implementations; the
 ≤1-ULP wobble only enters upstream where `haversineMeters` supplies `distM`.
 
-Ported here: the kernel + the place-noise / line-noise wrappers. The decision
+Here: the kernel + the place-noise / line-noise wrappers. The decision
 routing (which penalty applies for a given from→to transition, and the
 route-graph distances it feeds in) is a thin follow-on that composes these over
 caller-resolved distances. UNPROVEN; bit-exact, pinned by the `#guard`s.

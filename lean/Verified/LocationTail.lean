@@ -29,7 +29,7 @@ Both caches here are ten seconds, and both are fresh iff `age < ttl`.
 [`Verified.VelocityCache`] already owns that comparison, so it is reused rather
 than restated.
 
-Pure and total. UNPROVEN; the `#guard`s pin the original route's answers.
+Pure and total. UNPROVEN; the `#guard`s pin its answers.
 -/
 namespace Verified.LocationTail
 

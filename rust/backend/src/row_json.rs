@@ -87,7 +87,7 @@ impl RowEncoder {
             let Some(shape) = shape else {
                 bail!(
                     "column `{name}` has SQL type `{ty}`, which Verified.RowShape does not map. \
-                     Measure what the TypeScript emits for it and add it there — do not guess here."
+                     Add it there — do not guess here."
                 );
             };
             columns.push(ColumnPlan {
@@ -131,9 +131,8 @@ fn encode_value(row: &MySqlRow, i: usize, col: &ColumnPlan) -> Result<Value> {
                 Value::from(row.try_get::<i64, _>(i)?)
             }
         }
-        // ⚠ A STRING on the wire. `bigIntAsNumber: false` exists because Fitbit
-        // sleep log ids are 64-bit, and the `BigInt.prototype.toJSON` patch in
-        // `bigint-json.ts` is what turns them into these strings.
+        // ⚠ A string on the wire: Fitbit sleep log ids are 64-bit, beyond what a
+        // JavaScript number holds exactly.
         RowShape::BigintStr => {
             if col.unsigned {
                 Value::from(row.try_get::<u64, _>(i)?.to_string())

@@ -49,8 +49,7 @@ open Verified.Hsmm.RouteModel (RouteGraphModel RouteEdge buildRouteGraphModel ed
 open Verified.Hsmm.Observation (ObsRow)
 open Verified.Hsmm.ServedStations (RailStopRelation servedStationSet stationNameServed)
 
-/-- Station-footprint radius (m) — `train-candidate-generator.ts`'s constant,
-    restated here because this module's copy is what its own guards pin. -/
+/-- Station-footprint radius (m). -/
 def STATION_FOOTPRINT_M : Float := 200
 /-- Lines are read from edges within this radius of a station node. -/
 def STATION_LINE_RADIUS_M : Float := 250
@@ -1365,8 +1364,7 @@ private def pathBetween (a b : String) : Option Float :=
 -- east-to-west therefore lands a ULP apart.
 --
 -- The accumulation is shared, not divergent, but it is why the guard is a
--- window rather than `pathBetween a b == pathBetween b a`, which is what the
--- first version asserted and what failed.
+-- window rather than `pathBetween a b == pathBetween b a`, which fails.
 #guard (pathBetween "Alpha" "Echo").any (within · 5993.2586905 5993.2586907)
 #guard (pathBetween "Echo" "Alpha").any (within · 5993.2586905 5993.2586907)
 

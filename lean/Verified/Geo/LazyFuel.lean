@@ -7,8 +7,8 @@ import Verified.Rail.LoopInv
 `LazyDijkstra.lean` models the unfueled `while (heap nonempty)` settle loop
 with a fuel parameter; its refinement theorems assume a stop is fuel-reachable
 (`k ≤ fuel` with `stopAt … = true`). This file proves that assumption for the
-fuel the model is actually run with: the rail potential argument, ported to the
-lazy state.
+fuel the model is actually run with: the rail potential argument, on the lazy
+state.
 
 `potentialL = heap.a.size + Σ undone out-degrees` strictly decreases at
 every live step (`lstep_potential`): a pop always shrinks the heap by

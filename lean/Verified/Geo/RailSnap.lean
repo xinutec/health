@@ -11,21 +11,16 @@ import Verified.FloatConst
 Snap a confident train leg onto the rail network, routing between its two named
 stations along the line the user's past journeys actually traced rather than the
 geometrically shortest one. The whole module is pure geometry and graph search,
-so all of it ports — including the vertex fusion, which earlier ports left in
-the shell:
+including the vertex fusion:
 
-* **Fusion is in Lean.** `buildRailGraph` keys a vertex by
-  `` `${lat.toFixed(7)},${lon.toFixed(7)}` ``. That was the last algorithmic
-  reason to hand Lean a pre-built topology; with `toFixed` ported exactly
-  (`Verified.JsNum`) the builder takes RAW ways and fuses them itself, so the
-  shell's only remaining job for this module is reading the rows.
-  {@link Verified.JsNum.coordKey7} stands in for the key string — a graph
+* **Fusion is in Lean.** `buildRailGraph` keys a vertex by its coordinates at 7
+  decimals, so the builder takes raw ways and fuses them itself, and the shell
+  only reads the rows. {@link Verified.JsNum.coordKey7} is the key — a graph
   builder needs only to know when two coordinates agree, and that comparison is
   exact even where the string rendering is not.
-* **Reuse.** `parseRailWayName` is already ported in `Verified.Geo.Worldline`
-  (it is the same `indexOf`/`slice` parser, splitting on the FIRST separator
-  with the tail rejoined) and `metersBetween` in `Verified.Geo.WalkableRoute`
-  (identical constants and formula).
+* **Reuse.** `parseRailWayName` is `Verified.Geo.Worldline`'s (splitting on the
+  first separator with the tail rejoined) and `metersBetween` is
+  `Verified.Geo.WalkableRoute`'s.
 
 `parseLineMemberships` is here because `wayOnLine` is its only consumer in this
 cluster, which also lets `snapTrainSegmentOnLine` do its own line filtering.

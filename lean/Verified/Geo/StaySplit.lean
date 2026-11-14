@@ -197,7 +197,7 @@ def claimStayArrivalFromWalk (segments : Array Seg) (points : Array PointF) : Ar
     else out := out.push cur
   return out
 
-/-! ### Guards, on the same construction as the original's tests. -/
+/-! ### Guards -/
 namespace FootArrivalGuards
 
 open Verified.Geo.SegmentMerge (Seg)

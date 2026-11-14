@@ -103,7 +103,7 @@ advisory. -/
 def isEnforceable (r : Row) : Bool :=
   (r.status == .correct || r.status == .wrong) && trusted r.provenance
 
-/-! ## String helpers — each one is a regex the original had -/
+/-! ## String helpers — each one a regex, written as a walk -/
 
 /-- `text.replace(/\*+/g, "")`. Emphasis is presentation, not content. -/
 def stripStars (s : String) : String :=
@@ -479,9 +479,9 @@ private def cell (s : String) : Option Truth := parseTruthCell s
 #guard cell "train Northgate → Southgate (Circle/H&C/Met)"
        == some { mode := .train, trainFrom := some "Northgate", trainTo := some "Southgate" }
 
--- ⚠ THE `on` ASYMMETRY, and it is deliberate in the original: for a TRAIN it
--- names the LINE (mirroring the pipeline's bare-line rendering); for a BUS it
--- names the ROAD and falls through to the generic way shape.
+-- `on` is asymmetric on purpose: for a train it names the line (as the
+-- pipeline renders a bare line); for a bus it names the road and falls through
+-- to the generic way shape.
 #guard cell "train on Circle Line" == some { mode := .train, lineName := some "Circle Line" }
 #guard cell "bus on Market Street" == some { mode := .bus, wayName := some "Market Street" }
 

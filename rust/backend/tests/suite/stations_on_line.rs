@@ -92,7 +92,7 @@ fn the_fixture_arm_reproduces_the_recorded_answers() {
         assert_eq!(
             names,
             want_names,
-            "{line}: answered {} station(s) against the TypeScript's {}",
+            "{line}: answered {} station(s) against the recorded {}",
             names.len(),
             want_names.len()
         );

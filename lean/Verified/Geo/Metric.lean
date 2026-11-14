@@ -512,9 +512,8 @@ def qDistC (a b : QPt) (c : Int) : Nat :=
   let dloAbs : Nat := if negY then (yAbs + 1048575) / 1048576 else yAbs / 1048576
   isqrt (dlaAbs * dlaAbs + dloAbs * dloAbs)
 
-/-- µm between two points, cos at the mid-latitude — mirrors
-`metersBetween` (`map-match-core.ts`). One latitude unit = 11 132 µm
-exactly. -/
+/-- µm between two points, cos at the mid-latitude, as `metersBetween`. One
+latitude unit = 11 132 µm exactly. -/
 def qDist (a b : QPt) : Nat :=
   -- Carried as `Nat` magnitudes, not `Int`: the intermediates here reach ≈2⁴⁸
   -- (`Δlo·11132·c`) and ≈2⁵⁶ (the squares), which is inside `Nat`'s unboxed
@@ -567,8 +566,7 @@ theorem le_qDist_lo (a b : QPt) :
       ≤ qDist a b :=
   le_qDist_of_axes (Nat.zero_le _) (Nat.le_refl _) (by omega)
 
-/-- µm between two points, cos at the first point — mirrors
-`equirectMeters` (`episode-geometry.ts`'s variant). -/
+/-- µm between two points, cos at the first point, as `equirectMeters`. -/
 def qDistA (a b : QPt) : Nat :=
   let dla : Int := (b.la - a.la) * 11132
   let c : Int := cosQ a.la

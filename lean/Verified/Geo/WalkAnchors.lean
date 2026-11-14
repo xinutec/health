@@ -15,10 +15,6 @@ endpoint is genuinely unknown, so a neighbour more than three minutes away says
 nothing at all. Note the gap test is ONE-SIDED (`> 180`), so a neighbour that
 OVERLAPS the walk — a negative gap — still testifies.
 
-This is the last exported pure leaf in `computeVelocity`'s dependency set.
-Everything else `pedestrian-match-annotate.ts` exports is a mutable diagnostic
-sink or the async `annotateWalkMatches`, both shell.
-
 Wholly exact: the only arithmetic is a timestamp subtraction. UNPROVEN; pinned
 by the `#guard`s.
 -/

@@ -167,7 +167,7 @@ def dominantOverWindow (minutes : Array DecoderMinute) (startTs endTs : Int)
   return (argmax modeTally, argmax lineTally)
 
 /-- Deduped ordered mode sequence with same-vehicle interchange walks smoothed
-away — `journey-score.ts`'s `modeShape`, on the Journeys types. -/
+away, on the Journeys types. -/
 def modeShape (j : Journey) : Array String := Id.run do
   let legs := j.legs
   let mut kept : Array String := #[]
@@ -257,7 +257,7 @@ structure StationCounts where
   stationsMissing : Nat
   deriving BEq, Repr, Inhabited
 
-/-- `decoder-scoreboard.ts`'s `scoreStations`. -/
+/-- How many of the truth's board and alight stations the decode names. -/
 def scoreStations (gtJourneys decJourneys : Array Journey) : StationCounts := Id.run do
   let decLegs := decJourneys.flatMap (·.legs)
   let mut c : StationCounts := ⟨0, 0, 0⟩

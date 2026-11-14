@@ -1,8 +1,8 @@
 /-!
 # `trimOverRouteExcursions` — the over-route detour excision
 
-The most intricate display pass of `map-match-core.ts`, ported in the
-metric-parametric style. Two excision passes over a matched path against
+The most intricate display pass, in the metric-parametric style. Two excision
+passes over a matched path against
 the GPS corridor, then a rebuild:
 
 1. *Spatial*: an off-corridor run (every vertex further than

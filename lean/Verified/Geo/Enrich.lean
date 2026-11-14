@@ -30,7 +30,7 @@ decision taken on their answers is here.
 The cascade reads neither rail/road proximity nor biometrics, so neither is
 computed here.
 
-UNPROVEN; the guards pin the original implementation's answers.
+UNPROVEN; the guards pin its answers.
 -/
 
 namespace Verified.Geo.Enrich

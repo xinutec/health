@@ -46,9 +46,9 @@ structure Station where
   lon : Float
   deriving Repr, Inhabited, BEq
 
-/-- ⚠ HAVERSINE, at `LEAN_EARTH_R` (6 371 000 m) — the same formula and the same
-radius as `decode-day.ts`'s own local copy. The equirectangular approximation
-`Verified.Geo.LineStations` uses is fine for its purpose and is not this one:
+/-- ⚠ Haversine, at `LEAN_EARTH_R` (6 371 000 m). The equirectangular
+approximation `Verified.Geo.LineStations` uses is fine for its purpose and is
+not this one:
 at 400 m the two disagree by little, but "little" is all it takes to move a
 place across a threshold that HARD-ZEROES a transition. -/
 def distM (p : Place) (s : Station) : Float :=

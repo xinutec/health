@@ -34,12 +34,9 @@ the mode table ever grows on one side only. So `Live.mode` is a `String`.
 
 ## ⚠ NO REGEX, and one deliberate divergence
 
-`parsePipelineState`'s route pattern is rewritten as explicit walking. The one
-place this is not exact is a degenerate capture that trims to empty
-(`"A →  · Line"`, a route whose alight is only whitespace): the original would
-backtrack into an empty `to`, this returns "no route" and falls through to the
-bare-line branch. No corpus row has that shape, and a row that did would be a
-narrative typo rather than a claim.
+`parsePipelineState`'s route pattern is explicit walking. A route whose alight
+is only whitespace (`"A →  · Line"`) is "no route" and falls through to the
+bare-line branch: such a row would be a narrative typo rather than a claim.
 -/
 
 namespace Verified.Eval.TruthCheck

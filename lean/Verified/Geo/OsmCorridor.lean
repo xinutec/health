@@ -204,8 +204,8 @@ def corridorWays (query : Float → Float → Float → Option (Array Way))
 
 /-! ## Guards
 
-Every number below is the original implementation's answer on the same
-fixture, at full double precision.
+Every number below is a recorded answer on the same fixture, at full double
+precision.
 
 The `metersBetween` wobble is MEASURED, not assumed: across every distance
 this file's fixtures compute, `Math.hypot` and `sqrt(dx² + dy²)` agreed on

@@ -97,8 +97,8 @@ def decideCoverage
 
 /-! ## Guards
 
-Every expectation below is the original implementation's answer, not a value
-reasoned to; a guard that stops matching means the behaviour changed. -/
+Every expectation below is a recorded answer, not a value reasoned to; a guard
+that stops matching means the behaviour changed. -/
 
 private def NOW : Int := 1700000000000
 private def day : Int := 86400000

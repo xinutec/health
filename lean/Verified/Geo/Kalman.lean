@@ -16,13 +16,11 @@ quantised (`round(speed·10)/10`, `round(bearing)`), which absorbs the ULP wobbl
 except at a round boundary, the accepted near-tie class. The reset path emits
 speed/bearing unrounded. UNPROVEN; pinned by the `#guard`s.
 
-Against the original over the golden days: row counts agree everywhere, `lat`
-is bit-identical, and `lon` differs on ~0.5% of rows by ≤1 ULP; the few
-speed/bearing differences are reset rows. The cause is the two libms' `cos`,
-which disagree by 1 ULP on a few percent of real latitudes; `metersToDegreesLon`
-calls `cos` and `metersToDegreesLat` does not, which is why `lat` is the clean
-control. Two libms cannot be made to agree; making this filter provable rather
-than pinned means taking the metre↔degree scaling off `Float`.
+`cos` comes from the platform libm, and two libms disagree by 1 ULP on a few
+percent of real latitudes. `metersToDegreesLon` calls `cos` and
+`metersToDegreesLat` does not, so `lon` can differ by 1 ULP across platforms
+and `lat` cannot. Making this filter provable rather than pinned means taking
+the metre↔degree scaling off `Float`.
 -/
 
 namespace Verified.Geo.Kalman

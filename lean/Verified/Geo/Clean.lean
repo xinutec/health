@@ -5,8 +5,8 @@ import Verified.Geo.Prefilter
 # Cleaning passes — `dedupeConsecutive`, `removeSpurs`,
 # `despikeUnsupportedApexes`
 
-The remaining small display passes of `map-match-core.ts`, ported in the
-same metric-parametric style as the rest of the layer (`Simplify.lean`
+The small display passes, in the same metric-parametric style as the rest of
+the layer (`Simplify.lean`
 et al.): the pass logic is combinatorial, the primitives are parameters.
 
 - `dedupe`: drop points `near` the last *kept* point (`< 0.5 m`, *strict*,

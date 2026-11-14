@@ -241,13 +241,11 @@ private def SMALL : Bbox := { minLat := 51.5, maxLat := 51.52, minLon := -0.1, m
 #guard near (tileBbox SMALL 0.05)[0]!.minLat SMALL.minLat
 #guard near (tileBbox SMALL 0.05)[0]!.maxLon SMALL.maxLon
 
--- ⚠ 0.1 DEGREES AT 0.05-DEGREE CELLS IS 3x2, NOT 2x2, AND THAT IS THE
--- TYPESCRIPT'S ANSWER TOO. `51.6 - 51.5` is 0.09999999999999432 in a double but
--- `-0.1 - -0.2` is 0.10000000000000003, so the latitude span divides to
--- 2.0000000000000284 and `ceil` takes it to THREE. The mirror therefore issues
--- 50% more latitude tiles than the geometry calls for. Verified against `node`
--- rather than reasoned about; a guard of `== 4` here would have looked obviously
--- right and been wrong about production.
+-- ⚠ 0.1 degrees at 0.05-degree cells is 3x2, not 2x2. `51.6 - 51.5` is
+-- 0.09999999999999432 in a double but `-0.1 - -0.2` is 0.10000000000000003, so
+-- the latitude span divides to 2.0000000000000284 and `ceil` takes it to three:
+-- the mirror issues 50% more latitude tiles than the geometry calls for. A guard
+-- of `== 4` would look right and be wrong about production.
 private def BIG : Bbox := { minLat := 51.5, maxLat := 51.6, minLon := -0.2, maxLon := -0.1 }
 private def TILES : Array Bbox := tileBbox BIG 0.05
 #guard TILES.size == 6

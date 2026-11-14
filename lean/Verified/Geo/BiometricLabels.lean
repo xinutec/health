@@ -374,7 +374,7 @@ has a case here, because a corpus shadow only exercises the branches the corpus
 happens to reach, and the branch that never fires in London is exactly the one
 that will fire on a travel day.
 
-The reference values are the original implementation's answers. -/
+The reference values are recorded answers, not derived ones. -/
 
 private def T0 : Int := 1778457600
 

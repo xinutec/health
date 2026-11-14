@@ -6,13 +6,9 @@
 /// The production lat/lon → IANA lookup, backed by `tzf-rs`'s polygons —
 /// bundled, so the image needs no data file alongside the binary.
 ///
-/// ⚠ **IT IS NOT THE SAME DATASET THE TYPESCRIPT USED.** `fitbit-tz.ts`
-/// calls the npm `tz-lookup`, which ships a deliberately coarsened
-/// approximation of the tz shapefile; `tzf` carries the fuller polygons. They
-/// agree in the interior of a zone and can disagree within a few kilometres of a
-/// border. That is a real behaviour change in a port, it lands in a `tz` column
-/// that is never revisited, and there is no differential check between them
-/// because tz-lookup has no Rust binding to check against.
+/// ⚠ Rows stored before these polygons came from a coarser lookup (npm
+/// `tz-lookup`). The two agree inside a zone and can disagree within a few
+/// kilometres of a border, and a stored `tz` is never revisited.
 pub struct PolygonLookup {
     finder: tzf_rs::DefaultFinder,
 }

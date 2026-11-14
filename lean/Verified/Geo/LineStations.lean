@@ -142,7 +142,7 @@ private def qualifierStart (cs : Array Char) : Option Nat :=
 /--
 A line's name with any trailing " line"/" lines …" qualifier stripped, trimmed.
 
-Exported because `rail-stops-cache.ts` matches relations with the same
+Exported because the rail-stops cache matches relations with the same
 normalisation, and the two must not drift.
 -/
 def lineBaseToken (lineName : String) : String :=

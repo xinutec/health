@@ -78,8 +78,8 @@ impl Replay {
 /// Every golden day, sorted.
 ///
 /// ⚠ It does NOT apply `CORPUS_DAYS` — `restrict` does, separately, so that an
-/// empty corpus and a mistyped filter cannot produce the same message. They are
-/// different faults and the first version of this conflated them.
+/// empty corpus and a mistyped filter cannot produce the same message: they are
+/// different faults.
 pub fn day_names(golden: &str) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(golden)
         .expect("the corpus directory is readable")

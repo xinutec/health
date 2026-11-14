@@ -71,12 +71,9 @@ pub const MAX_BUILDING_HALF_WIDTH_M: f64 = 2_500.0;
 
 /// How wide a box to fetch for a question of this radius in this bucket.
 ///
-/// ⚠ **THE ONE PLACE THIS DEPARTS FROM THE TYPESCRIPT**, and the departure is
-/// forced. `fetchBboxAround` centred a FIXED half-width on the query point, so a
-/// question whose radius exceeded it could never be satisfied by its own fetch —
-/// on the serving path that merely meant the enrichment was skipped, but a drain
-/// that re-queues the same key on every pass is an unbounded loop against a
-/// two-slot public endpoint.
+/// ⚠ The box grows with the radius. A fixed half-width could never satisfy a
+/// question whose radius exceeded it, and a drain that re-queues the same key on
+/// every pass is an unbounded loop against a two-slot public endpoint.
 ///
 /// `MARGIN` is what keeps the answer stable against the difference between this
 /// module's degree conversion and the one the coverage gate applies: the gate

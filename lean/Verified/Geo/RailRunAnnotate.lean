@@ -337,9 +337,8 @@ def resolveRailRunLabel (env : Env) (run : RailRun) (segments : Array Seg)
       let bestSlow := pickBestStation startStationsSlow
       ⟨bestSlow.map (·.name), b0.lookupLat, b0.lookupLon, stationCoord bestSlow,
         bestSlow.map (·.subtype)⟩
-    -- Back-compat: `slowBefore` resolved to nothing but a preceding stay did.
-    -- Covers the original "rider noisy at the platform" case from before the
-    -- velocity gate existed.
+    -- `slowBefore` resolved to nothing but a preceding stay did: a rider whose
+    -- fixes are noisy at the platform.
     let b : Boarding := match b1.station, stay with
       | none, some st =>
         ⟨some st.name, st.lat, st.lon, stationCoord (some st.station), some st.station.subtype⟩
@@ -876,10 +875,9 @@ private def fixesS52 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1120, 5
 #guard labelsOf segsS52 fixesS52 == #[(1100, 1300, "Ayton → Gee Platform 1")]
 #guard traceOf segsS52 fixesS52 == #[.stations 51.5 (-38.1), .stations 51.52 (-38.13), .lines 51.5 (-38.1), .lines 51.52 (-38.13), .lines 51.5 (-38.1), .lines 51.52 (-38.13)]
 
--- The back-compat stay fallback: the walking-pace gate declined to trust the
--- stay, and slowBefore then resolves to NOTHING, so without the fallback the
--- run loses its label entirely. The original 'rider noisy at the platform'
--- case, from before the velocity gate existed.
+-- The stay fallback: the walking-pace gate declined to trust the stay, and
+-- slowBefore then resolves to nothing, so without the fallback the run loses
+-- its label entirely. A rider noisy at the platform.
 private def segsS53 : Array Seg := #[
   { startTs := 400, endTs := 600, mode := "stationary", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 0.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
   { startTs := 600, endTs := 1090, mode := "walking", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 4.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },

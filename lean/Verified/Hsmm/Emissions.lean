@@ -172,10 +172,9 @@ def placeTerm (s : State) (o : Observation) (placeCoord : Option (Float × Float
           if raw > PLACE_DISTANCE_FLOOR then raw else PLACE_DISTANCE_FLOOR
   else 0.0
 
-/-- The base-path emission log-probability, summed in `emissions.ts` order
-    less its first term: the per-minute mode prior retired
-    with the fitted entry prior (`entryCounts`), which charges a mode once per
-    segment where the minute prior grew with a true ride's length. -/
+/-- The base-path emission log-probability. It has no per-minute mode prior:
+    the fitted entry prior (`entryCounts`) charges a mode once per segment,
+    where a minute prior would grow with a true ride's length. -/
 def emissionLogProb (s : State) (o : Observation) (placeCoord : Option (Float × Float))
     (priors : Mode → ModePrior := modePriors) : Float :=
   let prior := priorOf priors s

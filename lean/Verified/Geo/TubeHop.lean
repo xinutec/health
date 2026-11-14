@@ -55,7 +55,7 @@ def isEntranceLike (s : NearbyStation) : Bool :=
   alone it wins, and the ride gets named after a mainline terminus the rider
   never entered.
 * **1 — a real station of the WRONG subtype**, when the caller expressed a
-  preference. Only `underground-rail.ts` does, with `"subway"`: a shared site
+  preference. Only the Underground caller does, with `"subway"`: a shared site
   offers a mainline node and a tube node, and a tube ride should be named after
   the tube one even when the mainline node is nearer.
 * **0 — a real station**, of the preferred subtype when there is one.
@@ -141,7 +141,7 @@ private def st (name : String) (distanceM : Float) (subtype : String := "station
 
 /-! ### The `prefer` split
 
-Only `underground-rail.ts` passes one (`"subway"`). It reorders WITHIN the
+Only the Underground caller passes one (`"subway"`). It reorders within the
 real-station tier and nowhere else. -/
 
 -- Without it the nearer mainline node wins; with it, the subway node from four

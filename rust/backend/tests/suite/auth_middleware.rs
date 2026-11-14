@@ -66,11 +66,10 @@ async fn a_database_that_cannot_be_read_is_500_and_not_401() {
     backend::lean::init().expect("the Lean runtime must start");
     let st = state_with_a_dead_database(Some("a-secret-at-least-16-chars"));
 
-    // ⚠ A VALIDLY SIGNED cookie, and that is the whole setup. A bad signature is
+    // ⚠ A validly signed cookie, and that is the whole setup. A bad signature is
     // refused by the HMAC before any query, so it would produce a 401 that says
-    // nothing about the database — the first version of this test asserted
-    // otherwise and went red for exactly that reason. Only a cookie that
-    // verifies reaches the `sessions` lookup, which is where the outage is.
+    // nothing about the database. Only a cookie that verifies reaches the
+    // `sessions` lookup, which is where the outage is.
     let cookie = format!(
         "session={}",
         backend::auth::session::sign_value("a-secret-at-least-16-chars", "deadbeef")

@@ -513,10 +513,7 @@ async fn check() -> Result<()> {
     let Some(check_date) = check_date else {
         anyhow::bail!(
             "{user} has no decoded_days row at the current classifier version — the decode \
-             cron has not run for this user. ⚠ This message named a TypeScript writer \
-             drifting from a Rust reader until 2026-09-01; there is no TypeScript writer \
-             (#975) and CLASSIFIER_VERSION now has a single declaration, so a drift between \
-             two copies is no longer one of the things this can mean"
+             cron has not run for this user"
         );
     };
 
@@ -659,7 +656,7 @@ async fn check() -> Result<()> {
     if fetched.points.is_empty() {
         anyhow::bail!(
             "no PhoneTrack fixes for {user} on {check_date}, a day that HAS an HSMM decode — the \
-             decoder runs on GPS, so the TypeScript saw fixes here and this arm did not"
+             decoder ran on fixes for this day, so the loader is missing them"
         );
     }
     // ⚠ A partial walk fails the check: unlike the loader, which prefers a

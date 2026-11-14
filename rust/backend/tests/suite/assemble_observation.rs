@@ -1,11 +1,7 @@
 //! `assemblesegments` building the observation tensor itself.
 //!
-//! ⚠ THIS FILE EXISTS BECAUSE ITS ABSENCE WAS THE DEFECT. `decode-day` shipped
-//! with a request that `assemblesegments` could never accept — it sent
-//! `head::capture`'s `obs`, the DAY TENANT's object, where the decoder wants a
-//! tensor. It compiled, CI was green, and every production run failed with
-//! `array expected`. There was a test for the date window and none for the
-//! request, so nothing could catch it.
+//! ⚠ The request is `serde_json::Value`, so a wrong shape compiles; only a test
+//! that sends one through Lean can see it.
 //!
 //! ⚠ The tensor must not cross the wire. Lean builds it from the day's fixes and
 //! two small lookup tables; shipping a row a minute instead is tens of MiB a day.

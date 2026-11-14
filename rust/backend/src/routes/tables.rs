@@ -2,10 +2,8 @@
 //!
 //! Eight are "the last N days of one table", two are "one day of one table",
 //! and two are a whole table with no window at all.
-//! Each is a single line in `api.ts` — `selectAll()`, `c.json(rows)`
-//! — and the port is almost entirely about not changing the response. See
-//! [`crate::row_json`] for what the driver and `JSON.stringify` were measured to
-//! produce; nothing about the rendering is decided here.
+//! Each is a select and its rows as JSON. [`crate::row_json`] owns the
+//! rendering; nothing about it is decided here.
 //!
 //! # Two windows, two different refusals
 //!
@@ -65,10 +63,8 @@ pub struct DateParams {
 ///   * `Number` reads non-decimal literals, so `"0x10"` is a valid 16-day
 ///     window. Unsigned only — JS gives `NaN` for `"-0x10"`, as does this.
 ///
-/// Infinities become `NaN` here, which is a rejection. `Number("Infinity")` is
-/// `Infinity` in JS and zod then rejects it as non-integral, so the request is
-/// refused either way — but arriving as `NaN` keeps it out of the integer
-/// conversion in Lean rather than relying on it.
+/// Infinities become `NaN` here, which is a rejection, and keeps them out of
+/// the integer conversion in Lean.
 pub fn js_number(s: &str) -> f64 {
     let t = s.trim();
     if t.is_empty() {

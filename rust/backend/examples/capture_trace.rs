@@ -117,11 +117,9 @@ async fn main() -> Result<()> {
     // the lookup forms, which is precisely the failure that makes a fixture
     // look loaded and answer nothing.
     // ⚠ NON-EMPTINESS FIRST, because the hit rate below CANNOT see this. An
-    // answer recorded as `[]` is returned as `[]` and counts as a HIT: the
-    // first version of this harness captured a trace with zero buildings and
-    // four ways and proudly reported 100%. A check that passes for the wrong
-    // reason is worse than none — so the shape of what was written is asserted
-    // before anything is said about replaying it.
+    // answer recorded as `[]` is returned as `[]` and counts as a hit, so a
+    // trace with zero buildings replays at 100%. The shape of what was written
+    // is asserted before anything is said about replaying it.
     let mut empties: Vec<String> = Vec::new();
     let mut total_answers = 0usize;
     for (table, entries) in trace.as_object().into_iter().flatten() {

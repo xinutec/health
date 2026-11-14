@@ -195,14 +195,11 @@ def neighborCells (lat lon : Float) : List (Int × Int) :=
 
 /-! ## Per-edge attributes
 
-The last two pure leaves of `route-graph.ts`. Both are module-PRIVATE there, so
-the reference values below come from driving `buildRouteGraph` and reading the
-`attrs.underground` / `attrs.lengthM` it publishes — the same approach the
-episode-geometry port used for its three private helpers.
+Whether an edge is underground and how long it is. The reference values below
+are the `attrs.underground` / `attrs.lengthM` that `buildRouteGraph` publishes.
 -/
 
--- Great-circle metres — `route-graph.ts` carried its own copy of `place-snap.ts`'s
--- formula, identical constants and association; one definition serves both.
+-- Great-circle metres: the place snap's formula, one definition for both.
 export Verified.Hsmm.FloatScore (haversineMeters)
 
 /-- JS `Number(s)` narrowed to what an OSM `layer` value can be: an optional

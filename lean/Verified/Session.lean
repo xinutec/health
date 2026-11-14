@@ -114,7 +114,7 @@ def mayProceedSharing (isShareViewer hidesLocation : Bool) (method path : String
 
 /-! ## Guards
 
-The framing cases are the original `verifyValue`'s answers. -/
+The framing cases are recorded `verifyValue` answers. -/
 
 #guard splitSigned "abc.SIG" == some ("abc", "SIG")
 -- ⚠ The `lastIndexOf` case: a value containing dots round-trips whole.

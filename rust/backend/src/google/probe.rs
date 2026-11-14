@@ -427,14 +427,12 @@ async fn rollup_one(
     end: (i32, u32, u32),
 ) -> String {
     let url = format!("{BASE}/users/me/dataTypes/{ty}/dataPoints:dailyRollUp");
-    // ⚠ `start`/`end`, each a CivilDateTime — NOT `startTime`/`endTime` holding
-    // ISO strings. The first version used the latter and ALL NINE types answered
+    // ⚠ `start`/`end`, each a CivilDateTime — not `startTime`/`endTime` holding
+    // ISO strings, which every type refuses with
     //
     //     400 Unknown name "startTime" at 'range': Cannot find field.
     //
-    // including `floors` and `total-calories`, which had NAMED dailyRollUp
-    // themselves. That uniformity is what identified a malformed request rather
-    // than nine absent series — the controls earning their place.
+    // A uniform 400 across all types is a malformed request, not absent series.
     //
     // `time` is optional and defaults to midnight, which is the alignment a
     // one-day window wants, so it is omitted rather than spelled out.

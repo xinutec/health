@@ -91,10 +91,10 @@ def isRideModeStr (m : String) : Bool :=
 
 /-! ## The coverage allowance, without floats
 
-The original is `Math.max(COVERAGE_SLACK_FRAC * span, COVERAGE_SLACK_MIN_S)` with
-`COVERAGE_SLACK_FRAC = 0.2` — a Float, compared against an integer `uncovered`
-and then `Math.round`ed for the report. Both are reproduced exactly in `Int`,
-and the reasoning is written down because "close enough" is not a port.
+The allowance is `max(COVERAGE_SLACK_FRAC * span, COVERAGE_SLACK_MIN_S)` with
+`COVERAGE_SLACK_FRAC = 0.2`, compared against an integer `uncovered` and rounded
+for the report. Both are exact in `Int`, and the reasoning is written down
+because a Float version would differ at the boundary.
 
 * **The TEST.** `u ≤ 0.2 * span` for integer `u` is `u ≤ ⌊0.2 * span⌋`. The
   double `0.2` is slightly ABOVE one fifth, so `0.2 * n ≥ n / 5` always and

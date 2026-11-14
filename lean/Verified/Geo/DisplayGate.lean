@@ -530,9 +530,9 @@ def spliceMatchedWithDivergentRuns (fixes matchedPath : Array MPt) (maxStrayM : 
 
 /-! ## Guards
 
-Reference values are the original implementation's, compared to within 1e-9
-because it measured with an overflow-careful hypot where Lean uses `sqrt` of
-the sum of squares. -/
+Reference values are recorded answers, compared to within 1e-9 because they
+were measured with an overflow-careful hypot where Lean uses `sqrt` of the sum
+of squares. -/
 
 section Guards
 

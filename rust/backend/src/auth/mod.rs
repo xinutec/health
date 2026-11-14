@@ -6,9 +6,9 @@
 //! would be fiction — an HMAC, a CSPRNG, a constant-time compare — plus the
 //! table reads and writes around them.
 //!
-//! `token.ts` is the worked example of that split and `lib.rs`
-//! records it: `generateShareToken` reads the CSPRNG and stays shell;
-//! `shareableDateRange` is a total function of its arguments and went to Lean.
+//! Share tokens are the worked example of that split: generating one reads the
+//! CSPRNG and is shell; `shareableDateRange` is a total function of its
+//! arguments and is Lean's.
 
 pub mod middleware;
 pub mod session;

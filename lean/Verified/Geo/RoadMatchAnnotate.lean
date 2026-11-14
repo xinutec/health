@@ -115,8 +115,7 @@ def MATCH_MAX_STRAY_M : Float := 40
 -- `refinedMode ?? mode` — `SegmentMerge.effectiveMode`, the one definition.
 export Verified.Geo.SegmentMerge (effectiveMode)
 
-/-- Fixes inside a segment's window, INCLUSIVE both ends
-(`segment-util.ts`'s `samplesInWindow`). -/
+/-- Fixes inside a segment's window, inclusive at both ends. -/
 def samplesInWindow (points : Array Fix) (startTs endTs : Int) : Array Fix :=
   Verified.SpeedFix.within points startTs endTs
 
@@ -194,8 +193,8 @@ def annotateRoadMatches (env : Env) (segments : Array Seg) (points : Array Fix) 
 
 /-! ## Guards
 
-Every number below is the original implementation's answer on the same
-fixture, at full double precision.
+Every number below is a recorded answer on the same fixture, at full double
+precision.
 
 The two shell values are oracle tables, not stubs that re-derive an answer.
 `stubRoads` holds every `(lat, lon, radius)` the reference was asked about;

@@ -8,7 +8,7 @@ lists into `bus_route_cache`: the ingestion half of the bus matcher.
 
 The pure decision in the bus route cache is here too.
 
-## ⚠ THIS ARM AND THE RAIL ARM DISAGREE, TWICE, AND BOTH DISAGREEMENTS ARE PORTED
+## ⚠ This arm and the rail arm disagree twice, on purpose
 
 They are near-identical crons over the same tiling, so the differences read as
 oversights until you check them. They are not:
@@ -22,8 +22,8 @@ oversights until you check them. They are not:
    bus loop is `if (!byRelation.has(id)) set(...)`, the rail loop is a bare
    `set(...)`. `node(r)` returns a relation's full stop list from any tile it
    touches, so both copies are complete and neither arm is wrong — but they are
-   different, and a port that "tidied" them into one would be changing
-   behaviour while claiming to share code.
+   different, and merging them into one would change behaviour while claiming
+   to share code.
 
 ## Whether a run failed
 

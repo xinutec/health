@@ -35,8 +35,7 @@ cache key, and thin or absent corridor evidence is `computeRailRoute`'s problem 
 it refuses rather than guessing. Dropping such a leg here would silently
 withdraw the one thing that could still route it from the line fallback.
 
-Pure and total. UNPROVEN; the `#guard`s pin the original implementation's
-answers.
+Pure and total. UNPROVEN; the `#guard`s pin its answers.
 -/
 
 namespace Verified.Geo.RailRouteFill
@@ -105,7 +104,7 @@ def unsnappedTrainRoutes (segments : List FillSegment) (points : List Fix) : Lis
 
 /-! ## Guards
 
-Every expectation is the original `unsnappedTrainRoutes`' answer on the same
+Every expectation is a recorded `unsnappedTrainRoutes` answer on the same
 input. -/
 
 private def PTS : List Fix :=

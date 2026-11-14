@@ -449,8 +449,7 @@ private def named (n : String) (id : Option Int := none) : Seg :=
 #guard samePlace { blank with mode := "stationary", place := some "" } { blank with mode := "stationary", place := some "" } == false
 
 /-- What the passes read off a resolved place. The label and the city are
-computed by `osm.ts` (`placeLabel` / `extractCity`) from the Nominatim result,
-so they arrive here already derived. -/
+derived from the Nominatim result before they arrive here. -/
 structure ResolvedPlace where
   label : String
   city : Option String := none

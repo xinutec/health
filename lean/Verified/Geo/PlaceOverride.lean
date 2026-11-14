@@ -146,11 +146,8 @@ private def placeHmm : List HmmSeg := [
 
 /-! ## The pass itself
 
-`applyHsmmPlaceOverride` used to be listed here as shell — "that record-cloning
-orchestration stays shell" — on the old rule that record sequencing belongs
-outside Lean. The stay-split work superseded that rule: where the output RECORDS
-are the answer rather than a decision about them, the rewrite ports. This is
-such a pass, and it is wholly pure — `places` is a lookup table, not I/O.
+The output records are the answer here, not a decision about them, so the pass
+is Lean's, and it is wholly pure: `places` is a lookup table, not I/O.
 
 Three arms, dispatched on the EFFECTIVE mode:
 
@@ -265,7 +262,7 @@ def projSeg (s : Seg) : String × Option String × Option String × Option Strin
 
 /-! ## Guards
 
-The reference values are the original `applyHsmmPlaceOverride`'s answers.
+The reference values are recorded `applyHsmmPlaceOverride` answers.
 -/
 
 namespace Guards

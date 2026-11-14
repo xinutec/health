@@ -1,7 +1,5 @@
 //! Nextcloud: credentials, a thin HTTP client, and the PhoneTrack fetch.
 //!
-//! Ports of `src/nextcloud/{credentials,client,phonetrack}.ts`.
-//!
 //! # Nothing here goes to Lean, with one exception that did
 //!
 //! By the split rule in [`crate::lib`](crate): these modules read a row, build

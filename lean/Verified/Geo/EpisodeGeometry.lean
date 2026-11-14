@@ -39,8 +39,8 @@ policy, not a classification:
 ## Two metres functions, deliberately different
 
 {@link equirectMeters} here takes `cos` at the FIRST point and combines with
-`sqrt`; `metersBetween` (`map-match-core.ts`, ported in
-`Verified.Geo.WalkableRoute`) takes `cos` at the MIDPOINT and combines with
+`sqrt`; `metersBetween` (`Verified.Geo.WalkableRoute`) takes `cos` at the
+MIDPOINT and combines with
 `hypot`. Both are in the codebase and they do not agree; this module's
 thresholds were tuned against this one.
 
@@ -95,12 +95,11 @@ structure LatLon where
 /-- A vertex of a derived path (`snappedPath` / `matchedPath` / …), which always
 carries an interpolated timestamp.
 
-`ts` is `Float` because the interpolators that produce it do not round.
-`interpolateTimes` (rail-snap.ts) DOES — so the snapped path is integral — but
-`slicePathByArc` (map-match-core.ts, the over-route trim) and four sites in
-`walk-building-escape.ts` interpolate `a.ts + (b.ts - a.ts) * t` and keep the
-fraction. Measured across the 33-day corpus: 4226 of 23525 drawn vertices carry
-a fractional `ts`.
+`ts` is `Float` because most interpolators that produce it do not round.
+`interpolateTimes` (`Verified.Geo.RailSnap`) does, so the snapped path is
+integral, but `slicePathByArc` (the over-route trim) and the walk escape
+interpolate `a.ts + (b.ts - a.ts) * t` and keep the fraction, so a drawn vertex
+can carry a fractional `ts`.
 
 The window filter in `clipPath` compares it against the state's integral
 bounds; a rounded model could keep or drop a vertex differently there, though
@@ -247,7 +246,7 @@ def holdImplausibleSpeed (fixes : Array RawFix) (capKmh : Option Float) : Array 
 
 /-! ## The three private helpers -/
 
-/-- `refinedMode ?? mode` — `segment-util.ts`'s `effectiveMode`. -/
+/-- The refined mode where there is one, else the mode. -/
 def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 
 /-- Whether a timestamp lies in a window, INCLUSIVE at both ends (the dominant
@@ -452,8 +451,7 @@ def buildEpisodes (states : Array State) (segments : Array Seg) (points : Array 
 
 /-! ## Smoke tests
 
-The reference values are the original `buildEpisodes`' answers for these
-scenarios.
+The reference values are recorded `buildEpisodes` answers for these scenarios.
 
 Scenario coordinates are built from the frame arithmetic rather than pasted as
 decimals, so both sides compute the same doubles instead of parsing a rounded

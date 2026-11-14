@@ -38,11 +38,10 @@ best possible answer.
 
 ## Exactness
 
-The arithmetic is float-for-float the original implementation's, which
-blessed `tests/golden/walk-baseline.json`: the same planar lat/lon→metre
-approximation (111320 m/deg, `cos` at the segment midpoint), the same clamps,
-the same sampling steps. Structurally different arithmetic would redden the
-gate on a healthy tree.
+`tests/golden/walk-baseline.json` was blessed by this arithmetic: the planar
+lat/lon→metre approximation (111320 m/deg, `cos` at the segment midpoint), its
+clamps and its sampling steps. Structurally different arithmetic would redden
+the gate on a healthy tree.
 
 ⚠ Two known divergences, both argued to be below the gate's resolution:
 
@@ -167,12 +166,11 @@ def pedometerDistanceM (steps : Array PedStep) (from_ to : Float)
 
 /-! ## Step budget
 
-⚠ TWO windowing rules and TWO strides live a few lines apart in the original,
-and the referee uses the SECOND of each. `pedometerDistanceM` above distributes
-per-minute rows by time OVERLAP at a 0.72 m stride; `stepsInWindow` here sums
-WHOLE rows whose timestamp falls in an INCLUSIVE window, and the budget
-multiplies by 0.75. They are not interchangeable, and a port that tidied them
-into one would move every `budgetM` in the blessed baseline. -/
+⚠ Two windowing rules and two strides, a few lines apart. `pedometerDistanceM`
+above distributes per-minute rows by time overlap at a 0.72 m stride;
+`stepsInWindow` here sums whole rows whose timestamp falls in an inclusive
+window, and the budget multiplies by 0.75. Merging them would move every
+`budgetM` in the blessed baseline. -/
 
 /-- The reconstruction profile's stride. ⚠ 0.75 — NOT `scoreWalk`'s 0.72. -/
 def STEP_STRIDE_M : Float := 0.75
@@ -676,8 +674,8 @@ def onNamedWayFraction (drawn : Array LatLon) (acceptedNames : Array String)
 
 /-! ## Witnesses
 
-⚠ Every number below is the original implementation's output, not hand
-arithmetic. `tests/golden/walk-baseline.json` was blessed by it, and a merely
+Every number below is this arithmetic's recorded output, not hand arithmetic.
+`tests/golden/walk-baseline.json` was blessed by it, and a merely
 plausible metric would sit inside the gate's 5–30 m epsilons while measuring
 something else. These pin the arithmetic itself, at 1e-9, before the corpus is
 asked.

@@ -11,12 +11,11 @@ corridor advances) or a there-and-back the GPS actually traced.
 
 ## ⚠ WHY THIS IS IN `Geo` AND NOT IN THE REFEREE THAT MEASURES IT
 
-It began in `Verified.Eval.WalkMetrics`, which is where the walk referee was
-ported. That is the wrong home for it: it is a geometry primitive over two
-polylines, and the DECISION gate needs it too — `matchImprovesDisplay` accepts
-detours precisely because it has no path→fixes term. `Verified.Geo`
-imports `Verified.Eval` nowhere and must not start; the direction is Eval → Geo.
-So the primitive moved DOWN and the referee calls it.
+It is a geometry primitive over two polylines, and the decision gate needs it
+as well as the walk referee: `matchImprovesDisplay` accepts detours precisely
+because it has no path→fixes term. `Verified.Geo` imports `Verified.Eval`
+nowhere and must not start (the direction is Eval → Geo), so it lives here and
+the referee calls it.
 
 ⚠ **THE MOVE IS FLOAT-SAFE AND THAT WAS CHECKED, NOT ASSUMED.** `WalkMetrics`
 carried its own `LatLon` and `metersBetween`; the structures are identical

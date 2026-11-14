@@ -320,9 +320,8 @@ private def DEDUP_SAMPLES : Array (Array NearbyWay) := #[
 -- MEASURED, and it is the reason this helper is shared rather than copied: the
 -- nearer way is NOT first. `Midway` is re-found at 8 m in the second sample and
 -- keeps its original slot, so it precedes the 3 m footway — and
--- `pickBestHighway` reads `highways[0]`. Whether that ordering is RIGHT is a
--- question about `velocity.ts`, not about this port; what is pinned here is that
--- both arms answer it the same way.
+-- `pickBestHighway` reads `highways[0]`. What is pinned here is that ordering,
+-- not that it is right.
 #guard (dedupNearestWays DEDUP_SAMPLES).map (fun w =>
     s!"{w.type}/{w.subtype}/{w.name.getD ""}@{w.distanceM.getD 0}")
   == #["highway/residential/Midway@8.000000", "highway/footway/@3.000000",

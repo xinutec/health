@@ -19,11 +19,11 @@ have the SAME two fields, so only the points need translating.
 
 # The quantisation is `Math.round(x * 1e7)`, and that is not `toFixed(7)`
 
-`quant-twin.ts`'s `quantPt` is the pinned rule:
+The pinned rule:
 
-    la: BigInt(Math.round(p.lat * 1e7))
-    lo: BigInt(Math.round(p.lon * 1e7))
-    ts: BigInt(Math.round(p.ts ?? 0))
+    la = Math.round(lat * 1e7)
+    lo = Math.round(lon * 1e7)
+    ts = Math.round(ts)
 
 `Math.round` is round-half-toward-+∞. It is tempting to reach for
 `Verified.JsNum.toFixed`, which is also a 7-decimal JS rounding rule and is
@@ -35,10 +35,7 @@ negative tie. At London's longitudes that is not a hypothetical sign.
 
 A coordinate returned by this matcher is a multiple of 1e-7°, so the drawn line
 sits up to half a unit from the float arm's: 0.56 cm in latitude, 0.35 cm in
-longitude at London's latitude (`map-match-core.ts`'s `CANDIDATE_TIE_UM` note
-derives the same figures). That is the float↔quant deviation
-`compare-match --gate` measures and adjudicates — over 35 days and 207 legs it
-is 0.00–0.14 m on all but two legs.
+longitude at London's latitude, far below anything a drawn walk shows.
 
 ⚠ The quantised arm is judged by the corpus gates; do not quiet a divergence by
 widening an accepted delta.
@@ -102,8 +99,7 @@ def matcher (fixes : Array Verified.Geo.PathPt) (ways : Array Verified.Geo.OsmCo
 
 /-! ## Specs
 
-On literals, so these fail on a rule change rather than on a data change. The
-values are the ones `quant-twin.ts`'s `quantPt` produces for the same inputs. -/
+On literals, so these fail on a rule change rather than on a data change. -/
 
 -- London, and the sign that makes the rounding rule matter.
 #guard (toQ 51.5661113948718 (-0.1784117025641026)).la == 515661114

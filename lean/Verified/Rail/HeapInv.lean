@@ -6,13 +6,13 @@ import Verified.Rail.Dijkstra
 The classical Dijkstra ordering arguments — `none ⟺ disconnected` for
 the rail search (`LoopInv.lean`, done) and a settled vertex's
 `dist`/`prev` being final (`Verified/Geo/LazyDijkstra.lean`, still
-`#guard`-pinned) — start here: the ported `Heap` really is a binary
+`#guard`-pinned) — start here: the `Heap` really is a binary
 min-heap.
 
 `IsHeapA` is the parent-ordering invariant (`(j-1)/2` is the parent index,
 written out everywhere so `omega` can reason about it directly). This file
-proves the invariant is established and maintained by the ported
-operations, exactly as written:
+proves the invariant is established and maintained by the operations, exactly
+as written:
 
 * `root_le` — the root of a heap-ordered array is a minimum;
 * `siftUp_isHeap` — sift-up repairs the one violation `UpOK` allows (the

@@ -262,8 +262,8 @@ The two guards above pin the shape a real day takes. They do not reach a null
 accuracy, a duplicate timestamp, or a bridge scan that runs past its horizon,
 and real days rarely do either, so the guards below pin those edges.
 
-Every expectation below is the original filter's answer, not a value reasoned
-about here; a disagreement means the filter's behaviour changed. -/
+Every expectation below is a recorded answer, not a value reasoned about here;
+a disagreement means the filter's behaviour changed. -/
 
 private def gpn (ts : Int) (lat lon : Float) : GpsPoint := ⟨ts, lat, lon, none⟩
 

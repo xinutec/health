@@ -6,8 +6,8 @@ import Verified.Hsmm.Quantize
 # Model assembly — factor composition + quantised tensor build
 
 The last structural layer before `Main.lean`: compose the per-cell scoring
-callbacks exactly as `buildHsmmModel` sums its ported factors, then quantise them
-into the integer tensors the verified trellis reads. Together with
+callbacks from the factors, then quantise them into the integer tensors the
+verified trellis reads. Together with
 `EmissionFull.emissionLogProbFull` (the composed emission) this is the full
 `{emission, entry, initial, duration, transition}` model surface.
 

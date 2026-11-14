@@ -1,17 +1,9 @@
 //! The `assemblesegments` request `decode-day` actually sends.
 //!
-//! ⚠ THIS FILE EXISTS BECAUSE THE REQUEST SHIPPED WRONG TWICE, in the same way
-//! both times: a field whose SHAPE was never checked. First `obs`, where
-//! `head::capture`'s day-tenant object was sent in place of the observation
-//! tensor; then `places`, where `focus_places` ROWS were sent in place of the
-//! decoder's places. Both compiled. Both passed CI. Both failed on the first
-//! production run — the second only because the first was fixed and the run got
-//! far enough to reach it.
-//!
-//! The pattern is worth naming: every field on this wire is `serde_json::Value`,
-//! so nothing on the Rust side can tell a wrong shape from a right one. Lean
-//! refuses by name, which is the only check there is — and it only runs if
-//! something sends a realistic request.
+//! ⚠ Every field on this wire is `serde_json::Value`, so nothing on the Rust
+//! side can tell a wrong shape from a right one. Lean refuses by name, which is
+//! the only check there is — and it only runs if something sends a realistic
+//! request.
 
 use backend::classification_inputs::decode_places;
 use backend::lean;
@@ -234,7 +226,7 @@ fn the_prior_place_coord_is_a_pair_and_may_be_null() {
         .expect("no known centroid leaves the continuity bonus un-gated");
     assert!(
         lean::assemble_segments(&seed(serde_json::json!({ "lat": 51.5, "lon": -0.1 }))).is_err(),
-        "the TypeScript's object shape is not the wire shape"
+        "an object is not the wire shape"
     );
 }
 
@@ -304,7 +296,7 @@ fn a_plain_number_coordinate_still_parses() {
         "lineMemberships": ["Central Line"], "underground": true,
         "startNode": "n1", "endNode": "n2",
     }]);
-    lean::assemble_segments(&r).expect("the TypeScript encoding must still parse");
+    lean::assemble_segments(&r).expect("the plain-number encoding must still parse");
 }
 
 /// ⚠ AND A STRING THAT IS NOT A BIT PATTERN IS STILL AN ERROR. Accepting two

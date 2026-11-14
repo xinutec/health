@@ -8,7 +8,7 @@ import Verified.Hsmm.ChainContext
 /-!
 # Unified route-graph model + fully Lean-computed route-rail factor
 
-Composes the ported route-graph query primitives (`edgesNearIdx`, `pathExistsOnLine`,
+Composes the route-graph query primitives (`edgesNearIdx`, `pathExistsOnLine`,
 `pointToPolylineMeters`, `parseLineMemberships`-derived memberships, `haversine`)
 into the route-rail emission term — the FIRST factor whose route-graph facts
 (`linesPresent` / `linesUnderground` at each bookend fix, and per-line

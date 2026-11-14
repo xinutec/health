@@ -5,8 +5,8 @@
 //! forges WHOLE LOG LINES — including further `client-event` lines attributed to
 //! someone else. A log the observed thing can write into is not evidence.
 //!
-//! Every expectation is the original `oneLine`'s answer, with the Unicode
-//! tables derived by testing every code point rather than transcribing a chart.
+//! Every expectation is a recorded `oneLine` answer, with the Unicode tables
+//! derived by testing every code point rather than transcribing a chart.
 
 use backend::lean;
 

@@ -2,10 +2,9 @@
 //!
 //! `segsRaw` is the day fold's ONLY input, and every stage that produces it —
 //! GPS quality control, place-snap, the Kalman smoother, segmentation — has a
-//! `#guard`-pinned Lean twin reachable through `lean::serve`. What was missing
-//! was the sequencing: which fixes each stage is handed, in what order, and
-//! with which filter between them. That lived in `velocity.ts` and is
-//! what this module ports.
+//! `#guard`-pinned Lean twin reachable through `lean::serve`. This module is
+//! the sequencing: which fixes each stage is handed, in what order, and with
+//! which filter between them.
 //!
 //! ```text
 //!   inputs.phonetrack.today
@@ -74,7 +73,7 @@ pub struct Smoothed {
 /// Deliberately loose. The filter weights each measurement by its accuracy²
 /// variance, so a noisy fix already contributes little; pre-filtering harder
 /// throws away anchors that matter most on fast linear travel, where even a
-/// 150 m fix pins a smooth path. See the note in `velocity.ts`.
+/// 150 m fix pins a smooth path.
 const KALMAN_ADMIT_ACCURACY_M: f64 = 200.0;
 
 /// A `f64` on the Lean wire: its IEEE-754 bit pattern as a decimal string.

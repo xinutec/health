@@ -6,8 +6,8 @@
 //! can invent a wire format the producer never emits, and tests pass against
 //! the fiction.
 //!
-//! The expectations below are the TYPESCRIPT ARM'S OUTPUT for this same input,
-//! read off `dist/geo/osm-rail-stops.js`, not values chosen to match the port.
+//! The expectations below are recorded output for this input, not values
+//! chosen to match the code.
 
 use backend::lean;
 
@@ -116,6 +116,6 @@ fn the_serialised_stop_field_order_matches_json_stringify() {
     let json = serde_json::to_string(s).unwrap();
     assert_eq!(
         json, r#"{"name":"Epping","lat":51.6934076,"lon":0.113805,"seq":0}"#,
-        "field order or number rendering drifted from the TypeScript"
+        "field order or number rendering drifted"
     );
 }

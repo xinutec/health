@@ -56,16 +56,14 @@ fn floats_cross_as_their_bit_pattern() {
     use backend::fold_payload::bits;
     assert_eq!(bits(0.0), "0");
     assert_eq!(bits(1.0), "4607182418800017408");
-    // ⚠ A REAL LITERAL, computed independently. The first version of this
-    // assertion compared `bits(x)` against an expression that evaluated to
-    // `bits(x)`, so it passed no matter what the function did — the exact shape
-    // of check this file exists to argue against.
+    // ⚠ Real literals, computed independently: an expected value computed by
+    // the function under test passes whatever it does.
     assert_eq!(bits(-0.176_252_1), "13818890208280377371");
     assert_eq!(bits(51.523_456_789_012_3), "4632448099209369256");
     // Negative zero is a distinct pattern, and a formatter would erase it.
     assert_eq!(bits(-0.0), "9223372036854775808");
     assert_ne!(bits(-0.0), bits(0.0));
-    // Round trip through the inverse `day-serve.ts` uses.
+    // Round trip through the inverse.
     let x = 51.523_456_789_012_34_f64;
     assert_eq!(f64::from_bits(bits(x).parse().unwrap()), x);
 }

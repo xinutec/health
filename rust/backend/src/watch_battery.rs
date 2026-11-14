@@ -66,13 +66,9 @@ pub async fn load(
     .await
     .with_context(|| format!("reading device_battery_log for {user_id}"))?;
 
-    // ⚠ EVERY DECODE ERRORS RATHER THAN DEFAULTING, and this is not caution for
-    // its own sake. The first version of this loop wrote
-    // `try_get::<u8, _>("battery_level").unwrap_or(0)`, which turns a width
-    // mismatch into a watch that reports EMPTY at every sync — a well-formed
-    // chart of a dead battery, indistinguishable from a real one. That is the
-    // same shape as the loader that decoded 117 production places to centroid
-    // 0.0 and still printed OK.
+    // ⚠ Every decode errors rather than defaulting: `unwrap_or(0)` would turn a
+    // column-width mismatch into a watch that reports empty at every sync, a
+    // well-formed chart of a dead battery indistinguishable from a real one.
     //
     // The caller may treat a failure here as "no watch series". It must not be
     // this function's job to decide that a broken read looks like a flat line.
