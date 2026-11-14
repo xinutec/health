@@ -1,9 +1,9 @@
 //! `assemblesegments` building the observation tensor itself.
 //!
-//! ⚠ The request is `serde_json::Value`, so a wrong shape compiles; only a test
+//! The request is `serde_json::Value`, so a wrong shape compiles; only a test
 //! that sends one through Lean can see it.
 //!
-//! ⚠ The tensor must not cross the wire. Lean builds it from the day's fixes and
+//! The tensor must not cross the wire. Lean builds it from the day's fixes and
 //! two small lookup tables; shipping a row a minute instead is tens of MiB a day.
 
 use crate::with_record;
@@ -74,7 +74,7 @@ fn a_day_decodes_from_raw_materials_with_no_tensor_on_the_wire() {
     }
 }
 
-/// ⚠ A MINUTE ABSENT FROM `proximity` IS "not known to be near either", NOT
+/// A minute absent from `proximity` is "not known to be near either", not
 /// "far from both". An empty table must decode, because a day whose OSM lookups
 /// all failed still has a timeline.
 #[test]
@@ -102,7 +102,7 @@ fn a_25_hour_day_is_decoded_to_its_end() {
     assert!(last > T0 + 1440 * 60, "the last segment ends at {last}");
 }
 
-/// ⚠ THE LOOKUP TABLE IS ONE LOCAL DAY, and its length is the tensor's. A table
+/// The lookup table is one local day, and its length is the tensor's. A table
 /// far from 23 to 25 hours is a caller bug, refused here rather than decoded as
 /// a short day.
 #[test]
@@ -119,7 +119,7 @@ fn a_short_local_ctx_is_refused_by_name() {
     );
 }
 
-/// ⚠ The two input forms are NOT interchangeable, and `head::capture`'s `obs` is
+/// The two input forms are not interchangeable, and `head::capture`'s `obs` is
 /// neither of them. This is the exact request decode-day was sending.
 #[test]
 fn the_day_tenant_obs_object_is_refused() {
@@ -136,7 +136,7 @@ fn the_day_tenant_obs_object_is_refused() {
     );
 }
 
-/// ⚠ `maxD` is the model's, not the caller's. It is the depth of the
+/// `maxD` is the model's, not the caller's. It is the depth of the
 /// `O(T·S·maxD)` trellis, so an absent one takes
 /// `Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION` rather than a number the shell
 /// spelled: the shell has no basis for an opinion about it, and a second copy
@@ -164,7 +164,7 @@ fn an_absent_max_d_is_the_models_own_240() {
     );
 }
 
-/// ⚠ A PROXIMITY VALUE THE DECODER CANNOT READ IS A REFUSAL, NOT A NULL. This is
+/// A proximity value the decoder cannot read is a refusal, not a NULL. This is
 /// the worst failure available on this path: swallowed, the day decodes, every
 /// segment looks plausible, and the decoder simply never learned that any fix
 /// was on a railway — and it would take a ground-truth audit to notice. It is
@@ -187,11 +187,11 @@ fn an_unreadable_proximity_distance_is_refused_by_name() {
     );
 }
 
-/// ⚠ The station chain runs inside `assemblesegments`, because the
+/// The station chain runs inside `assemblesegments`, because the
 /// `stationchain` mode takes `obs`: wiring it from the shell would put the
 /// 1440-row tensor back on the wire.
 ///
-/// ⚠ And the fields are absent, not null, where the resolver did not reach.
+/// And the fields are absent, not null, where the resolver did not reach.
 /// `boardStation`/`alightStation` are set only at the indices the resolver
 /// returned. `segments_json` is compared as text (a `jq` diff parses both sides
 /// and calls them equal), so a null where nothing should be written is a real
@@ -205,7 +205,7 @@ fn an_unresolved_segment_carries_no_station_keys_at_all() {
     let arr = segs.as_array().expect("segments is an array");
     assert!(!arr.is_empty());
     // No edges and no nodes, so nothing can resolve — and every segment must
-    // therefore be missing the KEY, not carrying a null.
+    // therefore be missing the key, not carrying a null.
     for s in arr {
         let o = s.as_object().unwrap();
         assert!(
@@ -219,7 +219,7 @@ fn an_unresolved_segment_carries_no_station_keys_at_all() {
     }
 }
 
-/// ⚠ `railStopRelations` ABSENT AND `[]` ARE DIFFERENT REQUESTS. Absent means the
+/// `railStopRelations` absent and `[]` are different requests. Absent means the
 /// mirror was never consulted, so every candidate's `servedPen` is 0; empty means
 /// it was consulted and had nothing. Both must decode — this pins that neither is
 /// an error, which is what a shell that cannot reach the mirror depends on.
@@ -331,12 +331,12 @@ fn ride_request(relations: serde_json::Value) -> serde_json::Value {
     }))
 }
 
-/// ⚠ THE POSITIVE CASE, WITHOUT WHICH THE ABSENT-KEY TEST ABOVE IS VACUOUS. A
+/// The positive case, without which the absent-key test above is vacuous. A
 /// day where nothing resolves would pass that test with the whole chain deleted.
 /// This one decodes an actual train leg and asserts the two stations by name, so
 /// removing the wiring fails here first.
 ///
-/// ⚠ IT DEPENDS ON THE DECODER CHOOSING `train`, which is a model outcome rather
+/// It depends on the decoder choosing `train`, which is a model outcome rather
 /// than a wire contract. If a model change breaks this, read it as "the ride no
 /// longer decodes as a train" before reading it as a station-chain fault.
 #[test]
@@ -365,7 +365,7 @@ fn a_decoded_train_leg_carries_its_board_and_alight_stations() {
         "alighted at the east end: {train}"
     );
 
-    // ⚠ AND ONLY THE TRAIN LEG. A stationary segment is not a leg the chain can
+    // And only the train leg. A stationary segment is not a leg the chain can
     // resolve, so it carries no key — not a null.
     for s in arr.iter().filter(|s| s["mode"] != "train") {
         let o = s.as_object().unwrap();
@@ -376,7 +376,7 @@ fn a_decoded_train_leg_carries_its_board_and_alight_stations() {
     }
 }
 
-/// ⚠ NO RELATIONS IS NOT NO CHAIN. Absent `railStopRelations` means every
+/// No relations is not no chain. Absent `railStopRelations` means every
 /// candidate's `servedPen` is 0 — the resolver still runs and still names the
 /// stations from the graph. This pins that the mirror being unreachable degrades
 /// the answer rather than removing it.

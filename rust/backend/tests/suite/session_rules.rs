@@ -4,7 +4,7 @@
 //! wire, because the crate links a prebuilt static library and an op added to
 //! `BackendEntry.lean` is invisible until `BackendEntry:static` is rebuilt.
 //!
-//! ⚠ The HMAC, the CSPRNG and the constant-time compare are NOT tested here
+//! The HMAC, the CSPRNG and the constant-time compare are not tested here
 //! because they are not here. They are the host's, and there is nothing to prove
 //! about them beyond that they were asked for.
 
@@ -18,7 +18,7 @@ fn a_signed_value_splits_on_the_last_separator() {
         lean::split_signed("abc.SIG").unwrap(),
         Some(("abc".into(), "SIG".into()))
     );
-    // ⚠ THE CASE THE RULE EXISTS FOR. Splitting on the FIRST dot would hand the
+    // The case the rule exists for. Splitting on the first dot would hand the
     // verifier "a" and check it against "b.c.SIG" — a well-formed comparison of
     // the wrong bytes.
     assert_eq!(
@@ -43,7 +43,7 @@ fn a_signed_value_splits_on_the_last_separator() {
 fn a_session_expiring_exactly_now_is_still_valid() {
     lean::init().expect("the Lean runtime must start");
     assert!(lean::session_is_valid(1_000, 999).unwrap());
-    // ⚠ Inclusive. Flipping this logs a user out a millisecond early for no
+    // Inclusive. Flipping this logs a user out a millisecond early for no
     // observable reason — the sort of boundary that gets changed by tidying.
     assert!(lean::session_is_valid(1_000, 1_000).unwrap());
     assert!(!lean::session_is_valid(1_000, 1_001).unwrap());
@@ -59,7 +59,7 @@ fn a_share_viewer_may_read_everything_and_write_nothing() {
     assert!(!viewer("PUT", "/api/settings"));
     assert!(!viewer("DELETE", "/api/share"));
     assert!(!viewer("PATCH", "/api/settings"));
-    // ⚠ A verb nobody has thought of yet is REFUSED. The test is "not GET",
+    // A verb nobody has thought of yet is refused. The test is "not GET",
     // not a list of writing verbs, so the API can grow without opening a hole.
     assert!(!viewer("PROPFIND", "/api/velocity"));
 }
@@ -67,11 +67,11 @@ fn a_share_viewer_may_read_everything_and_write_nothing() {
 #[test]
 fn telemetry_is_the_one_path_a_share_viewer_may_post_to_and_it_is_exact() {
     lean::init().expect("the Lean runtime must start");
-    // It writes to the LOG, not the database, so it is outside the rule's
+    // It writes to the log, not the database, so it is outside the rule's
     // subject rather than an exception to it — and it is the only way to know
     // what a share recipient saw.
     assert!(lean::may_proceed(true, false, "POST", "/api/telemetry").unwrap());
-    // ⚠ EXACT, not a prefix. A route mounted underneath is a different route,
+    // Exact, not a prefix. A route mounted underneath is a different route,
     // and prefix-matching here would open every one of them.
     assert!(!lean::may_proceed(true, false, "POST", "/api/telemetry/bulk").unwrap());
     assert!(!lean::may_proceed(true, false, "POST", "/api/telemetryX").unwrap());
@@ -92,7 +92,7 @@ fn a_used_session_slides_and_the_cookie_outlives_it() {
     let hour = 60 * 60 * 1000;
     assert_eq!(p.ttl_ms, month);
     assert_eq!(p.cookie_name, "session");
-    // ⚠ The ROW decides when a session ends, so the cookie must outlive it: a
+    // The row decides when a session ends, so the cookie must outlive it: a
     // cookie as short as the row would end a renewed session at its first expiry.
     assert!(
         p.cookie_max_age_s * 1000 > p.ttl_ms,
@@ -122,7 +122,7 @@ fn a_share_window_ends_today_and_a_disabled_share_has_none() {
         Some(("2026-08-17".into(), "2026-08-17".into()))
     );
 
-    // ⚠ `None` MEANS SHARE DISABLED, not "no window". A caller reading it as
+    // `None` means share disabled, not "no window". A caller reading it as
     // "unrestricted" turns a revoked share into a full-history one.
     assert_eq!(lean::shareable_date_range("2026-08-17", 0).unwrap(), None);
     assert_eq!(lean::shareable_date_range("2026-08-17", -1).unwrap(), None);
@@ -134,7 +134,7 @@ fn a_share_window_ends_today_and_a_disabled_share_has_none() {
 #[test]
 fn the_share_window_and_the_visibility_check_agree() {
     lean::init().expect("the Lean runtime must start");
-    // ⚠ The two rules are used together — one builds the window, the other
+    // The two rules are used together — one builds the window, the other
     // tests a date against it — and they are in different Lean functions. This
     // is the assertion that they mean the same thing by "inclusive".
     let (from, to) = lean::shareable_date_range("2026-08-17", 7)

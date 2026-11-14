@@ -120,17 +120,17 @@ def appendBatteryTail (series : List BatterySample) (tail : Option BatterySample
       series ++ [(dayEndTs, level.toInt64.toInt)]
   | _, _ => series
 
-/-! ### The WATCH trace
+/-! ### The watch trace
 
 `device_battery_log` read back for one day, shaped to sit on the same axis as
 the phone's series above. A different reduction from `batterySeries`, because the
-history is different: Fitbit's devices endpoint reports only the CURRENT level at
+history is different: Fitbit's devices endpoint reports only the current level at
 each device sync, so there is a handful of points a day rather than one per fix.
 
-⚠ The wall-clock → epoch conversion is NOT here. `last_sync_time` is a Fitbit
+The wall-clock → epoch conversion is not here. `last_sync_time` is a Fitbit
 wall clock with no offset, so resolving it needs tzdata; the host does that and
 puts the instant on the wire. `none` is a clock that did not resolve, and it is
-DROPPED rather than defaulted — a reading at a guessed instant would draw a step
+dropped rather than defaulted — a reading at a guessed instant would draw a step
 where none happened. -/
 
 /-- Fitbit's pseudo-name for phone step tracking. Not a wearable, and it reports
@@ -142,7 +142,7 @@ structure WatchRow where
   /-- `none` when the wall clock did not resolve. -/
   ts : Option Int
   level : Int
-  /-- `none` is KEPT. An untagged row is an unknown device, not the phone. -/
+  /-- `none` is kept. An untagged row is an unknown device, not the phone. -/
   deviceVersion : Option String := none
   deriving Repr, Inhabited
 
@@ -151,13 +151,13 @@ structure WatchRow where
 Drop the phone pseudo-tracker and the unresolved clocks, keep the half-open
 window `[startUtc, endUtc)`, sort by time, then collapse.
 
-⚠ The sort is stable and the collapse depends on it. Two devices reporting at
+The sort is stable and the collapse depends on it. Two devices reporting at
 the same instant keep the row that came later in the input, which is the table's
 own order, not a rule about which device is right; reversing the input reverses
 which level is drawn.
 
-⚠ A run of equal levels collapses to its FIRST reading: the flat step is already
-drawn from the point that started it. A level that RETURNS to an earlier value is
+A run of equal levels collapses to its first reading: the flat step is already
+drawn from the point that started it. A level that returns to an earlier value is
 a real step and is kept — the comparison is against the previous kept sample
 only, never against the whole series. -/
 def watchBatterySeries (rows : List WatchRow) (startUtc endUtc : Int) : List BatterySample :=
@@ -222,7 +222,7 @@ private def rel (xs : List BatterySample) : List (Int × Int) := xs.map fun (ts,
 
 #guard rel (watchBatterySeries [] D0 D1) == []
 #guard rel (watchBatterySeries [wr 100 90] D0 D1) == [(100, 90)]
--- ⚠ The phone pseudo-tracker reports 0 and must never reach the watch series.
+-- The phone pseudo-tracker reports 0 and must never reach the watch series.
 #guard rel (watchBatterySeries [wr 100 0 (some PHONE_PSEUDO_DEVICE), wr 200 90] D0 D1)
   == [(200, 90)]
 -- An untagged row is an unknown device, not the phone.
@@ -233,10 +233,10 @@ private def rel (xs : List BatterySample) : List (Int × Int) := xs.map fun (ts,
 -- The table is not ordered.
 #guard rel (watchBatterySeries [wr 300 80, wr 100 90, wr 200 85] D0 D1)
   == [(100, 90), (200, 85), (300, 80)]
--- ⚠ A flat run collapses to its FIRST reading.
+-- A flat run collapses to its first reading.
 #guard rel (watchBatterySeries [wr 100 90, wr 200 90, wr 300 90, wr 400 85] D0 D1)
   == [(100, 90), (400, 85)]
--- ⚠ Same instant: the LATER row in INPUT order wins, both ways round.
+-- Same instant: the later row in input order wins, both ways round.
 #guard rel (watchBatterySeries [wr 100 90, wr 100 70] D0 D1) == [(100, 70)]
 #guard rel (watchBatterySeries [wr 100 70, wr 100 90] D0 D1) == [(100, 90)]
 -- A level returning to an earlier value is a real step, not a flat run.

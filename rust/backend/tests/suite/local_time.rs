@@ -3,7 +3,7 @@
 //! These two exist because `Verified.Geo.OpeningHours` decides open-versus-
 //! closed but instant → local `(weekday, minute)` is tzdata, so the shell
 //! resolves the pairs and puts them on the wire. They feed `bestPlace`, whose
-//! entries are the only DERIVED ones in any answer table.
+//! entries are the only derived ones in any answer table.
 //!
 //! The cases were produced by running `dist/geo/opening-hours.js` and
 //! `dist/geo/venue-prior.js` — see `fixtures/local-time-ts.mjs`. They are
@@ -58,7 +58,7 @@ fn the_stay_samples_match_the_typescript() {
     }
 }
 
-/// ⚠ MONDAY IS ZERO, and nothing about the shape of the output says so.
+/// Monday is zero, and nothing about the shape of the output says so.
 ///
 /// `chrono`'s `num_days_from_sunday` is the obvious call and is wrong here.
 /// Using it shifts every opening-hours judgement by one day while producing
@@ -90,14 +90,14 @@ fn a_zero_length_stay_samples_its_start() {
     let t = 1_768_435_200;
     let got = local_stay_samples(t, t, "Europe/London").expect("samples");
     assert_eq!(got.len(), 1);
-    // And an end BEFORE the start is the same case, not a negative walk.
+    // And an end before the start is the same case, not a negative walk.
     assert_eq!(
         local_stay_samples(t, t - 600, "Europe/London").expect("s"),
         got
     );
 }
 
-/// ⚠ THE OBSERVATION TENSOR'S TABLE IS RESOLVED PER MINUTE, and the two days a
+/// The observation tensor's table is resolved per minute, and the two days a
 /// year that matters are the two days the decoder is hardest to debug. On a
 /// spring-forward day 01:00 local is followed by 02:00 local, so the day has
 /// 1380 minutes and the naive `(m / 60) % 24` is wrong for 22 of its hours.
@@ -118,7 +118,7 @@ fn the_local_ctx_table_follows_dst_rather_than_the_minute_index() {
         t.iter().all(|p| p[0] != 1),
         "no minute of this civil day is in the 01:00 hour"
     );
-    // ⚠ AND THE INDEX IS NOT THE HOUR. Stated as its own assertion because the
+    // And the index is not the hour. Stated as its own assertion because the
     // whole point is that a table built from `m / 60` would pass every other
     // check in this file.
     assert_ne!(
@@ -126,7 +126,7 @@ fn the_local_ctx_table_follows_dst_rather_than_the_minute_index() {
         (0..23 * 60).map(|m: u32| (m / 60) % 24).collect::<Vec<_>>()
     );
 
-    // ⚠ SUNDAY IS 0 HERE AND 6 IN `local_stay_samples`. The two live in one file
+    // Sunday is 0 here and 6 in `local_stay_samples`. The two live in one file
     // and disagree deliberately: opening hours are Monday-based, the tensor
     // follows JavaScript's `Date`. Pinned so a shared helper is never "tidied"
     // in without noticing it shifts every hour profile by a day.

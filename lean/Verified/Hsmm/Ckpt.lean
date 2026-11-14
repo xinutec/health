@@ -10,12 +10,12 @@ feeding `listMax`), re-enter the `Problem` closures per cell, and
 
 This file keeps the theorems and swaps the machinery, in two layers:
 
-* **Fold-based columns** — `rangeMax` accumulates a maximum over `0..n-1`
+* Fold-based columns — `rangeMax` accumulates a maximum over `0..n-1`
   with no list allocation; `closeRowF`/`colStepF` use it and hoist the
   per-column `emit`/`entry` reads into rows. `closeRowF_eq`/`colStepF_eq`
   prove them *equal* to `closeRow`/`colStep`, so every pointwise fact
   (`colStep_get`) transfers by rewriting.
-* **Checkpointed storage** — `buildCkpt` runs the same recurrence but
+* Checkpointed storage — `buildCkpt` runs the same recurrence but
   retains only every `K`-th column (as `(time, column)` entries) plus the
   final column. The walk recomputes a queried column from the nearest
   stored checkpoint (`findCk`/`colFrom`/`colAt`). Correctness never
@@ -24,7 +24,7 @@ This file keeps the theorems and swaps the machinery, in two layers:
   enters the proofs.
 
 `decodeCk` is `decodeFast` on this machinery; `decodeCk_eq` proves
-`decodeCk P K = decode P` for **every** stride `K`, so `decodeCk_correct`
+`decodeCk P K = decode P` for every stride `K`, so `decodeCk_correct`
 and `decodeCk_none_iff` are inherited outright.
 -/
 

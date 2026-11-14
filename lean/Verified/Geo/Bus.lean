@@ -6,7 +6,7 @@ import Verified.Fix
 
 Two independent ways to tell a bus from a taxi on the same streets:
 
-* **Route matching** (`matchBusRoute`) — anchor a road-vehicle leg's board and
+* Route matching (`matchBusRoute`) — anchor a road-vehicle leg's board and
   alight coords to two *in-route-order* stops of a candidate route, then
   corroborate by checking the leg's trace passed the route's *intermediate*
   stops. Anchoring alone is not sufficient: with ~1000 routes mirrored almost
@@ -14,7 +14,7 @@ Two independent ways to tell a bus from a taxi on the same streets:
   endpoints, which is how a taxi got stamped "bus N22". Corroboration is
   weighted by a speed logistic — a leg too fast to be a bus is discounted, not
   vetoed.
-* **Stop-pattern evidence** (`detectBoardingWait`, `detectVehicleDwells`,
+* Stop-pattern evidence (`detectBoardingWait`, `detectVehicleDwells`,
   `scoreBusEvidence`) — a bus is boarded at a flag after a 45 s+ standstill and
   dwells mid-leg at fixed public stops; a car dwells at signals. Summed as
   weighted nats with per-signal caps, no vetoes.
@@ -64,7 +64,7 @@ structure BusRoute where
   stops : List BusStop
   deriving Inhabited
 
-/-- A leg's endpoints plus the trace used ONLY to corroborate intermediate
+/-- A leg's endpoints plus the trace used only to corroborate intermediate
     stops — fixes are measured against stops, never snapped to geometry. -/
 structure VehicleLeg where
   board : LatLon
@@ -260,7 +260,7 @@ def DWELL_MAX_SPEED_KMH : Float := 3
 def BOARDING_AT_STOP_NATS : Float := 1.5
 def BOARDING_NO_STOP_DATA_NATS : Float := 0.2
 def DWELL_AT_STOP_NATS : Float := 0.8
-/-- A dwell near BOTH a stop and a signal is ambiguous — half credit. -/
+/-- A dwell near both a stop and a signal is ambiguous — half credit. -/
 def DWELL_AT_STOP_AND_SIGNAL_NATS : Float := 0.4
 def DWELL_CREDIT_CAP_NATS : Float := 2.4
 def MANY_DWELLS_NO_STOP_NATS : Float := -0.8
@@ -299,8 +299,8 @@ contiguous standstill is shorter than `BOARDING_WAIT_MIN_S` (rolling approach
 = taxi pattern, or no data).
 -/
 def detectBoardingWait (fixes : List Fix) (segStartTs : Int) : Option (Int × Float × Float) := Id.run do
-  -- Strictly BEFORE the leg: the segment's startTs is typically its first
-  -- MOVING fix (the pull-away), which must not seed the walk-back.
+  -- Strictly before the leg: the segment's startTs is typically its first
+  -- moving fix (the pull-away), which must not seed the walk-back.
   let pre := (fixes.filter (fun p =>
     decide (p.ts < segStartTs) && decide (p.ts ≥ segStartTs - BOARDING_WAIT_LOOKBACK_S))).toArray
   if pre.size < 2 then return none
@@ -334,7 +334,7 @@ def detectBoardingWait (fixes : List Fix) (segStartTs : Int) : Option (Int × Fl
 /--
 The boarding wait for a leg whose start may sit up to `slackS` either side of
 the pull-away (the decoder's segments, whose boundaries fall on whole minutes):
-the LAST standstill run of at least `BOARDING_WAIT_MIN_S` that ends between
+the last standstill run of at least `BOARDING_WAIT_MIN_S` that ends between
 `BOARDING_PULLAWAY_TRIM_S + slackS` before the start and `slackS` after it. A
 short dwell just inside the leg (a junction, the next stop) is passed over
 rather than taken for the wait, which the walk-back from the boundary would do.
@@ -571,7 +571,7 @@ private def leg (trace : List LatLon) (speedKmh : Option Float := none) : Vehicl
 #guard traceCoverage traceOnRoute [] BUS_STOP_PASS_M == 0
 #guard traceCoverage [bd] ((route38.stops.drop 1).take 3) BUS_STOP_PASS_M == 0
 
--- Two stops within the anchor radius at BOTH ends: the smallest combined
+-- Two stops within the anchor radius at both ends: the smallest combined
 -- anchor distance wins the pair.
 #guard match matchBusRoute (leg traceOnRoute) [routeTwin] with
        | some m => m.boardStop.name == some "Twin A" && m.alightStop.name == some "Twin Y"
@@ -669,7 +669,7 @@ private def E (waitS : Option Int) (stopM : Option Float) (dwells : List DwellSt
 -- Three stop dwells with no visible boarding also clear it (at the cap).
 #guard approx (scoreBusEvidence (E none none
         [D 40 (some 20) none, D 35 (some 15) none, D 25 (some 30) none])).total 2.3999999999999999
--- Stop AND signal is ambiguous: half credit each.
+-- Stop and signal is ambiguous: half credit each.
 #guard approx (scoreBusEvidence (E none none
         [D 40 (some 20) (some 10), D 35 (some 15) (some 30), D 25 (some 30) (some 20)])).total
        1.2000000000000002
@@ -698,14 +698,14 @@ function of `(lat, lon, radiusM)` the caller supplies, which is what lets the
 whole pass be reference-tested.
 
 The one piece of real logic outside the leaves is the per-dwell resolution:
-ask for everything within `TRANSIT_QUERY_RADIUS_M`, keep the requested SUBTYPE,
-take the nearest of those. That is NOT "the nearest stop, if it is a bus stop" —
+ask for everything within `TRANSIT_QUERY_RADIUS_M`, keep the requested subtype,
+take the nearest of those. That is not "the nearest stop, if it is a bus stop" —
 a traffic signal three metres away does not hide a bus stop at thirty.
 
 Exact: no arithmetic of its own beyond the duration test and the threshold
 comparison; the ULP story is entirely `scoreBusEvidence`'s.
 
-`TRANSIT_QUERY_RADIUS_M` is pinned by value and cannot be pinned by EFFECT: it
+`TRANSIT_QUERY_RADIUS_M` is pinned by value and cannot be pinned by effect: it
 is handed straight to the adapter, so only the adapter can act on it, and a
 stub that honoured it would be grading the stub. -/
 
@@ -794,14 +794,14 @@ private def LEG_END : Int := 1200
 
 private def stop (subtype : String) (distanceM : Float) : TransitStop := ⟨subtype, distanceM⟩
 
-/-- The stub answers the SAME list everywhere: what this pass decides is which
+/-- The stub answers the same list everywhere: what this pass decides is which
 subtype it asks for and how it reduces the answer, not where the query lands. -/
 private def everywhere (stops : Array TransitStop) : Float → Float → Float → Array TransitStop :=
   fun _ _ _ => stops
 
 private def atStop : Array TransitStop := #[stop "bus_stop" 10]
 private def signalsOnly : Array TransitStop := #[stop "traffic_signals" 8]
-/-- A NEARER signal alongside a further bus stop. -/
+/-- A nearer signal alongside a further bus stop. -/
 private def mixed : Array TransitStop := #[stop "traffic_signals" 3, stop "bus_stop" 30]
 /-- Two bus stops: the nearer is inside the bar, the further is not. -/
 private def twoStops : Array TransitStop := #[stop "bus_stop" 40, stop "bus_stop" 12]
@@ -816,24 +816,24 @@ private def kinds (segs : Array BusSeg) (stops : Array TransitStop) : Array (Opt
   (annotateBusEvidence segs busFixes (everywhere stops)).map (·.vehicleKind)
 
 #guard kinds #[drive] atStop == #[some "bus"]
--- The leg filter reads the EFFECTIVE mode, both directions.
+-- The leg filter reads the effective mode, both directions.
 #guard kinds #[drive "stationary" (some "driving")] atStop == #[some "bus"]
 #guard kinds #[drive "walking"] atStop == #[none]
 #guard kinds #[drive "driving" (some "train")] atStop == #[none]
 -- The duration bar is inclusive: one second under refuses, exactly at it judges.
 #guard kinds #[drive (startTs := LEG_START) (endTs := LEG_START + 179)] atStop == #[none]
 #guard kinds #[drive (startTs := LEG_START) (endTs := LEG_START + 180)] atStop == #[some "bus"]
--- No stops, and stops of the WRONG subtype, are the same answer: not a bus.
+-- No stops, and stops of the wrong subtype, are the same answer: not a bus.
 #guard kinds #[drive] #[] == #[none]
 #guard kinds #[drive] signalsOnly == #[none]
--- The subtype filter runs BEFORE the nearest reduce: the 3 m signal does not
+-- The subtype filter runs before the nearest reduce: the 3 m signal does not
 -- hide the 30 m bus stop.
 #guard kinds #[drive] mixed == #[some "bus"]
--- …and the reduce is a MIN, so the 12 m stop beats the 40 m one.
+-- …and the reduce is a min, so the 12 m stop beats the 40 m one.
 #guard kinds #[drive] twoStops == #[some "bus"]
 -- A stop beyond the near bar scores as no stop at all.
 #guard kinds #[drive] farStop == #[none]
--- The dwell window is the SEGMENT's, not the day's. Under `mixed` one dwell
+-- The dwell window is the segment's, not the day's. Under `mixed` one dwell
 -- scores 1.9 and two score 2.3, so a leg cut before the second dwell flips.
 #guard kinds #[drive (endTs := 700)] mixed == #[none]
 #guard kinds #[drive (endTs := 900)] mixed == #[some "bus"]
@@ -842,14 +842,14 @@ private def kinds (segs : Array BusSeg) (stops : Array TransitStop) : Array (Opt
 
 /-! #### Exactly at the threshold
 
-`DWELL_AT_STOP_AND_SIGNAL_NATS` REPLACES the stop credit rather than adding to
+`DWELL_AT_STOP_AND_SIGNAL_NATS` replaces the stop credit rather than adding to
 it (0.4 instead of 0.8 — a signal is an alternative explanation for the dwell),
-so the reachable totals are a coarse grid. The ONLY combination that lands on
+so the reachable totals are a coarse grid. The only combination that lands on
 exactly `BUS_EVIDENCE_THRESHOLD_NATS` is no boarding wait plus three dwells
 scoring 0.8 + 0.8 + 0.4, which sums to exactly 2 in that order. Without it the
 `≥`-vs-`>` decision at the bar is unpinned, so the fixture is built for it. -/
 
-/-- Three dwells and NO preceding standstill, so `boarding` is 0. -/
+/-- Three dwells and no preceding standstill, so `boarding` is 0. -/
 private def barFixes : List Fix := Id.run do
   let mut out : Array Fix := #[]
   let mut lat : Float := 51.5
@@ -865,7 +865,7 @@ private def barFixes : List Fix := Id.run do
 private def BAR_END : Int := 1500
 private def SIGNAL_FROM_LAT : Float := 51.55
 
-/-- A bus stop everywhere, and a traffic signal only at the LAST dwell. -/
+/-- A bus stop everywhere, and a traffic signal only at the last dwell. -/
 private def perDwell : Float → Float → Float → Array TransitStop :=
   fun lat _ _ =>
     if lat < SIGNAL_FROM_LAT then #[stop "bus_stop" 10]
@@ -886,7 +886,7 @@ orchestrator reads `bus_route_cache`), so there is nothing to inject and the
 whole pass ports as it stands.
 
 What it decides beyond the matcher is small and all of it is pinned: the leg
-filter reads the EFFECTIVE mode, the fix window is inclusive at BOTH ends, the
+filter reads the effective mode, the fix window is inclusive at both ends, the
 board and alight are the window's first and last fix while the trace is all of
 them, and the speed handed to the matcher is the segment's `avgSpeed`.
 
@@ -910,8 +910,8 @@ anchors and corroborates gets `vehicleKind := "bus"` and the route label, and
 everything else — wrong mode, too few fixes, no route matched — passes through
 untouched, so an empty route set makes the pass a no-op.
 
-⚠ THE ALIGHT HAS A SECOND READING WHEN THE FIXES CANNOT SHOW ONE. A ride
-whose last fix anchors to no stop is tried again with the centroid of the STAY
+The alight has a second reading when the fixes cannot show one. A ride
+whose last fix anchors to no stop is tried again with the centroid of the stay
 that follows it as the alight, within `BUS_STAY_ALIGHT_M` of a stop: the bus
 passed that stop and he was next seen a short walk from it. The observed
 alight is always tried first, so a leg the fixes do anchor is never re-read
@@ -1029,22 +1029,22 @@ private def rstay : BusRouteSeg := rdrive (mode := "stationary") (startTs := 900
 private def farStayFixes : List Fix :=
   [⟨900, 51.4905, -0.1420⟩, ⟨1000, 51.4905, -0.1420⟩, ⟨1100, 51.4905, -0.1420⟩]
 #guard cells #[rdrive (endTs := 800), rstay] (lostTailFixes ++ farStayFixes) [route38] == #[(none, none), (none, none)]
--- What follows must be a STAY; a walk from the same point says nothing about where he alighted.
+-- What follows must be a stay; a walk from the same point says nothing about where he alighted.
 private def rwalk : BusRouteSeg := rdrive (mode := "walking") (startTs := 900) (endTs := 1100) (avgSpeed := 4)
 #guard cells #[rdrive (endTs := 800), rwalk] (lostTailFixes ++ clinicFixes) [route38] == #[(none, none), (none, none)]
--- And a leg the fixes DO anchor is never re-read from its destination.
+-- And a leg the fixes do anchor is never re-read from its destination.
 #guard cells #[rdrive, rstay] (busFixes' ++ clinicFixes) [route38] == #[(some "bus", some LABEL), (none, none)]
 -- No routes loaded, and a taxi on the direct road, are the same answer.
 #guard cells #[rdrive] busFixes' [] == #[(none, none)]
 #guard cells #[rdrive] taxiFixes [route38] == #[(none, none)]
 
--- The leg filter reads the EFFECTIVE mode, both directions.
+-- The leg filter reads the effective mode, both directions.
 #guard cells #[rdrive "stationary" (some "driving")] busFixes' [route38] == #[(some "bus", some LABEL)]
 #guard cells #[rdrive "driving" (some "train")] busFixes' [route38] == #[(none, none)]
 #guard cells #[rdrive "walking"] busFixes' [route38] == #[(none, none)]
 #guard cells #[rdrive "stationary"] busFixes' [route38] == #[(none, none)]
 
--- The window is inclusive at BOTH ends: moving either edge by one second drops
+-- The window is inclusive at both ends: moving either edge by one second drops
 -- an endpoint fix, and the leg no longer anchors.
 #guard cells #[rdrive (startTs := 101)] busFixes' [route38] == #[(none, none)]
 #guard cells #[rdrive (endTs := 899)] busFixes' [route38] == #[(none, none)]
@@ -1055,7 +1055,7 @@ private def rwalk : BusRouteSeg := rdrive (mode := "walking") (startTs := 900) (
 #guard cells #[rdrive (endTs := 200)] busFixes' [route38] == #[(none, none)]
 
 /- The two-fix bar is not only guarding the index. `routeTwin` opens with two
-stops 24 m apart, so a ONE-fix leg anchors both ends of an in-order pair whose
+stops 24 m apart, so a one-fix leg anchors both ends of an in-order pair whose
 span holds no intermediate stop — coverage 0, which clears a floor of 0 because
 `0 < 0` is false. The matcher underneath does match that leg; the bar is the
 only thing between this fixture and a "bus" named off a single GPS point. -/
@@ -1072,7 +1072,7 @@ only thing between this fixture and a "bus" named off a single GPS point. -/
 #guard cells #[rdrive (avgSpeed := 35.57)] busFixes' [route38] == #[(none, none)]
 #guard cells #[rdrive (avgSpeed := 62)] busFixes' [route38] == #[(none, none)]
 
--- A match OVERWRITES an existing `wayName`; a miss leaves it, and leaves an
+-- A match overwrites an existing `wayName`; a miss leaves it, and leaves an
 -- existing `vehicleKind`, exactly as they were.
 #guard cells #[rdrive (wayName := some "Piccadilly")] busFixes' [route38]
        == #[(some "bus", some LABEL)]
@@ -1096,7 +1096,7 @@ only thing between this fixture and a "bus" named off a single GPS point. -/
        == #[{ startTs := 100, endTs := 900, mode := "driving", refinedMode := some "driving",
               vehicleKind := some "bus", wayName := some LABEL, avgSpeed := 14 }]
 
--- The board end anchors at the BOARDING WAIT when there is one. The leg here
+-- The board end anchors at the boarding wait when there is one. The leg here
 -- starts one fix late, 250 m down the road from Green Park and past no stop, so
 -- its first fix anchors nothing; the standstill before it sits at the stop.
 private def waitAtStop : List Fix := [⟨0, bd.lat, bd.lon⟩, ⟨50, bd.lat, bd.lon⟩, ⟨95, bd.lat, bd.lon⟩]

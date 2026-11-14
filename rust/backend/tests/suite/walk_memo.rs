@@ -83,7 +83,7 @@ fn a_remembered_walk_is_the_drawn_walk() {
             drawn == remembered,
             "{day}: the day with remembered walks differs from the day that drew them"
         );
-        // The store was READ, counted rather than timed: the first replay
+        // The store was read, counted rather than timed: the first replay
         // missed every walk and offered each; the second was served every
         // one and offered none.
         assert!(

@@ -8,22 +8,22 @@ import Verified.Geo.Segments
 # The road-match pass
 
 Attach a street-matched geometry to every road-vehicle leg the matcher can
-confidently place. Purely ADDITIVE: it never rewrites the mode or the raw fixes,
+confidently place. Purely additive: it never rewrites the mode or the raw fixes,
 only adds `matchedPath` for the map to draw instead of the raw polyline.
 
-Like the walk pass this is an ORCHESTRATOR, and what is unpinned is everything
+Like the walk pass this is an orchestrator, and what is unpinned is everything
 between the leaves: which legs are eligible, which fixes reach the matcher, what
 the leg reads from the mirror, and whether the drawn line changes.
 
 ## What is injected, and what is not
 
-The **matcher** is supplied by the caller. Its Lean counterpart is
+The matcher is supplied by the caller. Its Lean counterpart is
 `Verified.Geo.Match`'s `qMatchRoadSegment`, the quantised arm; wiring it in
 directly would make these guards assert the matcher instead of the
-orchestration. The **mirror read** is supplied for the usual reason: it is the
+orchestration. The mirror read is supplied for the usual reason: it is the
 shell.
 
-Everything the pass DECIDES with is the real Lean leaf — the spike rejection
+Everything the pass decides with is the real Lean leaf — the spike rejection
 (`Verified.Geo.rejectSpikes` under `EpisodeGeometry.spikeAt`), the speed cap
 (`Segments.MAX_SPEED_FOR_MODE`), the corridor fetch
 (`Verified.Geo.OsmCorridor`) and the display gate
@@ -36,20 +36,20 @@ Unlike the walk pass, which fires every eligible leg's read up front so the DB
 round-trips overlap, this pass is a plain sequential `for … await`: leg *i*'s
 reads all happen before leg *i+1*'s. A leg that bails before the fetch — wrong
 mode, or under `MIN_LEG_FIXES` after the cap filter and despike — reads
-NOTHING, so its absence from the trace is itself pinned.
+nothing, so its absence from the trace is itself pinned.
 
 ## Three asymmetries the guards pin
 
-1. **The cap filter is per-mode and mostly absent.** `MAX_SPEED_FOR_MODE` has no
+1. The cap filter is per-mode and mostly absent. `MAX_SPEED_FOR_MODE` has no
    entry for `driving` or `bus`, so those legs keep every in-window fix however
-   fast; only `cycling` is capped, at 35 km/h. The filter runs BEFORE the
+   fast; only `cycling` is capped, at 35 km/h. The filter runs before the
    despike, so a fast outlier is removed by the cap rather than surviving as a
    spike.
-2. **The matcher and the gate see the same fixes but different objects.** The
-   matcher gets the despiked fixes WITH timestamps; the gate compares the raw
+2. The matcher and the gate see the same fixes but different objects. The
+   matcher gets the despiked fixes with timestamps; the gate compares the raw
    drawn line against the matched line as bare coordinates. A match that keeps
    the geometry but moves the times cannot change the gate's verdict.
-3. **`ways.length === 0` bails before the matcher.** An empty corridor is not
+3. `ways.length === 0` bails before the matcher. An empty corridor is not
    "the matcher found nothing" — it never runs, which is why a leg over
    unmapped ground makes exactly one read and no match attempt.
 
@@ -80,7 +80,7 @@ abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 /-- The shell: the mirror read and the matcher. -/
 structure Env where
-  /-- `osm.drivableRoads(lat, lon, radiusM)`. `none` is a DECLINE — the mirror
+  /-- `osm.drivableRoads(lat, lon, radiusM)`. `none` is a decline — the mirror
   does not cover this disc — and is not the same answer as `some #[]`, which is
   "asked, and there is no road here". -/
   drivableRoads : Float → Float → Float → Option (Array Way)
@@ -97,7 +97,7 @@ def ROAD_MODES : List Mode := ["driving", "bus", "cycling"]
 /-- Below this many in-window fixes a leg is too sparse to map-match. -/
 def MIN_LEG_FIXES : Nat := 4
 
-/-- Corridor sampling for the street-network read. STEP ≈ 2× the disc radius is
+/-- Corridor sampling for the street-network read. Step ≈ 2× the disc radius is
 the cost optimum; the disc is `drivableRoads`'s own box, wider than the
 matcher's reach, so the union is output-identical to a single centroid disc. -/
 def ROAD_SAMPLE_STEP_M : Float := 700
@@ -163,10 +163,10 @@ def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array
         let ways? ← corridorWays env.drivableRoads
           (clean.map fun p => ({ lat := p.lat, lon := p.lon } : Pt))
           ROAD_SAMPLE_STEP_M ROAD_SAMPLE_RADIUS_M
-        -- ⚠ A DECLINED CORRIDOR AND AN EMPTY ONE LEAVE THE LEG RAW ALIKE, and
+        -- A declined corridor and an empty one leave the leg raw alike, and
         -- they should: there is no network to match against either way. The
         -- difference the type now carries is spent upstream, where the host
-        -- RECORDS the declined discs so the ground is fetched — not
+        -- records the declined discs so the ground is fetched — not
         -- here, where acting differently would mean inventing a road.
         let ways := ways?.getD #[]
         if ways.isEmpty then
@@ -177,10 +177,10 @@ def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array
           match env.matcher fixes ways with
           | none => out := out.push seg
           | some path =>
-            -- Match first, then decide on the DRAWN line.
+            -- Match first, then decide on the drawn line.
             let d := matchImprovesDisplay (fixes.map PathPt.pt) (path.map PathPt.pt)
               (ways.map (·.coords)) NEEDS_MATCH_M MATCH_MAX_STRAY_M
-              -- ⚠ NO DETOUR VETO ON THE ROAD MATCHER: a pedometer is
+              -- No detour veto on the road matcher: a pedometer is
               -- not a witness for a vehicle, and this pass has no steps. `none`
               -- fails open, so the verdict is exactly what it was.
               (path.map PathPt.pt) none 200 1.5
@@ -310,7 +310,7 @@ private def ROADS : Array RoadsEntry := #[
       { osmId := 3, name := some "Parallel Road", subtype := some "residential", coords := #[p 51.5 (-0.13920633007295433), p 51.501796622349985 (-0.13920633007295433), p 51.503593244699964 (-0.13920633007295433), p 51.50538986704995 (-0.13920633007295433), p 51.50718648939993 (-0.13920633007295433), p 51.50898311174991 (-0.13920633007295433)] }] }
 ]
 
--- ⚠ `some #[]` OUTSIDE THE TABLE, never `none`: these guards pin what the pass
+-- `some #[]` outside the table, never `none`: these guards pin what the pass
 -- does with the roads it was given, against a mirror that covers the whole leg.
 -- Declining here would silently move every case onto the decline path.
 private def stubRoads (la lo rad : Float) : Option (Array Way) :=
@@ -329,7 +329,7 @@ bounding box, so a null-island sentinel would make the gate scan ~90,000 rings.
 
 A miss is a second net, not the only one: the matcher key is derived from the
 same despiked fix set that builds the corridor track, so any divergence in the
-fixes already shows up in the READ TRACE guard before it reaches here. -/
+fixes already shows up in the read trace guard before it reaches here. -/
 private def MISS : Array MPt := #[m 51.487 (-0.16) 0.0, m 51.487 (-0.159) 0.0]
 
 private def MATCHES : Array MatchEntry := #[
@@ -494,7 +494,7 @@ private def S2_FIXES : Array Fix := TOO_FEW
 #guard approxOut (outOf S2_SEGS S2_FIXES) #[
   sg 6000 6120 "driving" none]
 
--- S3: the p85 stray bar is the SOLE blocker: 95 m off-road, match 60 m away
+-- S3: the p85 stray bar is the sole blocker: 95 m off-road, match 60 m away
 private def S3_SEGS : Array Seg := #[sg 2000 2300 "driving" none]
 private def S3_FIXES : Array Fix := CORNER_CUT
 #guard approxOut (outOf S3_SEGS S3_FIXES) #[
@@ -512,7 +512,7 @@ private def S5_FIXES : Array Fix := CORNER_CUT
 #guard approxOut (outOf S5_SEGS S5_FIXES) #[
   sg 2000 2300 "walking" (some "driving")]
 
--- S6: refinedMode takes a driving-classified leg OUT of scope
+-- S6: refinedMode takes a driving-classified leg out of scope
 private def S6_SEGS : Array Seg := #[sg 2000 2300 "driving" (some "walking")]
 private def S6_FIXES : Array Fix := CORNER_CUT
 #guard approxOut (outOf S6_SEGS S6_FIXES) #[
@@ -569,7 +569,7 @@ private def S14_FIXES : Array Fix := (CORNER_CUT ++ TOO_FEW ++ NEAR_PARALLEL)
   sg 6000 6120 "driving" none,
   sg 3000 3300 "driving" none]
 
--- S15: the window is INCLUSIVE at both ends: a boundary fix is in
+-- S15: the window is inclusive at both ends: a boundary fix is in
 private def S15_SEGS : Array Seg := #[sg 2060 2240 "driving" none]
 private def S15_FIXES : Array Fix := CORNER_CUT
 #guard approxOut (outOf S15_SEGS S15_FIXES) #[
@@ -594,7 +594,7 @@ private def S18_FIXES : Array Fix := CORNER_SPIKED
 #guard approxOut (outOf S18_SEGS S18_FIXES) #[
   { sg 8000 8300 "driving" none with matchedPath := some #[m 51.5 (-0.14) 8000.0, m 51.5 (-0.1342278550760313) 8132.0, m 51.503593244699964 (-0.1342278550760313) 8300.0] }]
 
--- S19: a fix exactly ON the cycling cap survives — the bar is inclusive
+-- S19: a fix exactly on the cycling cap survives — the bar is inclusive
 private def S19_SEGS : Array Seg := #[sg 9000 9180 "cycling" none]
 private def S19_FIXES : Array Fix := CAP_EXACT
 #guard approxOut (outOf S19_SEGS S19_FIXES) #[

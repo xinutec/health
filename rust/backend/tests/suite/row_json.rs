@@ -1,7 +1,7 @@
 //! The wire shape of a `selectAll()` row.
 //!
 //! The twelve table endpoints have almost no logic, so what is worth testing is
-//! not what they decide but what they RENDER. Three things are pinned here:
+//! not what they decide but what they render. Three things are pinned here:
 //!
 //!   1. Lean's type → shape table, including the one that reads wrong;
 //!   2. that the host's inline ISO formatter agrees with Lean's, because the
@@ -9,10 +9,10 @@
 //!   3. that `days` coercion matches JavaScript's `Number()`, on recorded
 //!      answers rather than ones from memory.
 //!
-//! ⚠ What is NOT here: encoding an actual row. A `MySqlRow` cannot be built
+//! What is not here: encoding an actual row. A `MySqlRow` cannot be built
 //! without a server, so nothing in this file has ever seen a DECIMAL come off
 //! the wire. `backend rows-check` does that against production, and it is the
-//! only thing that does — a green run here is evidence about the RULES, not
+//! only thing that does — a green run here is evidence about the rules, not
 //! about the decode.
 
 use backend::lean::{self, RowShape};
@@ -45,7 +45,7 @@ fn shape_table_matches_lean() {
     assert_eq!(
         got,
         vec![
-            // ⚠ sqlx NAMES `TINYINT(1)` "BOOLEAN" and production puts 0/1 on
+            // sqlx names `TINYINT(1)` "boolean" and production puts 0/1 on
             // the wire. Decoding a Rust `bool` from this column would emit
             // `true` and change the contract without failing anything.
             Some(RowShape::Num),
@@ -66,9 +66,9 @@ fn shape_table_matches_lean() {
     );
 }
 
-/// An unmapped type must REFUSE, not render as null.
+/// An unmapped type must refuse, not render as null.
 ///
-/// ⚠ FLOAT and DOUBLE are in this list on purpose. Rendering a float to JSON
+/// Float and DOUBLE are in this list on purpose. Rendering a float to JSON
 /// for a JavaScript client means reproducing shortest-round-trip output, so
 /// until a column needs one, refusing is the honest answer and a guess would
 /// be an invisible one.
@@ -83,7 +83,7 @@ fn unmapped_types_are_refused() {
     );
 }
 
-/// ⚠ THE DRIFT GUARD. `row_json` formats dates inline — a day of intraday heart
+/// The drift guard. `row_json` formats dates inline — a day of intraday heart
 /// rate is thousands of values and a host call each would be thousands of round
 /// trips — so nothing but this test stops the two renderings diverging.
 #[test]
@@ -142,7 +142,7 @@ fn date_renders_as_a_full_timestamp() {
 
 /// `days` coercion.
 ///
-/// ⚠ Every expectation here is a recorded answer, not derived from reading
+/// Every expectation here is a recorded answer, not derived from reading
 /// documentation.
 #[test]
 fn days_coercion_matches_number() {
@@ -157,7 +157,7 @@ fn days_coercion_matches_number() {
         ("366", None),
         ("7.5", None),
         ("abc", None),
-        // ⚠ EMPTY IS NOT ABSENT. `Number("")` is 0, which is below the minimum,
+        // Empty is not absent. `Number("")` is 0, which is below the minimum,
         // so `?days=` is a rejection and not the 30-day default.
         ("", None),
         // `Number()` trims, reads hex, and takes an exponent or a trailing ".0"
@@ -172,13 +172,13 @@ fn days_coercion_matches_number() {
         let got = lean::validate_days(Some(js_number(raw))).expect("validate days");
         assert_eq!(got, *want, "days={raw:?}");
     }
-    // Absent — and ONLY absent — is the default.
+    // Absent — and only absent — is the default.
     assert_eq!(lean::validate_days(None).expect("absent"), Some(30));
 }
 
 /// How a JS number renders.
 ///
-/// ⚠ Every expectation here is JavaScript's own rendering. The rule matters
+/// Every expectation here is JavaScript's own rendering. The rule matters
 /// because JavaScript has no integer/float distinction: a derived `Serialize`
 /// writes `120.0` where `JSON.stringify` writes `120`, 8,790 bytes of
 /// difference across one day of GPS fixes, which only a byte diff caught.
@@ -190,7 +190,7 @@ fn numbers_render_as_javascript_renders_them() {
         (17.0, "17"),
         (100.0, "100"),
         (0.0, "0"),
-        // ⚠ `JSON.stringify(-0)` is `0`, not `-0`.
+        // `JSON.stringify(-0)` is `0`, not `-0`.
         (-0.0, "0"),
         (1.0, "1"),
         (-1.0, "-1"),
@@ -211,7 +211,7 @@ fn numbers_render_as_javascript_renders_them() {
             "js_number_value({v})"
         );
     }
-    // ⚠ NaN and the infinities are `null` — JSON cannot say them, and
+    // NaN and the infinities are `null` — JSON cannot say them, and
     // `JSON.stringify` does not error either.
     for v in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         assert_eq!(js_number_value(v), serde_json::Value::Null, "{v}");

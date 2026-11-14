@@ -11,7 +11,7 @@ Two callers. `UndergroundAnnotate.sideWayName` names the walk left over when a
 tube ride is carved out of its host. `Enrich.enrichMovingSegment` names the
 on-foot remainders `vehicleSplit` leaves behind, via `reenrichSplitWalks`.
 
-The `osm` enrichment STAGE that calls `refineMode` for every moving segment runs
+The `osm` enrichment stage that calls `refineMode` for every moving segment runs
 before the 38-pass cascade and is not the fold's business — but it calls the same
 function this ports, and `reenrichSplitWalks` is that stage re-run on one leg.
 
@@ -72,12 +72,12 @@ golden corpus it beats the alternatives: insertion order leaves 5 standing
 regressed truth rows over 3 days, global-nearest 14 over 11, coverage-ranked 17
 over 15. Do not "fix" it to sort by distance.
 
-⚠ NOR BY LETTING THE BORROW WIN, which is the narrower arm and is also refuted.
+Nor by letting the borrow win, which is the narrower arm and is also refuted.
 Leaving `hw` alone — so the mode branch, the reason and every driving-speed
-decision are untouched — and only preferring the nearest NAMED way for the name
+decision are untouched — and only preferring the nearest named way for the name
 at walking pace costs eleven confirmed rows: 313 verified against a floor of 314
 becomes 303, and 3 standing regressed rows over 2 days become 13 over 13. So
-global-nearest's damage was never the reordering; it was the NAME half all
+global-nearest's damage was never the reordering; it was the name half all
 along.
 
 The measured case is 06-16 @11:13Z, where `Queen's Walk` sits in the deduped
@@ -87,7 +87,7 @@ for it, and neither is re-deriving arc length by nearest-way over
 `walkMatchedPath`: that line is snapped onto the network, so the distances it
 would be judged by are ~0 for every way near it.
 
-⚠ The matcher's own identity report (`QMatchResult.wayUm`, the route's arc
+The matcher's own identity report (`QMatchResult.wayUm`, the route's arc
 length per way name) is refuted too: over the enforceable named-walk truth
 windows, naming by route dominance broke 12 and fixed 2, and even a pure
 absence veto over this cascade's pick broke 3 and fixed 1, because the route
@@ -106,7 +106,7 @@ private def pickBestHighway (highways : Array NearbyWay) (speedKmh : Float)
 /-- Name a walk after the street its pavement belongs to.
 
 OSM models a street's pavement and its carriageway as separate ways at the same
-place, and the pavement is almost always unnamed — so the way CLOSEST to a
+place, and the pavement is almost always unnamed — so the way closest to a
 walking fix is an anonymous `footway` and reading its name renders the leg with
 no street at all, while the street sits a few metres away in the same result set.
 
@@ -122,7 +122,7 @@ private def borrowStreetName (highways : Array NearbyWay) : Option String :=
   | some b => if dist b ≤ WALK_NAME_BORROW_MAX_M then b.name else none
   | none => none
 
-/-- The reason a leg carries when the map had NO ways near it at all — no
+/-- The reason a leg carries when the map had no ways near it at all — no
 coverage, not a road. `PreFold.trainContinuesWithoutMap` reads it. -/
 def NO_OSM_CONTEXT : String := "no OSM context"
 
@@ -138,7 +138,7 @@ the next one reachable.
 The rail-versus-road tie-break is the one worth reading twice. "Any rail nearby →
 train" is hijacked by a freight line beside a motorway; "any major road nearby →
 not train" is hijacked by a tube line under an urban arterial. So when distances
-are known it prefers whichever the track was actually CLOSER to, and only falls
+are known it prefers whichever the track was actually closer to, and only falls
 back to presence when neither side reports a distance.
 -/
 def refineModeLegacyCascade (originalMode : String) (speedKmh : Float)
@@ -175,8 +175,8 @@ def refineModeLegacyCascade (originalMode : String) (speedKmh : Float)
   else
   if hh : highways.size > 0 then
     let hw := pickBestHighway highways speedKmh hh
-    -- The SAME distance bar applies whether or not the pick is named. The bar is
-    -- about the DISTANCE, not about how the name was obtained, so a named pick
+    -- The same distance bar applies whether or not the pick is named. The bar is
+    -- about the distance, not about how the name was obtained, so a named pick
     -- past it is exactly as wrong — and without this the code is stricter about
     -- naming a walk when its pick is anonymous than when its pick is named-but-
     -- far, letting a far named pick displace a nearer one the borrow would find.
@@ -211,7 +211,7 @@ def refineModeLegacyCascade (originalMode : String) (speedKmh : Float)
 
 Both callers ask the same question of a leg — what ways lie along it — in the
 same two steps: take evenly spaced samples, then dedup the union keeping each
-way's MINIMUM distance. Shared rather than copied, because the ORDER the dedup
+way's minimum distance. Shared rather than copied, because the order the dedup
 produces is what `pickBestHighway` reads, and two copies of an order-sensitive
 helper is how a port drifts. -/
 
@@ -221,9 +221,9 @@ division is that floor. -/
 def sampleIdxs (n count : Nat) : Array Nat :=
   (Array.range count).map fun i => (i * (n - 1)) / (max 1 (count - 1))
 
-/-- Upsert into a JS `Map`: a key already present keeps its ORIGINAL position and
+/-- Upsert into a JS `Map`: a key already present keeps its original position and
 only its value is replaced. Load-bearing — the deduped ways are handed to the
-cascade in this order, and `pickBestHighway` reads the FIRST driveable one. -/
+cascade in this order, and `pickBestHighway` reads the first driveable one. -/
 private def upsert (m : Array (String × NearbyWay)) (k : String) (v : NearbyWay)
     : Array (String × NearbyWay) :=
   match m.findFinIdx? (fun p => p.1 == k) with
@@ -231,9 +231,9 @@ private def upsert (m : Array (String × NearbyWay)) (k : String) (v : NearbyWay
   | none => m.push (k, v)
 
 /-- The union of every sample's ways, deduped on `(type, subtype, name)` keeping
-the MINIMUM distance — a way brushed past at one sample cannot outweigh one
+the minimum distance — a way brushed past at one sample cannot outweigh one
 hugged at four others, and the distance is what the rail-versus-road tie-break
-reads. First-SAMPLE order, per `upsert`.
+reads. First-sample order, per `upsert`.
 
 Takes the answers rather than the lookup: each sample is asked once and the
 result read twice (here, and for the road-corridor fraction). -/
@@ -245,7 +245,7 @@ def dedupNearestWays (wayResults : Array (Array NearbyWay)) : Array NearbyWay :=
 
 /-! ## The physical-plausibility override
 
-`rejectImplausibleDriving` runs AFTER the cascade, on its verdict. A tube ride
+`rejectImplausibleDriving` runs after the cascade, on its verdict. A tube ride
 under an arterial looks like driving to the cascade, because the road is the
 closest way at the surface fixes bracketing the tunnel. -/
 
@@ -317,8 +317,8 @@ private def DEDUP_SAMPLES : Array (Array NearbyWay) := #[
   #[rw "highway" "primary" (some "Holloway Road") (some 40),
     rw "railway" "subway" (some "Piccadilly") (some 30)]]
 
--- MEASURED, and it is the reason this helper is shared rather than copied: the
--- nearer way is NOT first. `Midway` is re-found at 8 m in the second sample and
+-- Measured, and it is the reason this helper is shared rather than copied: the
+-- nearer way is not first. `Midway` is re-found at 8 m in the second sample and
 -- keeps its original slot, so it precedes the 3 m footway — and
 -- `pickBestHighway` reads `highways[0]`. What is pinned here is that ordering,
 -- not that it is right.

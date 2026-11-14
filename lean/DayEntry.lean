@@ -123,7 +123,7 @@ row as the OSM enrichment stage reads it.
 
 The whole row rather than a projection, unlike `stayPlaces` and `dwellPlaces`
 beside it: the stationary branch scores the candidate and then branches its
-LABEL on three more fields of the SAME row in one decision, so a split would
+label on three more fields of the same row in one decision, so a split would
 only give the halves somewhere to drift apart. -/
 private def parseNamedPlace (j : Json) : Except String Verified.Geo.StayEnrich.NamedPlace := do
   let a ← j.getArr?
@@ -261,7 +261,7 @@ private def parseGeoResult (j : Json) : Except String Verified.Geo.BestPlace.Res
     }
   }
 
-/-- One Overpass landmark, as `bestPlace` ranks them. `openingHours` is the RAW
+/-- One Overpass landmark, as `bestPlace` ranks them. `openingHours` is the raw
 tag: `Verified.Geo.BestPlace.toLandmark` parses it against the stay's samples,
 because the fraction is a function of both and only the pair is meaningful. -/
 private def parsePoi (j : Json) : Except String Verified.Geo.BestPlace.Poi := do
@@ -285,7 +285,7 @@ private def parseVenueStats (j : Json) : Except String Verified.Geo.VenuePrior.V
 /-- The mined visit-shape priors, or `none` when nothing has been mined.
 
 Association lists rather than maps, and in the encoder's order: `shapeScore`
-reads the subtype universe's SIZE off `bySubtype`, so the collection is data and
+reads the subtype universe's size off `bySubtype`, so the collection is data and
 not just an index. -/
 private def parseVenuePriors (j : Json) :
     Except String (Option Verified.Geo.VenuePrior.VenuePriors) := do
@@ -309,7 +309,7 @@ caller writes as a literal (16 here, 18 by default), not a measured double, and
 keying an integer on its float bits would be a spelling both sides have to agree
 on for no gain.
 
-`null` is a RESULT — Nominatim resolving nothing — and is stored as such, so a
+`null` is a result — Nominatim resolving nothing — and is stored as such, so a
 key present with a null answer is not a miss. -/
 private def entryGeo (j : Json) :
     Except String (String × Option Verified.Geo.BestPlace.Result) := do
@@ -347,14 +347,14 @@ private def entryS (parse : Json → Except String α) (j : Json) : Except Strin
   return (← (← nth a 0).getStr?, ← parse (← nth a 1))
 
 /-- `[latBits, lonBits, startTs, endTs, tz, samples, localHour]` — the stay
-CONTEXT of one naming question, keyed on all five arguments because it is asked
+context of one naming question, keyed on all five arguments because it is asked
 per merged stay and two stays at one centroid with different windows are
 different questions.
 
-It used to carry the ANSWER, `{label, city}`, because `bestPlace` was a shell.
+It used to carry the answer, `{label, city}`, because `bestPlace` was a shell.
 It is now `Verified.Geo.BestPlace`, so what crosses is the part Lean cannot
 compute: the stay's minutes and its midpoint hour resolved in the venue's zone.
-The zone stays in the KEY as well — it is what those two were resolved against,
+The zone stays in the key as well — it is what those two were resolved against,
 and a key without it would spell two different questions the same way. -/
 private def entryPlace (j : Json) :
     Except String (String × (List (Nat × Nat) × Int)) := do
@@ -373,7 +373,7 @@ private def entryPlace (j : Json) :
 /-! ### The stages after the fold
 
 `Verified.Geo.DayChain` reads a different closure: two raw-fix series from
-OUTSIDE the day, the Fitbit windows before place attribution, the mined places in
+outside the day, the Fitbit windows before place attribution, the mined places in
 two projections, and one shell lookup. Parsed separately from `Env` because they
 are a different stage's inputs, not more of the fold's. -/
 
@@ -493,7 +493,7 @@ private def Namer.name (n : Namer) (lat lon : Float) (stay : Option (Int × Int 
   let shape := stay.map fun (s, e, _) =>
     ({ startUnix := s, endUnix := e, localHour := (ctx.map (·.2)).getD 0 } :
       Verified.Geo.VenuePrior.StayShape)
-  -- ⚠ The dump is inert without `LEAN_DUMP_DIR`; with it, the geocode TABLE
+  -- The dump is inert without `LEAN_DUMP_DIR`; with it, the geocode table
   -- is read at both zooms, which may ask the host a zoom the chain would not.
   DayEntry.Host.dump "place"
     (fun _ => placeInputJson pois (n.geocodeAt lat lon) samples shape n.priors preferResidential)
@@ -517,7 +517,7 @@ private def parseChain (j : Json) (segs : Array Seg)
     dayEndTs := (← optInt j "dayEndTs").getD 0
     dayStartTs := (← optInt j "dayStartTs").getD 0
     dayTz := (j.getObjValAs? String "dayTz").toOption
-    -- ⚠ INJECTED, not computed here, unlike `sleepPlace` below. The
+    -- Injected, not computed here, unlike `sleepPlace` below. The
     -- bracket is two `presence_log` reads plus a `focus_places` centroid — DB,
     -- not mirror — so the fold cannot ask for it and is handed the answer. The
     -- shell also names it, which is what `buildInferredStayState`'s doc has
@@ -616,7 +616,7 @@ private def parseEnv (j : Json) : Except String Env := do
     linesAtPoint := fun lat lon r => askRow "linesAtPoint" (k3 lat lon r) (entry3 strs)
     nearbyWays := waysAt
     -- `reenrichSplitWalks` re-derives one carve remainder's enrichment from its
-    -- OWN geometry. `samplesInWindow` is inclusive at both ends, and an empty
+    -- own geometry. `samplesInWindow` is inclusive at both ends, and an empty
     -- window is `none`, which the pass reads as "leave the leg as it stands".
     reenrich := fun seg =>
       Verified.Geo.Enrich.enrichMovingSegment waysAt geocodeAt seg
@@ -633,10 +633,10 @@ private def parseEnv (j : Json) : Except String Env := do
       walkableRoads := DayEntry.OsmHost.walkableRoads
       buildingsNear := DayEntry.OsmHost.buildingsNear
       -- The real pedestrian matcher, through the quantisation adapter
-      -- (`Verified.Geo.WalkMatchAdapt`). It draws NOTHING without ways, so a
+      -- (`Verified.Geo.WalkMatchAdapt`). It draws nothing without ways, so a
       -- host that declines `walkableRoads` gets the raw leg back.
       -- Each solver leaf is timed under `walk.<leaf>`, so a slow walkMatch
-      -- pass says WHICH solver took the time.
+      -- pass says which solver took the time.
       matcher := fun fixes ways buildings => DayEntry.Host.timed "walk.matcher" fun _ =>
         DayEntry.Host.dump "match" (fun _ => matchInputJson fixes ways buildings)
           (Verified.Geo.WalkMatchAdapt.matcher fixes ways buildings)
@@ -690,10 +690,10 @@ private def parseEnv (j : Json) : Except String Env := do
     displayFixes := ← (← optArr j "displayFixes").mapM parsePedFix
     speedByTs := fun ts => speeds[toString ts]?
     -- `/api/velocity?walkMatch=0`, the raw baseline the map A/Bs the matched
-    -- line against. ABSENT MEANS MATCH: every other caller — the gates, the
+    -- line against. Absent means match: every other caller — the gates, the
     -- CLIs, `decode-day` — omits the field and must keep the production draw.
     --
-    -- ⚠ It reaches the fold only because the host puts it here. Spent only on
+    -- It reaches the fold only because the host puts it here. Spent only on
     -- the cache key, the two arms would compute the same day and the A/B would
     -- compare a value with itself.
     walkFlags := { matchDisable := !(← optBool j "walkMatch" true) }
@@ -745,10 +745,10 @@ private def segJson (s : Seg) : Json :=
     ("walkMatchedPath", match s.walkMatchedPath with | none => Json.null | some p => pathJson p),
     ("walkSmoothedPath", match s.walkSmoothedPath with | none => Json.null | some p => pathJson p),
     ("walkBuildingsMeasured", match s.walkBuildingsMeasured with | none => Json.null | some b => Json.bool b),
-    -- A DEBUG surface: where the walk matcher's route actually ran,
-    -- named way by named way, longest first. ⚠ Nothing consumes it — the day
+    -- A debug surface: where the walk matcher's route actually ran,
+    -- named way by named way, longest first. Nothing consumes it — the day
     -- gate compares `states`, and `parseSeg` does not read it back, so a
-    -- replay's INPUT is unchanged by its presence.
+    -- replay's input is unchanged by its presence.
     ("walkWayUm", Json.arr (s.walkWayUm.map fun (n, um) =>
       Json.arr #[Json.str n, Lean.toJson um])),
     ("roads", Json.arr (s.roads.map Json.str)),
@@ -756,7 +756,7 @@ private def segJson (s : Seg) : Json :=
 
 /-- One `DayState` on the wire.
 
-⚠ PUBLIC (as `Day.stateJson`) because `ServeEntry`'s `clipfuture` mode re-emits states with this
+Public (as `Day.stateJson`) because `ServeEntry`'s `clipfuture` mode re-emits states with this
 same encoder. Two encoders for one record would drift, and the drift would show
 as a field quietly missing from a clipped day but present in an unclipped one. -/
 def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
@@ -931,7 +931,7 @@ private def aboard : Array Verified.Geo.PlaceOverride.HmmSeg :=
 #guard (joinRidesAcrossAboardWalks aboard #[]).size == 3
 
 /-- The decoder's segments with each vehicle ↔ walk-or-stay boundary at fix
-resolution (`refineBoundary`). The head's segments AND every pass that reads
+resolution (`refineBoundary`). The head's segments and every pass that reads
 the decode take these, so no two readers disagree about where a ride ended. -/
 def refineDecoderBoundaries (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
     (pts : Array Verified.SpeedFix) : Array Verified.Geo.PlaceOverride.HmmSeg :=
@@ -993,7 +993,7 @@ def decoderSegs (hmm : Array Verified.Geo.PlaceOverride.HmmSeg)
           some (if l == "unknown_rail" then s!"{b} → {a}" else s!"{b} → {a} · {l}")
         | some b, some a, none => some s!"{b} → {a}"
         | _, _, l => l
-    -- A wait the chain found at a CHANGE is a stay at the station, the ride
+    -- A wait the chain found at a change is a stay at the station, the ride
     -- its own span: his rows write a change so (06-29, 07-01). A wait the
     -- decoder found arrives as a `stationary` with its station as
     -- `boardStation` and is a stay at the station too; the journey referee
@@ -1033,7 +1033,7 @@ def dayResult (j : Json) : Json :=
     let env ← parseEnv envJson
     let wantTrace ← optBool j "trace" false
     -- The day's segments are the decoder's: a day folds from its stored decode
-    -- and the passes that NAME what it drew (`PassFold.passes`). A day with no
+    -- and the passes that name what it drew (`PassFold.passes`). A day with no
     -- decode is not folded — the server answers that it is being decoded.
     if env.hmmDecode.isEmpty then
       throw "the day has no decode: a day folds from its decode"
@@ -1193,7 +1193,7 @@ private def encStay (s : Stay) : Json :=
 
 /-- A cluster and everything the mining cron derives from it.
 
-The hour profile is emitted BOTH serialised and re-parsed, because
+The hour profile is emitted both serialised and re-parsed, because
 `serializeHourProfile` rounds to permille: comparing only the string would let
 `parseHourProfile` drift unseen, and comparing only the parse would hide a
 rounding difference the column actually stores. -/
@@ -1211,7 +1211,7 @@ private def report (windows : List (Int × Int)) (c : Cluster) : Json :=
     ("reparsed", match parseHourProfile (some profile) with
       | none => Json.null
       | some xs => Json.arr ((xs.map fBits).toArray)),
-    -- `hourProfileForRange` is the RUNTIME counterpart of `hourProfileOf` — it
+    -- `hourProfileForRange` is the runtime counterpart of `hourProfileOf` — it
     -- scores one live stay against a mined profile — so it is exercised on the
     -- cluster's own first stay rather than left to the guards.
     ("firstStayProfile", match c.stays.head? with

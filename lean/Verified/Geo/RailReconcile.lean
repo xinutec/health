@@ -12,7 +12,7 @@ again after the passes that relabel a ride.
 ## The JSON boundary
 
 `annotateSnappedPaths` reads `rail_route_cache` rows whose geometry is a JSON
-string. `JSON.parse` and the `Array.isArray` check are SHELL — this port takes
+string. `JSON.parse` and the `Array.isArray` check are shell — this port takes
 rows already decoded to a coordinate list, and a row the shell could not decode
 is simply absent. The `length ≥ 2` rejection is a real decision and stays here.
 
@@ -94,7 +94,7 @@ def annotateSnappedPaths (segments : Array Seg) (railRouteCache : Array RouteRow
             snappedPath := some (Verified.Geo.RailSnap.interpolateTimes geom
               (Float.ofInt seg.startTs) (Float.ofInt seg.endTs)) }
 
-/-- Each train run's track for its FINAL label: the cached geometry, or none.
+/-- Each train run's track for its final label: the cached geometry, or none.
 
 `annotateSnappedPaths` attaches early, because walk anchoring and the final
 merge read the track; passes after it can still relabel a run — a later alight,
@@ -145,7 +145,7 @@ private def CACHE : Array RouteRow := #[⟨"A → B", #[northPt 0, northPt 1000]
 -- draw); a non-train leg; an unlabelled leg.
 #guard (annotateSnappedPaths #[tr 1000 2000 (some "C → D")] CACHE)[0]!.snappedPath == none
 #guard (annotateSnappedPaths #[tr 1000 2000 (some "A → B")] #[⟨"A → B", #[northPt 0]⟩])[0]!.snappedPath == none
--- A non-train leg is skipped by the PER-SEGMENT mode test, not by an empty key
+-- A non-train leg is skipped by the per-segment mode test, not by an empty key
 -- set: the train leg beside it puts a usable row in the cache lookup.
 #guard (annotateSnappedPaths
     #[tr 1000 2000 (some "A → B"), tr 2000 3000 (some "A → B") (mode := "walking")] CACHE).map

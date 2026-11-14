@@ -7,7 +7,7 @@ the HSMM's line-proximity factor consumes (`roadDistM`/`railDistM`). Trams are
 excluded (mixed-traffic track is weak evidence); pedestrian/cycle ways are not
 drivable.
 
-Only the PURE kernel ports here. The surrounding `computeMinuteProximity` is
+Only the pure kernel ports here. The surrounding `computeMinuteProximity` is
 shell — an async `nearbyWays` OSM query + `dateBoundsUtc` tz resolution + minute
 bucketing — the I/O boundary Lean does not cross; it feeds this kernel a resolved
 ways list. Pure `min` over a filtered list, no transcendentals ⇒ exact. UNPROVEN;

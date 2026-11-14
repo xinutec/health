@@ -2,7 +2,7 @@
 //!
 //! A fixture carries two things the fold can be answered from: `osmRowSet`, the
 //! raw mirror rows the answerer scores through Lean
-//! ([`crate::rowset_answerer`]), and `osmTrace`, the ANSWERS production gave on
+//! ([`crate::rowset_answerer`]), and `osmTrace`, the answers production gave on
 //! the day it was captured — one section per table, keyed by the question. This
 //! is the second: a replay asks the trace first and the row set for whatever the
 //! trace does not hold, so a day replays against the roads it was blessed on.
@@ -10,15 +10,15 @@
 //! # Two kinds of key
 //!
 //! The seven answerer tables are keyed as the fold spells them — bit patterns
-//! joined by `|` — and matched EXACTLY. The three matcher reads
+//! joined by `|` — and matched exactly. The three matcher reads
 //! (`walkableRoads`, `buildingsNear`, `drivableRoads`) are keyed by the
-//! coordinates as decimal text and matched QUANTISED, to 1e-9° and 1e-6 m,
+//! coordinates as decimal text and matched quantised, to 1e-9° and 1e-6 m,
 //! because the two arms that wrote and read them compute a corridor centre one
 //! ULP apart on ~0.5% of rows (`Float.cos` differs between runtimes) and a
 //! disc's address is not a 17-digit quantity. Production is unaffected either
 //! way: a live mirror answers by distance, not by key.
 //!
-//! # ⚠ Presence of a section is not presence of a trace
+//! # Presence of a section is not presence of a trace
 //!
 //! A fixture can carry all three matcher sections as empty objects. Count the
 //! entries ([`TraceAnswerer::has_walk_capture`]) before calling a day measurable
@@ -62,7 +62,7 @@ impl MatcherRead {
 }
 
 /// Which of the three matcher sections to answer from. Withholding one
-/// attributes a measured change to ONE read rather than to "the trace".
+/// attributes a measured change to one read rather than to "the trace".
 #[derive(Debug, Clone, Copy)]
 pub struct Sections {
     pub walkable: bool,
@@ -282,7 +282,7 @@ impl Answerer for &TraceAnswerer {
 
 /// Record the three matcher reads' answers as an `osmTrace` while another
 /// answerer supplies them — the writer for a new golden day. The other
-/// seven sections come from `rowset_capture`, which records the ROWS.
+/// seven sections come from `rowset_capture`, which records the rows.
 pub struct RecordingAnswerer<A> {
     inner: A,
     sections: Map<String, Value>,
@@ -355,7 +355,7 @@ impl<A: Answerer> Answerer for RecordingAnswerer<A> {
             parse_bits_key(&ask.key),
             MatcherRead::parse(&ask.what),
         ) {
-            // ⚠ FULL PRECISION: the key is parsed back by `parse_text_key` and
+            // Full precision: the key is parsed back by `parse_text_key` and
             // quantised; a rounded format would land in a different bucket
             // than the live lookup and the replay would miss every key it had
             // just captured.
@@ -371,8 +371,8 @@ impl<A: Answerer> Answerer for RecordingAnswerer<A> {
 
 /// What a capture was taken under, for stamping into a fixture's `meta`.
 ///
-/// ⚠ **A FIXTURE THAT DOES NOT RECORD THESE CANNOT NOTICE THEM MOVING.** Each
-/// one changes what the mirror is ASKED or what it may return, and none of
+/// A fixture that does not record these cannot notice them moving. Each
+/// one changes what the mirror is asked or what it may return, and none of
 /// them is part of any key a fixture holds — so a change to one alters
 /// production and alters nothing a gate replays.
 #[must_use]
@@ -381,16 +381,16 @@ pub fn capture_inputs() -> Value {
         "roadCorridorMarginM": crate::mirror_source::ROAD_CORRIDOR_MARGIN_M,
         "candidateLimit": crate::mirror_source::CANDIDATE_LIMIT,
         // What the walk matcher's network may contain: a subtype outside it is
-        // ABSENT from the graph, not down-weighted.
+        // absent from the graph, not down-weighted.
         "walkableRoadSubtypes": crate::mirror_source::WALKABLE_ROAD_SUBTYPES,
     })
 }
 
 /// Refuse a fixture captured under inputs this build no longer uses.
 ///
-/// ⚠ **ABSENT IS NOT A MISMATCH.** The fixtures captured before this existed
-/// carry no stamp and must keep working. Only a stamp that is PRESENT and
-/// DIFFERENT is a refusal.
+/// Absent is not a mismatch. The fixtures captured before this existed
+/// carry no stamp and must keep working. Only a stamp that is present and
+/// different is a refusal.
 pub fn check_capture_inputs(meta: &Value) -> Result<(), String> {
     let Some(stamped) = meta.get("captureInputs").and_then(Value::as_object) else {
         return Ok(());

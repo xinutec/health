@@ -2,7 +2,7 @@
 //!
 //! `/telemetry` records what a person did — navigations and taps the browser
 //! sees and the API does not. `/client-log` records what broke. Neither stores
-//! anything: these are LOGS, not data, and both answer 204 because the client
+//! anything: these are logs, not data, and both answer 204 because the client
 //! neither reads the response nor retries.
 //!
 //! # ⚠ The log is evidence, and the client can write to it
@@ -13,9 +13,9 @@
 //! is the security boundary of this file, not tidiness. It is called rather
 //! than reimplemented, because it depends on derived Unicode tables.
 //!
-//! # ⚠ `user=` and `actor=` are different questions
+//! # `user=` and `actor=` are different questions
 //!
-//! A share recipient's session carries the OWNER's user id — that is how the
+//! A share recipient's session carries the owner's user id — that is how the
 //! link grants read access. Logging `user=` alone would attribute a stranger's
 //! clicks to the owner, which is worse than not logging them: a gap in a log is
 //! visible, a lie in one is not.
@@ -23,7 +23,7 @@
 //! # The caps
 //!
 //! A per-batch cap so one POST cannot become a log flood, and a per-label cap
-//! so one event cannot bloat a line. ⚠ Events past the cap are dropped
+//! so one event cannot bloat a line. Events past the cap are dropped
 //! silently: a client sending 200 events is told nothing about the 100 that
 //! vanished.
 
@@ -56,12 +56,12 @@ fn actor_of(session: &UserSession) -> &'static str {
     }
 }
 
-/// `String.prototype.slice(0, n)`, which counts UTF-16 CODE UNITS.
+/// `String.prototype.slice(0, n)`, which counts UTF-16 code units.
 ///
-/// ⚠ Not code points, unlike `oneLine`'s cap, which does count them: the two
+/// Not code points, unlike `oneLine`'s cap, which does count them: the two
 /// truncations differ, and this one is for `event` and `data`.
 ///
-/// ⚠ ONE DELIBERATE DIVERGENCE. JavaScript will cut a surrogate PAIR in half
+/// One deliberate divergence. JavaScript will cut a surrogate pair in half
 /// and emit a lone surrogate; a Rust `String` cannot hold one, so this stops at
 /// the last whole character instead. The difference is at most one character at
 /// the very end of an over-long log field, and the alternative is unrepresentable
@@ -82,7 +82,7 @@ fn truncate_utf16(s: &str, max_units: usize) -> String {
 
 /// `String(x ?? "")` for a JSON value.
 ///
-/// ⚠ A missing field and an explicit `null` both become `""`, and a NUMBER
+/// A missing field and an explicit `null` both become `""`, and a number
 /// becomes its JS rendering — which is why this goes through the same number
 /// rule the wire uses rather than through `serde_json`'s.
 fn js_string(v: Option<&Value>) -> String {
@@ -131,13 +131,13 @@ pub async fn telemetry(
 
     let actor = actor_of(&session);
     for raw in events.iter().take(MAX_EVENTS) {
-        // ⚠ A non-object element is SKIPPED, not rejected. One malformed event
+        // A non-object element is skipped, not rejected. One malformed event
         // must not discard the batch around it.
         let Some(obj) = raw.as_object() else { continue };
         let kind = js_string(obj.get("kind"));
         let path = js_string(obj.get("path"));
         let at = js_string(obj.get("at"));
-        // ⚠ The flattening. See the module note on why this is a boundary.
+        // The flattening. See the module note on why this is a boundary.
         let label = match lean::one_line(&js_string(obj.get("label")), MAX_LABEL) {
             Ok(l) => l,
             Err(e) => {
@@ -171,7 +171,7 @@ pub async fn client_log(
         )
             .into_response();
     };
-    // ⚠ An array is accepted here while `/telemetry` requires one, deliberately
+    // An array is accepted here while `/telemetry` requires one, deliberately
     // kept: a client sending one gets a 204 and a log line.
     if !body.is_object() && !body.is_array() {
         return (
@@ -189,7 +189,7 @@ pub async fn client_log(
         None => String::new(),
         Some(v) => match serde_json::to_string(v) {
             Ok(s) => truncate_utf16(&s, MAX_DATA),
-            // ⚠ LOUD, not silent. This is a value that just came off the wire as
+            // Loud, not silent. This is a value that just came off the wire as
             // JSON, so re-serialising it should be impossible to fail — which is
             // exactly why a quiet empty string here would be the wrong answer:
             // the log would show an event with no data and nothing would say the
@@ -206,7 +206,7 @@ pub async fn client_log(
         },
     };
 
-    // ⚠ Not flattened, so `/client-log` can still inject newlines into the log
+    // Not flattened, so `/client-log` can still inject newlines into the log
     // where `/telemetry` cannot. It is the class of hole the flattening exists to
     // close; closing it here would change what production logs, so it is
     // recorded rather than fixed.

@@ -5,7 +5,7 @@
 //! call per device against Nextcloud, so each user's answer is kept for ten
 //! seconds.
 //!
-//! ⚠ Process-local, like the velocity cache, and for the same reason: a deploy
+//! Process-local, like the velocity cache, and for the same reason: a deploy
 //! restarts the pod and that is the invalidation. Ten seconds also means the
 //! worst staleness is ten seconds, so there is nothing to invalidate by hand.
 //!
@@ -23,7 +23,7 @@ use serde::Serialize;
 
 /// The live marker: the freshest fix, or `None` when there is none.
 ///
-/// ⚠ The field order is the wire order: `preserve_order` is on, so serde emits
+/// The field order is the wire order: `preserve_order` is on, so serde emits
 /// these in declaration order, and the client reads that order.
 #[derive(Clone, Debug, Serialize)]
 pub struct LatestFix {
@@ -33,7 +33,7 @@ pub struct LatestFix {
     pub accuracy: Option<f64>,
 }
 
-/// One buffered point for the raw tail. ⚠ Three fields only: the tail is
+/// One buffered point for the raw tail. Three fields only: the tail is
 /// projected down to `{lat, lon, ts}`, dropping altitude, speed, accuracy and
 /// battery, which would only make the response bigger.
 #[derive(Clone, Debug, Serialize)]
@@ -50,7 +50,7 @@ struct Entry<T> {
 
 /// Per-user, TTL'd, with no eviction.
 ///
-/// ⚠ Unbounded in principle and bounded in practice by the user count — this is
+/// Unbounded in principle and bounded in practice by the user count — this is
 /// keyed by user, not by user-and-date like the velocity cache, so it cannot
 /// grow with time. If this app ever serves many users, that reasoning stops
 /// holding and this needs the LRU the velocity cache already has.
@@ -73,9 +73,9 @@ impl<T: Clone> LocationCache<T> {
 
     /// The cached value if it is still fresh.
     ///
-    /// ⚠ Freshness is `Verified.LocationTail.cacheFresh`, which is the velocity
+    /// Freshness is `Verified.LocationTail.cacheFresh`, which is the velocity
     /// cache's comparison — strict at the boundary, and a future timestamp is
-    /// STALE rather than eternally fresh. A host that wrote `<=` here would
+    /// stale rather than eternally fresh. A host that wrote `<=` here would
     /// serve an entry one millisecond past its promise, which is the direction
     /// that cannot be justified to a caller.
     pub fn get(&self, key: &str, now_ms: i64, ttl_ms: i64) -> Option<T> {
@@ -99,15 +99,15 @@ impl<T: Clone> LocationCache<T> {
 
 /// The points a tail request answers with.
 ///
-/// ⚠ Mirrors `Verified.LocationTail.tailAfter`, and is NOT a host call:
+/// Mirrors `Verified.LocationTail.tailAfter`, and is not a host call:
 /// a tail buffer is thousands of points and shipping all of them across the FFI
 /// per poll would cost more than the fetch it saves. `tests/suite/location_tail.rs`
 /// holds this against Lean's over a corpus, which is the only thing stopping
 /// the two drifting.
 ///
-/// Both halves invert without looking wrong. `>` is STRICT, so the point the
-/// caller already has is not resent and drawn twice. The cap keeps the LAST
-/// `TAIL_MAX_POINTS`, so a long buffer answers with the NEWEST — taking the
+/// Both halves invert without looking wrong. `>` is strict, so the point the
+/// caller already has is not resent and drawn twice. The cap keeps the last
+/// `TAIL_MAX_POINTS`, so a long buffer answers with the newest — taking the
 /// first would answer a live map with the stale head and never reach the
 /// present, which reads as lag rather than as a bug.
 pub fn tail_after(points: &[TailPoint], since: f64) -> Vec<TailPoint> {
@@ -123,15 +123,15 @@ pub fn tail_after(points: &[TailPoint], since: f64) -> Vec<TailPoint> {
 
 /// How long a started OAuth handshake may take to come back.
 ///
-/// ⚠ Ten minutes, matching the pending-login cookie. A shorter window strands a
+/// Ten minutes, matching the pending-login cookie. A shorter window strands a
 /// user who stops to read the consent screen; a longer one keeps a redeemable
 /// PKCE verifier alive after the person has walked away.
 pub const OAUTH_STATE_TTL_MS: i64 = 10 * 60 * 1000;
 
 impl<T: Clone> LocationCache<T> {
-    /// Read and REMOVE an entry, if it is still fresh.
+    /// Read and remove an entry, if it is still fresh.
     ///
-    /// ⚠ Single-use, which is the point for an OAuth state: a verifier that
+    /// Single-use, which is the point for an OAuth state: a verifier that
     /// could be redeemed twice is a replayable authorisation. An expired entry
     /// is removed too, so a stale one cannot linger and be redeemed after a
     /// clock correction.

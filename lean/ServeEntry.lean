@@ -458,7 +458,7 @@ graph-box-rings={t3e - t3d}ms graph-no-fixes={t3f - t3e}ms"
 
 /-! ## Assembling the model
 
-Build the HSMM model FROM PARSED INPUTS in Lean (`Verified.Hsmm.Assemble`).
+Build the HSMM model from parsed inputs in Lean (`Verified.Hsmm.Assemble`).
 Input is the post-boundary structured day (past the tz / WKT / `toFixed`
 boundary the shell owns): the observation tensor, the parsed route edges, the
 focus places, the train-generator coverage map, continuity, and the C4 flags.
@@ -500,7 +500,7 @@ private def parseChainNode (j : Json) : Except String Verified.Hsmm.StationChain
     name, edgeIds.toList⟩
 
 /-- One cached rail relation: which line, and the stops it serves. Only the stop
-NAMES are read — the coordinates in `stops_json` answer a different question. -/
+names are read — the coordinates in `stops_json` answer a different question. -/
 private def parseRelation (j : Json) :
     Except String Verified.Hsmm.ServedStations.RailStopRelation := do
   let stops ← (← (← j.getObjVal? "stops").getArr?).mapM fun t => do
@@ -639,7 +639,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let edges ← (← (← j.getObjVal? "edges").getArr?).mapM parseEdge
   let places ← (← (← j.getObjVal? "places").getArr?).mapM parsePlace
   let model := Verified.Hsmm.RouteModel.buildRouteGraphModel edges
-  -- Coverage: REBUILD in Lean from the station nodes when present (the
+  -- Coverage: rebuild in Lean from the station nodes when present (the
   -- self-contained serve path), else take the provided coverage map.
   let nodes ← match j.getObjVal? "nodes" with
     | .ok v => if v.isNull then pure #[] else (← v.getArr?).mapM parseStationNode
@@ -1189,7 +1189,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     (preTb : Option Verified.Hsmm.Journey.Tables := none) :
     Except String (Array Nat × Array Nat × Array Nat × Option Verified.Hsmm.Journey.Tables) := do
   let quant := Verified.Hsmm.Quantize.quantize
-  -- Duration: EXACT class partition by (mode, isNamedTrain).
+  -- Duration: exact class partition by (mode, isNamedTrain).
   let keys : Array Nat := c.states.foldl (fun acc s =>
     let k := durClassKey s; if acc.contains k then acc else acc.push k) #[]
   let nC := keys.size
@@ -1295,7 +1295,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             for t in [0:T] do
               out := out.set! (li * T + t) (Verified.Hsmm.Assemble.entryAt c t l)
           return out
-        -- The first leg's prior is spread over the LINES of its mode (which line),
+        -- The first leg's prior is spread over the lines of its mode (which line),
         -- as the fitted transition weight is; the last leg's is the leg's own.
         let prior := fun (spread : Bool) (xs : List (Verified.Hsmm.Emissions.Mode × Float)) (l : Nat) =>
           let st := c.states[l]!
@@ -1415,7 +1415,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           | some n =>
             let near := fun (t : Nat) => nearFix fixes[t]! n
             let seen := fun (t : Nat) => match c.obs[t]? with | some o => o.gps.isSome | none => false
-            -- Seen at the station as the minute ENDS (its own last fix): a train
+            -- Seen at the station as the minute ends (its own last fix): a train
             -- pulling away slowly leaves its first moving minute's median within
             -- reach, and the dark minute after a train enters the tunnel says
             -- nothing of where he is.
@@ -1424,7 +1424,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             if (c.states[l]!).mode == .train then
               (Array.range T).filter fun t => near t && (!seen t || !stillHere t || !stillHere (t + 1))
             else (Array.range T).filter near
-        -- The board station against the fix of the minute BEFORE the leg — where
+        -- The board station against the fix of the minute before the leg — where
         -- he stood when the ride began (the leg's own first minute already moves):
         -- the chain's anchor form, relative to the best station at that minute.
         let boardAt : FloatArray := Id.run do
@@ -1432,7 +1432,7 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
           let mut raw := Verified.FloatConst.floats (LA * T) journeyZero
           let mut has := Array.replicate (LA * T) false
           -- A station is a complex of nodes (one per line's platforms); the leg's
-          -- distance is its NAME's nearest node, so two lines boarded at the same
+          -- distance is its name's nearest node, so two lines boarded at the same
           -- station tie here and their pairs decide.
           let stationNodes : Std.HashMap String (Array Verified.Hsmm.StationChain.ChainNode) :=
             match g? with
@@ -2344,7 +2344,7 @@ private def segmentsOf (j : Json) (c : Verified.Hsmm.Assemble.ModelContext)
     | some tb => Verified.Hsmm.Journey.expandLegs tb r.path isJ
     | none => #[]
   -- Index → the state the model actually holds. An out-of-range index is
-  -- an ERROR, not a skipped minute: it would shorten the path and shift
+  -- an error, not a skipped minute: it would shorten the path and shift
   -- every later segment boundary.
   let states : Except String (Array Verified.HsmmSegments.State) :=
     path.foldlM (fun acc i => do
@@ -2361,7 +2361,7 @@ private def segmentsOf (j : Json) (c : Verified.Hsmm.Assemble.ModelContext)
   | .ok sts =>
     match Verified.HsmmSegments.groupStates sts (c.obs.map (·.ts)) with
     | none =>
-      -- `groupStates` returns none ONLY on a length mismatch, which means
+      -- `groupStates` returns none only on a length mismatch, which means
       -- the path and the observation tensor disagree — a wiring fault, not
       -- a quiet day.
       Json.mkObj [("error", Json.str
@@ -2369,7 +2369,7 @@ private def segmentsOf (j : Json) (c : Verified.Hsmm.Assemble.ModelContext)
     | some segs0 =>
       let folded := Verified.HsmmSegments.foldRideWaits segs0
       -- A decoded wait's station, from its leg at its first minute: the
-      -- segment leaves as a stay AT the station, so the fold's stay namer
+      -- segment leaves as a stay at the station, so the fold's stay namer
       -- cannot name it after the venue beside it and absorb the walk.
       let obsT0 := (c.obs[0]?.map (·.ts)).getD 0
       let waitStation : Array (Option String) := folded.map fun s =>
@@ -2746,7 +2746,7 @@ observation tensor — over the whole day's track in one call.
   { "pts": [[ts, latBits, lonBits, accBits|null], …] }
 
 Output: `{ "pts": [[ts, latBits, lonBits, speedBits, bearingBits], …] }`. The
-filter DROPS rows (duplicate timestamps, innovation-gated fixes), so the output
+filter drops rows (duplicate timestamps, innovation-gated fixes), so the output
 is a subsequence of the input and a length mismatch is meaningful, not a bug. -/
 
 private def parseKalmanPt (j : Json) : Except String Verified.Geo.Kalman.GpsPoint := do
@@ -2908,7 +2908,7 @@ private def bestPlaceResult (j : Json) : Json :=
       (Option Verified.Geo.SegmentMerge.ResolvedPlace
         × List (Verified.Geo.VenuePrior.VenueCandidateScore × Option (Float × Float × Float))) := do
     let pois ← (← (← j.getObjVal? "landmarks").getArr?).mapM parsePoi
-    -- The geocode is a TABLE keyed by zoom, so the chain's two asks (18 then,
+    -- The geocode is a table keyed by zoom, so the chain's two asks (18 then,
     -- only on one branch, 16) are answered from data rather than recomputed.
     let geo := fun (zoom : Int) =>
       match j.getObjVal? "geocode" with
@@ -3156,7 +3156,7 @@ private def headResult (j : Json) : Json :=
     | "snap" =>
       let fixes ← (← (← j.getObjVal? "fixes").getArr?).mapM parseHeadFix
       let places ← (← (← j.getObjVal? "places").getArr?).mapM parseHeadPlace
-      -- `snapToPlace` takes a List; convert ONCE rather than per fix.
+      -- `snapToPlace` takes a List; convert once rather than per fix.
       let pl := places.toList
       return Json.mkObj [("snapped", Json.arr (fixes.map fun (la, lo, acc) =>
         let r := Verified.Geo.PlacePrior.snapToPlace la lo acc pl
@@ -3194,7 +3194,7 @@ Input:
     "relations": [{lineRef, lineName, stops:[{name}]}] | null }
 Output: { "resolved": [[segIndex, board|null, alight|null]] }
 
-⚠ `nodes` order is part of the input: the candidate dedupe, the stable sort,
+`nodes` order is part of the input: the candidate dedupe, the stable sort,
 the cut at `MAX_CANDIDATES_PER_SIDE` and the first-wins argmax all read it. A
 transport that sorted or deduplicated it would change results.
 -/
@@ -3208,7 +3208,7 @@ private def parseChainSeg (j : Json) : Except String ChainSeg := do
            startTs := ← (← j.getObjVal? "startTs").getInt?
            endTs := ← (← j.getObjVal? "endTs").getInt? }
 
-/-- `relations` ABSENT and `relations: []` are different requests, and the
+/-- `relations` absent and `relations: []` are different requests, and the
     difference is not cosmetic: absent means the mirror was never consulted, so
     every candidate's `servedPen` is 0, while an empty array means it was
     consulted and had nothing — which `servedStationSet` also answers `none` to,
@@ -3365,7 +3365,7 @@ the phone series' axis.
 → { "series": [[ts, level], …] }
 
 `ts` is already resolved by the host (tzdata); a `null` is dropped, never
-guessed. ⚠ Row order matters: of two rows at one instant the later is kept, so
+guessed. Row order matters: of two rows at one instant the later is kept, so
 the SQL must not gain an `ORDER BY` the shaping does not expect. -/
 private def watchBatteryResult (j : Json) : Json :=
   let parsed : Except String Json := do

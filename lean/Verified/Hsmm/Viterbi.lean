@@ -19,7 +19,7 @@ Two deliberate choices:
 The goal theorem is proved for the *specification* decoder (`Decode.lean`:
 `decode_correct`, `decode_none_iff`) and inherited by the memoised forms
 (`Memo.decodeFast`, `Ckpt.decodeCk`) and by `ByStart.sDecode`, what
-`verified_cli` runs. This array `viterbi` is **not** itself proved and is **not**
+`verified_cli` runs. This array `viterbi` is not itself proved and is not
 on the production path: it is the reference loop that `Tests.lean` `#guard`-pins
 the spec decoder against, paths included, so a divergence between the loop and
 the verified spec fails the build. It exists to cross-check, not to decode in
@@ -31,7 +31,7 @@ namespace Verified.Hsmm
 structure DecodeResult where
   /-- State index per minute, length `T`. -/
   path : Array Nat
-  /-- The MAP score the decoder claims for that path. -/
+  /-- The map score the decoder claims for that path. -/
   best : Score
 deriving Repr, BEq
 
@@ -43,7 +43,7 @@ namespace Viterbi
 end Viterbi
 
 open Viterbi in
-/-- `hsmmViterbi`: decode the MAP state-per-minute path. `none` when no path has
+/-- `hsmmViterbi`: decode the map state-per-minute path. `none` when no path has
 a finite score (or the window/state space is degenerate with `T > 0`). -/
 def viterbi (P : Problem) : Option DecodeResult := Id.run do
   let T := P.T

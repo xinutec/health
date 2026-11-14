@@ -12,7 +12,7 @@ the loop runs on every moving segment. With both, the day is one chain from
 
 ## The cascade, in the order it decides
 
-1. **Just alighted a train?** Then the stay is at that station, whatever else
+1. Just alighted a train? Then the stay is at that station, whatever else
    is co-located (05-22's Finchley Road ambulance wait was mislabelled "Loft
    Coffee Company"). {@link Verified.Geo.TransitPlace.stationAtTrainAlight}.
    The city still comes from the venue resolver; only the label is the station.
@@ -21,11 +21,11 @@ the loop runs on every moving segment. With both, the day is one chain from
    and its biometric coherence
    ({@link Verified.Geo.BiometricCoherence.biometricCoherence}) as the two
    modulating signals.
-3. A winner that is **Home or Work** wins outright — those are intent labels —
+3. A winner that is Home or Work wins outright — those are intent labels —
    unless the stay sits {@link HOME_WORK_FAR_SIGMA}σ or more from it and the
    resolver, asked at the stay's own centroid, finds a building enclosing it.
    "Stay" is a clustering bucket, not a timeline name, so it falls through.
-4. A winner that is **not residential and carries a mined `amenityLabel`** takes
+4. A winner that is not residential and carries a mined `amenityLabel` takes
    that label.
 5. Any other winner, and any stay with no winner at all, is named by the venue
    resolver ({@link Verified.Geo.BestPlace.resolve}) — at the winner's stored
@@ -89,14 +89,14 @@ open Verified.Geo.TubeHop (NearbyStation)
 
 /-! ## Local solar time -/
 
-/-- JS `%` on doubles: the TRUNCATED remainder, not Lean's `%` and not a
+/-- JS `%` on doubles: the truncated remainder, not Lean's `%` and not a
 floored modulo. Exact for every value here — `|a/b| < 3`, so the quotient's
 truncation and the subtraction are both exact. -/
 private def jsMod (a b : Float) : Float :=
   let q := a / b
   a - (if q < 0 then Float.ceil q else Float.floor q) * b
 
-/-- Hour of the local SOLAR day at a longitude — no tzdata, no zone, just
+/-- Hour of the local solar day at a longitude — no tzdata, no zone, just
 `lon / 15` hours of offset from UTC.
 
 The double `%` is kept rather than collapsed into one floored modulo:
@@ -104,7 +104,7 @@ The double `%` is kept rather than collapsed into one floored modulo:
 where a single operation would not. -/
 def localSolarHour (ts : Int) (lon : Float) : Nat :=
   -- `new Date(ts*1000).getUTCHours()*60 + getUTCMinutes()` — whole minutes of
-  -- the UTC day, so seconds are DROPPED before the offset is applied.
+  -- the UTC day, so seconds are dropped before the offset is applied.
   let secOfDay := ((ts % 86400) + 86400) % 86400
   let utcMinutes := Float.ofInt (secOfDay / 60)
   -- `local` is a Lean keyword, so `solarMinutes`.
@@ -116,7 +116,7 @@ def HOUR_BUCKETS : Nat := 24
 private def HOUR_PROFILE_STEP_SEC : Int := 30 * 60
 
 /-- The stay's own hour-of-day dwell profile: 24 fractions summing to 1, or 24
-zeros when the range admits no sample. Sampled every half hour INCLUSIVE of both
+zeros when the range admits no sample. Sampled every half hour inclusive of both
 ends, so a zero-length stay still contributes one sample. -/
 def hourProfileForRange (startTs endTs : Int) (lon : Float) : List Float := Id.run do
   let mut buckets : Array Float := Array.replicate HOUR_BUCKETS 0
@@ -160,7 +160,7 @@ def namingCoordinate (cLat cLon spreadM : Float)
 
 /-! ## Inputs -/
 
-/-- Sleep hours at or above which a mined cluster is a RESIDENCE, and its
+/-- Sleep hours at or above which a mined cluster is a residence, and its
 address beats a co-located venue label. -/
 def RESIDENCE_SLEEP_THRESHOLD_H : Float := 5
 
@@ -179,7 +179,7 @@ station, it carried that name into 07-10's merged Work stay. The 09-30 wait was
 def HOME_WORK_FAR_MIN_S : Int := 30 * 60
 
 /-- A mined `focus_places` row as this branch reads it: the scorer's candidate
-fields plus the three the LABEL cascade branches on. One record rather than two
+fields plus the three the label cascade branches on. One record rather than two
 projections, because unlike the fix series both halves are read on the same
 code path, for the same row, in the same decision. -/
 structure NamedPlace where
@@ -193,7 +193,7 @@ structure NamedPlace where
 
 `place` is {@link Verified.Geo.BestPlace.resolve} with its reads already bound
 to a coordinate — the caller supplies the landmarks and geocode tables, because
-choosing WHICH coordinate to ask about is this module's decision and answering
+choosing which coordinate to ask about is this module's decision and answering
 is not. -/
 structure Reads where
   /-- `osm.nearbyStations(lat, lon, radiusM)`. -/
@@ -201,7 +201,7 @@ structure Reads where
   /-- `bestPlace(osm, lat, lon, { preferResidential, stay?, priors })` composed
   with `placeLabel` and `extractCity`. `withStay` is false for the two arms that
   pass no `stay` — the alight arm and the Home/Work arm — and those two ask a
-  DIFFERENT question of the resolver, so they must not share a key with the
+  different question of the resolver, so they must not share a key with the
   arms that do. -/
   place : (lat : Float) → (lon : Float) → (preferResidential : Bool) → (withStay : Bool) →
     Option ResolvedPlace
@@ -242,7 +242,7 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
       let placeLat := wp.cand.centroidLat
       let placeLon := wp.cand.centroidLon
       -- 3. Home and Work are intent labels and win outright. "Stay" is a
-      -- clustering bucket, so it is NOT here and falls through to naming.
+      -- clustering bucket, so it is not here and falls through to naming.
       -- Far from it, a building the stay is inside names it instead: the
       -- intent label is the guess, the outline around the fixes is evidence.
       let far := seg.endTs - seg.startTs ≥ HOME_WORK_FAR_MIN_S &&
@@ -264,11 +264,11 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
         let isResidential := wp.sleepHours ≥ RESIDENCE_SLEEP_THRESHOLD_H
         -- 4. The mined amenity label does not short-circuit the venue
         -- resolver. Measured before its removal, via the
-        -- priors referee + this exact ablation: ZERO truth verdicts move and
-        -- the elected venue changes on NO corpus stay — the override's labels
-        -- differed from the resolver's only in FORMAT (bare vs suffixed),
+        -- priors referee + this exact ablation: zero truth verdicts move and
+        -- the elected venue changes on no corpus stay — the override's labels
+        -- differed from the resolver's only in format (bare vs suffixed),
         -- settled the same day by the bare-label policy in `BestPlace.named`.
-        -- ⚠ `venueless` below still reads the FIELD (`amenityLabel.isNone`),
+        -- `venueless` below still reads the field (`amenityLabel.isNone`),
         -- exactly as before — see the trap note above.
         -- 5a. Named where he stood (see the header). `venueless` sends an
         -- amenity-less cluster to the address rather than to whatever
@@ -297,7 +297,7 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
 
 The scorer, the coherence gate, the station picker and the venue resolver are
 pinned in their own modules. What is new here is the local-solar arithmetic and
-the CASCADE — which arm fires, and which coordinate it asks about. -/
+the cascade — which arm fires, and which coordinate it asks about. -/
 
 section Guards
 
@@ -313,7 +313,7 @@ open Verified.Geo.PlacePrior (PlaceCandidate)
 -- still the hour.
 #guard localSolarHour 59 0 == 0
 -- 15° east is one hour ahead, 15° west one hour behind — and the west case
--- wraps BACKWARDS across midnight, which is what the double `%` is for.
+-- wraps backwards across midnight, which is what the double `%` is for.
 #guard localSolarHour 0 15.0 == 1
 #guard localSolarHour 0 (-15.0) == 23
 #guard localSolarHour 3600 (-30.0) == 23
@@ -328,7 +328,7 @@ private def ONE_HOUR : List Float := hourProfileForRange 0 1500 0
 #guard ONE_HOUR.length == 24
 #guard ONE_HOUR[0]! == 1.0
 #guard ONE_HOUR[1]! == 0.0
--- Inclusive of BOTH ends, and stepped by HALF hours: 0..3600 is THREE samples
+-- Inclusive of both ends, and stepped by half hours: 0..3600 is three samples
 -- (0, 1800, 3600), two of them in hour 0. An exclusive end would give two, and
 -- an hourly step would give two — so this one case separates both.
 private def ONE_HOUR_SPAN : List Float := hourProfileForRange 0 3600 0
@@ -378,13 +378,13 @@ private def resid : NamedPlace :=
 private def venueless : NamedPlace :=
   { cand := cand 4 LAT LON 40, displayName := some "Stay", sleepHours := 0 }
 
-/-- The same cafe seen on ONE day and on TWO: the day count does not change
+/-- The same cafe seen on one day and on two: the day count does not change
 the question asked. -/
 private def cafe1day : NamedPlace := { cafe with cand := cand 5 LAT LON 1 }
 
 private def cafe2day : NamedPlace := { cafe with cand := cand 6 LAT LON 2 }
 
-/-- A resolver that reports WHICH coordinate and WHICH flags it was asked
+/-- A resolver that reports which coordinate and which flags it was asked
 about, so a guard can pin the question rather than only the answer. -/
 private def spy : Reads :=
   { stations := fun _ _ _ => #[]
@@ -402,16 +402,16 @@ private def run (reads : Reads) (places : List NamedPlace) (prev : Option Seg :=
   enrichStay reads {} places prev stay LAT LON
 
 -- 1. The alight arm wins over a focus place that would otherwise have taken it,
--- and asks the resolver `preferResidential=false` with NO stay.
+-- and asks the resolver `preferResidential=false` with no stay.
 #guard (run withStation [home] (some train)).place == some "Finchley Road"
 #guard (run withStation [home] (some train)).city == some "London"
 #guard (run withStation [home] (some train)).focusPlaceId == none
--- It fires on the PRECEDING mode only: the same stay after a walk is named the
+-- It fires on the preceding mode only: the same stay after a walk is named the
 -- ordinary way.
 #guard (run withStation [home] (some { stay with mode := "walking" })).place == some "Home"
 #guard (run withStation [home] none).place == some "Home"
 
--- 3. Home wins outright, keeps the focus id, and asks at the PLACE's centroid
+-- 3. Home wins outright, keeps the focus id, and asks at the place's centroid
 -- with `preferResidential=true`.
 #guard (run spy [home]).place == some "Home"
 #guard (run spy [home]).focusPlaceId == some 1
@@ -431,8 +431,8 @@ private def runFar (reads : Reads) : Seg := enrichStay reads {} [farHome] none s
 #guard (enrichStay (enclosingAt "enclosing") {} [farHome] none
   { stay with endTs := stay.startTs + HOME_WORK_FAR_MIN_S - 1 } LAT LON).place == some "Home"
 -- 4: the mined label does not short-circuit the resolver; a labelled, non-residential cluster asks the resolver like
--- everything else. What SURVIVES the retirement and stays pinned here: a
--- cluster that carries an amenityLabel is NOT `venueless`, so it asks with
+-- everything else. What survives the retirement and stays pinned here: a
+-- cluster that carries an amenityLabel is not `venueless`, so it asks with
 -- `preferResidential=false` — while the venueless guard below asks with
 -- `true`. Folding that field-read into some new gate verdict is the
 -- plausible-looking change that diverges (see the trap note in the cascade).
@@ -446,7 +446,7 @@ private def runFar (reads : Reads) : Seg := enrichStay reads {} [farHome] none s
 -- into `venueless` is the plausible-looking change that would break this: the
 -- rule tests the field, not this verdict.
 #guard (run spy [cafe1day]).focusPlaceId == some 5
--- ... and a RESIDENTIAL one does not, even carrying the same label: it falls
+-- ... and a residential one does not, even carrying the same label: it falls
 -- through to the resolver, which the spy answers with its arguments —
 -- `preferResidential=true` (residential) and a stay.
 #guard (run spy [resid]).place == some "51.520|-0.130|true|true"
@@ -454,17 +454,17 @@ private def runFar (reads : Reads) : Seg := enrichStay reads {} [farHome] none s
 -- 5a. Venue-less and non-residential still prefers the address, which is the
 -- `venueless` disjunct doing the work rather than `isResidential`.
 #guard (run spy [venueless]).place == some "51.520|-0.130|true|true"
--- 5a asks at the BLEND: a cafe 0.002° north of a tight stay is asked about at
+-- 5a asks at the blend: a cafe 0.002° north of a tight stay is asked about at
 -- the fixes (the place's σ ≈ 99 m against a 10 m floor moves it a metre)…
 private def cafeNorth : NamedPlace := { cafe with cand := cand 7 (LAT + 0.002) LON 40 }
 #guard (run spy [cafeNorth]).place == some "51.520|-0.130|false|true"
 -- …the same cafe under a smeared stay is asked about at the place…
 #guard (enrichStay spy {} [cafeNorth] none stay LAT LON 1000).place == some "51.522|-0.130|false|true"
--- …and a RESIDENCE by day is asked about at the fixes like any other winner,
+-- …and a residence by day is asked about at the fixes like any other winner,
 -- with `preferResidential` so the lodging override still runs from there…
 private def residNorth : NamedPlace := { resid with cand := cand 8 (LAT + 0.002) LON 40 }
 #guard (run spy [residNorth]).place == some "51.520|-0.130|true|true"
--- …while a NIGHT at it is asked about at the place, however tight the fixes.
+-- …while a night at it is asked about at the place, however tight the fixes.
 #guard (enrichStay spy {} [residNorth] none { stay with startTs := 0, endTs := 6 * 3600 } LAT LON 10).place
   == some "51.522|-0.130|true|true"
 
@@ -482,7 +482,7 @@ private def placeNorth (m : Float) : PlaceCandidate := cand 9 (northM m) LON 40
 -- The scatter is floored: two coincident fixes are not an exact position.
 #guard namingCoordinate LAT LON 0 (placeNorth 100) == namingCoordinate LAT LON SPREAD_FLOOR_M (placeNorth 100)
 
--- 5b. No mined place at all: the DAY's centroid, and `preferResidential` is the
+-- 5b. No mined place at all: the day's centroid, and `preferResidential` is the
 -- overnight check — false for this midday stay.
 #guard (run spy []).place == some "51.520|-0.130|false|true"
 #guard (run spy []).focusPlaceId == none

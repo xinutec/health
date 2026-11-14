@@ -8,12 +8,12 @@ downstream (the day fold, the presence rollup) reads the compacted form.
 
 Pure and total. UNPROVEN; the guards pin the run boundary and the `+ 60`.
 
-⚠ **`endTs` is EXCLUSIVE and is built by adding 60 to the run's LAST minute**,
+⚠ `endTs` is exclusive and is built by adding 60 to the run's last minute,
 not by reading the next run's start. Those differ wherever the timestamp series
 has a gap: taking the next start would silently stretch a segment across missing
 minutes and claim the person was somewhere the decoder said nothing about.
 
-⚠ **A run breaks on ANY of the three fields** — mode, place, line. Two adjacent
+A run breaks on any of the three fields — mode, place, line. Two adjacent
 `train` minutes on different lines are two segments, and merging them would
 invent a single ride the decoder never asserted.
 -/
@@ -29,7 +29,7 @@ structure State where
   lineName : Option String
   deriving Inhabited, BEq, Repr
 
-/-- One stored segment. `startTs` inclusive, `endTs` EXCLUSIVE. -/
+/-- One stored segment. `startTs` inclusive, `endTs` exclusive. -/
 structure Segment where
   startTs : Int
   endTs : Int
@@ -44,7 +44,7 @@ def sameState (a b : State) : Bool :=
 
 /-- Run-length compact the day.
 
-⚠ Mismatched lengths are a caller bug: this returns `none`, so the host reports
+Mismatched lengths are a caller bug: this returns `none`, so the host reports
 it rather than silently compacting the shorter of the two and writing a day
 that is missing its tail. -/
 def groupStates (states : Array State) (timestamps : Array Int) : Option (Array Segment) :=
@@ -64,7 +64,7 @@ def groupStates (states : Array State) (timestamps : Array Int) : Option (Array 
         | some s, some t0, some t1 =>
           out := out.push
             { startTs := t0
-              -- ⚠ The LAST MINUTE of this run plus 60, never the next run's start.
+              -- The last minute of this run plus 60, never the next run's start.
               endTs := t1 + 60
               mode := s.mode, placeId := s.placeId, lineName := s.lineName }
         | _, _, _ => pure ()
@@ -77,20 +77,20 @@ private def st (m : String) (p : Option Int := none) (l : Option String := none)
   { mode := m, placeId := p, lineName := l }
 
 #guard groupStates #[] #[] == some #[]
--- ⚠ A length mismatch is refused, not compacted.
+-- A length mismatch is refused, not compacted.
 #guard groupStates #[st "walking"] #[] == none
 #guard groupStates #[] #[0] == none
 
 -- One minute becomes one segment ending 60s after it starts.
 #guard (groupStates #[st "walking"] #[0]).map (·.map (·.endTs)) == some #[60]
 
--- Three like minutes collapse to one segment; endTs is the LAST minute + 60.
+-- Three like minutes collapse to one segment; endTs is the last minute + 60.
 #guard (groupStates #[st "walking", st "walking", st "walking"] #[0, 60, 120]).map (·.size)
        == some 1
 #guard (groupStates #[st "walking", st "walking", st "walking"] #[0, 60, 120]).map
        (·.map (·.endTs)) == some #[180]
 
--- ⚠ A GAP IN THE SERIES DOES NOT STRETCH THE SEGMENT. The first run ends at its
+-- A gap in the series does not stretch the segment. The first run ends at its
 -- own last minute + 60 (120), not at the next run's start (600).
 #guard (groupStates #[st "walking", st "walking", st "driving"] #[0, 60, 600]).map
        (·.map (fun s => (s.startTs, s.endTs))) == some #[(0, 120), (600, 660)]
@@ -106,7 +106,7 @@ private def st (m : String) (p : Option Int := none) (l : Option String := none)
 #guard (groupStates #[st "stationary" (some 1), st "stationary" (some 1)] #[0, 60]).map (·.size)
        == some 1
 
--- A run that resumes after a different state is a THIRD segment, not a merge
+-- A run that resumes after a different state is a third segment, not a merge
 -- back into the first.
 #guard (groupStates #[st "walking", st "driving", st "walking"] #[0, 60, 120]).map (·.size)
        == some 3

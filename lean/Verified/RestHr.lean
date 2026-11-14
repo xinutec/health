@@ -11,7 +11,7 @@ distribution rather than a single number. Never a single reading:
 * a sample more than `SPIKE_BPM` off the median of the samples within 30 s of
   it is dropped (a wrist sensor spikes on movement, strap and cold);
 * a minute's heart rate is the median of its kept samples;
-* a minute is AT REST when it has heart rate (the watch is worn), no steps,
+* a minute is at rest when it has heart rate (the watch is worn), no steps,
   and is not inside a sleep stage other than wake;
 * runs of at least `MIN_RUN` rest minutes count, minus their first `SETTLE`
   minutes (still settling after sitting down);

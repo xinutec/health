@@ -3,20 +3,20 @@ import Verified.FloatConst
 # JS numeric formatting
 
 `toFixed` is load-bearing algorithm in this codebase, not presentation. Two OSM
-coordinates fuse into ONE graph vertex exactly when their `toFixed(7)` strings
+coordinates fuse into one graph vertex exactly when their `toFixed(7)` strings
 are equal — `map-match-core`'s road graph, `rail-snap`'s rail graph and
 `walkable-route`'s `nodeKey` all key vertices that way — so its rounding rule
 decides graph connectivity. It also formats the display strings the ports
 reproduce verbatim.
 
-ECMA-262 21.1.3.3 step 10 defines the rounding against the double's **exact
-binary value**: let `n` be the integer for which `n / 10^f - x` is closest to
-zero, and **when two are equally close take the LARGER**. Two consequences a
+ECMA-262 21.1.3.3 step 10 defines the rounding against the double's exact
+binary value: let `n` be the integer for which `n / 10^f - x` is closest to
+zero, and when two are equally close take the larger. Two consequences a
 naive `round(x * 10^f) / 10^f` gets wrong, both pinned by the guards:
 
 * `(1.005).toFixed(2) = "1.00"`, because the double nearest 1.005 lies below it,
   while `(0.45).toFixed(1) = "0.5"` because that one lies above;
-* the sign is stripped *before* rounding, so ties go half-up on the MAGNITUDE:
+* the sign is stripped *before* rounding, so ties go half-up on the magnitude:
   `(-0.5).toFixed(0) = "-1"`, unlike `Math.round(-0.5)`, which is `-0`.
 
 Doing this exactly needs no decimal library. A finite double is `m · 2^e` for
@@ -72,13 +72,13 @@ def decompose (x : Float) : Decomposed :=
 
 /-! ## `Math.round`
 
-A DIFFERENT rounding rule from `toFixed`, and the difference is not cosmetic:
+A different rounding rule from `toFixed`, and the difference is not cosmetic:
 `Math.round` is round-half-toward-+∞ (`floor(y + 0.5)`), so `Math.round(-0.5)`
 is `-0` while `(-0.5).toFixed(0)` is `"-1"`. `toFixed` strips the sign before
-rounding and takes ties on the MAGNITUDE; `Math.round` does not. Reaching for
+rounding and takes ties on the magnitude; `Math.round` does not. Reaching for
 the wrong one of these is a silent off-by-one on exactly half the ties.
 
-⚠ There are THIRTEEN private copies of this one-liner across `Verified/Geo`
+There are thirteen private copies of this one-liner across `Verified/Geo`
 (RailReconcile, RailSnap, WalkAnnotate, SegmentMerge, StaySplit, CurrentPlace,
 UndergroundAnnotate, RailAbsorbers, OsmCorridor, WalkSmooth, Interchange x2,
 Segments). This is their home; new code should use it rather than add a
@@ -92,7 +92,7 @@ def jsRound (x : Float) : Float := Float.floor (x + 0.5)
 want (`Interchange`'s `jsRoundInt`). -/
 def jsRoundInt (x : Float) : Int := (jsRound x).toInt64.toInt
 
--- Ties go UP, not away from zero — the whole reason this is not `Float.round`.
+-- Ties go up, not away from zero — the whole reason this is not `Float.round`.
 #guard jsRound 1.5 == 2
 #guard jsRound 2.5 == 3
 #guard jsRound (-2.5) == -2
@@ -114,7 +114,7 @@ def toFixedNExact (x : Float) (f : Nat) : Nat :=
   else
     let den := 2 ^ (-d.e).toNat
     -- ⌊n/den + 1/2⌋. A tie makes the numerator an exact multiple of `2·den`,
-    -- and flooring then lands on the LARGER candidate, as the spec requires.
+    -- and flooring then lands on the larger candidate, as the spec requires.
     (2 * n + den) / (2 * den)
 
 /-! ⚠ A float literal inside a branch or a loop body is not hoisted by the
@@ -187,14 +187,14 @@ def toFixed (x : Float) (f : Nat) : Option String :=
   else if x == (-1.0 / 0.0) then some "-Infinity"
   else if x.abs ≥ toFixedMax then none
   else
-    -- `x < 0` is FALSE for `-0`, so `(-0).toFixed(7)` is `"0.0000000"`.
+    -- `x < 0` is false for `-0`, so `(-0).toFixed(7)` is `"0.0000000"`.
     let sign := if x < 0 then "-" else ""
     some (sign ++ placePoint (toFixedN x f) f)
 
 /-! ## The fusion identity
 
 A graph builder does not need the string — it needs to know when two
-coordinates produce the SAME string. That is `(sign, n)`, which is exact for
+coordinates produce the same string. That is `(sign, n)`, which is exact for
 every finite double including those at or above `10^21`, where only the
 *rendering* is unported. Keeping the key separate from the string is what lets
 vertex fusion move into Lean without dragging `ToString` along. -/
@@ -265,7 +265,7 @@ private def chk (x : Float) (f : Nat) (expect : String) : Bool := toFixed x f ==
 #guard chk 1.025 2 "1.02"
 #guard chk 8.575 2 "8.57"
 #guard chk 0.35 1 "0.3"
--- The double nearest 0.45 lies ABOVE it, so this one rounds up where 0.35
+-- The double nearest 0.45 lies above it, so this one rounds up where 0.35
 -- rounds down — the pair that refutes any "ties always go down" reading.
 #guard chk 0.45 1 "0.5"
 #guard chk 2.675 2 "2.67"
@@ -298,7 +298,7 @@ private def chk (x : Float) (f : Nat) (expect : String) : Bool := toFixed x f ==
 #guard chk (-1234.56789) 3 "-1234.568"
 
 -- Large (still integral) and subnormal. The 1e20 case shows the `e ≥ 0` arm,
--- and the second prints the double's EXACT value, not the literal typed.
+-- and the second prints the double's exact value, not the literal typed.
 #guard chk 1e20 7 "100000000000000000000.0000000"
 #guard chk 123456789012345680000 2 "123456789012345683968.00"
 #guard chk 5e-324 7 "0.0000000"
@@ -335,7 +335,7 @@ private def kLon (e : Float) : Option String := toFixed (lon0 + e * mlon) 7
 
 -- `toFixedKey` agrees with the string it stands in for — including the two
 -- zeroes, which share a key, and a positive/negative pair rounding to zero,
--- which must NOT.
+-- which must not.
 #guard toFixedKey 0 7 == toFixedKey (-0.0) 7
 #guard toFixedKey 1e-9 7 != toFixedKey (-1e-9) 7
 #guard toFixed 1e-9 7 != toFixed (-1e-9) 7

@@ -1,6 +1,6 @@
 //! The as-of-the-day prior, end to end through the real Lean op.
 //!
-//! ⚠ NOT A MOCK OF THE AGGREGATION. These call `lean::priors_as_of`, which
+//! Not a mock of the aggregation. These call `lean::priors_as_of`, which
 //! crosses the FFI into `Verified.Geo.VenuePrior.priorsAsOf`. A Rust-side
 //! reimplementation would encode what I believe the aggregation does, and the
 //! whole reason the cut lives in Lean is that `bumpStats`' insertion order is
@@ -8,7 +8,7 @@
 
 use backend::lean::{self, WirePriorEvent, priors_as_of};
 
-/// ⚠ Per test, not once: nextest runs each in its own process, so a
+/// Per test, not once: nextest runs each in its own process, so a
 /// `OnceLock` guard in one says nothing about another.
 fn boot() {
     lean::init().expect("the Lean runtime must start");
@@ -53,7 +53,7 @@ fn a_cut_after_everything_is_the_whole_prior() {
     assert_eq!(s, vec!["cafe", "restaurant"]);
 }
 
-/// ⚠ THE WHOLE POINT, IN ONE ASSERTION. A day before the restaurant was ever
+/// The whole point, in one assertion. A day before the restaurant was ever
 /// visited must not know the subtype exists — that is the anachronism the
 /// ticket is named for, where a May dinner was scored against September.
 #[test]
@@ -64,7 +64,7 @@ fn a_past_day_cannot_see_later_evidence() {
     assert_eq!(subtypes(&v), vec!["cafe"]);
 }
 
-/// ⚠ INCLUSIVE, and on the stay's START. A stay beginning exactly at the cut
+/// Inclusive, and on the stay's start. A stay beginning exactly at the cut
 /// counts; keying on its end would make a long stay vanish from its own day.
 #[test]
 fn the_cut_includes_a_stay_starting_on_it() {
@@ -89,7 +89,7 @@ fn a_cut_before_everything_is_empty() {
     assert!(subtypes(&v).is_empty());
 }
 
-/// ⚠ FRACTIONAL WEIGHTS SURVIVE THE WIRE. Soft attribution contributes `r` of a
+/// Fractional weights survive the wire. Soft attribution contributes `r` of a
 /// visit, and `weight` is the one field that rides as bit patterns for exactly
 /// that reason — a JSON number would be a second rounding nobody asked for.
 #[test]

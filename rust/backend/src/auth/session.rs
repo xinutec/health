@@ -6,8 +6,8 @@
 //! inventing one. Neither half is secret-bearing on its own — the id is a
 //! random 32 bytes and the HMAC proves this server issued it.
 //!
-//! ⚠ The FRAMING of that string is `Verified.Session.splitSigned`, not a
-//! `split_once` here. It splits on the LAST separator, because the signature is
+//! The framing of that string is `Verified.Session.splitSigned`, not a
+//! `split_once` here. It splits on the last separator, because the signature is
 //! base64url and carries no dot, so a value containing dots round-trips. That is
 //! three lines, which is exactly the size at which a wrong one survives review.
 
@@ -35,7 +35,7 @@ pub struct UserSession {
 ///
 /// ⚠ `getrandom` and not a seeded generator. A session id is the whole of the
 /// bearer's claim, so the only acceptable source is the OS CSPRNG — and a
-/// failure to read it must be an ERROR rather than a fallback, because the
+/// failure to read it must be an error rather than a fallback, because the
 /// fallback would be a predictable id that works.
 pub fn mint_id() -> Result<String> {
     let mut bytes = [0u8; 32];
@@ -45,13 +45,13 @@ pub fn mint_id() -> Result<String> {
 
 /// A share token: 32 random bytes as base64url.
 ///
-/// ⚠ NOT [`mint_id`], which is the same 32 bytes as HEX. Both carry 256 bits,
+/// Not [`mint_id`], which is the same 32 bytes as hex. Both carry 256 bits,
 /// but a hex token is 64 characters and a base64url one is 43, and
 /// `share_tokens.token` is `VARCHAR(64)` — so hex would fit with nothing to
 /// spare and every link this issued would be visibly a different shape from
 /// every link production has issued.
 ///
-/// ⚠ Errors rather than falling back. A share token that is not from the OS
+/// Errors rather than falling back. A share token that is not from the OS
 /// CSPRNG is a guessable link to someone's location history.
 pub fn mint_share_token() -> Result<String> {
     let mut bytes = [0u8; 32];
@@ -61,7 +61,7 @@ pub fn mint_share_token() -> Result<String> {
 
 /// `<value>.<base64url-hmac-sha256>`.
 ///
-/// ⚠ base64url with no padding: padding would produce a signature that never
+/// base64url with no padding: padding would produce a signature that never
 /// matches one already issued.
 pub fn sign_value(secret: &str, value: &str) -> String {
     let sig = mac(secret, value);
@@ -82,7 +82,7 @@ fn mac(secret: &str, value: &str) -> Vec<u8> {
 
 /// The value inside a signed string, or `None` if it was not signed by us.
 ///
-/// ⚠ CONSTANT TIME. A comparison that returns on the first differing byte tells
+/// ⚠ constant time. A comparison that returns on the first differing byte tells
 /// an attacker where it differed, one request at a time, and a signature is
 /// exactly the thing that makes that worth doing. `subtle::ConstantTimeEq`
 /// rather than `==`, and the length check is separate because lengths differing
@@ -140,7 +140,7 @@ fn expires_at(ms: i64) -> Result<String> {
 /// Who this cookie belongs to, and whether its session was renewed just now
 /// (so the cookie goes back with a fresh `Max-Age`), or `None`.
 ///
-/// ⚠ An EXPIRED row is deleted on the way past. The sweep below only reaches
+/// An expired row is deleted on the way past. The sweep below only reaches
 /// sessions whose owner never returns; this is what retires the ones that do.
 pub async fn get(
     pool: &MySqlPool,
@@ -159,7 +159,7 @@ pub async fn get(
     let Some(row) = row else {
         return Ok(None);
     };
-    // ⚠ Every decode errors rather than defaulting. A `display_name` that
+    // Every decode errors rather than defaulting. A `display_name` that
     // silently became "" is a session that works and cannot say whose it is.
     let user_id: String = row.try_get("user_id").context("sessions.user_id")?;
     let display_name: String = row

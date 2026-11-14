@@ -16,13 +16,13 @@ with the answer is here: which subtypes count, which distance wins, how fixes
 bucket into minutes, and the ~11 m cache key that collapses a stationary day to
 one lookup.
 
-## ⚠ TRAMS ARE NOT RAIL HERE
+## ⚠ trams are not rail here
 
 `RAIL_ONLY_SUBTYPES` excludes `tram` deliberately — mixed-traffic track runs
-down the middle of a road, so a tram way is not evidence for rail OVER road. It
+down the middle of a road, so a tram way is not evidence for rail over road. It
 is the one subtype where the two categories genuinely overlap, and including it
 would make the strongest signal the decoder has ambiguous exactly where the
-ambiguity matters. Note that {@link Verified.Geo.OsmRailStops} DOES mirror
+ambiguity matters. Note that {@link Verified.Geo.OsmRailStops} does mirror
 trams: "which lines stop here" and "is this fix on rail not road" are different
 questions.
 -/
@@ -31,7 +31,7 @@ namespace Verified.Hsmm.RailRoadProximity
 
 open Verified.Hsmm.Observation (GpsPoint median bucketIndex)
 
-/-- Rail-only OSM way subtypes. ⚠ No `tram` — see the module note. -/
+/-- Rail-only OSM way subtypes. No `tram` — see the module note. -/
 def RAIL_ONLY_SUBTYPES : List String := ["rail", "subway", "light_rail", "narrow_gauge"]
 
 /-- Drivable highway subtypes: residential through motorway, plus track and
@@ -70,8 +70,8 @@ def railRoadDistFromWays (ways : List NearbyWay) : Proximity := Id.run do
   let mut minRoad : Option Float := none
   for w in ways do
     let some d := usable w.distanceM | continue
-    -- ⚠ `else if`, not two `if`s: a way is rail OR road, never both. A way
-    -- tagged `railway` whose subtype is not rail-only does NOT fall through to
+    -- `else if`, not two `if`s: a way is rail or road, never both. A way
+    -- tagged `railway` whose subtype is not rail-only does not fall through to
     -- the road test — it is simply not evidence either way.
     if w.type == "railway" && RAIL_ONLY_SUBTYPES.contains w.subtype then
       minRail := some (match minRail with | none => d | some m => min m d)
@@ -81,16 +81,16 @@ def railRoadDistFromWays (ways : List NearbyWay) : Proximity := Id.run do
 
 /-! ## Which minutes to ask about, and how few times to ask -/
 
-/-- One minute that had fixes: the top-of-minute timestamp and the MEDIAN of the
+/-- One minute that had fixes: the top-of-minute timestamp and the median of the
 fixes in it.
 
-⚠ THE MEDIAN, NOT THE MEAN, and it is taken per-coordinate — matching the
+The median, not the mean, and it is taken per-coordinate — matching the
 observation tensor's own aggregation, so the location this asks about is the
 location the tensor will report. A mean would drag the query point toward a
 single wild fix, and the answer would be "near a road" for a minute spent on a
 platform.
 
-⚠ The bucket is the LOCAL-DAY minute index, so a fix outside `[startUtc, endUtc)`
+The bucket is the local-day minute index, so a fix outside `[startUtc, endUtc)`
 is dropped rather than clamped into the first or last minute. -/
 structure MinuteFix where
   minuteTs : Int
@@ -103,7 +103,7 @@ position. Minutes with no fixes are absent, not zero. -/
 def minuteMedians (startUtc endUtc : Int) (points : List GpsPoint) : Array MinuteFix :=
   Id.run do
     let mut acc : Array (Nat × Array GpsPoint) := #[]
-    -- Insertion-ordered by FIRST appearance of each minute, which is ascending
+    -- Insertion-ordered by first appearance of each minute, which is ascending
     -- for the sorted input the loader supplies and stable for any other.
     for p in points do
       match bucketIndex startUtc endUtc p.ts with
@@ -120,14 +120,14 @@ def minuteMedians (startUtc endUtc : Int) (points : List GpsPoint) : Array Minut
 /-- The coarse cache key, ~11 m. Two minute-medians this close share one
 `nearbyWays` lookup.
 
-⚠ THIS IS WHAT MAKES THE COST BEARABLE. A stationary day is hundreds of minutes
+This is what makes the cost bearable. A stationary day is hundreds of minutes
 at one place; without it that is hundreds of identical OSM queries. Four decimal
 places is ~11 m, which is far below any distance this module distinguishes. -/
 def coordKey (lat lon : Float) : String :=
   let f := fun (x : Float) => (Verified.JsNum.toFixed x 4).getD (toString x)
   s!"{f lat},{f lon}"
 
-/-- The DISTINCT locations a day must be asked about, in first-seen order.
+/-- The distinct locations a day must be asked about, in first-seen order.
 
 The shell runs one `nearbyWays` per entry and feeds each answer back through
 {@link railRoadDistFromWays}; every minute sharing a key shares that answer. -/
@@ -145,7 +145,7 @@ def distinctQueryPoints (ms : Array MinuteFix) : Array MinuteFix :=
 /-- One answered query: the location the shell asked about, and the ways it
 found there.
 
-⚠ A query that failed is simply absent from `answers`. It is not sent as an
+A query that failed is simply absent from `answers`. It is not sent as an
 empty list: `[]` is "nothing within 300 m", which is evidence, and a failure is
 no evidence at all. {@link proximityTable} counts the minutes left unanswered so
 the shell can say which it had. -/
@@ -159,15 +159,15 @@ structure WayAnswer where
 ~11 m cache key, and return the sparse per-minute table plus the number of
 minutes no answer covered.
 
-⚠ THE JOIN IS HERE AND NOT IN THE SHELL. The key that decides which minutes
+The JOIN is here and not in the shell. The key that decides which minutes
 share an answer is {@link coordKey}, and a second copy of it beside the OSM
 call would be a second chance to disagree about how many queries a day needs.
 
-⚠ A MINUTE WITH NOTHING IN RANGE IS OMITTED, not written as `(none, none)`.
+A minute with nothing in range is omitted, not written as `(none, none)`.
 That is the same value the consumer reads for an absent minute
 (`buildObservationTensor` defaults to `(none, none)`), so omitting it is exactly
 equivalent and keeps the table sparse. Absent means "not known to be near
-either" — never "far from both", which would be evidence AGAINST rail. -/
+either" — never "far from both", which would be evidence against rail. -/
 def proximityTable (ms : Array MinuteFix) (answers : Array WayAnswer)
     : Array (Int × Proximity) × Nat := Id.run do
   let mut byKey : Array (String × Proximity) := #[]
@@ -199,12 +199,12 @@ private def W (t s : String) (d : Float) : NearbyWay :=
                               W "highway" "primary" 80])
         == { railDistM := some 12, roadDistM := some 80 }
 
--- ⚠ A TRAM IS NEITHER. Mixed-traffic track is not rail-vs-road evidence, and it
+-- A tram is neither. Mixed-traffic track is not rail-vs-road evidence, and it
 -- must not be counted as a road either.
 #guard (railRoadDistFromWays [W "railway" "tram" 5])
         == { railDistM := none, roadDistM := none }
 
--- ⚠ A railway that is not rail-only does NOT fall through to the road test.
+-- A railway that is not rail-only does not fall through to the road test.
 -- `else if` is what stops a siding counting as a road.
 #guard (railRoadDistFromWays [W "railway" "disused" 5])
         == { railDistM := none, roadDistM := none }
@@ -221,7 +221,7 @@ private def W (t s : String) (d : Float) : NearbyWay :=
 #guard (RAIL_ONLY_SUBTYPES.map (fun s => railRoadDistFromWays [W "railway" s 10])).all
         (fun p => p.railDistM == some 10)
 
--- ⚠ A MISSING DISTANCE IS SKIPPED, not zero. Treating it as 0 would put the fix
+-- A missing distance is skipped, not zero. Treating it as 0 would put the fix
 -- on top of a way nobody measured.
 #guard (railRoadDistFromWays [{ type := "railway", subtype := "rail", distanceM := none },
                               W "railway" "rail" 50])
@@ -229,11 +229,11 @@ private def W (t s : String) (d : Float) : NearbyWay :=
 #guard (railRoadDistFromWays [{ type := "railway", subtype := "rail", distanceM := none }])
         == { railDistM := none, roadDistM := none }
 
--- ⚠ NaN MUST BE SKIPPED, AND THE ORDER OF THE WAYS DECIDES WHETHER A TEST CAN
--- SEE IT. Lean's `min` is `if a ≤ b then a else b`, and every comparison with
+-- NaN must be skipped, and the order of the ways decides whether a test can
+-- see it. Lean's `min` is `if a ≤ b then a else b`, and every comparison with
 -- NaN is false — so `min NaN 25` is 25 (NaN silently dropped) while
 -- `min 25 NaN` is NaN (NaN silently wins). A guard written only the first way
--- passes with the finite check REMOVED, which is how this one started.
+-- passes with the finite check removed, which is how this one started.
 private def NAN_WAY : NearbyWay :=
   { type := "railway", subtype := "rail", distanceM := some (0.0 / 0.0) }
 #guard (railRoadDistFromWays [NAN_WAY, W "railway" "rail" 25]).railDistM == some 25
@@ -241,11 +241,11 @@ private def NAN_WAY : NearbyWay :=
 -- And alone it is nothing in range, not a measured zero.
 #guard (railRoadDistFromWays [NAN_WAY]).railDistM == none
 
--- Zero is a real distance: a fix ON the way.
+-- Zero is a real distance: a fix on the way.
 #guard (railRoadDistFromWays [W "highway" "primary" 0]).roadDistM == some 0
 
--- ⚠ MINUTE BUCKETING. A fix before the day starts or at/after it ends is
--- DROPPED, not clamped — clamping would put a 23:59 fix from yesterday into
+-- Minute bucketing. A fix before the day starts or at/after it ends is
+-- dropped, not clamped — clamping would put a 23:59 fix from yesterday into
 -- minute 0 and give the day a phantom starting location.
 private def P (ts : Int) (lat lon : Float) : GpsPoint :=
   { ts := ts, lat := lat, lon := lon, speedKmh := 0 }
@@ -258,12 +258,12 @@ private def T1 : Int := T0 + 1440 * 60
 #guard (minuteMedians T0 T1 [P T0 51.5 (-0.1)]).size == 1
 #guard (minuteMedians T0 T1 [P T0 51.5 (-0.1)])[0]!.minuteTs == T0
 
--- Fixes inside one minute collapse to ONE entry at the top of that minute.
+-- Fixes inside one minute collapse to one entry at the top of that minute.
 #guard (minuteMedians T0 T1 [P (T0 + 5) 51.0 0, P (T0 + 30) 53.0 0, P (T0 + 59) 52.0 0]).size == 1
 #guard (minuteMedians T0 T1 [P (T0 + 5) 51.0 0, P (T0 + 30) 53.0 0, P (T0 + 59) 52.0 0])[0]!
         == { minuteTs := T0, lat := 52.0, lon := 0.0 }
 
--- ⚠ MEDIAN, NOT MEAN: one wild fix must not drag the query point. The mean of
+-- Median, not mean: one wild fix must not drag the query point. The mean of
 -- 51/52/99 is 67.3; the median is 52.
 #guard (minuteMedians T0 T1 [P (T0+1) 51.0 0, P (T0+2) 52.0 0, P (T0+3) 99.0 0])[0]!.lat == 52.0
 
@@ -271,7 +271,7 @@ private def T1 : Int := T0 + 1440 * 60
 #guard (minuteMedians T0 T1 [P T0 51.0 0, P (T0 + 60) 52.0 0]).size == 2
 #guard (minuteMedians T0 T1 [P T0 51.0 0, P (T0 + 60) 52.0 0])[1]!.minuteTs == T0 + 60
 
--- ⚠ THE CACHE KEY IS THE WHOLE COST ARGUMENT. Two positions ~1 m apart share a
+-- The cache key is the whole cost argument. Two positions ~1 m apart share a
 -- lookup; a stationary day collapses to one query.
 #guard coordKey 51.512345 (-0.123456) == coordKey 51.512349 (-0.123451)
 #guard coordKey 51.5123 (-0.1234) != coordKey 51.5124 (-0.1234)
@@ -281,7 +281,7 @@ private def T1 : Int := T0 + 1440 * 60
 #guard (distinctQueryPoints #[{ minuteTs := 2, lat := 51.9, lon := 0 },
                               { minuteTs := 1, lat := 51.5, lon := 0 }])[0]!.lat == 51.9
 
--- ⚠ THE JOIN. One answer serves every minute whose median rounds to the same
+-- The JOIN. One answer serves every minute whose median rounds to the same
 -- ~11 m key, which is the whole reason a stationary day costs one query.
 private def A (lat lon : Float) (ws : List NearbyWay) : WayAnswer :=
   { lat := lat, lon := lon, ways := ws }
@@ -293,7 +293,7 @@ private def M (ts : Int) (lat lon : Float) : MinuteFix :=
         == (#[(60, { railDistM := none, roadDistM := some 30 }),
               (120, { railDistM := none, roadDistM := some 30 })], 0)
 
--- ⚠ A MINUTE NO ANSWER COVERS IS COUNTED, NOT INVENTED. It leaves no row, so
+-- A minute no answer covers is counted, not invented. It leaves no row, so
 -- the decoder reads it as "not known to be near either" — and the shell can
 -- still say how much of the day that was.
 #guard (proximityTable #[M 60 51.5 0, M 120 52.9 0]
@@ -301,7 +301,7 @@ private def M (ts : Int) (lat lon : Float) : MinuteFix :=
         == (#[(60, { railDistM := some 12, roadDistM := none })], 1)
 #guard (proximityTable #[M 60 51.5 0] #[]) == ((#[] : Array (Int × Proximity)), 1)
 
--- ⚠ ANSWERED-BUT-EMPTY IS A ROW-LESS MINUTE THAT IS NOT UNANSWERED. Both read
+-- Answered-but-empty is a row-less minute that is not unanswered. Both read
 -- as no evidence downstream; only this count tells the shell which it was.
 #guard (proximityTable #[M 60 51.5 0] #[A 51.5 0 []])
         == ((#[] : Array (Int × Proximity)), 0)
@@ -309,7 +309,7 @@ private def M (ts : Int) (lat lon : Float) : MinuteFix :=
 #guard (proximityTable #[M 60 51.5 0] #[A 51.5 0 [W "highway" "footway" 3]])
         == ((#[] : Array (Int × Proximity)), 0)
 
--- Rows come out in MINUTE order, not answer order, so the table reads as a day.
+-- Rows come out in minute order, not answer order, so the table reads as a day.
 #guard ((proximityTable #[M 180 51.9 0, M 60 51.5 0]
           #[A 51.5 0 [W "railway" "rail" 1], A 51.9 0 [W "railway" "rail" 2]]).1.map (·.1))
         == #[180, 60]

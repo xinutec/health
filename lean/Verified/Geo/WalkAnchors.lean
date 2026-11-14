@@ -3,17 +3,17 @@ import Verified.Geo.PathPoint
 /-!
 # Walk endpoint anchors
 
-A walking leg's endpoints are often confidently known from its NEIGHBOURS: the
+A walking leg's endpoints are often confidently known from its neighbours: the
 stay it left or arrived at contributes its centroid, and the train it alighted
 from or boarded contributes the snapped track's terminal vertex — which sits at
 the station to about platform precision. A post-tunnel reacquire smear
 contradicts both, so these anchors pin the reconstruction between the known
 truths.
 
-Only a TEMPORALLY ADJACENT neighbour testifies. Across a long unknown gap the
+Only a temporally adjacent neighbour testifies. Across a long unknown gap the
 endpoint is genuinely unknown, so a neighbour more than three minutes away says
-nothing at all. Note the gap test is ONE-SIDED (`> 180`), so a neighbour that
-OVERLAPS the walk — a negative gap — still testifies.
+nothing at all. Note the gap test is one-sided (`> 180`), so a neighbour that
+overlaps the walk — a negative gap — still testifies.
 
 Wholly exact: the only arithmetic is a timestamp subtraction. UNPROVEN; pinned
 by the `#guard`s.
@@ -48,7 +48,7 @@ def STATION_ANCHOR_SIGMA_M : Float := 15
 biased by the very smear these anchors exist to correct. -/
 def STAY_ANCHOR_SIGMA_M : Float := 25
 
-/-- Which end of the NEIGHBOUR touches the walk. `end` means the walk FOLLOWS
+/-- Which end of the neighbour touches the walk. `end` means the walk follows
 it (take its end coordinate); `start` means the walk precedes it. -/
 inductive Side where
   | «end»
@@ -108,9 +108,9 @@ private def TRACK_FIRST : Option WalkAnchor := some ⟨51.5, -0.1, 15⟩
 private def TRACK_LAST : Option WalkAnchor := some ⟨51.52, -0.12, 15⟩
 
 -- A stay before and a train after: the stay gives its centroid at the softer
--- sigma, the train its FIRST vertex — the walk precedes it.
+-- sigma, the train its first vertex — the walk precedes it.
 #guard walkEndpointAnchors #[stay 0 1000, walk, train 2000 3000] 1 == (STAY_A, TRACK_FIRST)
--- Mirror image: the train is BEFORE, so its LAST vertex is the one touching.
+-- Mirror image: the train is before, so its last vertex is the one touching.
 #guard walkEndpointAnchors #[train 0 1000, walk, stay 2000 3000] 1 == (TRACK_LAST, STAY_A)
 -- 181 s is past the bar on the left; 180 exactly still testifies.
 #guard walkEndpointAnchors #[stay 0 819, walk, train 2000 3000] 1 == (none, TRACK_FIRST)
@@ -118,7 +118,7 @@ private def TRACK_LAST : Option WalkAnchor := some ⟨51.52, -0.12, 15⟩
 -- …and the same bar on the right.
 #guard walkEndpointAnchors #[stay 0 1000, walk, train 2181 3000] 1 == (STAY_A, none)
 #guard walkEndpointAnchors #[stay 0 1000, walk, train 2180 3000] 1 == (STAY_A, TRACK_FIRST)
--- A NEGATIVE gap — the neighbour overlaps the walk — is well under the bar, so
+-- A negative gap — the neighbour overlaps the walk — is well under the bar, so
 -- it testifies. The test is one-sided.
 #guard walkEndpointAnchors #[stay 0 1500, walk, train 2000 3000] 1 == (STAY_A, TRACK_FIRST)
 -- A stay with no centroid, a train with no track, and a track too short to have
@@ -134,12 +134,12 @@ private def TRACK_LAST : Option WalkAnchor := some ⟨51.52, -0.12, 15⟩
 #guard walkEndpointAnchors
   #[{ startTs := 0, endTs := 1000, mode := "walking" }, walk,
     { startTs := 2000, endTs := 3000, mode := "walking" }] 1 == (none, none)
--- effectiveMode: a leg refined TO stationary contributes its centroid…
+-- effectiveMode: a leg refined to stationary contributes its centroid…
 #guard walkEndpointAnchors
   #[{ startTs := 0, endTs := 1000, mode := "walking", refinedMode := some "stationary",
       centroidLat := some 51.4, centroidLon := some (-0.2) }, walk, train 2000 3000] 1
   == (STAY_A, TRACK_FIRST)
--- …and one refined AWAY from train does not contribute its track.
+-- …and one refined away from train does not contribute its track.
 #guard walkEndpointAnchors
   #[stay 0 1000, walk,
     { startTs := 2000, endTs := 3000, mode := "train", refinedMode := some "walking",

@@ -4,7 +4,7 @@ import Verified.Geo.WalkableRoute
 
 `EnrichedSegment` carries four derived polylines: `snappedPath` (rail track),
 `matchedPath` (street network), `walkMatchedPath` (walkable network) and
-`walkSmoothedPath` (MAP reconstruction), all of one shape.
+`walkSmoothedPath` (map reconstruction), all of one shape.
 
 The Lean port grew a separate vertex record per module, and they diverged on
 one field: `ts` came out `Int` where a module only ever compared timestamps, and

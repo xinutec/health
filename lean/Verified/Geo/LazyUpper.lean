@@ -7,9 +7,9 @@ The route reconstruction turns the `prev`-chain into a real costed walk
 (`LazyEdge`), and `settle_price` (`LazyLive`) pins each vertex's settle price to
 its `dist`. What is still missing for weight-optimality is the *value* half —
 that a settled vertex's `dist` is the length of the reconstructed route. That
-splits into two bounds, and this file supplies the **upper** one:
+splits into two bounds, and this file supplies the upper one:
 
-> `UInv`: for every edge `(v, w)` out of a **done** vertex `u` whose distance is
+> `UInv`: for every edge `(v, w)` out of a done vertex `u` whose distance is
 > within the radius (`dist[u] ≤ maxR`), `dist[v] ≤ dist[u] + w`.
 
 It is the "relaxation reached everyone it could" fact: once `u` is settled *by

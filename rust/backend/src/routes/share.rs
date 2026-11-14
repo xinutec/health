@@ -4,30 +4,30 @@
 //! access to the last N days, so these four handlers are the only place a user
 //! can widen or close that.
 //!
-//! ⚠ THESE ARE THE FIRST WRITE ROUTES IN THIS ROUTER, which makes the layer
+//! ⚠ these are the first write routes in this router, which makes the layer
 //! order in `routes::mod` load-bearing rather than theoretical. `require_session`
-//! must run BEFORE `require_may_proceed`, because the latter reads the session
+//! must run before `require_may_proceed`, because the latter reads the session
 //! out of the request extensions to decide whether a share viewer may write.
 //! Run the wrong way round, a recipient's POST is judged before their session
 //! exists, looks anonymous, is therefore not a share viewer, and is allowed —
 //! a read-only link that can rotate its owner's token.
 //!
-//! # `daysBack` CLAMPS here and REJECTS on a read
+//! # `daysBack` clamps here and rejects on a read
 //!
-//! ⚠ `?days=400` on `/activity` is an error; `daysBack: 400` here is silently
+//! `?days=400` on `/activity` is an error; `daysBack: 400` here is silently
 //! narrowed to 365. Same API, same domain, opposite behaviour, both kept
 //! because clients rely on them. See `Verified.Share.clampShareDaysBack` against
 //! `Verified.ApiWindow.validateDays`.
 //!
-//! ⚠ A non-number is a THIRD case, distinct from out-of-range: it is not
-//! clamped, it is refused, and then POST and PATCH disagree about what to do
-//! with the refusal. POST falls back to 7; PATCH answers 400. A host that
+//! A non-number is a third case, distinct from out-of-range: it is not
+//! clamped, it is refused, and then POST and patch disagree about what to do
+//! with the refusal. POST falls back to 7; patch answers 400. A host that
 //! collapsed them would either reject a bodyless create or quietly retune a
 //! live link to a week.
 //!
 //! # Rotation is DELETE + INSERT, in one transaction
 //!
-//! The old token's row is GONE, so a leaked link stops working immediately
+//! The old token's row is gone, so a leaked link stops working immediately
 //! rather than expiring. The transaction is what stops a concurrent read seeing
 //! the gap in between and concluding the share was revoked.
 
@@ -47,7 +47,7 @@ use crate::{lean, row_json};
 
 /// The default window when a create request says nothing usable.
 ///
-/// ⚠ Seven days, and it is NOT `SHARE_DAYS_MIN`. A create with no body opens a
+/// Seven days, and it is not `SHARE_DAYS_MIN`. A create with no body opens a
 /// week of history, so a mistaken POST is not harmless.
 const DEFAULT_DAYS_BACK: i64 = 7;
 
@@ -62,7 +62,7 @@ pub struct Body {
 
 /// `daysBack` from a JSON body, as `clampShareDaysBack` sees it.
 ///
-/// ⚠ A numeric string is not a number: `{"daysBack": "7"}` is refused, not
+/// A numeric string is not a number: `{"daysBack": "7"}` is refused, not
 /// parsed. That is the opposite of the query-parameter path, where everything
 /// arrives as a string and is coerced.
 fn days_back_of(body: Option<&Body>) -> Option<i64> {
@@ -75,18 +75,18 @@ fn days_back_of(body: Option<&Body>) -> Option<i64> {
 
 /// One share row, as the client reads it.
 ///
-/// ⚠ `createdAt` is `Date.toISOString()`, which is the same string
+/// `createdAt` is `Date.toISOString()`, which is the same string
 /// `JSON.stringify` produces for a Date — so this reuses the row renderer's
 /// formatter rather than inventing a second one.
 /// `GET`/`POST`/`PATCH /share`'s answer, in both of its shapes.
 ///
-/// ⚠ ONE STRUCT FOR A TAGGED PAIR, and the tag is `active`. With no link the
-/// other keys are ABSENT, not null — the settings page renders the create
+/// One struct for a tagged pair, and the tag is `active`. With no link the
+/// other keys are absent, not null — the settings page renders the create
 /// button off `active: false` alone — so every optional carries
 /// `skip_serializing_if`.
 ///
-/// ⚠ `last_accessed_at` is `Option<Option<_>>` and that is not a typo. The
-/// OUTER absence means "there is no link"; `Some(None)` means "a link nobody
+/// `last_accessed_at` is `Option<Option<_>>` and that is not a typo. The
+/// outer absence means "there is no link"; `Some(None)` means "a link nobody
 /// has opened yet" and must serialize as an explicit `null`. Collapsing the two
 /// would make an unopened link indistinguishable from no link at all.
 #[derive(Serialize)]
@@ -108,7 +108,7 @@ pub struct ShareStatus {
 }
 
 impl ShareStatus {
-    /// "You have no share link" — an ANSWER with a 200, not a 404.
+    /// "You have no share link" — an answer with a 200, not a 404.
     fn inactive() -> Self {
         Self {
             active: false,
@@ -164,7 +164,7 @@ pub async fn get(
 ) -> Response {
     match fetch(&st, &session.user_id).await {
         Err(e) => oops(&e),
-        // ⚠ `{active: false}` and a 200, not a 404. "You have no share link" is
+        // `{active: false}` and a 200, not a 404. "You have no share link" is
         // an answer, and the settings page renders it as the create button.
         Ok(None) => Json(ShareStatus::inactive()).into_response(),
         Ok(Some(row)) => match share_json(&st, &row) {
@@ -174,7 +174,7 @@ pub async fn get(
     }
 }
 
-/// `POST /share` — create or ROTATE. The previous token stops working.
+/// `POST /share` — create or rotate. The previous token stops working.
 pub async fn post(
     State(st): State<AppState>,
     Extension(session): Extension<UserSession>,
@@ -211,9 +211,9 @@ pub async fn post(
     }
 }
 
-/// DELETE + INSERT in ONE transaction.
+/// DELETE + INSERT in one transaction.
 ///
-/// ⚠ The transaction is not ceremony. Without it a concurrent read lands
+/// The transaction is not ceremony. Without it a concurrent read lands
 /// between the two statements, finds no row, and tells the user their share is
 /// revoked — which is exactly the moment they are looking at the settings page.
 async fn rotate(
@@ -243,7 +243,7 @@ async fn rotate(
         .ok_or_else(|| anyhow::anyhow!("share row vanished immediately after insert"))
 }
 
-/// `PATCH /share` — retune the window WITHOUT rotating, so the link keeps
+/// `PATCH /share` — retune the window without rotating, so the link keeps
 /// working.
 pub async fn patch(
     State(st): State<AppState>,
@@ -254,7 +254,7 @@ pub async fn patch(
     let share_location = body.as_ref().and_then(|b| b.share_location);
     let asks_days = body.as_ref().is_some_and(|b| b.days_back.is_some());
     let requested = days_back_of(body.as_ref());
-    // ⚠ REJECTS where POST defaults. A PATCH is aimed at a live link, and
+    // Rejects where POST defaults. A patch is aimed at a live link, and
     // quietly retuning it to seven days because the body was malformed would
     // change what a recipient can see without anyone asking for it. A body
     // that only sets `shareLocation` leaves the window as it is.
@@ -289,7 +289,7 @@ pub async fn patch(
 
     match updated {
         Err(e) => oops(&e),
-        // ⚠ 404 rather than creating one. An update to a share that does not
+        // 404 rather than creating one. An update to a share that does not
         // exist is a mistake worth reporting, not an invitation to open access.
         Ok(None) => (
             StatusCode::NOT_FOUND,

@@ -18,7 +18,7 @@ import Verified.Geo.Landmarks
 /-!
 # The naming tail
 
-The decoder draws the day (`DayEntry.decoderSegs`); these passes NAME what it
+The decoder draws the day (`DayEntry.decoderSegs`); these passes name what it
 drew — the track a ride ran on, the bus, the roads of a walk, the zone, the
 biometrics, the decoder's places, the station a stay beside a ride is at — and
 settle a ride's edges against the fixes. They run in order, each consuming what
@@ -34,21 +34,21 @@ The day's observations and the shell's lookups arrive as one record rather than
 as 20 parameters, so adding a pass that needs a new lookup does not re-thread
 every call site. Three kinds of field live in it:
 
-* **Observations** — the Kalman track, the pre-Kalman coarse fixes, the step
+* Observations — the Kalman track, the pre-Kalman coarse fixes, the step
   rows.
-* **Mirror reads**: station / line / way lookups against the local OSM mirror,
+* Mirror reads: station / line / way lookups against the local OSM mirror,
   as functions of a coordinate.
-* **Shell callbacks** — the two things Lean cannot do and does not pretend to:
+* Shell callbacks — the two things Lean cannot do and does not pretend to:
   venue re-resolution (`bestPlace`) and the IANA zone at a coordinate (`tzAt`).
 
 ## Why the fixes are projected rather than unified
 
 Every pass declares the fix shape it reads, and they differ: some want a speed
-per fix, most want only a position and a timestamp. The env carries the RICHEST
+per fix, most want only a position and a timestamp. The env carries the richest
 one and narrows at each call site.
 
-That is safe HERE in a way it would not be for the segment record, and the
-difference is worth stating: a fix is INPUT, which no pass writes. Narrowing an
+That is safe here in a way it would not be for the segment record, and the
+difference is worth stating: a fix is input, which no pass writes. Narrowing an
 input to the fields a consumer declares cannot lose a write, because there are
 none. The segment record is the opposite — every pass rewrites it — so a
 narrowed segment silently drops whatever an earlier pass wrote into a field the
@@ -86,7 +86,7 @@ structure Env where
   /-- The Kalman-filtered track, carrying the per-fix speed the ride-head and
   rail passes read. Every other pass takes a narrowing of it. -/
   points : Array Shed.PointF
-  /-- The RAW, pre-Kalman fixes. The underground reconstruction mines these
+  /-- The raw, pre-Kalman fixes. The underground reconstruction mines these
   because smoothing destroys the coarse cell-network pattern it looks for. -/
   rawFixes : Array CoarseFix
   /-- Per-minute step rows. -/
@@ -100,7 +100,7 @@ structure Env where
   linesAtPoint : Float → Float → Float → Array String
   /-- `osm.nearbyWays(lat, lon)`. -/
   nearbyWays : Float → Float → Array Verified.Geo.RefineMode.NearbyWay
-  /-- SHELL: re-resolve a merged stay's venue from its combined centre. An OSM
+  /-- Shell: re-resolve a merged stay's venue from its combined centre. An OSM
   call, supplied by the caller so the pass around it lives here whole. -/
   bestPlace : Float → Float → Int → Int → String → Option Verified.Geo.SegmentMerge.ResolvedPlace
   /-- Name a stay the way the enrichment stage names every stay — election of
@@ -108,7 +108,7 @@ structure Env where
   ({@link Verified.Geo.EnrichFold.nameStay}). `walkDwell` hands its carved
   stops to this; the identity default leaves them unnamed. -/
   nameStay : Seg → Seg := id
-  /-- SHELL: the IANA zone at a coordinate. tzdata, not arithmetic.
+  /-- Shell: the IANA zone at a coordinate. tzdata, not arithmetic.
 
   Total here, so a fallback to `homeTz` when the lookup fails belongs to
   whoever supplies the function. -/
@@ -117,7 +117,7 @@ structure Env where
   covers, and the fallback when the zone lookup fails. -/
   homeTz : String := "Europe/London"
   /-- `osm.stationsOnLine(line)` — every station the line serves, with the
-  coordinate of its canonical node. The RICHEST of the three shapes the passes
+  coordinate of its canonical node. The richest of the three shapes the passes
   ask for; the other two are projections of it. -/
   stationsOnLine : String → Array LineStation := fun _ => #[]
   /-- `rail_route_cache` rows, filled offline by `refresh-rail-routes`. -/
@@ -139,7 +139,7 @@ structure Env where
   /-- Mined focus places, for the far-phantom swallow. -/
   knownPlaces : Array Verified.Geo.SegmentMerge.KnownPlaceProjection := #[]
   /-- `focus_places.unique_days` by id — how established a place is. The
-  transit-interchange labeller reads it as a PROVENANCE guard: a stay the
+  transit-interchange labeller reads it as a provenance guard: a stay the
   posterior assigned to a place visited on many days is a destination, not a
   platform, and the rename is refused. A separate field because
   `KnownPlaceProjection` carries geometry only. -/
@@ -148,7 +148,7 @@ structure Env where
   hr : List Verified.Geo.BiometricWindows.HrPoint := []
   /-- Sleep-stage windows. -/
   sleep : List Verified.Geo.BiometricWindows.SleepStage := []
-  /-- SHELL: re-derive one split walk's enrichment from its own geometry.
+  /-- Shell: re-derive one split walk's enrichment from its own geometry.
   `none` is a failed re-enrichment, and the answer to that is to leave the leg
   honestly unnamed rather than confidently wrong, so the caller keeps the
   segment as it stands. The only genuinely async pass in the cascade; what is
@@ -156,7 +156,7 @@ structure Env where
   reenrich : Seg → Option Seg := fun _ => none
   /-- The road matcher's shell: the street-network read and the solver.
 
-  ⚠ **THE UNFED READ DECLINES, IT DOES NOT ANSWER EMPTY**. A shell
+  ⚠ the unfed read declines, it does not answer empty. A shell
   nobody wired has no mirror behind it, and "there are no roads here" is a claim
   about the world that an unwired shell is in no position to make. The pass
   leaves the leg raw either way, so this changes no drawing — what it changes is
@@ -174,7 +174,7 @@ structure Env where
       refineMatched := fun _ _ => none
       correct := fun drawn _ _ => drawn
       snapPassages := fun drawn _ => drawn }
-  /-- The DISPLAY fixes — a different series from `points`, carrying the
+  /-- The display fixes — a different series from `points`, carrying the
   phone's self-reported accuracy the walk draw weighs. -/
   displayFixes : Array Verified.Geo.WalkAnnotate.PedFix := #[]
   /-- Kalman speed at a timestamp, for the walk matcher's pace gate. -/
@@ -210,7 +210,7 @@ def Env.biomSteps (e : Env) : List Verified.Geo.BiometricWindows.StepPoint :=
 The mirror lookups take a radius, and it is the caller that picks one: the same
 lookup reaches for a different distance depending on which pass is asking.
 
-UNPINNED, and that is a gap rather than a decision: nothing here brackets them,
+Unpinned, and that is a gap rather than a decision: nothing here brackets them,
 because the fold has no scenario guards yet. The pass each one feeds does pin
 its own behaviour, so a wrong value surfaces as a wrong answer rather than as
 silence — but that is weaker than a fixture either side of the bar. -/
@@ -224,7 +224,7 @@ def LINES_AT_POINT_DEFAULT_RADIUS_M : Float := 100
 Every other entry names a function some module owns. These two are written
 here: they are pass bodies, not wiring, and belong to the fold in the same way. -/
 
-/-- Fixes covering a segment's window. `samplesInWindow`: INCLUSIVE both ends,
+/-- Fixes covering a segment's window. `samplesInWindow`: inclusive both ends,
 the pipeline's dominant reading. -/
 private def inWindow (e : Env) (s : Seg) : Array Shed.PointF :=
   Verified.SpeedFix.within e.points s.startTs s.endTs
@@ -258,7 +258,7 @@ def displayTz (e : Env) (segs : Array Seg) : Array Seg :=
 
 /-- Name a train-bracketed stay after its station.
 
-Runs LAST because the train adjacency is only final once the rail passes and
+Runs last because the train adjacency is only final once the rail passes and
 `repairHandoff` have absorbed the slivers between the change and the next ride;
 the early place enrichment that named the stay had no transit context at all.
 
@@ -341,7 +341,7 @@ private def boardingNames (e : Env) (segs : Array Seg) : Array (Option (String �
     match segs[i]? with
     | some w => let pts := inWindow e w; !pts.isEmpty && pts.all (inStation e st)
     | none => false
-  -- A stay the station BUILDING encloses (`placeKind`, written by the namer
+  -- A stay the station building encloses (`placeKind`, written by the namer
   -- with the name), given the station nodes in range of it.
   let enclosedAt (i : Nat) : Array String := Id.run do
     let some s := segs[i]? | return #[]
@@ -502,7 +502,7 @@ def passes (e : Env) : Array Pass := #[
     Verified.Geo.RailReconcile.annotateSnappedPaths segs e.railRouteCache),
 
   -- A refined-driving leg whose boarding wait and mid-leg dwells coincide with
-  -- bus_stop nodes is a bus. After all mode refinement, so it judges the FINAL
+  -- bus_stop nodes is a bus. After all mode refinement, so it judges the final
   -- driving legs.
   ("busEvidence", fun segs =>
     Verified.Geo.Bus.annotateBusEvidence segs e.geoFixes.toList e.transitStops e.boundarySlackS),
@@ -517,7 +517,7 @@ def passes (e : Env) : Array Pass := #[
 
   -- Snap each road-vehicle leg onto the street network so the map draws it on
   -- the road instead of the raw GPS zigzag through buildings. After all mode
-  -- refinement, so it only matches the FINAL road legs. Purely additive: with
+  -- refinement, so it only matches the final road legs. Purely additive: with
   -- no road data it is a no-op and the raw track draws.
   ("roadMatch", fun segs =>
     Verified.Geo.RoadMatchAnnotate.annotateRoadMatches e.roadEnv segs e.points),
@@ -533,7 +533,7 @@ def passes (e : Env) : Array Pass := #[
   ("displayTz", fun segs => displayTz e segs),
 
   -- Final cross-modal enrichment: HR, sleep and step stats per segment. Missing
-  -- Fitbit data leaves the enrichment's own fields empty — which is NOT the
+  -- Fitbit data leaves the enrichment's own fields empty — which is not the
   -- same as the field being absent, and the segment record keeps both readings
   -- apart.
   ("biomEnrich", fun segs =>
@@ -549,7 +549,7 @@ def passes (e : Env) : Array Pass := #[
     if e.hmmDecode.isEmpty then segs
     else Verified.Geo.PlaceOverride.applyHsmmPlaceOverride segs e.hmmDecode e.hsmmPlaces),
 
-  -- A stay at a station bracketed by trains on BOTH sides is a change of
+  -- A stay at a station bracketed by trains on both sides is a change of
   -- trains, not a venue visit — name it the station so a co-located shop cannot
   -- surface as a destination.
   -- The waits before a train are at the station; first, so a change of trains
@@ -561,12 +561,12 @@ def passes (e : Env) : Array Pass := #[
   ("alightAfterHold", fun segs => alightAfterHold e segs),
   ("alightAtLastFix", fun segs => alightAtLastFix e segs),
 
-  -- The track again, for each run's FINAL label: the passes since `railSnap`
+  -- The track again, for each run's final label: the passes since `railSnap`
   -- can relabel a ride, and the early track stays on it otherwise.
   ("railSnapFinal", fun segs =>
     Verified.Geo.RailReconcile.reattachSnappedPaths segs e.railRouteCache),
 
-  -- LAST. `driving` is this cascade's placeholder for "a vehicle-speed run
+  -- Last. `driving` is this cascade's placeholder for "a vehicle-speed run
   -- nobody has identified yet"; the rail and bus passes have now all had their
   -- chance to claim it, so a placeholder still wearing the name of a car must
   -- justify it with road evidence or be demoted to an honest `vehicle`.
@@ -606,7 +606,7 @@ passed every guard, as did feeding a pass an empty fix array, and as did a
 fabricated radius. An order guard cannot see whether an entry is connected:
 wrong function, wrong argument, and no function at all read the same to it.
 
-So each pass gets a day it demonstrably rewrites. This is a REACHABILITY check,
+So each pass gets a day it demonstrably rewrites. This is a reachability check,
 not a parity check — what a pass decides is pinned in the module that decides
 it, and restating that here would be transcription rather than a second check.
 What is checked here is the thing only this module can get wrong: that the
@@ -658,12 +658,12 @@ private def withTrack (pts : Array Shed.PointF) (steps : Array StepPoint) : Env 
     points := pts
     steps := steps
     nearbyStations := stationsAt
-    -- RADIUS-SENSITIVE on purpose. A lookup that ignores its radius makes the
+    -- Radius-sensitive on purpose. A lookup that ignores its radius makes the
     -- constant the caller passes unfalsifiable: `LINES_AT_POINT_DEFAULT_RADIUS_M`
     -- could be anything, including the fabricated `0` this fold nearly shipped.
     -- Answering only for a real radius puts that constant inside the guards.
     linesAtPoint := fun _ _ r => if r ≥ 50 then #["Metropolitan"] else #[]
-    -- DIFFERENT from `homeTz`, on purpose: with both answering London a
+    -- Different from `homeTz`, on purpose: with both answering London a
     -- `displayTz` that never looked anything up would be indistinguishable from
     -- one that did, and the fallback branch would be untestable.
     tzAt := fun _ _ => "Europe/Amsterdam"
@@ -709,12 +709,12 @@ private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
   snappedPath := some #[⟨0, 0, 1000⟩, ⟨0, 1, 2000⟩] }]
 -- Any segment a fix covers gets a zone. `tzAt` answers Amsterdam and `homeTz`
 -- is London, so a pass that fell back instead of looking up would still differ
--- from the input and pass here — what pins the BRANCH is the pair of guards on
+-- from the input and pass here — what pins the branch is the pair of guards on
 -- `displayTz` itself, below.
 #guard fires MIX "displayTz" #[wk 0 3000]
 -- Every segment leaves with an enrichment attached. Asserting only that the
 -- field went from `none` to `some` would be satisfied by a pass that attached a
--- DEFAULT, so the mean of the two in-window samples is what is checked.
+-- default, so the mean of the two in-window samples is what is checked.
 #guard fires MIX "biomEnrich" #[wk 0 3000]
 #guard ((runNamed MIX "biomEnrich" #[wk 0 3000])[0]!.biometrics.map (·.hrMean)) == some (some 70)
 -- …and a window the samples miss gets an enrichment whose HR fields are empty,
@@ -767,8 +767,8 @@ coordinate, and the fallback, untested. -/
 #guard (displayTz MIX #[wk 100000 200000])[0]!.displayTz == some "Europe/London"
 -- One a fix covers takes the lookup's answer.
 #guard (displayTz MIX #[wk 0 3000])[0]!.displayTz == some "Europe/Amsterdam"
--- Stationary reads the CENTROID, moving the MIDPOINT. The window has to span
--- the pace change for that to be a distinction at all: over a UNIFORM stretch
+-- Stationary reads the centroid, moving the midpoint. The window has to span
+-- the pace change for that to be a distinction at all: over a uniform stretch
 -- the mean position and the middle sample are the same point, so a pass that
 -- used one for both would pass. Across 0-6000 the ride pulls the mean far ahead
 -- of the middle sample — centroid ≈ 11.9 km, midpoint 3.3 km — and the lookup
@@ -780,8 +780,8 @@ private def byLat : Env :=
 #guard (displayTz byLat #[{ startTs := 0, endTs := 6000, mode := "walking" }])[0]!.displayTz
   == some "south"
 
-/-- A fix at `metresNorth` of the origin. The boundary passes read TRANSLATION
-and PACE out of the track, so a witness for one needs both stated per fix rather
+/-- A fix at `metresNorth` of the origin. The boundary passes read translation
+and pace out of the track, so a witness for one needs both stated per fix rather
 than inferred from the segment. -/
 private def fxm (ts : Int) (metresNorth speedKmh : Float) : Shed.PointF :=
   { ts, lat := lat0 + metresNorth * mlat, lon := lon0, speedKmh }
@@ -855,10 +855,10 @@ private def longRide : Seg := tr 0 1000 (some "B → V · L")
 #guard !fires (lastAt 1000 #[{ terminus with subtype := "subway" }]) "alightAtLastFix" #[longRide]
 #guard !fires (lastAt 800 #[terminus]) "alightAtLastFix" #[longRide]
 
-/-- A road-vehicle leg at a bus's average pace. ⚠ `dr` declares 45 km/h and the
+/-- A road-vehicle leg at a bus's average pace. `dr` declares 45 km/h and the
 matcher reads `seg.avgSpeed`, not the trace — `busSpeedPlausibility` is a sigmoid
 about `BUS_SPEED_MID_KMH = 38`, so 45 scores 0.24 against a 0.6 floor and a `dr`
-leg over this same geometry is REFUSED for being too fast to be a bus. That is
+leg over this same geometry is refused for being too fast to be a bus. That is
 the pass working; the leg has to claim a bus's speed because that is the field
 the decision is made on. -/
 private def bus (a b : Int) : Seg :=
@@ -877,9 +877,9 @@ private def mlon : Float := 1 / (111320 * 0.62241594)
 
 /-- A road running due north, and a track that zigzags 32 m either side of it.
 
-⚠ THE ZIGZAG IS THE WITNESS, not decoration. `matchImprovesDisplay` asks three
-things at once — the raw line must be FARTHER than `NEEDS_MATCH_M` = 25 m from
-the ways, the matched line must be CLOSER than the raw one, and the matched line
+The zigzag is the witness, not decoration. `matchImprovesDisplay` asks three
+things at once — the raw line must be farther than `NEEDS_MATCH_M` = 25 m from
+the ways, the matched line must be closer than the raw one, and the matched line
 must stay within `MATCH_MAX_STRAY_M` = 40 m of the fixes. 32 m clears the first
 and third with room, and snapping to the road answers the second. MIX cannot
 witness this pass at any segment: its track is already a straight line, so
@@ -897,7 +897,7 @@ private def straightWay : Verified.Geo.OsmCorridor.Way :=
 
 /-- The shell answered: the leg's own fixes pulled onto the road's centreline.
 
-⚠ `roadEnv`'s two leaves are FUNCTIONS defaulting to no ways and `none`, so the
+`roadEnv`'s two leaves are functions defaulting to no ways and `none`, so the
 pass is a documented no-op on a bare env and no arrangement of fixes alone can
 witness it. What this pins is that the fold reaches the pass and writes what its
 shell answered — the solver itself lives outside Lean. -/
@@ -911,7 +911,7 @@ private def ROADMATCH : Env :=
 #guard fires ROADMATCH "roadMatch" #[dr 3000 4200]
 
 /-- The same ragged track as `PedFix`, which is the series the walk matcher
-reads — `displayFixes` is a DIFFERENT series from `points` and defaults empty, so
+reads — `displayFixes` is a different series from `points` and defaults empty, so
 a walk witness has to supply it explicitly. -/
 private def raggedPed : Array Verified.Geo.WalkAnnotate.PedFix :=
   raggedRoad.map fun p => { ts := p.ts, lat := p.lat, lon := p.lon, accuracy := some 8 }
@@ -937,10 +937,10 @@ private def WALKMATCH : Env :=
 /-- A standstill at the stop, then a ride at ~40 km/h with two dwells in it —
 `Bus`'s own `AnnotateGuards` fixture, in this module's coordinates.
 
-⚠ THE DWELLS ARE THE WHOLE POINT and are why MIX cannot witness this pass: the
-scorer reads a BOARDING WAIT before the leg and mid-leg STOPS inside it, and
+The dwells are the whole point and are why MIX cannot witness this pass: the
+scorer reads a boarding wait before the leg and mid-leg stops inside it, and
 MIX's track moves at a constant pace from end to end. The standstill before
-`startTs` is not padding either — `detectBoardingWait` looks BACKWARD from the
+`startTs` is not padding either — `detectBoardingWait` looks backward from the
 leg start, so a leg that begins at the first moving fix has no wait to find. -/
 private def busEvidenceTrack : Array Shed.PointF := Id.run do
   let mut out : Array Shed.PointF := #[]
@@ -969,8 +969,8 @@ without a witness cannot slip in as covered. To witness a new pass, run it
 against the existing fixtures first, then lift a fixture from the guards of the
 module that owns it.
 
-⚠ `roadMatch` and `walkMatch` are answered by an injected shell, so their
-guards show that the fold REACHES the pass and writes what the shell returned;
+`roadMatch` and `walkMatch` are answered by an injected shell, so their
+guards show that the fold reaches the pass and writes what the shell returned;
 the solvers live outside Lean and are not under test. -/
 def unwitnessed : Array String :=
   #[]

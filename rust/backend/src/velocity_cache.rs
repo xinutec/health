@@ -5,7 +5,7 @@
 //! deterministic for a given `(user, date, tz, walkMatch)`. The user revisits
 //! the same day several times in a session, so repeat views read from here.
 //!
-//! # ⚠ Nothing here decides anything
+//! # Nothing here decides anything
 //!
 //! How long an entry may be reused, and how many to keep, are
 //! `Verified.VelocityCache`. This is the map, the eviction order and the
@@ -29,7 +29,7 @@
 //! No schema-version tag and no invalidation hook: a deploy restarts the pod
 //! and that is the invalidation. The cost is a cold cache after each deploy.
 //!
-//! ⚠ **There is no invalidation and no generation counter**, because nothing
+//! There is no invalidation and no generation counter, because nothing
 //! changes an answer under a running pod: a deploy restarts it. Anything that
 //! later changes the pipeline's answer under a running pod has to bring both;
 //! this paragraph is the note that says so. The drain beside the pod
@@ -64,7 +64,7 @@ struct Entry {
 /// The cache. One per process; `AppState` holds it behind an `Arc`.
 #[derive(Default)]
 pub struct VelocityCache {
-    /// ⚠ Insertion-ordered, oldest first, because the eviction rule is "drop the
+    /// Insertion-ordered, oldest first, because the eviction rule is "drop the
     /// oldest" and a `HashMap` has no oldest. A `Vec` rather than an ordered-map
     /// crate: the bound is 32, so a linear scan is free and the order is visible
     /// in the type instead of being a property of a dependency.
@@ -80,8 +80,8 @@ impl VelocityCache {
 
     /// Drop every entry past its own window.
     ///
-    /// ⚠ Freshness is Lean's — including the rule that an entry stamped in the
-    /// FUTURE is stale. Plain `now - cached_at < ttl` reads a far-future entry
+    /// Freshness is Lean's — including the rule that an entry stamped in the
+    /// future is stale. Plain `now - cached_at < ttl` reads a far-future entry
     /// as eternally fresh, which is the one staleness failure that never expires
     /// by itself.
     fn sweep(entries: &mut Vec<Entry>, now_ms: i64) -> Result<()> {
@@ -146,7 +146,7 @@ impl VelocityCache {
     ///
     /// This takes a per-key lock instead, and the waiter re-reads the cache
     /// after acquiring it. Same guarantee about parallelism; the difference is
-    /// on FAILURE, where a waiter recomputes rather than inheriting the first
+    /// on failure, where a waiter recomputes rather than inheriting the first
     /// caller's error. That is the better answer for a transient fault and a
     /// worse one for a persistent it — bounded by the number of waiters, which
     /// is the number of tabs.
@@ -172,7 +172,7 @@ impl VelocityCache {
         };
         let guard = lock.lock().await;
 
-        // ⚠ RE-READ under the lock. The holder we just queued behind may have
+        // Re-read under the lock. The holder we just queued behind may have
         // seated exactly what this request wanted, and computing again would be
         // the parallel run the lock exists to prevent, merely serialised.
         let out = match self.take_fresh(key, now_ms)? {
@@ -183,7 +183,7 @@ impl VelocityCache {
             None => {
                 tracing::debug!(key, "velocity-cache MISS");
                 match compute().await {
-                    // ⚠ A day still being decoded seats NOTHING either: its
+                    // A day still being decoded seats nothing either: its
                     // decode lands within minutes, and a seated "decoding"
                     // would be served for the whole TTL after it had.
                     Ok(result) if result.get("decoding").and_then(Value::as_bool) == Some(true) => {
@@ -193,7 +193,7 @@ impl VelocityCache {
                         self.seat(key, &result, now_ms, policy)?;
                         Ok(result)
                     }
-                    // ⚠ A failed compute seats NOTHING. Caching an error would
+                    // A failed compute seats nothing. Caching an error would
                     // serve it for the whole TTL to requests that might have
                     // succeeded.
                     Err(e) => Err(e),

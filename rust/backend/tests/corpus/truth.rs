@@ -24,7 +24,7 @@
 //! `KNOWN_UNHELD` is filtered the same way, or a one-day run would report the
 //! exempted rows holding again on days it never opened.
 //!
-//! ⚠ `TRUTH_BLESS` does not shard: it rewrites one floor file, so two shards
+//! `TRUTH_BLESS` does not shard: it rewrites one floor file, so two shards
 //! would race on it and half a corpus would read as complete. `corpus_gate`
 //! runs shard 0 over all days and stands the others down for a bless.
 //!
@@ -53,7 +53,7 @@ pub const NAME_CONFIDENCE: &str = concat!(
 );
 
 /// Per naming rule, `(right, graded)` over one day's graded stay rows: each row
-/// that asserts a stationary or sleeping PLACE and carries a clean verdict is
+/// that asserts a stationary or sleeping place and carries a clean verdict is
 /// counted under the rule that named the state its verdict was read from
 /// (`covering`, the truth check's own midpoint lookup), when that state is a
 /// stay. A row whose verdict came from no stay judged no name, and a state with
@@ -140,7 +140,7 @@ struct Resolved {
 
 /// Parse a narrative and resolve its civil windows through the tz database.
 ///
-/// ⚠ The zone is the narrative's when it declares one: `parseGroundTruth`
+/// The zone is the narrative's when it declares one: `parseGroundTruth`
 /// returns the zone it read the clock times in, which a `Times:` line can
 /// override. The fixture's zone would shift every window on those days.
 fn resolve_narrative(date: &str, tz: &str) -> Option<Resolved> {
@@ -196,10 +196,10 @@ pub struct Truth {
     /// like losing everything; excluded by name.
     reported: BTreeSet<String>,
     /// `TRUTH_ROWS_OUT`: every narrative row with its resolved window, one
-    /// JSON line per date, APPENDED so the shards do not clobber each other.
+    /// JSON line per date, appended so the shards do not clobber each other.
     rows_out: Option<String>,
     failures: Vec<String>,
-    /// ⚠ Injection makes the run report-only: a floor graded on injected priors
+    /// Injection makes the run report-only: a floor graded on injected priors
     /// would enforce against an arm nobody blessed.
     report_only: bool,
     tally_v: usize,
@@ -280,7 +280,7 @@ impl Truth {
         }
 
         let states = rep.out["states"].as_array().cloned().unwrap_or_default();
-        // ⚠ Non-vacuity. `states` is read by key, and a moved key yields an
+        // Non-vacuity. `states` is read by key, and a moved key yields an
         // empty slice, not an error: every row would regress at once, reading
         // like a pipeline collapse rather than a wiring bug.
         if states.is_empty() {
@@ -422,7 +422,7 @@ impl Truth {
         let s = self.standing.entry(date.to_string()).or_default();
         for (i, verdict) in verdicts.iter().enumerate() {
             match verdict.as_str() {
-                // `verified | regressed` IS the enforceable-`correct` set:
+                // `verified | regressed` is the enforceable-`correct` set:
                 // those are the only two verdicts such a row can take.
                 Some("verified") => {
                     d.push(narrative.starts[i]);
@@ -544,7 +544,7 @@ impl Truth {
             // held, so they sit under the floor and no gate will go red for
             // them; someone has to read this line.
             //
-            // ⚠ A malformed cell lands here looking like a defect: a way cell
+            // A malformed cell lands here looking like a defect: a way cell
             // naming a composed label ("A, B") matches no component. Check the
             // cell first; `../README.md` has the rule.
             for (date, rows) in &self.standing {
@@ -553,11 +553,11 @@ impl Truth {
                 }
             }
         }
-        // ⚠ Refusals, not failures; the count is not debt. `rowVerdict`
+        // Refusals, not failures; the count is not debt. `rowVerdict`
         // declines a row whose status is `partial`/`unclear`, or whose
         // provenance is untrusted (`unspecified`, or `inferred` read back off
         // the pipeline's own output); the provenance ladder exists so those
-        // cannot gate. Printed so a refusal is visible. ⚠ Never "fix" an
+        // cannot gate. Printed so a refusal is visible. Never "fix" an
         // untrusted row by writing `{user}`: that asserts the user confirmed it.
         if !self.ungraded.is_empty() {
             let n: usize = self.ungraded.values().map(|(a, b)| a + b).sum();
@@ -599,7 +599,7 @@ impl Truth {
                 );
             }
         }
-        // ⚠ A drop is the only way a red gate goes green without a fix; never silent.
+        // A drop is the only way a red gate goes green without a fix; never silent.
         if !dropped.is_empty() {
             eprintln!(
                 "truth: {} floor key(s) the narrative no longer describes:",
@@ -641,7 +641,7 @@ impl Truth {
                 );
             }
         }
-        // ⚠ The bless path is not a way to make a red gate green.
+        // The bless path is not a way to make a red gate green.
         // `ratchetUpFloor` takes a union, so only a key the narrative no longer
         // describes can leave, and each drop is printed above. This writes the
         // floor Lean computed, not "the keys that passed this run".
@@ -669,7 +669,7 @@ impl Truth {
             return out;
         }
 
-        // ⚠ Fails when the debt is paid, so an exemption cannot rot: a row that
+        // Fails when the debt is paid, so an exemption cannot rot: a row that
         // holds again must leave the list, or the next real regression on its
         // key is invisible. Unmeasured days are excluded, or a one-day run
         // would report the exemptions holding on days it never opened.

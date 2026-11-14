@@ -6,7 +6,7 @@
 /// The production lat/lon → IANA lookup, backed by `tzf-rs`'s polygons —
 /// bundled, so the image needs no data file alongside the binary.
 ///
-/// ⚠ Rows stored before these polygons came from a coarser lookup (npm
+/// Rows stored before these polygons came from a coarser lookup (npm
 /// `tz-lookup`). The two agree inside a zone and can disagree within a few
 /// kilometres of a border, and a stored `tz` is never revisited.
 pub struct PolygonLookup {
@@ -20,7 +20,7 @@ impl Default for PolygonLookup {
 }
 
 impl PolygonLookup {
-    /// ⚠ EXPENSIVE — it decompresses the polygon set. Build one per process,
+    /// Expensive — it decompresses the polygon set. Build one per process,
     /// never per user and never per row.
     pub fn new() -> Self {
         Self {
@@ -30,7 +30,7 @@ impl PolygonLookup {
 
     /// The IANA zone containing a coordinate, or `None` for one it cannot place.
     ///
-    /// ⚠ **`None` IS RARER THAN IT LOOKS, AND THAT IS THE THING TO KNOW HERE.**
+    /// `None` is rarer than it looks, and that is the thing to know here.
     /// The polygons cover the oceans too, with the nautical `Etc/GMT±N` zones,
     /// so almost every in-range coordinate gets an answer:
     ///
@@ -50,7 +50,7 @@ impl PolygonLookup {
     /// an empty string in a `tz` column would look present, parse as no zone,
     /// and be invisible to an `IS NULL` check.
     pub fn zone(&self, lat: f64, lon: f64) -> Option<String> {
-        // ⚠ `tzf` takes LONGITUDE FIRST. Every other signature in this file
+        // ⚠ `tzf` takes longitude first. Every other signature in this file
         // takes (lat, lon), so the swap happens exactly here and nowhere else.
         // Reversed, the lookup silently answers with a different continent's
         // zone rather than failing.

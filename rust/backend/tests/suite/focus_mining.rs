@@ -1,7 +1,7 @@
 //! `mineCluster` answers, and answers the gates the cron depends on.
 //!
-//! ⚠ THE POINT IS THAT IT ANSWERS AT ALL. A `match` arm added to
-//! `BackendEntry` links against a STALE archive perfectly happily and then
+//! The point is that it answers at all. A `match` arm added to
+//! `BackendEntry` links against a stale archive perfectly happily and then
 //! replies "unknown op" at runtime — the same shape as `nearbyLandmarks`
 //! answering `[]` for every stay while every count read as answered.
 //! A test that only checked the label could pass on a build where the arm does
@@ -9,17 +9,17 @@
 
 use backend::lean::{MineStay, mine_cluster};
 
-/// One landmark in the shape `lean::shape_landmarks` ACTUALLY RETURNS.
+/// One landmark in the shape `lean::shape_landmarks` actually returns.
 ///
-/// ⚠ THE DISTANCE FIELD IS `distanceM`, AND IT IS A BIT-PATTERN STRING. The
+/// The distance field is `distanceM`, and it is a bit-pattern string. The
 /// Lean `shapeLandmarks` export names it `distanceMBits`; the Rust wrapper
 /// remaps it to `distanceM` because `DayEntry.parsePoi` and the trace-fed fold
-/// read that name. ⚠ A helper saying `distanceMBits` passes every test here
+/// read that name. A helper saying `distanceMBits` passes every test here
 /// while describing a shape the producer never emits — production then refuses
 /// every landmark with "a landmark has no distanceMBits", after the cluster
 /// half has already answered correctly.
 ///
-/// ⚠ So: build fixtures from what the PRODUCER emits, not from what the
+/// So: build fixtures from what the producer emits, not from what the
 /// consumer's parser happens to accept. A test that invents its own wire
 /// format tests its own copy of the wiring, and this one did.
 fn lm(name: &str, ty: &str, subtype: &str, dist: f64) -> serde_json::Value {
@@ -74,8 +74,8 @@ fn the_near_field_exemption_survives_the_ffi() {
         .expect("mineCluster answers");
     assert_eq!(out.amenity_label.as_deref(), Some("Cafe"));
 
-    // The same short stay from 40 m is not exempt, and gate 1 refuses it BY
-    // WEIGHT. Naming the gate is the check: a refusal that reported the wrong
+    // The same short stay from 40 m is not exempt, and gate 1 refuses it by
+    // weight. Naming the gate is the check: a refusal that reported the wrong
     // reason would still produce a null label and look identical.
     let far = lm("Far", "amenity", "cafe", 40.0);
     let out = mine_cluster(&[stay(600, vec![far.clone()])], &serde_json::json!([far]))
@@ -118,7 +118,7 @@ fn a_park_is_not_label_worthy_however_long_the_stay() {
     )
     .expect("mineCluster answers");
     assert_eq!(out.amenity_label, None);
-    // ⚠ No vote was ever cast, so there is nothing to refuse. A `1-weight`
+    // No vote was ever cast, so there is nothing to refuse. A `1-weight`
     // here would mean the gate-2 filter had let it through and gate 1 caught
     // it instead, which is a different pipeline.
     assert_eq!(out.refusal, None);

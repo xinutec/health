@@ -7,7 +7,7 @@ the response carries a configuration patch. So this decides, on every fix, how
 often that phone should take the next one — which is a direct trade of the
 user's battery against the fidelity of their timeline.
 
-⚠ This never demotes. A missing journey is a hole in the record; a flat battery
+This never demotes. A missing journey is a hole in the record; a flat battery
 is not. A demotion gated on standstill at a place the user lingers still cost a
 walk twice (three hours at home, then a fourteen-minute gap walking out; a
 twelve-minute standstill mid-walk, then fourteen minutes lost walking on). The
@@ -16,14 +16,14 @@ escalates a phone that reports itself in Significant.
 
 ## The cascade, in priority order
 
-1. **High speed wins everywhere.** Boarding a train should not wait for history
+1. High speed wins everywhere. Boarding a train should not wait for history
    to accumulate; a single fix above the transit threshold escalates.
-2. **Significant → Move**, on any evidence of motion. Only fires when the phone
+2. Significant → Move, on any evidence of motion. Only fires when the phone
    is actually in Significant — there is nothing to escalate from Move. With no
    evidence the answer is still a Move profile.
-3. **Refinement inside Move**, once there is enough trajectory to tell walking
+3. Refinement inside Move, once there is enough trajectory to tell walking
    from a bus.
-4. **Night.** Between `NIGHT_START_H` and `NIGHT_END_H` local time a phone
+4. Night. Between `NIGHT_START_H` and `NIGHT_END_H` local time a phone
    that is not moving locates once an hour — still Move mode, so a night walk
    is seen at the next fix and escalates like any other. The interval spares
    data, not battery; it is not a pause.
@@ -48,7 +48,7 @@ def MIN_HISTORY_SPAN_FOR_REFINE_SEC : Float := 120
 
 /-- In Significant mode Android schedules a fix roughly every 15 minutes and
 emits extras when its motion sensor fires. Two fixes closer together than this
-therefore MEAN motion, without any speed being reported. -/
+therefore mean motion, without any speed being reported. -/
 def SIGNIFICANT_MODE_MOTION_GAP_SEC : Float := 300
 
 /-- A motion regime inside Move mode: how often to locate. `none` is "no
@@ -142,7 +142,7 @@ def computeSignals (history : List Fix) : Signals :=
   match history.getLast?, history.dropLast.getLast? with
   | none, _ => {}
   | some last, none =>
-    -- ⚠ One fix: the reported velocity is all there is. Every derived signal
+    -- One fix: the reported velocity is all there is. Every derived signal
     -- stays 0, and `historySpanSec = 0` is what stops a predicate trusting them.
     { reportedVelKmh := last.vel.getD 0
       trigger := last.trigger
@@ -151,7 +151,7 @@ def computeSignals (history : List Fix) : Signals :=
     let gap := Float.ofInt (last.ts - prev.ts)
     let distM := haversineMeters prev.lat prev.lon last.lat last.lon
     { reportedVelKmh := last.vel.getD 0
-      -- ⚠ Computed from displacement, so a missing `vel` field — which is
+      -- Computed from displacement, so a missing `vel` field — which is
       -- common in Significant mode — does not read as "not moving".
       computedVelKmh := if gap > 0 then (distM / gap) * 3.6 else 0
       gapSinceLastFixSec := gap
@@ -163,7 +163,7 @@ def computeSignals (history : List Fix) : Signals :=
 
 /-- Is the phone in Significant mode?
 
-⚠ The phone's own `m` field is ground truth and beats our memory of what we last
+The phone's own `m` field is ground truth and beats our memory of what we last
 pushed — the phone may have been changed underneath us. Only when it says
 nothing do we fall back to what we know: a device we have decided for was
 pushed a Move profile, a device we have never seen may be anywhere. -/
@@ -175,7 +175,7 @@ def isPhoneInSignificant (monitoringMode : Option Int) (prev : Option Profile) :
 
 /-- Predicate 1: a single fast reading escalates immediately.
 
-⚠ Takes the MAX of reported and computed speed, so a phone that omits `vel`
+Takes the MAX of reported and computed speed, so a phone that omits `vel`
 still escalates on displacement. -/
 def escalateOnHighSpeed (s : Signals) : Option Profile :=
   let speed := max s.reportedVelKmh s.computedVelKmh
@@ -198,11 +198,11 @@ Three independent sources, any one enough: the user pressed the button, a fix
 arrived sooner than the Significant cadence allows (the motion sensor fired), or
 there is visible displacement above walking pace.
 
-⚠ Self-gates on `m = 2`. The cascade only calls this inside the Significant
+Self-gates on `m = 2`. The cascade only calls this inside the Significant
 branch, but the function is reachable on its own and a contract that quietly
 depended on its caller would invite a regression.
 
-⚠ Falls back to `transit` rather than to nothing: the point is to get Move mode
+Falls back to `transit` rather than to nothing: the point is to get Move mode
 going. Guessing a slightly-too-eager profile costs battery; guessing nothing
 costs the journey. -/
 def escalateFromSignificant (s : Signals) : Option Profile :=
@@ -227,7 +227,7 @@ def refineInMove (s : Signals) : Option Profile :=
 
 /-- Predicate 4: at night, a still phone locates hourly; a moving one walks.
 
-⚠ Reads the max of every speed the signals carry, so a phone that omits `vel`
+Reads the max of every speed the signals carry, so a phone that omits `vel`
 still counts as moving on displacement, and a night walk seen at an hourly
 fix is answered with the walking cadence at once. -/
 def nightProfile (s : Signals) : Option Profile :=
@@ -265,7 +265,7 @@ def decideTransition (s : Signals) (prev : Option Profile) : Transition :=
 /-- What we decide for a device we have never seen, or one with no evidence
 either way: the gentlest Move profile.
 
-⚠ Move, not the phone's factory default of Significant: every answer is a push,
+Move, not the phone's factory default of Significant: every answer is a push,
 and the first fix after a restart would push Significant onto a walking phone. -/
 def DEFAULT_PROFILE : Profile := .walking
 
@@ -279,7 +279,7 @@ def configFor : Profile → (Int × Option Int)
 
 /-- The whole decision: signals in, a concrete profile out.
 
-⚠ ALWAYS a concrete profile, never "no change". The proxy pushes the full config
+Always a concrete profile, never "no change". The proxy pushes the full config
 on every fix and the phone treats it as idempotent, which is what removes the
 need for an anti-flap timer, a per-device push memory, and any state that could
 be lost — a transient failure on either side recovers on the very next fix. -/
@@ -288,7 +288,7 @@ def decideRemoteConfig (s : Signals) (prev : Option Profile) : Profile :=
   | .to p => p
   | .keep =>
     match prev with
-    -- ⚠ Night EXPIRES WITH THE WINDOW, not with motion: the morning's cadence
+    -- Night expires with the window, not with motion: the morning's cadence
     -- comes back on the first fix after 06:00 whether or not anything moved,
     -- because the hourly fix is the one that would otherwise miss him going out.
     | some .night => if s.localHour.any isNightHour then .night else DEFAULT_PROFILE
@@ -297,11 +297,11 @@ def decideRemoteConfig (s : Signals) (prev : Option Profile) : Profile :=
 
 /-! ## Guards -/
 
--- ⚠ A single fast reading escalates with no history at all.
+-- A single fast reading escalates with no history at all.
 #guard escalateOnHighSpeed { reportedVelKmh := 100 } == some Profile.transitFast
 #guard escalateOnHighSpeed { reportedVelKmh := 50 } == some Profile.transit
 #guard escalateOnHighSpeed { reportedVelKmh := 10 } == none
--- ⚠ …and it escalates on COMPUTED speed too, so a missing `vel` does not read
+-- …and it escalates on computed speed too, so a missing `vel` does not read
 -- as standing still.
 #guard escalateOnHighSpeed { computedVelKmh := 100 } == some Profile.transitFast
 
@@ -313,9 +313,9 @@ def decideRemoteConfig (s : Signals) (prev : Option Profile) : Profile :=
 
 -- The user pressed the button: escalate even with no speed at all.
 #guard escalateFromSignificant { trigger := some "u" } == some Profile.transit
--- A fix sooner than the Significant cadence MEANS motion.
+-- A fix sooner than the Significant cadence means motion.
 #guard escalateFromSignificant { gapSinceLastFixSec := 60 } == some Profile.transit
--- ⚠ A gap of 0 is "no previous fix", NOT "arrived instantly" — it must not read
+-- A gap of 0 is "no previous fix", not "arrived instantly" — it must not read
 -- as motion evidence.
 #guard escalateFromSignificant { gapSinceLastFixSec := 0 } == none
 #guard escalateFromSignificant { gapSinceLastFixSec := 900 } == none
@@ -330,7 +330,7 @@ def decideRemoteConfig (s : Signals) (prev : Option Profile) : Profile :=
 #guard refineInMove { historySpanSec := 60, effectiveSpeedKmh := 5, straightness := 0.9 } == none
 #guard refineInMove { historySpanSec := 200, effectiveSpeedKmh := 5, straightness := 0.9 }
        == some Profile.walking
--- ⚠ Walking pace WITHOUT straightness is GPS noise at a desk, not a walk.
+-- Walking pace without straightness is GPS noise at a desk, not a walk.
 #guard refineInMove { historySpanSec := 200, effectiveSpeedKmh := 5, straightness := 0.1 } == none
 #guard refineInMove { historySpanSec := 200, effectiveSpeedKmh := 50 } == some Profile.transit
 #guard refineInMove { historySpanSec := 200, effectiveSpeedKmh := 100 } == some Profile.transitFast
@@ -340,11 +340,11 @@ def decideRemoteConfig (s : Signals) (prev : Option Profile) : Profile :=
        == Transition.to Profile.transitFast
 -- No evidence at all: keep whatever we had.
 #guard decideTransition { monitoringMode := some 1 } (some Profile.walking) == Transition.keep
--- ⚠ A first-ever fix is put in Move, never left in Significant.
+-- A first-ever fix is put in Move, never left in Significant.
 #guard decideRemoteConfig {} none == Profile.walking
 #guard (configFor (decideRemoteConfig {} none)).1 == 2
 #guard decideRemoteConfig { monitoringMode := some 2 } (some Profile.walking) == Profile.walking
--- ⚠ NEVER DEMOTES: ten minutes of standstill in Move, at any place, with any
+-- Never demotes: ten minutes of standstill in Move, at any place, with any
 -- history, answers a Move profile.
 #guard decideRemoteConfig { historySpanSec := 600, effectiveSpeedKmh := 0, monitoringMode := some 2 }
          (some Profile.walking) == Profile.walking

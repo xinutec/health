@@ -14,7 +14,7 @@
 //!     ways and nodes, flattened with the bucket as `type`;
 //!   * the wire form, so the loop can append an answer without re-encoding it.
 //!
-//! ⚠ Key parts are reused verbatim. A miss arrives as the fold's bit patterns
+//! Key parts are reused verbatim. A miss arrives as the fold's bit patterns
 //! and the answer row starts with the same strings; a float round-tripped
 //! through text can disagree by an ULP. The parse below only asks the question.
 
@@ -27,7 +27,7 @@ use crate::tz_lookup::PolygonLookup;
 
 /// Line rows grouped by the feature bucket they came from.
 ///
-/// ⚠ The bucket becomes each way's `type` downstream, so it travels with its
+/// The bucket becomes each way's `type` downstream, so it travels with its
 /// rows; a list positional by request order would mislabel ways whenever the
 /// database returned an `IN` list in another order.
 pub type LinesByBucket = Vec<(String, Vec<Value>)>;
@@ -70,7 +70,7 @@ pub trait RowSource {
     /// Line rows of several buckets in one go, grouped by bucket. Per-bucket
     /// queries were most of a day's mirror queries.
     ///
-    /// ⚠ The bucket is returned, never inferred: `push_ways` writes it as every
+    /// The bucket is returned, never inferred: `push_ways` writes it as every
     /// way's `type`, and a batch that lost track would label every way the same
     /// in a well-formed table.
     ///
@@ -120,7 +120,7 @@ pub trait RowSource {
 
     /// Every railway station point, as `{name, latBits, lonBits}`.
     ///
-    /// ⚠ Order is part of the answer: the proximity filter keeps input order
+    /// Order is part of the answer: the proximity filter keeps input order
     /// and journey resolution reads positions out of the result.
     fn rail_stations(&mut self) -> Result<Option<Vec<Value>>>;
 
@@ -140,7 +140,7 @@ pub trait RowSource {
 ///
 /// The arms below are the part that must not be written twice: the bucket
 /// fan-out, the wire form and the two tables that need no rows at all (`tzAt`,
-/// `bestPlace`). Only the ROW SUPPLY differs between a fixture and a live
+/// `bestPlace`). Only the row supply differs between a fixture and a live
 /// mirror, and that is what [`RowSource`] abstracts.
 pub struct OsmAnswerer<S: RowSource> {
     source: S,
@@ -156,7 +156,7 @@ static ZONES: std::sync::OnceLock<PolygonLookup> = std::sync::OnceLock::new();
 ///
 /// A fixture's rows are complete by construction — extracted for exactly these
 /// days — so this source declines only where the capture recorded that the
-/// MIRROR declined. Everywhere else an `Ok(None)` a day reports comes from a
+/// mirror declined. Everywhere else an `Ok(None)` a day reports comes from a
 /// table with no arm rather than from missing rows.
 pub type RowSetAnswerer<'a> = OsmAnswerer<RowSetSource<'a>>;
 
@@ -174,7 +174,7 @@ pub struct RowSetSource<'a> {
     prefilter: bool,
     /// The questions the mirror declined when this row set was captured.
     ///
-    /// ⚠ Without it a fixture reproduces rows but not gaps: replaying a
+    /// Without it a fixture reproduces rows but not gaps: replaying a
     /// decline as "no rows near here" makes the day better in the fixture than
     /// in production, and blesses the defect away.
     ///
@@ -185,7 +185,7 @@ pub struct RowSetSource<'a> {
 
 /// The key a decline is recorded under: the method, the bucket and the question.
 ///
-/// ⚠ Full precision on the floats: a rounded key records a decline against a
+/// Full precision on the floats: a rounded key records a decline against a
 /// question nobody asks, and the real one is then answered.
 pub fn decline_key(method: &str, bucket: &str, lat: f64, lon: f64, radius_m: f64) -> String {
     format!("{method}|{bucket}|{lat}|{lon}|{radius_m}")
@@ -211,7 +211,7 @@ impl<S: RowSource> OsmAnswerer<S> {
     /// The venues near a point: the free [`nearby_landmarks`] against this
     /// answerer's own row source.
     ///
-    /// ⚠ `source` stays private: the mirror may only be touched from a blocking
+    /// `source` stays private: the mirror may only be touched from a blocking
     /// thread, which `with_mirror_answerer` guarantees, and a `MirrorSource`
     /// built on a runtime worker aborts the process. `refresh-focus-places`
     /// asks this per stay and per cluster centroid inside that closure.
@@ -230,7 +230,7 @@ impl<S: RowSource> OsmAnswerer<S> {
     /// fold's answer from the fold's code, which `decode-day` needs for its
     /// place/line constraint, so no second walk can drift.
     ///
-    /// ⚠ `Ok(None)` is "the mirror could not answer"; `Ok(Some(vec![]))` is a
+    /// `Ok(None)` is "the mirror could not answer"; `Ok(Some(vec![]))` is a
     /// line no way carries (a siding, a junction curve). Flattening the first
     /// into the second would put every place off a real line.
     pub fn stations_serving(&mut self, line: &str) -> Result<Option<Vec<Value>>> {
@@ -300,7 +300,7 @@ impl<'a> RowSetSource<'a> {
 
     /// Rows of one bucket, in the `osmspatial` mode's positional form.
     ///
-    /// ⚠ `coords` stay `(lat, lon)`: Lean's `lineDistDeg` reads `c.1` as the
+    /// `coords` stay `(lat, lon)`: Lean's `lineDistDeg` reads `c.1` as the
     /// latitude and hands `(c.2, c.1)` on as x, y. Swapped, the distances are
     /// wrong but plausible.
     fn line_rows(&self, bucket: &str, lat: f64, lon: f64, radius_m: f64) -> Vec<Value> {
@@ -354,7 +354,7 @@ impl<'a> RowSetSource<'a> {
                             .collect()
                     })
                     .unwrap_or_default();
-                // ⚠ Position 4, the tag map: `parseLineRow` reads it there and
+                // Position 4, the tag map: `parseLineRow` reads it there and
                 // `nearbyLandmarks` spawns one landmark per tag key. A
                 // four-element row parses fine with an empty map, so replays
                 // lost every building tag and no gate could see it, since both
@@ -465,7 +465,7 @@ impl RowSource for RowSetSource<'_> {
     }
 
     fn rail_line_names(&mut self) -> Result<Option<Vec<String>>> {
-        // ⚠ Absent is a decline: a fixture captured before `railLines` existed
+        // Absent is a decline: a fixture captured before `railLines` existed
         // cannot answer, and an empty list would say the line has no track.
         let Some(rail) = self.rail else {
             return Ok(None);
@@ -605,7 +605,7 @@ pub fn nearby_landmarks(source: &mut dyn RowSource, lat: f64, lon: f64) -> Resul
 /// Shared with `decode-day`, which needs the rail-vs-road distance for every
 /// minute with a fix, for the same reason as [`nearby_landmarks`].
 ///
-/// ⚠ Any bucket the source cannot vouch for declines the whole answer: four of
+/// Any bucket the source cannot vouch for declines the whole answer: four of
 /// five queries would report a coordinate without its aerodromes as complete.
 pub fn nearby_ways(source: &mut dyn RowSource, lat: f64, lon: f64) -> Result<Option<Vec<Value>>> {
     let radius = default_radius_m::NEARBY_WAYS;
@@ -655,7 +655,7 @@ pub fn nearby_transit_stops(
         return Ok(None);
     };
     let answer = spatial("queryPoints", &bits(lat), &bits(lon), &bits(radius), rows)?;
-    // ⚠ `{rows: [...]}`, not a bare array: read as one, it shapes nothing and
+    // `{rows: [...]}`, not a bare array: read as one, it shapes nothing and
     // answers `[]`, claiming there is no transit here.
     let shaped: Vec<Value> = answer
         .get("rows")
@@ -721,7 +721,7 @@ impl<S: RowSource> crate::lean::Answerer for OsmAnswerer<S> {
 
 impl<S: RowSource> OsmAnswerer<S> {
     fn answer_inner(&mut self, miss: &Ask) -> Result<Option<Value>> {
-        // ⚠ Before the coordinate-key guard: `stationsOnLine` is keyed by a
+        // Before the coordinate-key guard: `stationsOnLine` is keyed by a
         // bare line name with no `|`, so `key_parts` would drop it.
         if miss.what == "stationsOnLine" {
             return self.stations_on_line(&miss.key);
@@ -796,7 +796,7 @@ impl<S: RowSource> OsmAnswerer<S> {
             // set the forward sync uses). Not in the row set: the pipeline
             // imports `tzLookup` directly, so captures carry it separately.
             //
-            // ⚠ A coordinate with no zone is declined: mid-ocean has none, and
+            // A coordinate with no zone is declined: mid-ocean has none, and
             // "UTC" would be a claim about where the phone was.
             "tzAt" => {
                 let finder = ZONES.get_or_init(PolygonLookup::new);
@@ -812,7 +812,7 @@ impl<S: RowSource> OsmAnswerer<S> {
             // `fold_payload::best_place` derives the same fields from a
             // capture; this derives them from the key, as a serving caller must.
             //
-            // ⚠ An empty zone is declined. The fold asks once before `tzAt`
+            // An empty zone is declined. The fold asks once before `tzAt`
             // has resolved the stay's zone and again after, so the blank form
             // is a question asked too early; answering it with UTC would add a
             // second row for the stay, scored against the wrong clock.
@@ -846,10 +846,10 @@ impl<S: RowSource> OsmAnswerer<S> {
             // Venues near a stay: what names a timeline entry after the place
             // rather than a bare "stationary".
             //
-            // ⚠ Both tables, and either declining declines the whole answer:
+            // Both tables, and either declining declines the whole answer:
             // OSM has venues as point POIs and buildings as way outlines.
             //
-            // ⚠ The spatial answer is `{rows: [...]}`, not a bare array; read
+            // The spatial answer is `{rows: [...]}`, not a bare array; read
             // as an array it answers `[]` for every stay, claiming "no venues
             // here", and the served day has zero states.
             "nearbyLandmarks" => {
@@ -858,7 +858,7 @@ impl<S: RowSource> OsmAnswerer<S> {
                 let Some(shaped) = nearby_landmarks(&mut self.source, flat, flon)? else {
                     return Ok(None);
                 };
-                // ⚠ Four elements: `[lat, lon, RADIUS, answer]`. This table is
+                // Four elements: `[lat, lon, RADIUS, answer]`. This table is
                 // keyed on the radius too, and the three-element `nearbyWays`
                 // form reads as malformed: the fold produces no states at all.
                 //
@@ -871,7 +871,7 @@ impl<S: RowSource> OsmAnswerer<S> {
             // Bus stops, tram stops and station entrances near a dwell — the
             // evidence `annotateBusEvidence` reads to tell a bus from a taxi.
             //
-            // ⚠ The radius comes from the key, like `nearbyLandmarks`: the fold
+            // The radius comes from the key, like `nearbyLandmarks`: the fold
             // asks at `Bus.TRANSIT_QUERY_RADIUS_M`.
             "transitStops" => {
                 let radius = match p.get(2) {
@@ -890,7 +890,7 @@ impl<S: RowSource> OsmAnswerer<S> {
             // answers only where a source can reach a geocode cache, and the
             // corpus replay keeps reading its own fixture.
             //
-            // ⚠ One encoder: `fold_payload::encode_geocode` encodes both this
+            // One encoder: `fold_payload::encode_geocode` encodes both this
             // and the recorded section, so live and fixture geocodes are the
             // same bytes.
             "reverseGeocode" => {

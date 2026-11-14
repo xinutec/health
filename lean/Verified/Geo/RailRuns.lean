@@ -13,12 +13,12 @@ where a ride began and ended, and what to call the line it ran on.
   past mid-ride station dwells.
 * `expandTubeLineNames` — one OSM line name → the physical lines it denotes.
 
-## `expandTubeLineNames` is a THIRD line-name canonicaliser, not a duplicate
+## `expandTubeLineNames` is a third line-name canonicaliser, not a duplicate
 
 `Verified.Hsmm.RouteGraph.parseLineMemberships` does a
-similar job and the two are NOT interchangeable:
+similar job and the two are not interchangeable:
 
-* that one REQUIRES a `" Line"`/`" Lines"` suffix and returns the empty set
+* that one requires a `" Line"`/`" Lines"` suffix and returns the empty set
   without one; this one falls back to the input unchanged, so `"Bakerloo"` maps
   to `["Bakerloo"]` here and to `[]` there;
 * that one strips a directional by matching a fixed list of `" Eastbound"`-style
@@ -46,7 +46,7 @@ abbrev Fix := Verified.SpeedFix
 private def DIRECTIONAL_WORDS : List String := ["eastbound", "westbound", "northbound", "southbound"]
 
 /-- Strip a trailing `\s+(?:East|West|North|South)bound`, case-insensitively,
-then trim. The leading `\s+` is REQUIRED, so a name that simply ends in the
+then trim. The leading `\s+` is required, so a name that simply ends in the
 letters (no separating space) keeps them. -/
 private def stripDirectional (s : String) : String :=
   let lower := s.toLower
@@ -89,11 +89,11 @@ private def splitParts : Nat → List Char → List String
 board∩alight intersection can resolve a unique line despite OSM's inconsistent
 naming. Two quirks are handled:
 
-1. **Direction split** — a line's two directions are separate relations
+1. Direction split — a line's two directions are separate relations
    ("Victoria Line" vs "Victoria Line Northbound"). Strip the compass word.
-2. **Shared-track combine** — lines sharing track are tagged under one relation
+2. Shared-track combine — lines sharing track are tagged under one relation
    ("Circle, Hammersmith & City and Metropolitan Lines") while the same line is
-   plain elsewhere. Split and re-suffix each component. `&` is NOT a separator,
+   plain elsewhere. Split and re-suffix each component. `&` is not a separator,
    so "Hammersmith & City" stays whole.
 
 A plain singular name — or anything that does not split into two or more parts —
@@ -114,7 +114,7 @@ def expandTubeLineNames (name : String) : List String :=
 a multi-station tube ride whose opening got classified as walking because the
 per-station stops dominated the window median. -/
 def PLATFORM_PATTERN_WALKBACK_S : Int := 900
-/-- At or below this the user is STANDING on the platform, not still walking
+/-- At or below this the user is standing on the platform, not still walking
 towards it. The backward chain walks through these only, stopping at the first
 walking-pace fix — that is what separates the platform-wait cluster from an
 approach walk past a nearer station. -/
@@ -130,12 +130,12 @@ def PLATFORM_MAX_SPREAD_M : Float := 150
 /-- The platform fix a ride actually boarded from, or `none`.
 
 Two phases, and the split matters. The platform-train-platform pattern has
-ACCELERATING fixes (walking-pace, 4-8 km/h) between the platform and the first
-train-speed fix, so phase one walks back PAST those to find the first
+accelerating fixes (walking-pace, 4-8 km/h) between the platform and the first
+train-speed fix, so phase one walks back past those to find the first
 near-stationary fix — the anchor. Phase two then extends further back through
 more near-stationary fixes, bounded by time gap and cluster spread; the first
 walking-pace fix ends the chain, because further back the user was still
-approaching. The EARLIEST fix in the chain is the boarding anchor.
+approaching. The earliest fix in the chain is the boarding anchor.
 
 `none` when the window holds no train-speed fix (the classifier's start is
 already at or before the first train signal we have) or no near-stationary fix
@@ -193,17 +193,17 @@ def findBoardingPlatformFix (points : Array Fix) (startTs : Int) : Option Fix :=
 def POST_TRANSIT_SPEED_KMH : Float := 15
 /-- The preferred, tighter bar: a genuinely stopped fix. -/
 def POST_TRANSIT_ALIGHT_SPEED_KMH : Float := 5
-/-- A slow fix followed within this by a transit-speed fix is the train PAUSING
+/-- A slow fix followed within this by a transit-speed fix is the train pausing
 at a station, not the user getting off. -/
 def MID_RIDE_DWELL_RESUME_S : Int := 120
 
-/-- The fix CLOSEST to a timestamp, ties keeping input order.
+/-- The fix closest to a timestamp, ties keeping input order.
 
 Both turnaround arms use this instead of scanning. By the time they run, nothing
 in the fixes still says a turnaround happened: standing on the platform the
 rider has already come back past the outermost point, so the approach and the
 departure both read as heading home. A scan therefore walks straight through the
-interchange and names a station from the OTHER direction of travel. The split
+interchange and names a station from the other direction of travel. The split
 pass decided this boundary from the whole leg's geometry; take it.
 
 The fix nearest `t` in time, first on a tie. The index is carried in the key
@@ -218,7 +218,7 @@ def nearestByTs (points : Array Fix) (t : Int) : Option Fix :=
 
 /-- The fix at which a ride ended.
 
-Walks past mid-ride dwells: the alight is the first slow fix that is NOT
+Walks past mid-ride dwells: the alight is the first slow fix that is not
 followed within 120 s by a return to transit speed. Three arms, in preference
 order — under 5 km/h, then under 15, then simply the first fix after the ride's
 end (the ride ran off the end of the data). Fixes at or before `endTs` are
@@ -234,14 +234,14 @@ def findRunAlightFix (points : Array Fix) (endTs : Int)
     (findSustained fun p => p.speedKmh < POST_TRANSIT_SPEED_KMH).orElse fun _ =>
       points.find? fun p => p.ts > endTs
 
-/-- The fix at which a ride BEGAN.
+/-- The fix at which a ride began.
 
 Prefer fixes where the rider is not in transit — those are at or near a station
 rather than mid-route. A subway line that surfaces between stations means a fix
 near the run's `startTs` can be a real reading at 30 km/h mid-train; skipping
 transit-speed fixes reaches the actual boarding one.
 
-`findBoardingPlatformFix` runs FIRST, because the classifier's `startTs` is
+`findBoardingPlatformFix` runs first, because the classifier's `startTs` is
 often too late: when the per-window scorer averages over a stop-and-go platform
 sequence, the early part of a multi-station ride lands in the preceding
 "walking" segment. Failing that, the latest slow fix at or before `startTs`,
@@ -277,44 +277,44 @@ private def fx (ts : Int) (speedKmh : Float) (metresNorth : Float := 0) : Fix :=
 -- A plain singular name comes back as itself.
 #guard expandTubeLineNames "Metropolitan Line" == ["Metropolitan Line"]
 -- Directional suffixes are stripped, case-insensitively and through arbitrary
--- whitespace — a REGEX, not the fixed suffix list `parseLineMemberships` uses.
+-- whitespace — a regex, not the fixed suffix list `parseLineMemberships` uses.
 #guard expandTubeLineNames "Victoria Line Northbound" == ["Victoria Line"]
 #guard expandTubeLineNames "Jubilee Line Eastbound" == ["Jubilee Line"]
 #guard expandTubeLineNames "Jubilee Line EASTBOUND" == ["Jubilee Line"]
 #guard expandTubeLineNames "Jubilee Line   Westbound" == ["Jubilee Line"]
 -- Combined relations split on ", " and " and ", each part re-suffixed. `&` is
--- NOT a separator, so "Hammersmith & City" survives whole.
+-- not a separator, so "Hammersmith & City" survives whole.
 #guard expandTubeLineNames "Circle, Hammersmith & City and Metropolitan Lines"
   == ["Circle Line", "Hammersmith & City Line", "Metropolitan Line"]
 #guard expandTubeLineNames "Circle and District Lines" == ["Circle Line", "District Line"]
--- A combined name that splits into ONE part returns the BASE, suffix and all —
+-- A combined name that splits into one part returns the base, suffix and all —
 -- the `parts.length > 1` guard, so this is "Solo Lines", not "Solo Line".
 #guard expandTubeLineNames "Solo Lines" == ["Solo Lines"]
--- The directional is stripped BEFORE the combine match.
+-- The directional is stripped before the combine match.
 #guard expandTubeLineNames "Circle and District Lines Southbound" == ["Circle Line", "District Line"]
--- No " Lines" suffix: returned as-is. `parseLineMemberships` returns EMPTY for
+-- No " Lines" suffix: returned as-is. `parseLineMemberships` returns empty for
 -- this same input — the difference that makes these two non-interchangeable.
 #guard expandTubeLineNames "Bakerloo" == ["Bakerloo"]
 #guard expandTubeLineNames "" == [""]
 #guard expandTubeLineNames "  Central Line  " == ["Central Line"]
--- The `\s+` before the compass word is REQUIRED: a name that merely ENDS in
+-- The `\s+` before the compass word is required: a name that merely ends in
 -- those letters keeps them.
 #guard expandTubeLineNames "Eastbound" == ["Eastbound"]
 #guard expandTubeLineNames "XEastbound" == ["XEastbound"]
--- `\s+and\s+` needs whitespace on BOTH sides, so the "and" inside "Grand" is
+-- `\s+and\s+` needs whitespace on both sides, so the "and" inside "Grand" is
 -- not a separator — a whitespace-optional rule would split "Gr" from
 -- "Union and Lee".
 #guard expandTubeLineNames "Grand Union and Lee Lines" == ["Grand Union Line", "Lee Line"]
--- …and it tolerates RUNS of whitespace, which a literal " and " split would not.
+-- …and it tolerates runs of whitespace, which a literal " and " split would not.
 #guard expandTubeLineNames "Circle  and  District Lines" == ["Circle Line", "District Line"]
--- The TRAILING `\s+` matters too: "andDistrict" is one word, so this does not
+-- The trailing `\s+` matters too: "andDistrict" is one word, so this does not
 -- split at all and keeps its suffix.
 #guard expandTubeLineNames "Circle andDistrict Lines" == ["Circle andDistrict Lines"]
 
 private def START_TS : Int := 10000
 
 -- The platform-train-platform pattern: approach at walking pace, stand, then
--- accelerate. Phase one walks PAST the accelerating fix to the anchor, phase
+-- accelerate. Phase one walks past the accelerating fix to the anchor, phase
 -- two extends back, and the walking-pace approach ends the chain.
 #guard (findBoardingPlatformFix
     #[fx (START_TS - 800) 5 0, fx (START_TS - 700) 1 200, fx (START_TS - 640) 1 205,
@@ -322,14 +322,14 @@ private def START_TS : Int := 10000
 -- No train-speed fix in the window, and no near-stationary fix before one.
 #guard findBoardingPlatformFix #[fx (START_TS - 700) 1 0, fx (START_TS - 600) 5 50] START_TS == none
 #guard findBoardingPlatformFix #[fx (START_TS - 700) 10 0, fx (START_TS - 600) 40 300] START_TS == none
--- The chain breaks on a TIME GAP: 181 s is over the bar, 180 s exactly chains.
+-- The chain breaks on a time gap: 181 s is over the bar, 180 s exactly chains.
 #guard (findBoardingPlatformFix
     #[fx (START_TS - 900) 1 200, fx (START_TS - 719) 1 205, fx (START_TS - 660) 1 205,
       fx (START_TS - 600) 40 400] START_TS).map (·.ts) == some 9281
 #guard (findBoardingPlatformFix
     #[fx (START_TS - 900) 1 200, fx (START_TS - 720) 1 205, fx (START_TS - 660) 1 205,
       fx (START_TS - 600) 40 400] START_TS).map (·.ts) == some 9100
--- …and on SPREAD: a still fix 200 m from the anchor is a different place.
+-- …and on spread: a still fix 200 m from the anchor is a different place.
 #guard (findBoardingPlatformFix
     #[fx (START_TS - 800) 1 0, fx (START_TS - 700) 1 200, fx (START_TS - 640) 1 205,
       fx (START_TS - 600) 40 400] START_TS).map (·.ts) == some 9300
@@ -340,14 +340,14 @@ private def START_TS : Int := 10000
 #guard (findBoardingPlatformFix
     #[fx (START_TS - 901) 1 200, fx (START_TS - 700) 1 205, fx (START_TS - 600) 40 400] START_TS).map (·.ts)
   == some 9300
--- A fix at EXACTLY the train bar counts as in motion (`≥`); one at exactly the
--- still bar does NOT count as near-stationary (`<`), so there is no anchor.
+-- A fix at exactly the train bar counts as in motion (`≥`); one at exactly the
+-- still bar does not count as near-stationary (`<`), so there is no anchor.
 #guard (findBoardingPlatformFix #[fx (START_TS - 700) 1 200, fx (START_TS - 600) 30 400] START_TS).map (·.ts)
   == some 9300
 #guard findBoardingPlatformFix #[fx (START_TS - 700) 3 200, fx (START_TS - 600) 40 400] START_TS == none
 #guard (findBoardingPlatformFix #[fx (START_TS - 700) 2.9 200, fx (START_TS - 600) 40 400] START_TS).map (·.ts)
   == some 9300
--- The walkback WINDOW bound in isolation: two platform fixes 101 s apart — well
+-- The walkback window bound in isolation: two platform fixes 101 s apart — well
 -- inside the chain's gap tolerance — with the earlier one 901 s back. It is out
 -- of the window entirely, so the chain starts at the later one.
 #guard (findBoardingPlatformFix
@@ -364,7 +364,7 @@ private def END_TS : Int := 20000
 -- The preferred arm: the first fix under 5 km/h that stays slow.
 #guard (findRunAlightFix #[fx (END_TS + 60) 40, fx (END_TS + 120) 2, fx (END_TS + 180) 2] END_TS).map (·.ts)
   == some 20120
--- A mid-ride station DWELL is walked past: slow, then transit speed again
+-- A mid-ride station dwell is walked past: slow, then transit speed again
 -- inside 120 s, so the real alight is the later fix that stays slow.
 #guard (findRunAlightFix
     #[fx (END_TS + 60) 2, fx (END_TS + 120) 40, fx (END_TS + 240) 2, fx (END_TS + 300) 1] END_TS).map (·.ts)
@@ -373,14 +373,14 @@ private def END_TS : Int := 20000
 #guard (findRunAlightFix #[fx (END_TS + 60) 2, fx (END_TS + 181) 40] END_TS).map (·.ts) == some 20060
 #guard (findRunAlightFix #[fx (END_TS + 60) 2, fx (END_TS + 180) 40, fx (END_TS + 300) 2] END_TS).map (·.ts)
   == some 20300
--- The tight arm is PREFERRED, not merely first: a 10 km/h fix precedes a 2 km/h
+-- The tight arm is preferred, not merely first: a 10 km/h fix precedes a 2 km/h
 -- one and the 2 wins. Without this the two arms are indistinguishable.
 #guard (findRunAlightFix #[fx (END_TS + 60) 40, fx (END_TS + 120) 10, fx (END_TS + 180) 2] END_TS).map (·.ts)
   == some 20180
--- SECOND arm: nothing under 5, but something under 15.
+-- Second arm: nothing under 5, but something under 15.
 #guard (findRunAlightFix #[fx (END_TS + 60) 40, fx (END_TS + 120) 10, fx (END_TS + 180) 10] END_TS).map (·.ts)
   == some 20120
--- THIRD arm: nothing slow at all — the first fix after the end, whatever it is.
+-- Third arm: nothing slow at all — the first fix after the end, whatever it is.
 #guard (findRunAlightFix #[fx (END_TS + 60) 40, fx (END_TS + 120) 40] END_TS).map (·.ts) == some 20060
 -- Fixes at or before `endTs` are skipped, including one exactly on it.
 #guard (findRunAlightFix #[fx (END_TS - 60) 1, fx END_TS 1, fx (END_TS + 60) 2] END_TS).map (·.ts) == some 20060

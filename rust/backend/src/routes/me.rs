@@ -5,7 +5,7 @@
 //!
 //! # Two spellings of the same fact, on purpose
 //!
-//! ⚠ `fitbitLinked`/`nextcloudLinked` are legacy booleans kept for older SPA
+//! `fitbitLinked`/`nextcloudLinked` are legacy booleans kept for older SPA
 //! builds, and they are not the same question as `connections.*.status`. A
 //! revoked credential is `needs_reauth` and `linked: true`, so an old build
 //! shows "connected" for an account that cannot fetch anything. Narrowing the
@@ -14,7 +14,7 @@
 //!
 //! # `shareWindow` is how a recipient learns their own bounds
 //!
-//! ⚠ Present ONLY for a share-token request, `null` for the owner. The SPA
+//! Present only for a share-token request, `null` for the owner. The SPA
 //! clamps its previous/next-day arrows to it. It is not a security boundary —
 //! every endpoint enforces the window itself — but a host that omitted it would
 //! leave a recipient clicking into days that answer empty with no explanation.
@@ -33,7 +33,7 @@ use crate::state::AppState;
 /// `status` is `Verified.connectionStatus`'s own vocabulary — `active`,
 /// `needs_reauth`, `not_linked` — and is deliberately a `String` rather than an
 /// enum: the value crosses from Lean, and narrowing it here would move the
-/// decision about what statuses EXIST out of the module that decides it.
+/// decision about what statuses exist out of the module that decides it.
 #[derive(Serialize)]
 pub struct ConnectionState {
     pub status: String,
@@ -56,10 +56,10 @@ pub struct ShareWindow {
 
 /// `GET /me`'s answer.
 ///
-/// ⚠ Field order is wire order: `preserve_order` is on, and serde emits struct
+/// Field order is wire order: `preserve_order` is on, and serde emits struct
 /// fields in declaration order, so reordering them here is a wire change.
 ///
-/// ⚠ `shareWindow` is `Option` WITHOUT `skip_serializing_if`: the owner's
+/// `shareWindow` is `Option` without `skip_serializing_if`: the owner's
 /// answer carries an explicit `null`, which is what the SPA distinguishes from
 /// a share view. Omitting the key would read as "an older server" instead.
 #[derive(Serialize)]
@@ -72,9 +72,9 @@ pub struct MeResponse {
     pub share_window: Option<ShareWindow>,
 }
 
-/// ⚠ THE ERROR BODY IS `AppError`'s, not this module's. It used to build its own
+/// The error body is `AppError`'s, not this module's. It used to build its own
 /// `json!({"error": "internal"})`, which meant the handler had no wire type even
-/// once its SUCCESS answer had one — the rule asks whether a handler builds JSON
+/// once its success answer had one — the rule asks whether a handler builds JSON
 /// by hand at all, and an error envelope the SPA reads is part of the contract.
 /// `AppError::Other` logs the detail and answers generically, which is what the
 /// hand-rolled arm was doing.
@@ -86,7 +86,7 @@ pub async fn handler(
 }
 
 async fn run(st: &AppState, session: &UserSession) -> Result<Json<MeResponse>, AppError> {
-    // ⚠ `fetch_optional`, and NO row is the `not_linked` answer. The read is
+    // `fetch_optional`, and no row is the `not_linked` answer. The read is
     // deliberately cheap — `/api/me` is on the SPA's critical path and the
     // status makes no round trip to the provider.
     let nc: Option<Option<String>> =
@@ -95,8 +95,8 @@ async fn run(st: &AppState, session: &UserSession) -> Result<Json<MeResponse>, A
             .fetch_optional(&st.pool)
             .await?;
 
-    // ⚠ TWO levels of absence collapse here, and they mean different things:
-    // no ROW is `not_linked`, while a row with a NULL status takes the
+    // Two levels of absence collapse here, and they mean different things:
+    // no row is `not_linked`, while a row with a NULL status takes the
     // fall-through and reads as `active`. `Option<Option<String>>` keeps them
     // apart until this line, which is the only place the distinction is made.
     let (nc_status, nc_linked) =

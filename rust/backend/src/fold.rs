@@ -5,7 +5,7 @@
 //! geocode. Those arrive here as asks on the worker's pipe and are answered by
 //! whatever [`Answerer`] the caller supplies: the mirror in production, a golden
 //! fixture's recorded trace and row set in a replay, nothing at all when a day
-//! is being MEASURED for what it needs.
+//! is being measured for what it needs.
 //!
 //! There is no round loop. The converge loop this replaces re-sent a 1.5 MiB
 //! request per round to discover, from a panic on stderr, which keys the fold
@@ -35,7 +35,7 @@ pub const OSM_READS: [&str; 3] = ["walkableRoads", "buildingsNear", "drivableRoa
 /// Where a fold's host-side time went, by label: `{label: (count, nanos)}`,
 /// process-wide, read and reset per request by the route that reports it.
 ///
-/// ⚠ Exists because `foldDbMs` and `foldLeanMs` left ~1.7 s of a heavy day's
+/// Exists because `foldDbMs` and `foldLeanMs` left ~1.7 s of a heavy day's
 /// asks unaccounted for (asks 3.5 s, SQL 1.3 s, scoring 0.5 s). A total that two timers do not add up to is a question; this is
 /// where it is answered rather than guessed at. Labels: `db.<query>` for each
 /// statement kind, `cover` for the coverage gate's nested Lean calls,
@@ -96,7 +96,7 @@ pub struct Folded {
 }
 
 impl Folded {
-    /// The asks nothing answered. A day with any of these ran with a DEFAULT
+    /// The asks nothing answered. A day with any of these ran with a default
     /// in their place — an empty table, the home zone — and that is not the
     /// same day the mirror would have produced.
     pub fn declined(&self) -> Vec<Ask> {
@@ -147,7 +147,7 @@ pub fn run_day(cap: &Value, inputs: &Value, answerer: &mut dyn Answerer) -> Resu
     let t_build = std::time::Instant::now();
     let req = build_day_request(cap, inputs).context("building the day request")?;
     let body = serde_json::to_string(&req).context("serialising the request")?;
-    // The fold takes `{"mode": "day", …}`; the request object IS the rest.
+    // The fold takes `{"mode": "day", …}`; the request object is the rest.
     let wrapped = format!("{{\"mode\":\"day\",{}", &body[1..]);
     let build_ms = t_build.elapsed().as_millis();
 
@@ -161,7 +161,7 @@ pub fn run_day(cap: &Value, inputs: &Value, answerer: &mut dyn Answerer) -> Resu
         asks: c.asks,
     };
     if split {
-        // ⚠ Per-phase RSS is THIS process's, and the fold now runs in another:
+        // Per-phase RSS is this process's, and the fold now runs in another:
         // what grows here is the request and the answers, not the Lean heap.
         // The worker's own size is what `ps` on its pid says.
         let declined = folded.declined().len();
@@ -190,7 +190,7 @@ pub fn run_day(cap: &Value, inputs: &Value, answerer: &mut dyn Answerer) -> Resu
 
 /// Give the heap a fold freed back to the kernel, and say what that moved.
 ///
-/// ⚠ With folds already running one at a time, a fresh pod folding two heavy
+/// With folds already running one at a time, a fresh pod folding two heavy
 /// days kept 191–389 MiB of anonymous memory at idle (glibc's arenas hold what a
 /// fold freed), and the third fold was OOM-killed at 403 MiB backend plus a
 /// 100 MiB Lean worker. `malloc_trim(0)` walks every arena and returns the free
@@ -204,7 +204,7 @@ pub fn trim_heap() {
         unsafe extern "C" {
             fn malloc_trim(pad: usize) -> i32;
         }
-        // SAFETY: glibc's `malloc_trim` has no preconditions; it releases only
+        // Safety: glibc's `malloc_trim` has no preconditions; it releases only
         // memory the allocator already holds as free.
         unsafe {
             malloc_trim(0);
@@ -239,7 +239,7 @@ pub fn cgroup_memory() -> Option<(u64, u64)> {
 
 /// Resident set size of this process (MiB), or 0 if nothing can say.
 ///
-/// ⚠ `/proc` FIRST, because `ps` READ ZERO IN THE CONTAINER: the
+/// `/proc` first, because `ps` read zero in the container: the
 /// serving image is alpine, whose busybox `ps` does not take `-o rss= -p`.
 /// `/proc/self/statm` needs no fork and exists on every Linux; `ps` stays as
 /// the macOS fallback.

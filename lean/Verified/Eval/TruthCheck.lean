@@ -3,15 +3,15 @@ import Verified.Eval.Journeys
 /-!
 # Three-way truth check
 
-The golden harness diffs pipeline output against the last blessed SNAPSHOT,
+The golden harness diffs pipeline output against the last blessed snapshot,
 which conflates three different things into one must-not-change blob: lines we
 have confirmed true, lines we know are wrong but tolerate, and lines nobody ever
 checked. So fixing a known error trips the harness exactly like causing a
 regression, and an unverified line is treated as gospel.
 
 This module classifies each ground-truth row into one of five verdicts. The
-row's cell states the TRUTH (`GroundTruth.lean`); its **status** says how the
-pipeline relates to that truth; its **provenance** says how much to trust the
+row's cell states the truth (`GroundTruth.lean`); its status says how the
+pipeline relates to that truth; its provenance says how much to trust the
 claim (`isEnforceable`); and the live comparison says whether the pipeline
 currently matches it.
 
@@ -20,11 +20,11 @@ currently matches it.
 * `regressed`   — enforceable `correct` row, pipeline no longer matches.
 * `known-error` — enforceable `wrong` row, pipeline still deviates. Tolerated
                   debt: counted, never invisible, not a failure.
-* `cleared`     — enforceable `wrong` row, pipeline now MATCHES the truth.
+* `cleared`     — enforceable `wrong` row, pipeline now matches the truth.
 * `unverified`  — no enforceable truth (partial/unclear verdict, or
                   inferred/unspecified provenance).
 
-## ⚠ THE LIVE MODE STAYS A STRING
+## The live mode stays a string
 
 `Truth.mode` is a `Mode`, but the pipeline's mode is whatever the serving path
 emitted, compared as a canonical string, so an unrecognised mode compares
@@ -32,7 +32,7 @@ unequal to everything rather than being dropped. Parsing it to `Option Mode`
 would turn that into "no live state", a different verdict for a `wrong` row if
 the mode table ever grows on one side only. So `Live.mode` is a `String`.
 
-## ⚠ NO REGEX, and one deliberate divergence
+## No regex, and one deliberate divergence
 
 `parsePipelineState`'s route pattern is explicit walking. A route whose alight
 is only whitespace (`"A →  · Line"`) is "no route" and falls through to the
@@ -83,7 +83,7 @@ structure StateWindow where
 
 /-- ASCII + Latin-1 lowercase.
 
-⚠ JS `toLowerCase()` is fully Unicode-aware; `Char.toLower` is ASCII only. The
+JS `toLowerCase()` is fully Unicode-aware; `Char.toLower` is ASCII only. The
 Latin-1 supplement is added because European place names live there ("Café",
 "Ménière"), so a truth cell shouting a name would otherwise stop matching. Above
 U+00FF this still diverges from JS, which no corpus row reaches. -/
@@ -108,9 +108,9 @@ private def nonEmpty (s : String) : Option String :=
 /-- `/^(.+?)\s+→\s+([^·]+?)(?:\s*·\s*(.+))?$/` — a transit label's
 `From → To · Line`. Returns `(from, to, line?)`.
 
-The arrow must carry whitespace on BOTH sides and have at least one character
+The arrow must carry whitespace on both sides and have at least one character
 before it, which is what stops a bare "→" glyph inside a name from splitting the
-label. The line is everything after the FIRST `·`; the alight cannot contain
+label. The line is everything after the first `·`; the alight cannot contain
 one. -/
 def splitTransitRoute (s : String) : Option (String × String × Option String) := Id.run do
   let cs := s.toList
@@ -147,13 +147,13 @@ def splitTransitRoute (s : String) : Option (String × String × Option String) 
 
 /-! ## Rendering the live side -/
 
-/-- Render a live pipeline state into the comparison form, so ONE comparator
+/-- Render a live pipeline state into the comparison form, so one comparator
 works on both sides. Mirrors the shapes the truth cells use:
 
 * stationary/sleeping → `@ Place (qualifier)`: the trailing parenthetical splits
   off the place name;
 * walking/driving/cycling → `on Way`: the way label as-is;
-* train/bus → `From → To · Line` OR a bare line name. A transit state's
+* train/bus → `From → To · Line` or a bare line name. A transit state's
   `wayName` renders as either an `A → B` route (optionally `· Line`) or just the
   line (train) / the road names (bus), so parse whichever is present: transit
   rows compare on board/alight when available and fall back otherwise. -/
@@ -182,14 +182,14 @@ def parsePipelineState : Option StateWindow → Option Live
 
 /-! ## The comparator -/
 
-/-- Does the live way LABEL carry the road the truth names?
+/-- Does the live way label carry the road the truth names?
 
 A live `wayName` is not a road, it is a display label: `composeWayName` emits up
 to three road names joined by ", " for one merged moving leg, duration-weighted,
 each covering at least 15% of it, capped at 30 characters so the timeline stays
 one line. A walk crossing two roads is labelled "Example Rise, <second road>".
 
-⚠ String equality against that label contradicts this module's own rule (extra
+String equality against that label contradicts this module's own rule (extra
 attribution on the live side is not a contradiction), and it fails a real row:
 a confirmed "walking on Example Rise" against a live leg with identical bounds
 labelled "Example Rise" plus one more road, the confirmed road right there as
@@ -208,11 +208,11 @@ def PLACE_ALTERNATIVES : String := " / "
 
 /-- Does the live state match the truth cell?
 
-⚠ DELIBERATELY ASYMMETRIC: the truth cell asserts only what it NAMES, so extra
+Deliberately asymmetric: the truth cell asserts only what it names, so extra
 attribution on the live side is not a contradiction — a truth of plain "walking"
 is satisfied by "walking on Example Rise" (the narrative only vetted the mode), and
 a truth of "train A → B" without a `· Line` is satisfied by any line. But every
-assertion the truth DOES make must hold. The trailing `(qualifier)` is ignored:
+assertion the truth does make must hold. The trailing `(qualifier)` is ignored:
 "Hospital W (hospital)" and "Hospital W" are the same place, and a wrong
 qualifier on a right place is a separate, weaker signal. A null truth (unparsed
 cell) or an absent live state never matches.
@@ -239,7 +239,7 @@ def truthMatches : Option Truth → Option Live → Bool
         | some lf, some lt => if !stationIs tf lf || !stationIs tt lt then return false
         | _, _ => return false
       | _, _ => pure ()
-      -- Line only discriminates when BOTH sides name one — a missing line is a
+      -- Line only discriminates when both sides name one — a missing line is a
       -- partial attribution, not a contradiction.
       match t.lineName, l.lineName with
       | some tl, some ll => if norm tl != norm ll then return false
@@ -281,14 +281,14 @@ structure TRow where
   truth : Option Truth
   deriving BEq, Repr, Inhabited
 
-/-- The state covering a row's window, sampled at the window MIDPOINT.
+/-- The state covering a row's window, sampled at the window midpoint.
 
-⚠ The midpoint, not the overlap: a row is a claim about what was happening then,
+The midpoint, not the overlap: a row is a claim about what was happening then,
 and a leg that merely clips the window's edge did not answer it. That is why
 06-16's row 1 fails by 9 seconds: `vehicleSplit` ends the walk at its last fix
 rather than its last trustworthy one, and the midpoint lands past it. -/
 def stateIdxAt (states : Array StateWindow) (startTs endTs : Int) : Option Nat :=
-  -- `(startTs + endTs) / 2` in JS is a FLOAT midpoint; an odd sum lands on .5.
+  -- `(startTs + endTs) / 2` in JS is a float midpoint; an odd sum lands on .5.
   -- Doubling the bounds instead keeps it exact and orders identically.
   let mid2 := startTs + endTs
   states.findIdx? (fun s => 2 * s.startTs ≤ mid2 && mid2 < 2 * s.endTs)
@@ -308,7 +308,7 @@ structure DayResult where
   hasRegression : Bool
   /-- Which state covered each row, positionally, or `-1` for none.
 
-  ⚠ FOR DIAGNOSIS, and it exists because a regressed row names what BROKE and
+  For diagnosis, and it exists because a regressed row names what broke and
   never what the pipeline said instead — so every one of them had to be
   re-diagnosed by hand before it could be attributed. The windowing stays here
   rather than being re-derived by the caller: a debug view that finds the state
@@ -335,7 +335,7 @@ def classifyDay (rows : Array TRow) (states : Array StateWindow) : DayResult :=
 
 /-! ## Witnesses
 
-⚠ SYNTHETIC NAMES ONLY. The shapes are drawn from the real corpus — 395
+⚠ synthetic names only. The shapes are drawn from the real corpus — 395
 rows over 32 narratives, whose truth cells occupy exactly 12 shapes — but the
 names are invented, because this file is tracked and the repo is public.
 
@@ -345,7 +345,7 @@ that way and live only here:
 * `splitTransitRoute`'s empty-`from` guard — no narrative cell yields an empty
   board station, and with one the verdict comes out the same either way;
 * `nonEmpty` on an empty transit label — needs a train cell asserting a line
-  with NO route, a shape the corpus has zero of (61 rows have route+line, 19
+  with no route, a shape the corpus has zero of (61 rows have route+line, 19
   route-only, none line-only).
 -/
 
@@ -362,20 +362,20 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
     (way : Option String := none) (roads : Array String := #[]) : StateWindow :=
   { startTs := s, endTs := e, mode := m, place := pl, wayName := way, roads }
 
--- splitTransitRoute: the arrow needs whitespace on BOTH sides.
+-- splitTransitRoute: the arrow needs whitespace on both sides.
 #guard splitTransitRoute "Alpha → Beta" == some ("Alpha", "Beta", none)
 #guard splitTransitRoute "Alpha → Beta · Red Line" == some ("Alpha", "Beta", some "Red Line")
 #guard splitTransitRoute "Alpha→Beta" == none
 #guard splitTransitRoute "Alpha→ Beta" == none
 #guard splitTransitRoute "Alpha →Beta" == none
--- Multi-word names survive; only the FIRST qualifying arrow splits.
+-- Multi-word names survive; only the first qualifying arrow splits.
 #guard splitTransitRoute "Alpha Cross → Beta Park" == some ("Alpha Cross", "Beta Park", none)
--- The line is everything after the FIRST separator — the alight cannot hold one.
+-- The line is everything after the first separator — the alight cannot hold one.
 #guard splitTransitRoute "Alpha → Beta · Red · extra" == some ("Alpha", "Beta", some "Red · extra")
 -- A trailing separator with nothing after it fails the whole pattern: `(.+)`
 -- needs a character and `[^·]+?` cannot cross the `·` to reach the end.
 #guard splitTransitRoute "Alpha → Beta ·" == none
--- ⚠ CORPUS-UNREACHABLE: an empty board station. The guard exists so the walk
+-- Corpus-unreachable: an empty board station. The guard exists so the walk
 -- matches the regex; no narrative produces it, and the verdict would agree.
 #guard splitTransitRoute " → Beta" == none
 #guard splitTransitRoute "Alpha →  · Red" == none
@@ -399,19 +399,19 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
     == some (some "Alpha")
 #guard (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta · Red")))).map (·.lineName)
     == some (some "Red")
--- Train with no route reads the label as a bare LINE …
+-- Train with no route reads the label as a bare line …
 #guard (parsePipelineState (some (st 0 9 "train" (way := some "Red Line")))).map (·.lineName)
     == some (some "Red Line")
 #guard (parsePipelineState (some (st 0 9 "train" (way := some "Red Line")))).map (·.wayName)
     == some none
--- … while a bus with no route reads it as ROAD NAMES. The two fall back
+-- … while a bus with no route reads it as road names. The two fall back
 -- differently and swapping them is invisible in every shape but a bus row that
 -- asserts a road, of which the corpus has exactly one.
 #guard (parsePipelineState (some (st 0 9 "bus" (way := some "Alpha Road, Beta Street")))).map (·.wayName)
     == some (some "Alpha Road, Beta Street")
 #guard (parsePipelineState (some (st 0 9 "bus" (way := some "Alpha Road, Beta Street")))).map (·.lineName)
     == some none
--- ⚠ CORPUS-UNREACHABLE: an empty label is ABSENT, not an empty assertion.
+-- Corpus-unreachable: an empty label is absent, not an empty assertion.
 #guard (parsePipelineState (some (st 0 9 "train" (way := some "")))).map (·.lineName) == some none
 #guard (parsePipelineState (some (st 0 9 "bus" (way := some "")))).map (·.wayName) == some none
 -- An unknown mode is carried through as a string rather than dropped.
@@ -425,7 +425,7 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
 #guard !wayNameCovers "Alpha" (some "Alpha Road")
 #guard !wayNameCovers "Alpha Road" none
 
--- truthMatches: the asymmetry. A truth asserts only what it NAMES.
+-- truthMatches: the asymmetry. A truth asserts only what it names.
 #guard truthMatches (some (tw .walking)) (parsePipelineState (some (st 0 9 "walking" (way := some "Alpha Road"))))
 #guard truthMatches (some (tw .walking (way := some "Alpha Road")))
     (parsePipelineState (some (st 0 9 "walking" (way := some "Alpha Road, Beta Street"))))
@@ -435,7 +435,7 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
 #guard truthMatches (some (tw .walking (way := some "Gamma Lane")))
     (parsePipelineState (some (st 0 9 "walking" (way := some "Alpha Road, Beta Street")
       (roads := #["Alpha Road", "Beta Street", "Gamma Lane"]))))
--- The qualifier is ignored on BOTH sides — right place, wrong amenity still matches.
+-- The qualifier is ignored on both sides — right place, wrong amenity still matches.
 #guard truthMatches (some (tw .stationary (pl := some "Cafe Delta") (q := some "restaurant")))
     (parsePipelineState (some (st 0 9 "stationary" (pl := some "Cafe Delta (cafe)"))))
 #guard !truthMatches (some (tw .stationary (pl := some "Cafe Delta")))
@@ -451,7 +451,7 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
 #guard truthMatches (some (tw .sleeping (pl := some "Home"))) (parsePipelineState (some (st 0 9 "stationary" (pl := some "Home"))))
 #guard truthMatches (some (tw .stationary (pl := some "Home"))) (parsePipelineState (some (st 0 9 "sleeping" (pl := some "Home"))))
 #guard !truthMatches (some (tw .walking)) (parsePipelineState (some (st 0 9 "stationary" (pl := some "Home"))))
--- A route without a line is satisfied by any line; a NAMED line must agree.
+-- A route without a line is satisfied by any line; a named line must agree.
 #guard truthMatches (some (tw .train (f := some "Alpha") (t := some "Beta")))
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta · Red"))))
 #guard truthMatches (some (tw .train (f := some "Alpha") (t := some "Beta") (l := some "Red")))
@@ -464,13 +464,13 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta (Metro) · Red"))))
 #guard !truthMatches (some (tw .train (f := some "Alpha") (t := some "Beta") (l := some "Blue")))
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta · Red"))))
--- A truth naming stations against a live BARE LINE has nothing to compare: fail.
+-- A truth naming stations against a live bare line has nothing to compare: fail.
 #guard !truthMatches (some (tw .train (f := some "Alpha") (t := some "Beta")))
     (parsePipelineState (some (st 0 9 "train" (way := some "Red Line"))))
 -- A truth naming only a line matches a live route on that line.
 #guard truthMatches (some (tw .train (l := some "Red")))
     (parsePipelineState (some (st 0 9 "train" (way := some "Alpha → Beta · Red"))))
--- A bus truth asserting a ROAD is checked against the road label.
+-- A bus truth asserting a road is checked against the road label.
 #guard truthMatches (some (tw .bus (way := some "Alpha Road")))
     (parsePipelineState (some (st 0 9 "bus" (way := some "Alpha Road, Beta Street"))))
 #guard !truthMatches (some (tw .bus (way := some "Gamma Lane")))
@@ -490,10 +490,10 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
 #guard rowVerdict .unclear .corroborated true == .unverified
 #guard rowVerdict .correct .derived true == .verified
 
--- stateAt: the MIDPOINT, and an odd window lands between two integers.
+-- stateAt: the midpoint, and an odd window lands between two integers.
 #guard (stateAt #[st 0 100 "walking"] 10 20).isSome
 #guard (stateAt #[st 0 100 "walking"] 10 21).isSome
--- A leg that ends exactly AT the midpoint does not cover it; one that starts
+-- A leg that ends exactly at the midpoint does not cover it; one that starts
 -- there does. `[start, end)`, and the half-open end is what a nine-second
 -- shortfall at a window's tail turns on.
 #guard (stateAt #[st 0 15 "walking"] 10 20) == none
@@ -503,7 +503,7 @@ private def st (s e : Int) (m : String) (pl : Option String := none)
 #guard (stateAt #[st 0 15 "walking"] 10 21) == none
 #guard (stateAt #[st 0 16 "walking"] 10 21).isSome
 #guard (stateAt #[st 15 40 "walking"] 10 21).isSome
--- Overlapping legs: the FIRST match wins, as `Array.find?` and `Array.prototype.find` both do.
+-- Overlapping legs: the first match wins, as `Array.find?` and `Array.prototype.find` both do.
 #guard (stateAt #[st 0 100 "walking", st 0 100 "train"] 10 20).map (·.mode) == some "walking"
 #guard (stateAt #[] 10 20) == none
 
@@ -531,7 +531,7 @@ private def demoStates : Array StateWindow := #[
     == #[.verified, .regressed, .cleared, .knownError, .unverified]
 #guard (classifyDay demoRows demoStates).covering == #[0, 1, 2, 3, 4]
 #guard (classifyDay demoRows #[]).covering == #[-1, -1, -1, -1, -1]
--- The covering index and the verdict come from ONE lookup: a row covered by
+-- The covering index and the verdict come from one lookup: a row covered by
 -- nothing can never be `verified`.
 #guard (classifyDay demoRows (demoStates.eraseIdx! 0)).covering == #[-1, 0, 1, 2, 3]
 #guard (classifyDay demoRows (demoStates.eraseIdx! 0)).verdicts[0]! == .regressed
@@ -541,7 +541,7 @@ private def demoStates : Array StateWindow := #[
 #guard (classifyDay demoRows demoStates).knownError == 1
 #guard (classifyDay demoRows demoStates).unverified == 1
 #guard (classifyDay demoRows demoStates).hasRegression
--- Drop the one regressed row and the flag clears — a known error is DEBT, not
+-- Drop the one regressed row and the flag clears — a known error is debt, not
 -- a failure, and it must not be able to fail the gate on its own.
 #guard !(classifyDay (demoRows.eraseIdx! 1) demoStates).hasRegression
 #guard (classifyDay (demoRows.eraseIdx! 1) demoStates).knownError == 1

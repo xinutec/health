@@ -7,14 +7,14 @@ A pure selector over the user's mined `focus_places` and the latest fix, behind
 the internal `/internal/place/current` endpoint that coach uses to auto-select a
 training location.
 
-Unlike the long-stay gate this does NOT require a multi-hour dwell — coach cares
+Unlike the long-stay gate this does not require a multi-hour dwell — coach cares
 about any place the user has linked, and a gym is a ~1 h visit. `focus_places`
 are already dwell clusters rather than drive-throughs, so nearest-within-radius
 is the right rule. The radius (100 m) matches the long-stay gate: loose enough
 to absorb GPS jitter at a centroid, tight enough not to catch the place next
 door.
 
-It is a NEAREST rule, not a rank rule: `placeLabel` decides how to *name* the
+It is a nearest rule, not a rank rule: `placeLabel` decides how to *name* the
 winner, never which place wins. A "Stay" with a mined venue beats a "Home" that
 is further away.
 
@@ -96,7 +96,7 @@ def pickCurrentPlace (lat lon : Float) (places : Array FocusPlaceForPresence) : 
 #guard placeLabel (some "Stay") (some "PureGym Wembley") == "PureGym Wembley"
 #guard isNamedPlace (some "Stay") (some "PureGym Wembley") == true
 -- Nothing better: "Stay" comes back through the fallback chain, but it does not
--- NAME a place, so the picker declines to offer it.
+-- name a place, so the picker declines to offer it.
 #guard placeLabel (some "Stay") none == "Stay"
 #guard isNamedPlace (some "Stay") none == false
 #guard placeLabel none (some "Sainsbury's") == "Sainsbury's"
@@ -131,8 +131,8 @@ private def pv (r : Option CurrentPlace) : Option (Int × String × Float) :=
 #guard pv (pickCurrentPlace 51.5208 (-0.13) PLACES) == some (1, "Home", 89)
 -- …and just outside it.
 #guard pickCurrentPlace 51.5210 (-0.13) PLACES == none
--- EXACTLY 100 m from Home: the test is `d > radius`, so the boundary is
--- INCLUDED. Real coordinates almost never land on it — the doubles either side
+-- Exactly 100 m from Home: the test is `d > radius`, so the boundary is
+-- included. Real coordinates almost never land on it — the doubles either side
 -- of 100.0 here differ by ~8e-10 m — so this pair was found by search. Without
 -- it the `>` vs `≥` choice would be unpinned, which a probe confirmed.
 #guard pv (pickCurrentPlace 51.52089857309002 (-0.129941044) #[HOME]) == some (1, "Home", 100)

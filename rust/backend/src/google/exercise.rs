@@ -5,7 +5,7 @@
 //! each with its interval, type, a metrics summary, start/stop events and
 //! splits.
 //!
-//! ⚠ THE WHOLE POINT IS KEPT (`raw`). The typed columns are what a query wants
+//! The whole point is kept (`raw`). The typed columns are what a query wants
 //! first; the splits, heart-rate zone durations and events are only in `raw`,
 //! and storing them whole is the rule: full resolution, no rollups.
 
@@ -95,7 +95,7 @@ const BATCH_ROWS: usize = 200;
 
 /// Every workout Google holds, into `exercise_sessions`.
 ///
-/// ⚠ All of them, every run: the sessions fit one page, so a filter would save
+/// All of them, every run: the sessions fit one page, so a filter would save
 /// nothing, and a full read is what picks up a session Google edited after the
 /// fact. An edit replaces its row (keyed by point id): this is Google's record
 /// of the session, not a re-decision of ours.

@@ -7,7 +7,7 @@ use backend::{db, decode_fixture};
 
 /// Persist a day's HSMM decode, overwriting any existing row.
 ///
-/// ⚠ `classifier_version` is read back: `loadDecode` returns null on a mismatch
+/// `classifier_version` is read back: `loadDecode` returns null on a mismatch
 /// so readers re-decode rather than serve stale segments. A wrong number here
 /// fails nothing; every reader just discards the row and recomputes, which
 /// looks like a slow cache.
@@ -127,7 +127,7 @@ pub(crate) async fn decode_day(
         }
     }
 
-    // ⚠ A dry run wrote nothing and must not say "written": this line is what
+    // A dry run wrote nothing and must not say "written": this line is what
     // gets grepped to learn whether the row was replaced.
     eprintln!(
         "decode-day: {written} {}, {failed} failed of {attempted} day(s)",
@@ -139,7 +139,7 @@ pub(crate) async fn decode_day(
             "written"
         }
     );
-    // ⚠ Refuse rather than report success on nothing, as `refresh-rail-routes`
+    // Refuse rather than report success on nothing, as `refresh-rail-routes`
     // does: every day failing is a broken run; a day with no data is not.
     if failed > 0 && failed == attempted {
         pool.close().await;
@@ -241,7 +241,7 @@ pub(crate) async fn decode_one(
     );
 
     // ── the observation tensor's raw materials ──────────────────────────────
-    // ⚠ The tensor is built in Lean, not here: shipping 1440 assembled rows is
+    // The tensor is built in Lean, not here: shipping 1440 assembled rows is
     // the payload this design avoids. What crosses is the day's fixes and two
     // impure lookups, a timezone and an OSM query.
     //
@@ -249,7 +249,7 @@ pub(crate) async fn decode_one(
     // the tensor and the proximity lookups, so the two cannot disagree.
     let cleaned = backend::lean::drop_gps_outliers(&gps_fixes(&obs)?)?;
     step("outliers", &mut steps);
-    // ⚠ The decoder's places are not `focus_places` rows: `knownPlaces` names
+    // The decoder's places are not `focus_places` rows: `knownPlaces` names
     // the columns (`centroidLat`, `totalDwellSec`, `displayName`), the decode
     // wire the concepts (`lat`, `dwell`, `name`). The row shape is refused by
     // name; see `decode_places` and its request test.
@@ -258,7 +258,7 @@ pub(crate) async fn decode_one(
     println!("osm {date}: {}", osm.note);
     step("osm", &mut steps);
 
-    // ⚠ The chain seed is four fields: `priorPlaceId` alone is refused with
+    // The chain seed is four fields: `priorPlaceId` alone is refused with
     // `property not found: hoursSince`.
     let continuity = load_continuity(pool, user_id, date, &places).await?;
     step("continuity", &mut steps);
@@ -294,7 +294,7 @@ pub(crate) async fn decode_one(
         "edges": edges,
         "nodes": nodes,
         "places": places,
-        // ⚠ Absent is not neutral: `parseAssemble` reads a missing
+        // Absent is not neutral: `parseAssemble` reads a missing
         // `placeNearLine` as the empty set, which drops every place→line hard
         // zero, and the decode looks plausible while permitting forbidden
         // boardings.
@@ -359,7 +359,7 @@ pub(crate) async fn decode_one(
     // Blocking Lean work: the runtime moves its other tasks off this thread, so
     // `DECODE_JOBS` days decode side by side.
     //
-    // ⚠ `None` is degenerate: Lean found no viable path. That is a real answer
+    // `None` is degenerate: Lean found no viable path. That is a real answer
     // about the day, and must not be written as zero segments, which would
     // read as "decoded, nothing happened".
     let Some(segments) = tokio::task::block_in_place(|| backend::lean::assemble_segments(&req))?
@@ -384,7 +384,7 @@ pub(crate) async fn decode_one(
 /// The prior day's end-of-day seed, shaped as `parseContinuity` reads it, or
 /// `null`, a legitimate chain start.
 ///
-/// ⚠ Four fields, not one: `priorPlaceId` alone is refused with `property not
+/// Four fields, not one: `priorPlaceId` alone is refused with `property not
 /// found: hoursSince`. `priorPlaceCoord` is a `[lat, lon]` pair on the wire.
 ///
 /// Three absences, read separately though all answer null: no row (a chain
@@ -392,7 +392,7 @@ pub(crate) async fn decode_one(
 /// `end_of_day_ts` (the seed's staleness is unknown).
 ///
 /// ⚠ sqlx types that fail on real rows only: `presence_log.*_place_id` is INT
-/// UNSIGNED, so `u64`; `end_of_day_posterior` is FLOAT, so `f32`, widened
+/// UNSIGNED, so `u64`; `end_of_day_posterior` is float, so `f32`, widened
 /// exactly.
 ///
 /// The timestamp is read with `UNIX_TIMESTAMP`, mirroring the `FROM_UNIXTIME`
@@ -432,7 +432,7 @@ pub(crate) async fn load_continuity(
     };
     let posterior = f64::from(row.try_get::<f32, _>("end_of_day_posterior")?);
 
-    // ⚠ UTC midnight of the decoded date, not local midnight nor the day's
+    // UTC midnight of the decoded date, not local midnight nor the day's
     // `startUtc`: in London those differ by an hour for half the year, and
     // the difference lands in the continuity factor's time decay.
     let today_start = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
@@ -461,7 +461,7 @@ pub(crate) async fn load_continuity(
 
 /// `head::capture`'s `obs.points` as fixes.
 ///
-/// ⚠ These are the velocity pipeline's points, not the raw ones. `rawFixes`
+/// These are the velocity pipeline's points, not the raw ones. `rawFixes`
 /// builds the route-graph bbox, a wider set on purpose, so the graph contains
 /// the day even where the pipeline dropped fixes.
 pub(crate) fn gps_fixes(obs: &serde_json::Value) -> Result<Vec<backend::lean::GpsFix>> {
@@ -492,7 +492,7 @@ pub(crate) fn gps_fixes(obs: &serde_json::Value) -> Result<Vec<backend::lean::Gp
 
 /// Everything the decode needs from OSM, gathered in one trip to the mirror.
 ///
-/// ⚠ Two unrelated questions through one door, because the mirror is
+/// Two unrelated questions through one door, because the mirror is
 /// blocking-thread only: `with_mirror_answerer`'s closure cannot await, and a
 /// second `MirrorSource` built on a runtime worker aborts the process.
 pub(crate) struct DayOsm {
@@ -539,7 +539,7 @@ pub(crate) async fn day_osm(
         backend::mirror_source::with_mirror_answerer(pool.clone(), now_ms, move |ans| {
             let mut out = Vec::with_capacity(queries.len());
             for q in &queries {
-                // ⚠ `None` is "the mirror could not vouch for this coordinate",
+                // `None` is "the mirror could not vouch for this coordinate",
                 // not "nothing here": an empty way list would tell the decoder
                 // there is no railway within 300 m, evidence against rail.
                 let Some(ways) = ans.nearby_ways(q.lat(), q.lon())? else {
@@ -643,7 +643,7 @@ pub(crate) async fn route_graph_rows(
 ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>)> {
     use sqlx::Row as _;
 
-    // ⚠ The track is boxed by the day: a day away from home would otherwise
+    // The track is boxed by the day: a day away from home would otherwise
     // have no rail to match against.
     let mut pts: Vec<(f64, f64)> = Vec::new();
     if let Some(rows) = obs.get("rawFixes").and_then(serde_json::Value::as_array) {
@@ -690,7 +690,7 @@ pub(crate) async fn route_graph_rows(
         }));
     }
 
-    // ⚠ The stations are not boxed by the day. `emitLeg` names a station only
+    // The stations are not boxed by the day. `emitLeg` names a station only
     // when every rival trails by `MARGIN_NATS`, so the candidate pool is a
     // threshold; cut to the day's extent it lowers the bar, and a leg resolves
     // by where the phone was rather than where the train went.
@@ -759,7 +759,7 @@ pub(crate) async fn route_graph_rows(
 
 /// `tags_json` → `[[k, v], …]`.
 ///
-/// ⚠ Pairs, not an object: `BackendEntry` reads two-element arrays, and the
+/// Pairs, not an object: `BackendEntry` reads two-element arrays, and the
 /// object spelling parses to nothing, so every stay would answer no venues.
 pub(crate) fn tag_pairs(raw: Option<&str>) -> Vec<serde_json::Value> {
     let Some(v) = raw.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()) else {

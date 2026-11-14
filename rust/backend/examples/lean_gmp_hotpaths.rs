@@ -2,7 +2,7 @@
 //!
 //! # What it catches
 //!
-//! Three things Lean compiles to arbitrary-precision (GMP) work on EVERY
+//! Three things Lean compiles to arbitrary-precision (GMP) work on every
 //! evaluation, each of which has cost the walk matcher or the decoder build
 //! real time:
 //!
@@ -16,13 +16,13 @@
 //!
 //! The generated C says exactly where each happens; a function whose name
 //! contains `_init_` runs once and is not counted. The check reads
-//! `lean/.lake/build/ir/**/*.c`, so it runs after something has built the Lean
+//! `lean/.lake/build/ir//*.c`, so it runs after something has built the Lean
 //! (the Rust tests do, through `build.rs`).
 //!
 //! # The baseline
 //!
 //! `lean/gmp-hotpaths.baseline` lists today's sites, most of them in cold code.
-//! It is held EXACT: a new site, or more of an existing one, fails and names
+//! It is held exact: a new site, or more of an existing one, fails and names
 //! the function; a site that went away also fails, so the list shrinks with the
 //! code instead of keeping stale excuses. After judging a change —
 //! fixed it, or it is genuinely cold — rewrite the list with

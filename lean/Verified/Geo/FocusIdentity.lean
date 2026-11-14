@@ -12,7 +12,7 @@ Greedy bipartite matching, which handles split and merge implicitly:
 
 1. every `(old, new)` pair within `MATCH_RADIUS_M` becomes a candidate;
 2. sorted closest-first, `firstSeenTs` ascending as the tiebreaker — on an exact
-   distance tie the OLDER place keeps its identity;
+   distance tie the older place keeps its identity;
 3. walk the sorted list and accept a pair iff neither side is taken;
 4. unassigned new clusters are fresh inserts, unassigned old ids are deletions.
 
@@ -110,36 +110,36 @@ private def mv (r : MatchResult) : Array (Option Int) × Array Int :=
 -- One-to-one: two survive, the far one is deleted.
 #guard mv (matchClusters OLD #[⟨51.5201, -0.1301⟩, ⟨51.5299, -0.13⟩])
   == (#[some 10, some 11], #[12])
--- SPLIT: one old place, two new clusters in range. Greedy takes the CLOSER
+-- Split: one old place, two new clusters in range. Greedy takes the closer
 -- (index 1), so index 0 falls through to a fresh insert — the order of the
 -- output is input order, not match order.
 #guard mv (matchClusters #[OLD[0]!] #[⟨51.5205, -0.13⟩, ⟨51.5201, -0.13⟩])
   == (#[none, some 10], #[])
--- MERGE: two old places, one new cluster between them. The nearer id survives.
+-- Merge: two old places, one new cluster between them. The nearer id survives.
 #guard mv (matchClusters #[OLD[0]!, ⟨11, 51.5210, -0.13, 2000⟩] #[⟨51.5205, -0.13⟩])
   == (#[some 10], #[11])
--- TIEBREAK: the secondary key is observable only on an EXACT float tie, so the
--- two old places sit on the SAME coordinates and the older `firstSeenTs` wins.
--- (Mirroring them north/south does NOT produce a tie — see the guard below.)
+-- Tiebreak: the secondary key is observable only on an exact float tie, so the
+-- two old places sit on the same coordinates and the older `firstSeenTs` wins.
+-- (Mirroring them north/south does not produce a tie — see the guard below.)
 #guard mv (matchClusters #[⟨20, 51.5201, -0.13, 9000⟩, ⟨21, 51.5201, -0.13, 1⟩] #[⟨51.52, -0.13⟩])
   == (#[some 21], #[20])
--- Reversed, to prove the winner is the OLDER place rather than simply the
+-- Reversed, to prove the winner is the older place rather than simply the
 -- first-generated pair (which a stable sort alone would also give).
 #guard mv (matchClusters #[⟨20, 51.5201, -0.13, 1⟩, ⟨21, 51.5201, -0.13, 9000⟩] #[⟨51.52, -0.13⟩])
   == (#[some 20], #[21])
--- Same coords AND same age: a total tie, so the stable sort's generation order
--- (old-index outer) decides and the FIRST old id wins.
+-- Same coords and same age: a total tie, so the stable sort's generation order
+-- (old-index outer) decides and the first old id wins.
 #guard mv (matchClusters #[⟨20, 51.5201, -0.13, 500⟩, ⟨21, 51.5201, -0.13, 500⟩] #[⟨51.52, -0.13⟩])
   == (#[some 20], #[21])
--- The near-mirror is NOT a tie: `51.5205 - 51.52` and `51.52 - 51.5195` are
+-- The near-mirror is not a tie: `51.5205 - 51.52` and `51.52 - 51.5195` are
 -- different doubles (55.59746332175475 m vs 55.59746332254485 m), so this pair
--- is decided on DISTANCE and the younger place wins by being barely closer.
+-- is decided on distance and the younger place wins by being barely closer.
 -- Recorded because it is the case I first mistook for the tiebreaker.
 #guard mv (matchClusters #[⟨20, 51.5205, -0.13, 9000⟩, ⟨21, 51.5195, -0.13, 1⟩] #[⟨51.52, -0.13⟩])
   == (#[some 20], #[21])
 -- Everything out of radius: all new, all old deleted.
 #guard mv (matchClusters OLD #[⟨40, 0⟩]) == (#[none], #[10, 11, 12])
--- EXACTLY 150 m apart: the test is `d ≤ radius`, so the boundary MATCHES. Same
+-- Exactly 150 m apart: the test is `d ≤ radius`, so the boundary matches. Same
 -- story as the presence radius in `Verified.Geo.CurrentPlace` — found by search,
 -- because the doubles either side of 150.0 differ by ~8e-10 m.
 #guard mv (matchClusters #[⟨30, 51.52, -0.13, 1⟩] #[⟨51.5213489816655, -0.129997724⟩])

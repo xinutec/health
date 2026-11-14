@@ -7,14 +7,14 @@ opens on "the day you are currently living" rather than on the calendar day.
 Those differ before dawn: at 02:00 the interesting track is yesterday's, still
 in progress as far as the person is concerned.
 
-So the rule is one comparison — before 06:00 LOCAL, the window starts
+So the rule is one comparison — before 06:00 local, the window starts
 yesterday; at or after it, today.
 
-⚠ The cutoff is a claim about PEOPLE, not about clocks. It says a night out
+The cutoff is a claim about people, not about clocks. It says a night out
 belongs to the evening it started, which is why it is a named constant here
 rather than an inline 6 in a route.
 
-⚠ LOCAL hour, and the local calendar day. The host resolves the zone — Lean has
+Local hour, and the local calendar day. The host resolves the zone — Lean has
 no zone database — and passes the already-local `(y, m, d, hour)`. Handing it
 UTC parts would silently shift the boundary by the offset, which is invisible
 in London in winter and wrong everywhere else.
@@ -23,12 +23,12 @@ Pure and total. UNPROVEN.
 -/
 namespace Verified.PhoneTrackPrefs
 
-/-- Before this LOCAL hour, the window still belongs to yesterday. -/
+/-- Before this local hour, the window still belongs to yesterday. -/
 def NIGHT_CUTOFF_HOUR : Int := 6
 
 /-- The local calendar date whose 00:00 is the filter's start.
 
-⚠ Rolls through the civil calendar, so it crosses a month, a year and a leap
+Rolls through the civil calendar, so it crosses a month, a year and a leap
 day correctly. Subtracting 86400 from a timestamp would agree on most days and
 not across a DST change — which is exactly the kind of day someone would be
 looking at the map to understand. -/
@@ -44,7 +44,7 @@ def dateminDate (y m d hour : Int) : String :=
 #guard dateminDate 2026 8 22 6 == "2026-08-22"
 #guard dateminDate 2026 8 22 12 == "2026-08-22"
 #guard dateminDate 2026 8 22 23 == "2026-08-22"
--- ⚠ Before it: YESTERDAY, because the night belongs to the evening it started.
+-- Before it: yesterday, because the night belongs to the evening it started.
 #guard dateminDate 2026 8 22 5 == "2026-08-21"
 #guard dateminDate 2026 8 22 0 == "2026-08-21"
 -- Month, year and leap-day rollovers.

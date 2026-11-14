@@ -220,7 +220,7 @@ partial def grow (env : Environment) (extra : NameMap (Array Name)) (thms : Arra
   let newThms := thms.filterMap fun t => if live.contains t || !written env t then none else
     (env.find? t).bind (·.type.getUsedConstants.find? fun c =>
       live.contains c && inPackage env c && isDefinition env c) |>.map (t, ·)
-  -- What a check tests: a live definition it names, or a live FUNCTION a
+  -- What a check tests: a live definition it names, or a live function a
   -- fixture of it calls. A value a fixture reads is data, and a fixture tests
   -- nothing itself.
   let tests (c : Cmd) (r : Name) :=

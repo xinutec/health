@@ -3,8 +3,8 @@ import Verified.Geo.LazyInv
 /-!
 # Lazy Dijkstra: resume-read stability
 
-The single fact the matcher's per-source route cache rests on: **the target
-reads after settling do not depend on where you resume from.** The twin's
+The single fact the matcher's per-source route cache rests on: the target
+reads after settling do not depend on where you resume from. The twin's
 `QRouteCache` pauses a source's search at one target and resumes it at the
 next; this file proves the value it then reads — `dist`, `prev`, and `done`
 at the queried target — is exactly what a search resumed from the source's
@@ -52,7 +52,7 @@ theorem iter_terminal_fix {g : Graph} {maxR : Nat} :
     rw [iter_succ, lstep_terminal_fix h]
     exact ih h
 
-/-- **Done-vertex read stability.** From a valid base `s`, once *any*
+/-- Done-vertex read stability. From a valid base `s`, once *any*
 vertex `v` is settled by step `k` its `dist`/`prev`/`done` are frozen for
 the rest of the trajectory (`settled_final`). This is the fact the route
 reconstruction needs: every vertex on a settled target's `prev` chain is
@@ -73,7 +73,7 @@ theorem iter_done_stable {g : Graph} {maxR L : Nat} (hwf : WFEdges g)
     obtain ⟨hd, hp, hdn⟩ := settled_final (k := d) hwf hLk hv
     exact ⟨hd, hp, hdn.trans hv.symm⟩
 
-/-- **Read stability past the first stop.** From a valid base `s`, if the
+/-- Read stability past the first stop. From a valid base `s`, if the
 target `t` has stopped by step `k`, then every later trajectory point
 `iter (max m k) s` reports the same `dist`/`prev`/`done` at `t` as
 `iter k s` — whether the stop was a settle (`done`, frozen by
@@ -94,7 +94,7 @@ theorem iter_stop_read_stable {g : Graph} {maxR t L : Nat} (hwf : WFEdges g)
       rw [iter_add, iter_terminal_fix d hterm]
       exact ⟨rfl, rfl, rfl⟩
 
-/-- **Resume-read stability.** A fueled settle of `t` resumed from any
+/-- Resume-read stability. A fueled settle of `t` resumed from any
 trajectory point `iter m s` reports the same target reads as one resumed
 from the start `s`, provided `k` is `t`'s first stop from `s` (reachable
 within the fuel). This is the per-source cache soundness at the read level:

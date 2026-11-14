@@ -1,4 +1,4 @@
-//! The WORLDLINE-FEASIBILITY ceiling — the fifth grader behind the one replay.
+//! The worldline-feasibility ceiling — the fifth grader behind the one replay.
 //!
 //! ```text
 //!   fixture → trace → fold → states ─┐
@@ -8,7 +8,7 @@
 //! The user's standing requirement: *"Correct or at least viable
 //! trajectory is important. It shouldn't show definitely-wrong interpretations
 //! that can't be right given the data."* A model-independent assertion on the
-//! OUTPUT: a real worldline is one continuous path through space-time, so some
+//! output: a real worldline is one continuous path through space-time, so some
 //! drawn timelines are impossible regardless of how the cascade produced them.
 //! Five invariants — `impossible-mode-kinematics` (a walk at vehicle pace, and
 //! a train at pedestrian pace while the wearer steps), `invalid-rail-triple`
@@ -16,24 +16,24 @@
 //! stays at different places too far apart for the time between),
 //! `rail-discontinuity` and `degenerate-train-leg`.
 //!
-//! ⚠ **It rides the shared replay.** As a separate test with its own fold it
+//! It rides the shared replay. As a separate test with its own fold it
 //! was too slow for the commit table, ran only in the deploy gate, and never in
 //! the `CORPUS_DAYS=` replays a change is developed against, so a regression
 //! passed every replay and failed the deploy an hour later. Behind the shared
 //! replay it costs one Lean question per day already folded, so it is judged on
 //! every day anyone replays.
 //!
-//! # A CEILING, not a floor, and the ratchet is the other way
+//! # A ceiling, not a floor, and the ratchet is the other way
 //!
 //! `feasibility-baseline.json`, `rail-triple-baseline.json` and
-//! `teleport-baseline.json` record standing defects as per-day COUNTS that may only shrink. A day emitting more than its
+//! `teleport-baseline.json` record standing defects as per-day counts that may only shrink. A day emitting more than its
 //! committed count fails; fewer is an improvement to re-bless with
 //! `FEASIBILITY_BLESS=1` (single-shard, like every bless in this runner).
 //!
-//! ⚠ SILENCE IS NOT ZERO. `current[date] ?? 0` cannot tell a day with no
+//! Silence is not zero. `current[date] ?? 0` cannot tell a day with no
 //! defects from a day that never ran, and against a non-zero ceiling the second
-//! reads as the first — so a change that breaks a fixture AND worsens that day
-//! would report as an IMPROVEMENT. `measured` and `attempted` are passed
+//! reads as the first — so a change that breaks a fixture and worsens that day
+//! would report as an improvement. `measured` and `attempted` are passed
 //! separately for exactly that reason; see `Verified.Eval.CeilingGate`.
 //!
 //! Sharding is sound the way it is for the floors: the committed ceiling is
@@ -92,8 +92,8 @@ fn ceiling_wire(m: &BTreeMap<String, u64>) -> Vec<Value> {
 
 /// `[[ts, a, b, …]]` rows out of the day request, as `{ts, <k1>, <k2>}` objects.
 ///
-/// ⚠ `/env/points` carries lat/lon as IEEE-754 bit strings and the Lean wire
-/// reads either encoding, so they are passed through UNTOUCHED — re-parsing
+/// `/env/points` carries lat/lon as IEEE-754 bit strings and the Lean wire
+/// reads either encoding, so they are passed through untouched — re-parsing
 /// them here would put a rounding step between the fold and the invariant that
 /// judges it.
 fn rows(request: &Value, at: &str, keys: &[&str]) -> Vec<Value> {
@@ -158,7 +158,7 @@ impl Feasibility {
                 })
             })
             .collect();
-        // ⚠ NON-VACUITY: a moved key yields an EMPTY slice, not an error, and an
+        // Non-vacuity: a moved key yields an empty slice, not an error, and an
         // empty timeline has no impossible leg in it.
         if legs.is_empty() {
             self.failures
@@ -169,7 +169,7 @@ impl Feasibility {
         let steps = rows(&rep.request, "/env/steps", &["steps"]);
         let acc_fixes = rows(&rep.request, "/env/rawFixes", &["lat", "lon", "accuracy"]);
         // Line membership from the fixture's own recorded trace. A day whose
-        // capture never asked for a line contributes NOTHING here rather than
+        // capture never asked for a line contributes nothing here rather than
         // an empty list — see the mode's header.
         let line_stations: Vec<Value> = rep
             .fx
@@ -217,8 +217,8 @@ impl Feasibility {
             );
             match CEILINGS.iter().position(|c| c.1 == kind) {
                 Some(i) => counts[i] += 1,
-                // ⚠ CONTINUITY AND SELF-RIDE ARE AT ZERO AND HAVE NO CEILING
-                // FILE. They are hard failures, not standing debt: there is no
+                // Continuity and self-ride are at zero and have no ceiling
+                // file. They are hard failures, not standing debt: there is no
                 // committed count for them, so any occurrence is reported and
                 // fails below rather than being silently tolerated.
                 None => self.failures.push(format!("{date}: {kind} — {detail}")),
@@ -235,7 +235,7 @@ impl Feasibility {
     }
 
     /// The ceiling gate over everything this shard graded. Returns the
-    /// failures rather than asserting, so the runner can name WHICH grader
+    /// failures rather than asserting, so the runner can name which grader
     /// failed.
     pub fn finish(self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
@@ -278,8 +278,8 @@ impl Feasibility {
         }
 
         if std::env::var("FEASIBILITY_BLESS").is_ok() {
-            // ⚠ The runner made this a single shard measuring every day, so the
-            // FULL committed ceiling is the right input here, not `mine`.
+            // The runner made this a single shard measuring every day, so the
+            // full committed ceiling is the right input here, not `mine`.
             for ((c, committed), current) in CEILINGS.iter().zip(&self.base).zip(&self.now) {
                 let path = c.2;
                 let req = json!({

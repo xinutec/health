@@ -9,8 +9,8 @@ requested target settles and resumes on the next `settle(target')`, memoised
 per source. That it matches the eager search's post-break state (run once,
 break at the target or the radius) is what this file proves.
 
-The observation that makes it a theorem: the search is a **deterministic
-step sequence** that never consults the target — `settle(t)` only chooses
+The observation that makes it a theorem: the search is a deterministic
+step sequence that never consults the target — `settle(t)` only chooses
 *where to pause*. Modelling one pop-iteration as `lstep`:
 
 * `lsettle_spec` / `lsettle_eq_iter` — a settle call is exactly a prefix
@@ -322,7 +322,7 @@ theorem lsettle_spec (g : Graph) (maxR t : Nat) :
         · exact .inl (by rw [iter_succ]; exact h)
         · exact .inr (by omega)
 
-/-- **Lazy = eager.** If `t`'s stop is reachable within the fuel, the
+/-- Lazy = eager. If `t`'s stop is reachable within the fuel, the
 settle call lands exactly on the trajectory's first stop state — the
 eager run's post-break state — and that state is stopped. -/
 theorem lsettle_eq_iter {g : Graph} {maxR t : Nat} {fuel : Nat} {s : LState}
@@ -377,7 +377,7 @@ theorem lsettle_from_iter {g : Graph} {maxR t : Nat} {fuel m K : Nat} {s : LStat
     have hmk : Nat.max m K = K := Nat.max_eq_right (by omega : m ≤ K)
     rw [show m + (K - m) = K by omega, hmk]
 
-/-- **Settles commute.** Any interleaving of settle calls for targets
+/-- Settles commute. Any interleaving of settle calls for targets
 whose stops are fuel-reachable lands on the same state — the trajectory
 point at the larger first-stop index. Pausing order is irrelevant, which
 is what makes the per-source memoised cache sound. -/

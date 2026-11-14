@@ -6,17 +6,17 @@
 //!                                                             └── decode-bench (timed)
 //! ```
 //!
-//! ⚠ ONE BUILDER FOR BOTH READERS. The gate replays each day and compares its
+//! One builder for both readers. The gate replays each day and compares its
 //! segments with the blessed decode; the bench times the decoder on the same
 //! request. A second copy of this builder in the bench would time a request
 //! nothing proves is the gated one.
 //!
 //! Every field comes from the fixture the way `decode_one` builds it from the
 //! DB (main.rs) — same cleaners, same wire shapes, same flags semantics
-//! (`decodeFlags` recorded per fixture). The boxes are NOT re-applied: the
+//! (`decodeFlags` recorded per fixture). The boxes are not re-applied: the
 //! captured row sets already carry exactly what fed the blessed decode.
 //!
-//! ⚠ The corpus is gitignored and holds REAL LOCATION DATA. Nothing here
+//! ⚠ The corpus is gitignored and holds real location data. Nothing here
 //! prints a coordinate, and nothing that reads it should.
 
 use std::path::PathBuf;
@@ -277,7 +277,7 @@ pub fn request(fx: &Value) -> Result<Value> {
     let tz = meta["tz"].as_str().context("meta.tz")?;
     let bounds = crate::timezone::date_bounds_utc(date, Some(tz))?;
 
-    // The day's fixes, cleaned ONCE like the serving path.
+    // The day's fixes, cleaned once like the serving path.
     let fixes: Vec<crate::lean::GpsFix> = inputs["points"]
         .as_array()
         .context("inputs.points")?
@@ -337,7 +337,7 @@ pub fn request(fx: &Value) -> Result<Value> {
     let (edges, nodes) = crate::lean::build_wire_graph(&ways, &stops)?;
 
     // Sparse proximity: fixture `[ts, {railDistM, roadDistM}]` →
-    // wire `[ts, road, rail]` — the ORDER the parser documents.
+    // wire `[ts, road, rail]` — the order the parser documents.
     let proximity: Vec<Value> = inputs["proximityByMinute"]
         .as_array()
         .context("inputs.proximityByMinute")?
@@ -379,7 +379,7 @@ pub fn request(fx: &Value) -> Result<Value> {
         .as_array()
         .context("inputs.places")?
         .iter()
-        // Captured rows name the COLUMNS; the wire names the CONCEPTS —
+        // Captured rows name the columns; the wire names the concepts —
         // the same mapping decode_places does for the serving path.
         .map(|p| {
             json!({
@@ -409,7 +409,7 @@ pub fn request(fx: &Value) -> Result<Value> {
         "railStopRelations": inputs.get("railStopRelations").cloned().unwrap_or(Value::Null),
         "continuity": continuity,
         "flags": {
-            // ⚠ ARM KNOB, harness-only: absent unless the environment sets
+            // Arm knob, harness-only: absent unless the environment sets
             // it, and production never builds its request here.
             "unknownBelow": arm_knob("HSMM_UNKNOWN_BELOW"),
             "fittedPriors": fitted_priors(fx)?,

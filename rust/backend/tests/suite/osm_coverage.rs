@@ -77,7 +77,7 @@ fn containment_and_staleness() {
 
 #[test]
 fn there_is_no_union_across_rows() {
-    // ⚠ Two rows that jointly cover the box. Adding union logic would change
+    // Two rows that jointly cover the box. Adding union logic would change
     // the answer, so this asserts the absence rather than assuming it.
     let west = row(51.0, 52.0, -1.0, -0.1, Some(1));
     let east = row(51.0, 52.0, -0.1, 1.0, Some(1));

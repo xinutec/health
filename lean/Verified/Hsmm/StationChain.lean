@@ -23,7 +23,7 @@ then (1) dedupes by station name keeping the first best, (2) sorts by anchor
 penalty with a stable sort, and (3) cuts at `MAX_CANDIDATES_PER_SIDE`. All three
 read that order, so ties at the cut are decided by it.
 
-`TrainCandidates.stationsNear` is NOT reused here for exactly that reason: it
+`TrainCandidates.stationsNear` is not reused here for exactly that reason: it
 folds a `Std.HashMap`, so it yields hash order. That is invisible in its own
 guards, whose caller takes a minimum over the result and therefore cannot see a
 permutation. Reusing it here would import an order this module's caller reads —
@@ -31,10 +31,10 @@ the `dedupNearestWays` hazard in a new place. So `ChainGraph` carries
 `nodes : Array ChainNode` in the builder's insertion order, and the shell hands
 it over in that order.
 
-`nodeKey`'s `toFixed` rounding stays SHELL-side, as it does for
+`nodeKey`'s `toFixed` rounding stays shell-side, as it does for
 `RouteConnectivity`: edges carry `startNode` / `endNode` as the already-computed
 key strings. Note the consequence, which is real and ~0.3 m wide — a node's
-coordinates are the ROUNDED key parsed back, while the edge geometry it belongs
+coordinates are the rounded key parsed back, while the edge geometry it belongs
 to keeps full precision. Both are used, for different things, and neither is a
 rounding of the other's use.
 
@@ -64,7 +64,7 @@ structure ChainNode where
   edgeIds : List String
   deriving Inhabited, Repr
 
-/-- The resolver's view of the route graph. `nodes` is ORDERED — see the module
+/-- The resolver's view of the route graph. `nodes` is ordered — see the module
     docstring; the maps are lookups only and no iteration reads them. -/
 structure ChainGraph where
   model : RouteGraphModel
@@ -85,7 +85,7 @@ def stationLineMemberships (g : ChainGraph) (n : ChainNode) : List String :=
     g.model.edges[i].lineMemberships.foldl (fun acc l =>
       if acc.contains l then acc else acc ++ [l]) acc) []
 
-/-- Station nodes within `radiusM`, paired with their distance, IN GRAPH ORDER.
+/-- Station nodes within `radiusM`, paired with their distance, in graph order.
     The order is the point of this function existing separately — see the
     module docstring. -/
 def stationsNear (g : ChainGraph) (lat lon radiusM : Float) : Array (ChainNode × Float) :=
@@ -302,7 +302,7 @@ structure Fit where
   madM : Float
   deriving Inhabited
 
-/-- Theil–Sen: slope is the median of pairwise slopes, so a MINORITY of corrupted
+/-- Theil–Sen: slope is the median of pairwise slopes, so a minority of corrupted
     fixes cannot steer it. `(t, d)` pairs.
 
     `Observation.median` is reused rather than restated. It returns 0 on an empty
@@ -344,7 +344,7 @@ structure InLegFix where
 
 /-- The pass term over a pair's intermediate calls; see `PASS_MIN_KMH`.
 
-⚠ THE SPEED IS THE DISPLACEMENT FROM THE MINUTE BEFORE TO THE MINUTE AFTER, not
+The speed is the displacement from the minute before to the minute after, not
 the smoother's. A phone stopped at a platform sends no fix for most of a minute,
 and the Kalman speed carries line speed straight across the gap: 07-16's Jubilee
 read 58–66 km/h through Willesden Green and Kilburn, where the fixes either side
@@ -386,7 +386,7 @@ private def run3 : Array (Option (Float × Float × Float)) :=
 -- Slow minutes: a call, not a pass.
 #guard passPenalty #[some (51.502, -0.10, 20), some (51.505, -0.10, 20), some (51.508, -0.10, 20)]
   #[stopAt 51.5051 (-0.10)] == 0
--- ⚠ The smoother says 60 throughout, but the minutes either side are 670 m
+-- The smoother says 60 throughout, but the minutes either side are 670 m
 -- apart: the train stopped in between (07-16, Kilburn). A call, not a pass.
 #guard passPenalty #[some (51.502, -0.10, 60), some (51.505, -0.10, 60), some (51.508, -0.10, 60)]
   #[stopAt 51.5051 (-0.10)] == 0
@@ -400,7 +400,7 @@ private def dwellZ (excessMin : Float) : Float :=
     let z := excessMin / TERMINAL_DWELL_Z_MIN
     max DWELL_CLAMP (-0.5 * z * z)
 
-/-- Alighting at A means the trajectory reaches A at the leg's END; an in-leg fix
+/-- Alighting at A means the trajectory reaches A at the leg's end; an in-leg fix
     near A minutes earlier implies the train dwelt at a through station, which
     real services do not. Symmetrically for boards. A leg dark near the candidate
     asserts nothing. -/
@@ -490,7 +490,7 @@ private def pacedSeg (mode : String) : ChainSeg := { mode, lineName := none, sta
 #guard (pacedAnchor.pacedBy 250 (some (pacedSeg "stationary"))).pace == SLOP_SPEED_M_PER_MIN
 #guard (pacedAnchor.pacedBy 150 none).pace == SLOP_SPEED_M_PER_MIN
 
-/-- Last observed fix strictly BEFORE the leg (board side).
+/-- Last observed fix strictly before the leg (board side).
 
     Two sources, and the fallback is not the same shape as the scan. The scan
     walks backwards for a minute that carries its own `gps`; failing that it
@@ -571,7 +571,7 @@ private def byNameEmpty : ByName := ⟨#[], {}⟩
 private def byNameOut (st : ByName) : Array SideCandidate :=
   st.order.filterMap (fun name => st.best.get? name)
 
-/-- Keep the BEST node per station name: ON THE LINE first, then closest to
+/-- Keep the best node per station name: on the line first, then closest to
     the anchor. Penalties are ≤ 0, so "greater" is "closer"; the comparison is
     STRICT, so a later node tying the incumbent does not displace it and the
     name keeps its first position.
@@ -736,7 +736,7 @@ def trajectoryPenalty (trackFixes : Array TrackFix) (sssp : Std.HashMap String F
     -- rather than `!`-indexed, so the impossible case cannot panic in prod.
     | _, _ => none
 
-/-- Stations admissible for one side from the TRAJECTORY alone: along-line
+/-- Stations admissible for one side from the trajectory alone: along-line
     reachable from a near-boundary on-track fix within the ride time that
     boundary leaves. This is what gets the true station into the candidate set
     when the anchor fix is kilometres wrong — the anchor may be, the track is
@@ -752,7 +752,7 @@ def trajectoryAdmits (g : ChainGraph) (line : String) (trackFixes : Array TrackF
       let len := geometryLengthM tf.edge.geometry
       let endSeed := max 0 (len - tf.alongM)
       -- `Map.set` semantics: the start seed goes in first, and the end seed
-      -- replaces it only when LOWER and only when it is the same key.
+      -- replaces it only when lower and only when it is the same key.
       let seeds : Array (String × Float) :=
         if tf.edge.endNode == tf.edge.startNode then
           #[(tf.edge.startNode, min tf.alongM endSeed)]
@@ -779,7 +779,7 @@ structure SideEval where
   node : ChainNode
   anchorPen : Float
   dwellPen : Float
-  /-- `none` = the fixes cannot support a fit, which asserts nothing. NOT the
+  /-- `none` = the fixes cannot support a fit, which asserts nothing. Not the
       same as `some 0`, and the plausibility gate depends on the difference. -/
   trajPen : Option Float
   servedPen : Float
@@ -915,7 +915,7 @@ private def evalSide (g : ChainGraph) (line : String) (served : Option (Std.Hash
       if ride.isEmpty then none
       else trajectoryPenalty ride (footprintSssp g line c.node) startTs endTs side
     -- Served by name (`stationNameServed`, which also sees through the
-    -- National Rail "London " prefix). ⚠ Not by proximity to a served node:
+    -- National Rail "London " prefix). Not by proximity to a served node:
     -- counting a station served because a served one stands within
     -- `SAME_STATION_M` takes the scoreboard's stations from 15 to 5. The served
     -- term is what separates co-located stations of different names, and ties
@@ -964,7 +964,7 @@ private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (S
   let ev := evalSide g line served inLegFixes trackFixes seg.startTs seg.endTs
   let boardEvals := boards.map (fun c => ev c .board)
   let alightEvals := alights.map (fun c => ev c .alight)
-  -- The cross product in BOARD-major order, which is the order the argmax below
+  -- The cross product in board-major order, which is the order the argmax below
   -- breaks its ties in — the fourth consumer of candidate order in this module.
   let pairs := boardEvals.foldl (fun acc b =>
     alightEvals.foldl (fun acc a =>
@@ -1058,7 +1058,7 @@ private def backwardPass (chain : Array ChainLeg) : Array (Array Float) :=
     acc.push row) #[]
   rev.reverse
 
-/-- A side emits only when (a) every alternative naming a DIFFERENT station
+/-- A side emits only when (a) every alternative naming a different station
     trails by `MARGIN_NATS`, (b) some evidence channel actively supports the
     winner — anchor plausibility, or trajectory support strong enough to
     out-vote a corrupted anchor — and (c) the winner is not
@@ -1104,7 +1104,7 @@ private def emitLegOn (leg : ChainLeg) (through : Array Float) : Option (Nat × 
     if board.isNone && alight.isNone then none
     else some (leg.segIndex, { board, alight, boardTs, alightTs })
 
-/-- Emit for one leg: first its LINE, then its stations on that line.
+/-- Emit for one leg: first its line, then its stations on that line.
 
     The line is the best pair's when that pair beats every pair on the decoded
     line by `MARGIN_NATS` (the same bar a station must clear), the leg lasts at
@@ -1170,7 +1170,7 @@ private def chainsOf (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRo
             (acc.1.push (buildLeg g obs servedFor stopsFor i seg line altLines firstIdx lastIdx
               (if i == 0 then none else segs[i - 1]?) segs[i + 1]?), i + 1)
           | _, _ => skip) (#[], 0)).1
-  -- A leg with no valid pair stays unresolved AND breaks the chain: its
+  -- A leg with no valid pair stays unresolved and breaks the chain: its
   -- neighbours must not hand over across an opaque ride.
   let st := legs.foldl (fun (st : Array (Array ChainLeg) × Array ChainLeg) leg =>
       let breaks := leg.pairs.isEmpty || (match st.2.back? with
@@ -1194,7 +1194,7 @@ def chainMarginals (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
     let bwd := backwardPass chain
     (List.finRange chain.size).foldl (fun out (i : Fin chain.size) =>
       let leg := chain[i]
-      -- Max-marginal: the best chain total passing THROUGH this pair. The
+      -- Max-marginal: the best chain total passing through this pair. The
       -- subtraction is because `legScore` is counted by both passes. The two
       -- passes have one row per leg and one entry per pair by construction; a
       -- missing one (unreachable) reads as the `!` default did, 0.
@@ -1276,7 +1276,7 @@ entirely.
 carries candidate pairs on every one of them that connects its two sides, the
 chain Viterbi runs over all of them, and the leg takes the best pair's line when
 it clears `MARGIN_NATS` over its decoded line (`emitLeg`). The decoder picks a
-ride's line minute by minute from proximity; this is where the ride's TIMING
+ride's line minute by minute from proximity; this is where the ride's timing
 against each line's path, its anchors and the transfer to the next leg get a
 say. Empty = the decoded line only, the behaviour before.
 
@@ -1295,13 +1295,13 @@ def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array Ob
 /-! ## Guards: a synthetic line
 
 Five evenly-spaced stations west to east at lat 51.5, built there through the
-REAL `buildRouteGraph`, so these literals are its output rather than a second
+real `buildRouteGraph`, so these literals are its output rather than a second
 hand-assembly of the same graph. Note the two coordinate systems the builder
 produces and this file must keep apart: node coordinates are the 5-decimal
 `nodeKey` parsed back (`0.02165`), edge geometry is full precision
 (`0.021645543464882695`). -/
 
-/-- Edge geometry longitudes — FULL precision, as the WKT carried them. -/
+/-- Edge geometry longitudes — full precision, as the WKT carried them. -/
 private def LONS : Array Float :=
   #[0, 0.021645543464882695, 0.04329108692976539, 0.06493663039464809, 0.08658217385953078]
 
@@ -1355,9 +1355,9 @@ private def pathBetween (a b : String) : Option Float :=
 #guard (pathBetween "Alpha" "Bravo").any (within · 1498.3146726 1498.3146727)
 #guard (pathBetween "Alpha" "Delta").any (within · 4494.9440179 4494.9440180)
 
--- NOT exactly symmetric, and that is a property of the algorithm rather than a
--- defect in this port. The search sums edge lengths in TRAVERSAL order, and the
--- four edges of this deliberately-uniform line are NOT bit-identical in length:
+-- Not exactly symmetric, and that is a property of the algorithm rather than a
+-- defect in this port. The search sums edge lengths in traversal order, and the
+-- four edges of this deliberately-uniform line are not bit-identical in length:
 -- their longitudes differ, so `haversineMeters` returns doubles that agree to
 -- every printed decimal and disagree in the last bits (measured: edges 0-2
 -- compare equal to each other, edge 3 does not). Adding them west-to-east and
@@ -1376,15 +1376,15 @@ private def pathBetween (a b : String) : Option Float :=
 -- connectivity constraint doing its job, not an error path.
 #guard linePathMeters testGraph "Absent Line" (station "Alpha") (station "Echo") == none
 
--- `stationsNear` returns GRAPH ORDER, not distance order — the property the
+-- `stationsNear` returns graph order, not distance order — the property the
 -- whole ordered-array design exists for. A radius covering Bravo, Charlie and
--- Delta from a point beside Charlie must list them west to east, NOT nearest
+-- Delta from a point beside Charlie must list them west to east, not nearest
 -- first.
 #guard
   (stationsNear testGraph 51.5 0.04329 1600.0).map (fun p => p.1.stationName)
     == #[some "Bravo", some "Charlie", some "Delta"]
 
--- The radius is inclusive and measured from the node's ROUNDED coordinates.
+-- The radius is inclusive and measured from the node's rounded coordinates.
 #guard (stationsNear testGraph 51.5 0 1.0).size == 1
 #guard (stationsNear testGraph 51.5 0 0.0).size == 1
 
@@ -1447,7 +1447,7 @@ private def ghost (a b : Nat) : ChainSeg :=
 -- short hop on any line, so the decoded line stands (here: no pair, nothing).
 #guard resolveStationChain testGraph #[ghost 2 5] cleanObs none ["Test Line"] == #[]
 
--- 2. Duration DECIDES. The alight anchor sits midway between Bravo and Charlie,
+-- 2. Duration decides. The alight anchor sits midway between Bravo and Charlie,
 --    750 m from each, so the anchor term is INDIFFERENT; one minute of staleness
 --    widens σ enough that neither clamps (a clamped side fails ABS_ANCHOR_FLOOR
 --    and the margin would never be consulted). The leg is dark inside, so no
@@ -1463,7 +1463,7 @@ private def durationObsShort : Array ObsRow :=
   #[ob 0 (some 0), ob 1 (some 0)] ++ dark 2 5 ++ #[ob 6 (some 0.032468315197324044)]
 #guard run #[tseg 2 5] durationObsShort == #[(0, ⟨some "Alpha", none, none, none, none⟩)]
 
--- 3. Terminal dwell DISQUALIFIES. The fixes sit on Delta from minute 4 to the
+-- 3. Terminal dwell disqualifies. The fixes sit on Delta from minute 4 to the
 --    leg's end at 13 — the ride passed it mid-leg and stopped, which a real
 --    service does not do at its terminus. The alight side goes silent while the
 --    board side still resolves: the gate is PER SIDE.
@@ -1478,7 +1478,7 @@ private def dwellObs : Array ObsRow :=
 --    silence, not a guess.
 #guard run #[tseg 1 5] (dark 0 5) == #[]
 
--- 5. The CHAIN decides the second leg's board. Both legs are dark inside; the
+-- 5. The chain decides the second leg's board. Both legs are dark inside; the
 --    handover penalty is what makes Charlie→Echo beat the alternatives, and it
 --    is only available because the two legs are in one chain. The second leg
 --    is four minutes: Charlie → Echo expects 5.2 and Delta → Echo 3.1, within

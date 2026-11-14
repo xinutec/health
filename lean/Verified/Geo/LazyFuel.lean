@@ -296,7 +296,7 @@ theorem iter_potential_le {g : Graph} {maxR : Nat} :
     have h2 := lstep_potential_le (maxR := maxR) hdsz
     omega
 
-/-- **Fuel sufficiency.** From any trajectory point of the real run,
+/-- Fuel sufficiency. From any trajectory point of the real run,
 `lsettle` with fuel ≥ `E + 1` lands on a stopped state: the stop is
 reachable within the remaining potential, which the initial bound
 dominates. This discharges the `k ≤ fuel` reachability hypothesis of
@@ -334,7 +334,7 @@ theorem settles_eq_iter {g : Graph} {maxR : Nat} (s₀ : LState) :
     refine ⟨k + m, ?_⟩
     rw [List.foldl_cons, hm, hk, ← iter_add]
 
-/-- **Every settle stops.** Through any interleaving of memoised settle
+/-- Every settle stops. Through any interleaving of memoised settle
 calls (arbitrary targets and fuels), the next settle with fuel ≥ `E + 1`
 lands stopped: the unfueled loop always terminates, at every resume. -/
 theorem all_settles_stop {g : Graph} {maxR t src fuel : Nat}

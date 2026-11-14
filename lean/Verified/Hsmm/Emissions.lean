@@ -3,7 +3,7 @@ import Verified.Hsmm.FloatScore
 # Emission log-likelihood
 
 `buildEmissionFn`'s per-(state, observation) log-probability, in Lean `Float`.
-This is the BASE path: hand-tuned `MODE_PRIORS`, no learned emissions, no
+This is the base path: hand-tuned `MODE_PRIORS`, no learned emissions, no
 presence-continuity, no per-place HR fit, no reacquire-robust widening. Those
 refinements are follow-on bricks (each needs extra input plumbing); the base
 path is what fires when their flags/inputs are absent.

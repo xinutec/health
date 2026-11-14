@@ -83,7 +83,7 @@ pub async fn decoded_through(pool: &MySqlPool, user_id: &str, date: &str) -> Res
     Ok(row.flatten())
 }
 
-/// Queue the day when its decode does not stand. ⚠ Errors are logged, not
+/// Queue the day when its decode does not stand. Errors are logged, not
 /// returned: the read serves the day either way, and the next read asks again.
 pub async fn queue_if_stale(pool: &MySqlPool, user_id: &str, date: &str, horizon: i64) {
     match freshness(pool, user_id, date, horizon).await {

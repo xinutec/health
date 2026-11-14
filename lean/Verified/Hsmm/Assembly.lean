@@ -19,7 +19,7 @@ verified trellis reads. Together with
 * `transition = transition (+ chainContext, −∞ short-circuit)` — `transitionLogProbFull`.
 
 The composition is `a + b` (and one `−∞` short-circuit / one flag gate), so what
-the `#guard`s pin is the WIRING — the right summands, the right gate, the
+the `#guard`s pin is the wiring — the right summands, the right gate, the
 short-circuit — over sub-values already pinned bit-for-bit in their own modules.
 Chain-context's per-transition penalty stays caller-resolved, as that module
 declares (the geometry it needs is the parity boundary); everything the

@@ -93,7 +93,7 @@ def gapTerm (s : State) (hasFix : Bool) (prevFix nextFix : Option GpsFix)
 
 A stay at a known place during a dark minute: the day got from the previous fix
 to the place in the time since, and from the place to the next fix in the time
-left. Each leg needs only that SOME travel mode covers it: the best mode's
+left. Each leg needs only that some travel mode covers it: the best mode's
 survival. Which mode it was is the travel minutes' own states to pay for, so
 the mode prior is not charged here again. The two legs multiply.
 

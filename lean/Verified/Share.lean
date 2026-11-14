@@ -55,7 +55,7 @@ def clampShareDaysBack (value : Option Int) : Option Int :=
 
 /-- May a share-viewer see this date?
 
-The window is INCLUSIVE at both ends, and it is the same `[from, to]`
+The window is inclusive at both ends, and it is the same `[from, to]`
 {@link shareableDateRange} produced — a viewer who may see the boundary day must
 be able to load it.
 
@@ -63,8 +63,8 @@ String comparison, deliberately: `YYYY-MM-DD` orders lexicographically as it
 does chronologically, and parsing first would add a failure mode. A malformed
 date sorts somewhere and is refused or admitted consistently; it never throws.
 
-⚠ The DEFAULT IS REFUSAL at the call site, not here. This answers "is it in the
-window" for a caller that has already established there IS a window; a session
+⚠ The default is refusal at the call site, not here. This answers "is it in the
+window" for a caller that has already established there is a window; a session
 with no share-viewer is not a share-viewer with an empty window, and conflating
 them would silently open every date. -/
 def dateInShareWindow (date «from» to : String) : Bool :=

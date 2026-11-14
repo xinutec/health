@@ -18,29 +18,29 @@ depiction never re-decides what happened. That is why this module produces only
 `resolveEpisode` is a dispatch on the state's mode, and each arm is a *display*
 policy, not a classification:
 
-* **train** — a cached rail line (`snappedPath`) clipped to the window wins. A
+* train — a cached rail line (`snappedPath`) clipped to the window wins. A
   reconstructed leg (`pointCount = 0`, i.e. a tube ride whose window holds only
   teleporting cell-network garbage) draws a clean station-to-station connector
-  with NO distance cap, because a rail leg legitimately spans kilometres.
+  with no distance cap, because a rail leg legitimately spans kilometres.
   Otherwise the raw GPS, with the two station join points stitched on
   ({@link stitchTrainEnds}) — a train's GPS commonly starts after it pulls away
   and stops before it arrives, and without the stitch the adjacent walk bridges
   green across the missing tail.
-* **moving** — four draw sources in strict precedence: road match, walk
-  reconstruction, walk match, raw fixes. The raw arm prefers the PRE-Kalman
+* moving — four draw sources in strict precedence: road match, walk
+  reconstruction, walk match, raw fixes. The raw arm prefers the pre-Kalman
   `rawFixes`: measured, the road-blind smoother both pulls the line off the
   path and truncates it, so the map bridges the gap with a chord through
   buildings.
-* **stay** — one anchor point, the covering segment's centroid or the mean of
+* stay — one anchor point, the covering segment's centroid or the mean of
   the window fixes.
-* **unknown** — a connector capped at 2 km, so a no-GPS gap cannot imply a
+* unknown — a connector capped at 2 km, so a no-GPS gap cannot imply a
   cross-city route we do not have.
 
 ## Two metres functions, deliberately different
 
-{@link equirectMeters} here takes `cos` at the FIRST point and combines with
+{@link equirectMeters} here takes `cos` at the first point and combines with
 `sqrt`; `metersBetween` (`Verified.Geo.WalkableRoute`) takes `cos` at the
-MIDPOINT and combines with
+midpoint and combines with
 `hypot`. Both are in the codebase and they do not agree; this module's
 thresholds were tuned against this one.
 
@@ -58,7 +58,7 @@ thresholds (100 m stitch bar, 2 km connector cap). UNPROVEN; pinned by the
   "at least two vertices"), so they are plain `Array` here. `rawFixes` is not
   one of those: an empty `rawFixes` is present, so it stays an `Option`.
 * Fix timestamps are `Int` — the capture path records whole UTC seconds. Drawn
-  DERIVED vertices are not: the over-route trim and the walk corrector
+  derived vertices are not: the over-route trim and the walk corrector
   interpolate `ts` along a chord without rounding, so {@link SPt} and the `ts`
   {@link LatLon} carries are `Float`.
 -/
@@ -75,7 +75,7 @@ abbrev Mode := String
 
 /-- Geometry provenance — the only style input the map needs. Solid for
 `raw`/`matched`, dashed for `snapped`/`tentative`, a dot for `anchor`. No
-confidence field: the only upstream confidence is CLASSIFICATION confidence,
+confidence field: the only upstream confidence is classification confidence,
 which is not geometry trust. -/
 abbrev Kind := String
 
@@ -186,8 +186,8 @@ def ROAD_MATCH_MODES : List Mode := ["driving", "bus", "cycling"]
 
 open Verified.FloatConst (pi)
 
-/-- Equirectangular metres, `cos` at the FIRST point and `sqrt` (not `hypot`).
-See the module docstring: this is NOT `metersBetween`. -/
+/-- Equirectangular metres, `cos` at the first point and `sqrt` (not `hypot`).
+See the module docstring: this is not `metersBetween`. -/
 def equirectMeters (aLat aLon bLat bLon : Float) : Float :=
   let dLat := (bLat - aLat) * 111320.0
   let dLon := (bLon - aLon) * 111320.0 * Float.cos (aLat * pi / 180.0)
@@ -213,7 +213,7 @@ def centroidOf (pts : Array LatLon) : Option LatLon :=
 with the float predicates. -/
 
 /-- `rejectSpikes`'s predicate: a point juts out and back when the detour
-through it is both several times longer than going straight past it AND a large
+through it is both several times longer than going straight past it and a large
 absolute excess. A gentle curve or a sharp corner stays well under that bar. -/
 def spikeAt (prev cur next : LatLon) : Bool :=
   let direct := equirectMeters prev.lat prev.lon next.lat next.lon
@@ -249,7 +249,7 @@ def holdImplausibleSpeed (fixes : Array RawFix) (capKmh : Option Float) : Array 
 /-- The refined mode where there is one, else the mode. -/
 def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 
-/-- Whether a timestamp lies in a window, INCLUSIVE at both ends (the dominant
+/-- Whether a timestamp lies in a window, inclusive at both ends (the dominant
 convention across the pipeline). -/
 def inWindow (ts start finish : Int) : Bool := ts ≥ start && ts ≤ finish
 
@@ -268,7 +268,7 @@ def coveringSegs (segments : Array Seg) (st : State) : Array Seg :=
 existing end, so the whole leg stays train-coloured and its neighbours bridge
 from zero. The fixes in between are untouched.
 
-The two tests are SEQUENCED, not independent: `to` is compared against the end
+The two tests are sequenced, not independent: `to` is compared against the end
 of the array *after* a possible `from` prepend, so on an empty leg the second
 test sees the first's insertion. -/
 def stitchTrainEnds (raw : Array LatLon) (from? to? : Option LatLon) : Array LatLon := Id.run do
@@ -298,7 +298,7 @@ def stayAnchor (covering : Array Seg) (windowFixes : Array LatLon) : Option LatL
 
 /-- A representative entry coordinate for a state — its first window fix, else
 its stay centroid. Used as the far end of a connector. Note the fix's timestamp
-is DROPPED: the connector endpoint is derived geometry with no single moment. -/
+is dropped: the connector endpoint is derived geometry with no single moment. -/
 def entryPoint (st? : Option State) (segments : Array Seg) (points : Array Fix) : Option LatLon :=
   match st? with
   | none => none
@@ -325,7 +325,7 @@ def capForMode (mode : Mode) : Option Float :=
   (Verified.Geo.Segments.MAX_SPEED_FOR_MODE.find? (fun p => p.1 == mode)).map (·.2)
 
 /-- Resolve one state's display geometry. Sequence-aware: the train and
-`unknown` connectors read the PREVIOUS resolved episode and the NEXT state's
+`unknown` connectors read the previous resolved episode and the next state's
 entry point, so this must be folded in order. -/
 def resolveEpisode (st : State) (index : Nat) (states : Array State) (segments : Array Seg)
     (points : Array Fix) (resolved : Array Episode) (rawFixes : Option (Array RawFix))
@@ -391,12 +391,12 @@ def resolveEpisode (st : State) (index : Nat) (states : Array State) (segments :
       if walkMatched.size ≥ 2 then return base walkMatched "matched" none
     | none => pure ()
 
-    -- Unmatched moving leg: draw the RAW GPS, not the Kalman-smoothed points.
+    -- Unmatched moving leg: draw the raw GPS, not the Kalman-smoothed points.
     -- Measured: the road-blind smoother makes good data worse two ways — on a
     -- road leg it swings up to ~75 m off the reliable GPS, and on a walk it
-    -- TRUNCATES, so the line stops short and the map bridges the gap with a
+    -- truncates, so the line stops short and the map bridges the gap with a
     -- chord through buildings. `despike` drops lone teleports;
-    -- `holdImplausibleSpeed` then collapses a monotonic teleport RUN that both
+    -- `holdImplausibleSpeed` then collapses a monotonic teleport run that both
     -- despiking and the accuracy field miss.
     match rawFixes with
     | some rf =>
@@ -407,7 +407,7 @@ def resolveEpisode (st : State) (index : Nat) (states : Array State) (segments :
       if rawWin.size ≥ 2 then return base (rawWin.map rawToLatLon) "raw" none
     | none => pure ()
 
-    -- Speed-plausibility filter THEN geometric spike rejection. The filter drops
+    -- Speed-plausibility filter then geometric spike rejection. The filter drops
     -- a faster neighbour's fixes that bled across the boundary (a decelerating
     -- train's tail landing inside the following walk at vehicle speed);
     -- despiking drops teleports. They are complementary — the bleed is smooth
@@ -508,7 +508,7 @@ private def trPts : Array Fix := #[fx 1050 1 500, fx 1150 1 1000]
         snappedPath := #[spt 900 0 0, spt 1050 0 500, spt 1150 0 1000, spt 1300 0 1500] }] trPts)
   == #[("train", "snapped", none, #[ll 0 500 (some 1050), ll 0 1000 (some 1150)])]
 
--- Only ONE vertex lands in the window → falls through to the raw arm, which
+-- Only one vertex lands in the window → falls through to the raw arm, which
 -- draws the Kalman fixes (at n = 1, not the snapped line's n = 0).
 #guard render (buildEpisodes trSt
     #[{ sg 1000 1200 "train" with snappedPath := #[spt 900 0 0, spt 1050 0 500, spt 1300 0 1500] }] trPts)
@@ -521,7 +521,7 @@ private def trPts : Array Fix := #[fx 1050 1 500, fx 1150 1 1000]
         refinedMode := some "train", snappedPath := #[spt 1050 0 500, spt 1150 0 1000] }] #[fx 1050 1 500])
   == #[("train", "snapped", none, #[ll 0 500 (some 1050), ll 0 1000 (some 1150)])]
 
-/-! ### train — a reconstructed leg draws an UNCAPPED station connector -/
+/-! ### train — a reconstructed leg draws an uncapped station connector -/
 
 private def reconSt : Array State :=
   #[stt 900 1000 "stationary" (some "Baker Street"), stt 1000 1200 "train", stt 1200 1300 "walking"]
@@ -555,14 +555,14 @@ private def stSg : Array Seg := #[anchored 900 1000 0 0, sg 1000 1200 "train", s
 #guard (buildEpisodes stSt stSg #[fx 1050 0 50, fx 1100 0 2000, fx 1150 0 3950, fx 1250 0 4000])[1]!.points
   == #[ll 0 50 (some 1050), ll 0 2000 (some 1100), ll 0 3950 (some 1150)]
 
--- A nominal 100 m separation. The bar is STRICT (`> 100`), but the frame's
--- float value lands a hair above it, so the join point IS stitched — the exact
+-- A nominal 100 m separation. The bar is strict (`> 100`), but the frame's
+-- float value lands a hair above it, so the join point is stitched — the exact
 -- tie is not constructible from these coordinates.
 #guard (buildEpisodes stSt.pop stSg.pop #[fx 1050 0 100, fx 1100 0 2000, fx 1150 0 3000])[1]!.points
   == #[ll 0 0, ll 0 100 (some 1050), ll 0 2000 (some 1100), ll 0 3000 (some 1150)]
 #guard equirectMeters (pt 0 0).1 (pt 0 0).2 (pt 0 100).1 (pt 0 100).2 > 100.0
 
--- A leg with no in-window fixes: `farFromEnd` sees `none` at both ends, so BOTH
+-- A leg with no in-window fixes: `farFromEnd` sees `none` at both ends, so both
 -- join points go in and the leg becomes the bare station-to-station chord. The
 -- two tests are sequenced — the second sees the first's insertion.
 #guard (buildEpisodes stSt stSg #[fx 1250 0 4000, fx 1280 0 4100])[1]!.points == #[ll 0 0, ll 0 4000]
@@ -592,7 +592,7 @@ private def mvPts : Array Fix := #[fx 1020 0 0, fx 1080 0 60, fx 1140 0 120]
     #[{ sg 1000 1200 "walking" with walkMatchedPath := #[spt 1020 1 0, spt 1140 1 120] }] mvPts)
   == #[("walking", "matched", none, #[ll 1 0 (some 1020), ll 1 120 (some 1140)])]
 
--- The road arm is tested FIRST but applies to driving/bus/cycling only: a
+-- The road arm is tested first but applies to driving/bus/cycling only: a
 -- walking leg carrying a `matchedPath` does not take it.
 #guard render (buildEpisodes mvSt
     #[{ sg 1000 1200 "walking" with matchedPath := #[spt 1020 3 0, spt 1140 3 120] }] mvPts)
@@ -614,7 +614,7 @@ private def mvPts : Array Fix := #[fx 1020 0 0, fx 1080 0 60, fx 1140 0 120]
 #guard render (buildEpisodes mvSt #[sg 1000 1200 "walking"] mvPts (some #[rx 1000 0 0]))
   == #[("walking", "raw", none, #[ll 0 0 (some 1020), ll 0 60 (some 1080), ll 0 120 (some 1140)])]
 
--- Without `rawFixes` the Kalman branch filters on the REPORTED `speed_kmh`
+-- Without `rawFixes` the Kalman branch filters on the reported `speed_kmh`
 -- instead — a different mechanism from the hold, so it drops a different fix.
 #guard render (buildEpisodes mvSt #[sg 1000 1200 "walking"]
     #[fx 1020 0 0, fx 1050 0 60 40, fx 1080 0 120, fx 1140 0 180])
@@ -635,12 +635,12 @@ private def cafe : Array State := #[stt 1000 1200 "stationary" (some "Cafe")]
 #guard render (buildEpisodes cafe #[anchored 1000 1200 5 5] stayPts)
   == #[("stationary", "anchor", some "Cafe", #[ll 5 5])]
 
--- No centroid → the mean of the window fixes, with NO timestamp.
+-- No centroid → the mean of the window fixes, with no timestamp.
 #guard render (buildEpisodes cafe #[sg 1000 1200 "stationary"] stayPts)
   == #[("stationary", "anchor", some "Cafe",
         #[{ lat := ((pt 0 0).1 + (pt 0 100).1) / 2.0, lon := ((pt 0 0).2 + (pt 0 100).2) / 2.0 }])]
 
--- A segment carrying only ONE of the two centroid fields is not a centroid.
+-- A segment carrying only one of the two centroid fields is not a centroid.
 #guard render (buildEpisodes cafe
     #[{ sg 1000 1200 "stationary" with centroidLat := some (pt 5 5).1 }] stayPts)
   == #[("stationary", "anchor", some "Cafe",
@@ -662,7 +662,7 @@ private def gapSt : Array State :=
 private def gapSg : Array Seg := #[sg 900 1000 "walking", sg 1100 1200 "walking"]
 
 -- Under 2 km: drawn. The `from` end keeps its fix's timestamp; the `to` end is
--- the next state's first window fix with its timestamp DROPPED.
+-- the next state's first window fix with its timestamp dropped.
 #guard render (buildEpisodes gapSt gapSg #[fx 920 0 0, fx 980 0 100, fx 1120 0 1000, fx 1180 0 1100])
   == #[("walking", "raw", none, #[ll 0 0 (some 920), ll 0 100 (some 980)]),
        ("unknown", "tentative", none, #[ll 0 100 (some 980), ll 0 1000]),

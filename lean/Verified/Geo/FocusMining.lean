@@ -19,10 +19,10 @@ mode.
 The three gates read each other's leavings, so they cannot be composed from
 outside without moving the state between them into the shell:
 
-* the near-field exemption is a SET built from the same pass that builds the
+* the near-field exemption is a set built from the same pass that builds the
   tally — a name is exempt because some stay saw it from inside
   `NEAR_FIELD_DECISIVE_M`, which is known only while voting;
-* the centroid gate re-asks `isLabelWorthyVenue` about a DIFFERENT landmark
+* the centroid gate re-asks `isLabelWorthyVenue` about a different landmark
   list (the cluster centroid's, not any stay's);
 * the tally's iteration order decides ties.
 
@@ -59,7 +59,7 @@ inductive Refusal where
   | weight
   /-- The leader did not take a majority. -/
   | majority
-  /-- A winner was chosen, but it is not AT the cluster centroid. -/
+  /-- A winner was chosen, but it is not at the cluster centroid. -/
   | centroid
   deriving Inhabited, BEq, Repr
 
@@ -82,7 +82,7 @@ structure Mined where
   refusal : Option Refusal
   deriving Inhabited
 
-/-- Insertion-ordered accumulate. ⚠ Not a `HashMap` and not sorted:
+/-- Insertion-ordered accumulate. Not a `HashMap` and not sorted:
 `pickWinningAmenity` takes the argmax with a strict `>`, so an exact tie keeps
 the first name seen. Any reordering here silently re-picks those ties. -/
 private def bump (f : Float → Float → Float) (xs : List (String × Float))
@@ -99,10 +99,10 @@ The vote, in the cron's own order.
 
 Per stay: attribute it (for the prior), then rank its venues with the stay's
 own window so opening-hours evidence weighs in, then let the leader vote its
-dwell — if it is a real venue type close enough to be the place the stay is AT,
+dwell — if it is a real venue type close enough to be the place the stay is at,
 and if even the best candidate is plausible.
 
-⚠ `priors` is deliberately `none` when ranking. This same pass rebuilds the
+`priors` is deliberately `none` when ranking. This same pass rebuilds the
 priors blob, and voting with the previous run's blob would let one bad label
 echo into the next.
 -/
@@ -112,7 +112,7 @@ def mineCluster (stays : List MinedStay) (centroid : List Landmark)
   let mut voteDist : List (String × Float) := []
   let mut attributed : List AttributedStay := []
   for s in stays do
-    -- An empty landmark list is NOT a vote for nothing; it is no evidence.
+    -- An empty landmark list is not a vote for nothing; it is no evidence.
     if s.landmarks.isEmpty then continue
     match attributeStayVenue s.landmarks with
     | some a =>
@@ -127,7 +127,7 @@ def mineCluster (stays : List MinedStay) (centroid : List Landmark)
       if !isLabelWorthyVenue best.type best.distanceM then continue
       if decide (top.total < VENUE_RANK_FLOOR_NATS) then continue
       votes := bump (· + ·) votes best.name (Float.ofInt s.durationSec)
-      -- The CLOSEST sighting, not the latest: one visit that sat on the venue
+      -- The closest sighting, not the latest: one visit that sat on the venue
       -- establishes "you have been in here" as well as ten would, so a later
       -- sloppier fix must not undo it.
       voteDist := bump min voteDist best.name best.distanceM
@@ -142,8 +142,8 @@ def mineCluster (stays : List MinedStay) (centroid : List Landmark)
       else some Refusal.majority
     pure { label := none, kind := none, attributed := attributed, refusal := refusal }
   | some winner =>
-    -- The centroid gate: the winner must be AT the cluster, within venue range
-    -- of its CENTROID, not merely near some scattered stays. Two co-located
+    -- The centroid gate: the winner must be at the cluster, within venue range
+    -- of its centroid, not merely near some scattered stays. Two co-located
     -- places ~45 m apart would otherwise let the residence's evening stays —
     -- the ones whose GPS drifts venue-ward — vote the café's name onto the
     -- residence, whose centroid stays a clear ~70 m off it.
@@ -161,7 +161,7 @@ def mineCluster (stays : List MinedStay) (centroid : List Landmark)
 
 /-! ## Guards
 
-⚠ These are the ONLY check on this module until the Rust arm runs against prod
+These are the only check on this module until the Rust arm runs against prod
 and its output is diffed against `focus_places` — there is no live comparator
 for the mining half. Written to pin the gates and the tie-breaks, which
 is what drifted last time. -/
@@ -185,10 +185,10 @@ private def shop : Landmark := LM "Shop" "shop" "books" 80
 -- A stay with no landmarks casts no vote and refuses nothing.
 #guard (mineCluster [ST 3600 13 []] [] 1800 0.5).refusal == none
 -- Gate 1, weight: 10 minutes of dwell against a 30-minute floor, and the venue
--- is 10 m away so it is NOT near-field-exempt (the floor is 12 m).
+-- is 10 m away so it is not near-field-exempt (the floor is 12 m).
 #guard (mineCluster [ST 600 13 [LM "Far" "amenity" "cafe" 40]]
           [LM "Far" "amenity" "cafe" 40] 1800 0.5).refusal == some Refusal.weight
--- ⚠ The near-field exemption rescues exactly that case when the venue was seen
+-- The near-field exemption rescues exactly that case when the venue was seen
 -- from inside 12 m. Guarded on `mineCluster` — the level the cron uses — so the
 -- exemption cannot go missing without failing here.
 #guard (mineCluster [ST 600 13 [cafe]] [cafe] 1800 0.5).label == some "Cafe"
@@ -204,11 +204,11 @@ private def shop : Landmark := LM "Shop" "shop" "books" 80
 -- label-worthy, so a match 80 m from the centroid still refuses.
 #guard (mineCluster [ST 3600 13 [cafe]] [LM "Cafe" "amenity" "cafe" 80] 1800 0.5).refusal
        == some Refusal.centroid
--- The prior trains on the unambiguous stay even when a gate refuses the LABEL:
+-- The prior trains on the unambiguous stay even when a gate refuses the label:
 -- attribution and labelling answer different questions.
 #guard (mineCluster [ST 3600 13 [cafe]] [] 1800 0.5).attributed.length == 1
 #guard ((mineCluster [ST 3600 13 [cafe]] [] 1800 0.5).attributed.head!).subtype == "cafe"
--- ⚠ An ambiguous stay trains nothing: two differently-named venues inside the
+-- An ambiguous stay trains nothing: two differently-named venues inside the
 -- 20 m margin is exactly what the scorer must learn to predict.
 #guard (mineCluster [ST 3600 13 [cafe, LM "Other" "amenity" "bar" 12]] [] 1800 0.5).attributed.length == 0
 

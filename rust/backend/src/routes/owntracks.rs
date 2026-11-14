@@ -6,21 +6,21 @@
 //! duplicated here — but sitting in the path lets the decision use context the
 //! phone cannot have: the user's recent trajectory, and the local hour.
 //!
-//! ⚠ It never demotes. The phone stays in Move mode; this chooses how often it
+//! It never demotes. The phone stays in Move mode; this chooses how often it
 //! locates (hourly at night when still, every 30 s by day, faster in a vehicle)
 //! and must never take it out.
 //!
 //! Every decision is written to `owntracks_decisions` as well as logged:
 //! a rollout replaces the pod and its stdout with it, and the one
-//! line that says WHY the phone was told something is the line a diagnosis
+//! line that says why the phone was told something is the line a diagnosis
 //! needs. `backend owntracks-log <user>` reads it back.
 //!
-//! ⚠ THE FORWARD HAPPENS FIRST, AND ITS FAILURE IS FATAL TO THE REQUEST. Losing
+//! ⚠ the forward happens first, and its failure is fatal to the request. Losing
 //! a fix loses a piece of the timeline permanently; getting the config patch
 //! wrong costs battery until the next fix, seconds later. So the proxy refuses
 //! rather than answering with a patch it could not store the fix for.
 //!
-//! ⚠ Auth is the URL token plus the presence of Basic auth, checked BEFORE
+//! Auth is the URL token plus the presence of Basic auth, checked before
 //! anything upstream is touched. That protects Nextcloud's brute-force counters
 //! and this process's own state maps from attacker-controlled growth.
 //!
@@ -28,7 +28,7 @@
 //!
 //! There is no anti-flap timer, no per-device push memory, no "did this change"
 //! dedup. The phone treats `setConfiguration` as idempotent, so pushing it every
-//! time costs a few hundred bytes and means a state loss on EITHER side
+//! time costs a few hundred bytes and means a state loss on either side
 //! recovers on the very next fix. State that can be lost is state that has to be
 //! reasoned about; this design removes the question.
 
@@ -52,7 +52,7 @@ const MAX_BODY_BYTES: usize = 32 * 1024;
 
 /// Most distinct `(token, device)` keys retained.
 ///
-/// ⚠ A cap, not a capacity estimate. One user populates one to three; a client
+/// A cap, not a capacity estimate. One user populates one to three; a client
 /// cycling device names would otherwise grow these maps without bound.
 const MAX_STATE_KEYS: usize = 32;
 
@@ -125,7 +125,7 @@ impl ProxyState {
     }
 }
 
-/// ⚠ Constant-time, and a length check first. These tokens are SECRETS — a
+/// ⚠ Constant-time, and a length check first. These tokens are secrets — a
 /// PhoneTrack session token is write access to someone's location history — and
 /// an unauthenticated endpoint that leaks a prefix through timing invites
 /// exactly the retry loop that exploits it. `contains` would be shorter and
@@ -149,7 +149,7 @@ pub async fn proxy(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    // ⚠ Both checks happen before ANY upstream call or state write.
+    // Both checks happen before any upstream call or state write.
     if !headers.contains_key(header::AUTHORIZATION) {
         return err(StatusCode::UNAUTHORIZED, "authorization required");
     }
@@ -166,7 +166,7 @@ pub async fn proxy(
         return err(StatusCode::BAD_REQUEST, "invalid json");
     };
 
-    // ⚠ FORWARD FIRST. A fix that does not reach PhoneTrack is gone; a config
+    // Forward first. A fix that does not reach PhoneTrack is gone; a config
     // patch that is a few seconds late is not. Basic auth and User-Agent are
     // passed through so PhoneTrack authorises and attributes the real client.
     let base = st
@@ -198,10 +198,10 @@ pub async fn proxy(
         return err(StatusCode::BAD_GATEWAY, "upstream rejected");
     }
 
-    // ⚠ Only messages with a full position contribute. A ping without
+    // Only messages with a full position contribute. A ping without
     // coordinates tells the decision nothing and would otherwise land in the
     // history as a fix at (0, 0).
-    // ⚠ Every message that fails to parse is COUNTED AND LOGGED, not quietly
+    // Every message that fails to parse is counted and logged, not quietly
     // skipped. The fix is already stored upstream at this point, so a silent
     // drop here would leave the decision reading a shorter history than the
     // phone actually reported — which looks exactly like a phone that went
@@ -249,7 +249,7 @@ pub async fn proxy(
         })
         .collect();
 
-    // ⚠ Best-effort, and deliberately after the forward: a database hiccup must
+    // Best-effort, and deliberately after the forward: a database hiccup must
     // not cost the fix or the mode decision. Duplicates are ignored because
     // Owntracks re-POSTs.
     persist_motion(&st, &device, &messages).await;
@@ -265,7 +265,7 @@ pub async fn proxy(
     let cutoff = now_ts - lean::owntracks_history_max_age_sec();
     dev.history.retain(|f| f.ts >= cutoff);
 
-    // The hour where the phone is, in the user's home zone; a device name IS
+    // The hour where the phone is, in the user's home zone; a device name is
     // the user id here, as `persist_motion` reads it. Unresolvable reads as
     // daytime, which is the frequent side.
     let local_hour = match crate::sync_state::get(&st.pool, &device, "home_tz").await {
@@ -289,7 +289,7 @@ pub async fn proxy(
     let decision = match lean::owntracks_config(&fixes, dev.last_profile.as_deref(), local_hour) {
         Ok(d) => d,
         Err(e) => {
-            // The fix IS stored upstream, so this is not a lost fix — but we
+            // The fix is stored upstream, so this is not a lost fix — but we
             // have nothing to tell the phone, and inventing a profile here would
             // be this file deciding.
             tracing::error!(error = %format!("{e:#}"), "owntracks: the decision could not be made");
@@ -332,7 +332,7 @@ pub async fn proxy(
     dev.last_profile = Some(decision.profile.clone());
     st.owntracks.put(&key, dev);
 
-    // ⚠ PhoneTrack's own response body is PRESERVED and our command appended.
+    // PhoneTrack's own response body is preserved and our command appended.
     // It carries the "you are your own friend" location echo Owntracks needs to
     // draw the user's marker on its in-app map; replacing it would blank that.
     let mut out: Vec<Value> = match upstream.text().await {
@@ -411,7 +411,7 @@ async fn persist_motion(st: &AppState, device: &str, messages: &[Location]) {
                 ts,
                 lat,
                 lon,
-                // ⚠ Owntracks sends -1 for "no heading". Storing that as a
+                // Owntracks sends -1 for "no heading". Storing that as a
                 // bearing would be a fabricated direction, so it becomes NULL.
                 cog: m.cog.filter(|c| *c >= 0.0).map(|c| c.round() as i64),
                 vel: m.vel.map(|v| v.round() as i64),

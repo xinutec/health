@@ -7,14 +7,14 @@
 //! `refresh_focus_places_one`, a DB-backed `async fn` in the binary crate; the
 //! decode lives in `lean.rs` so this test can reach it.
 //!
-//! # The geography is INVENTED, and has to be
+//! # The geography is invented, and has to be
 //!
 //! No tracked test may carry real coordinates or place names. Synthetic points
 //! are also the sharper instrument: a cluster built at a chosen spot with a
 //! chosen dwell is one whose expected mining outcome is known, which a real
 //! day's smear is not.
 //!
-//! ⚠ ONE `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
+//! One `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
 //! starts a runtime and several tests racing on it would flake.
 
 /// A day of dwell at one invented spot: `n` fixes a minute apart, jittered by
@@ -50,11 +50,11 @@ fn focus_places_mines_a_dwell_and_keeps_its_reply_self_consistent() {
         "two spots sat at for four hours on two days must mine at least one place"
     );
 
-    // ⚠ THE INVARIANT THE CALLER DEPENDS ON. One assignment per mined cluster,
+    // The invariant the caller depends on. One assignment per mined cluster,
     // or the cron pairs a cluster with the wrong existing row and moves another
     // place's `first_seen_ts`. `focus_places` bails when this fails, so reaching
     // here at all is the assertion — this restates it so a future reader sees
-    // WHY the lengths must agree.
+    // why the lengths must agree.
     assert_eq!(
         mined.assignments.len(),
         mined.mined.len(),
@@ -62,7 +62,7 @@ fn focus_places_mines_a_dwell_and_keeps_its_reply_self_consistent() {
     );
 
     // Nothing existed before, so nothing can be a continuation of it and
-    // nothing can have gone away. This is what makes the run above a COLD mine
+    // nothing can have gone away. This is what makes the run above a cold mine
     // rather than a re-mine, and it is the arm the cron takes on a new user.
     assert!(
         mined.assignments.iter().all(Option::is_none),

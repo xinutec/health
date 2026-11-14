@@ -1,6 +1,6 @@
 //! How often a phone is told to look for itself.
 //!
-//! ⚠ It is never told to stop looking. The user's decision: a missing journey
+//! It is never told to stop looking. The user's decision: a missing journey
 //! is a hole in the record and a flat battery is not, so the backend never
 //! pushes Significant mode. What it chooses is the locate interval inside Move,
 //! and the night, when a still phone is asked once an hour. These tests pin
@@ -34,7 +34,7 @@ fn standstill() -> Vec<OwntracksFix> {
         .collect()
 }
 
-/// ⚠ A single fast fix escalates with NO history. Boarding a train must not
+/// A single fast fix escalates with no history. Boarding a train must not
 /// wait for a trajectory to accumulate.
 #[test]
 fn high_speed_escalates_on_one_fix() {
@@ -48,7 +48,7 @@ fn high_speed_escalates_on_one_fix() {
     assert_eq!(d.move_mode_locator_interval, Some(10));
 }
 
-/// ⚠ The standstill never demotes. Ten minutes still by day, with any history:
+/// The standstill never demotes. Ten minutes still by day, with any history:
 /// the phone keeps its Move profile. Answering "stationary" here costs walks.
 #[test]
 fn a_standstill_by_day_keeps_move_mode() {
@@ -58,7 +58,7 @@ fn a_standstill_by_day_keeps_move_mode() {
     assert_eq!(d.monitoring, 2, "monitoring must stay Move");
 }
 
-/// ⚠ THE FIRST FIX PUTS THE PHONE IN MOVE. Every answer is a push, and the
+/// The first fix PUTS the phone in move. Every answer is a push, and the
 /// old factory-default answer pushed Significant onto a walking phone after
 /// every deploy.
 #[test]
@@ -110,7 +110,7 @@ fn motion_at_night_returns_to_walking_cadence() {
     assert_eq!(d.move_mode_locator_interval, Some(30));
 }
 
-/// ⚠ Walking pace WITHOUT straightness is a stationary phone's GPS noise, not a
+/// Walking pace without straightness is a stationary phone's GPS noise, not a
 /// walk: the profile is refined to nothing, so whatever was decided last holds.
 #[test]
 fn wandering_at_walking_pace_is_not_walking() {

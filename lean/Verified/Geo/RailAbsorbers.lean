@@ -5,7 +5,7 @@ import Verified.Geo.SegmentMerge
 `parseRailWayName` reads a rail leg's `Board → Alight · Line` label for the
 passes and the feasibility check.
 
-## `parseRailWayName` is deliberately NOT reused from `Verified.Geo.Worldline`
+## `parseRailWayName` is deliberately not reused from `Verified.Geo.Worldline`
 
 `Board → Alight · Line` is parsed two ways, and they disagree.
 `Worldline.parseRailWayName` strips the ` · Line` suffix first, then finds the
@@ -18,7 +18,7 @@ only in what follows, without trimming and without rejecting empties:
 | `"A · X → B"` | `none` (no arrow left)     | board `"A · X"`, alight `"B"`  |
 | `" → B"`      | `none` (empty board)       | board `""`, alight `"B"`       |
 | `"A → "`      | `none` (empty alight)      | board `"A"`, alight `""`       |
-| `" A → B "`   | trimmed                    | NOT trimmed                    |
+| `" A → B "`   | trimmed                    | not trimmed                    |
 
 A comparison of `prevRail.alight == nextRail.board` sees the difference, and
 two of the guards below are exactly that discriminator.
@@ -47,7 +47,7 @@ structure RailTriple where
   line : Option String := none
   deriving Inhabited, BEq, Repr
 
-/-- Split on the FIRST occurrence of `sep`, rejoining the tail — exactly what
+/-- Split on the first occurrence of `sep`, rejoining the tail — exactly what
 `indexOf` + two `slice`s do. `none` when the separator is absent. -/
 private def splitFirst (s sep : String) : Option (String × String) :=
   match s.splitOn sep with
@@ -78,17 +78,17 @@ private def T (b a : String) (l : Option String := none) : Option RailTriple := 
 #guard parseRailWayName (some "Metropolitan Line") == none
 #guard parseRailWayName (some "") == none
 #guard parseRailWayName none == none
--- The arrow is found FIRST, so a line separator BEFORE it stays inside `board`.
+-- The arrow is found first, so a line separator before it stays inside `board`.
 -- rail-snap's parser strips the suffix first, finds no arrow, and returns none.
 #guard parseRailWayName (some "A · X → B") == T "A · X" "B"
--- Empty endpoints are ACCEPTED; rail-snap's parser rejects both of these.
+-- Empty endpoints are accepted; rail-snap's parser rejects both of these.
 #guard parseRailWayName (some " → B") == T "" "B"
 #guard parseRailWayName (some "A → ") == T "A" ""
--- Whitespace is NOT trimmed.
+-- Whitespace is not trimmed.
 #guard parseRailWayName (some " A → B ") == T " A" "B "
--- A bare trailing separator yields a PRESENT but empty line, not `none`.
+-- A bare trailing separator yields a present but empty line, not `none`.
 #guard parseRailWayName (some "A → B · ") == T "A" "B" (some "")
--- Both separators split on the FIRST occurrence with the tail rejoined.
+-- Both separators split on the first occurrence with the tail rejoined.
 #guard parseRailWayName (some "A → B → C") == T "A" "B → C"
 #guard parseRailWayName (some "A → B · L1 · L2") == T "A" "B" (some "L1 · L2")
 

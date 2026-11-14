@@ -44,7 +44,7 @@ fn every_captured_segment_encodes_as_the_typescript_does() {
     assert_eq!(checked, cases.len());
 }
 
-/// ⚠ The float encoding is the whole reason this wire format exists, so it is
+/// The float encoding is the whole reason this wire format exists, so it is
 /// pinned independently of any captured segment.
 ///
 /// A coordinate rendered as a decimal instead of its bit pattern is a silent
@@ -56,7 +56,7 @@ fn floats_cross_as_their_bit_pattern() {
     use backend::fold_payload::bits;
     assert_eq!(bits(0.0), "0");
     assert_eq!(bits(1.0), "4607182418800017408");
-    // ⚠ Real literals, computed independently: an expected value computed by
+    // Real literals, computed independently: an expected value computed by
     // the function under test passes whatever it does.
     assert_eq!(bits(-0.176_252_1), "13818890208280377371");
     assert_eq!(bits(51.523_456_789_012_3), "4632448099209369256");

@@ -1,12 +1,12 @@
 //! Splitting a capped PhoneTrack window loses no second and repeats none.
 //!
-//! ⚠ PhoneTrack truncates at `maxPoints` and puts NOTHING in the response to say
+//! PhoneTrack truncates at `maxPoints` and puts nothing in the response to say
 //! so, and a truncated week is shaped exactly like a quiet one. The fetch reacts
 //! to the symptom — a response of exactly the cap — by halving the window and
 //! asking again, so the arithmetic below is what stands between a lost tail and
 //! a correct one.
 //!
-//! ⚠ **Both bounds are INCLUSIVE.** So the halves must be `[a, mid]` and `[mid + 1, b]`: splitting at
+//! Both bounds are inclusive. So the halves must be `[a, mid]` and `[mid + 1, b]`: splitting at
 //! `mid` twice re-fetches the boundary second, and `[mid, b]` with `[a, mid - 1]`
 //! would drop it. Coverage is asserted second by second below rather than
 //! argued.
@@ -36,7 +36,7 @@ fn the_halves_cover_the_window_exactly() {
     }
 }
 
-/// ⚠ Real bounds are Unix seconds, and a 7-day chunk is the case that motivated
+/// Real bounds are Unix seconds, and a 7-day chunk is the case that motivated
 /// this — 604 800 seconds, which must still divide without losing its ends.
 #[test]
 fn a_seven_day_window_splits_without_losing_its_ends() {
@@ -48,7 +48,7 @@ fn a_seven_day_window_splits_without_losing_its_ends() {
     assert_eq!(hi_a, lo_b + 1, "the halves must touch without overlapping");
 }
 
-/// ⚠ THE TERMINATION ARGUMENT. The caller loops until nothing splits, so a
+/// The termination argument. The caller loops until nothing splits, so a
 /// window that could return itself would hang against a server that keeps
 /// answering at the cap.
 #[test]

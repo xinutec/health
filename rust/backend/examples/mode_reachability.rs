@@ -12,51 +12,51 @@
 //!
 //! So: two hops, and both must hold.
 //!
-//!   1. **`dispatch` routes to it** — read off the table's own arms in
+//!   1. `dispatch` routes to it — read off the table's own arms in
 //!      `lean/ServeEntry.lean`, which is the source of truth rather than a copy.
-//!   2. **Something executes it** — recorded by `backend::lean::serve`, the one
+//!   2. Something executes it — recorded by `backend::lean::serve`, the one
 //!      function every caller funnels through, when the run sets
 //!      `HEALTH_MODE_TRACE`. By EXECUTION and not by grep: several callers build
 //!      the mode from a parameter, so no scan of the source can see them.
 //!
-//! ⚠ AND HOP 1'S OWN PROBE MUST NOT SATISFY HOP 2 — see `PROBES`. That is the
+//! And hop 1'S own probe must not satisfy hop 2 — see `PROBES`. That is the
 //! whole difference between this check and the one that already exists.
 //!
 //! # What "no caller" means here, exactly
 //!
-//! This asks about the ARM, not about the handler behind it. `cliMain` reaches
+//! This asks about the arm, not about the handler behind it. `cliMain` reaches
 //! `railMain`, `geoMain`, `coverageResult` and others straight from `argv`
-//! WITHOUT going through `dispatch`, so a mode can have a thoroughly exercised
+//! without going through `dispatch`, so a mode can have a thoroughly exercised
 //! handler and a dead arm at the same time. That is a real finding rather than
 //! a blind spot — an arm nothing routes to is dead weight whatever else calls
 //! the function — but the reason field has to say which of the two it is, or a
 //! reader will take "no caller" for "no user".
 //!
-//! ⚠ AND THE TRACE SEES WHAT THE GATE RUNS. A mode reached only by the serving
+//! And the trace sees what the gate runs. A mode reached only by the serving
 //! binary on a path no test covers reads as dead here. That is also worth
 //! knowing, and it is also not the same thing as nothing calling it — again,
 //! the reason field carries the difference.
 //!
 //! # Why the exception list is checked in both directions
 //!
-//! Some modes must NEVER have a caller — an ablation exists to be subtracted
+//! Some modes must never have a caller — an ablation exists to be subtracted
 //! from a real mode, `ceilingbless` rewrites the oracle a gate judges against.
 //! So the check cannot be a bare gate; it needs a list of modes allowed to have no
 //! caller, and a list like that is a baseline that rots.
 //!
 //! It is held exact instead, which is the whole design. An entry whose mode has
-//! GAINED a caller fails, so the list cannot quietly grow stale. An entry naming
+//! gained a caller fails, so the list cannot quietly grow stale. An entry naming
 //! a mode the table no longer dispatches fails, so a deleted arm cannot leave
 //! its excuse behind. The list can only be right or red.
 //!
-//! ⚠ AND THE TWO KINDS OF EXCUSE MEAN OPPOSITE THINGS WHEN THEY BREAK, so the
+//! And the two kinds of excuse mean opposite things when they break, so the
 //! file names which one each line is. An `ablation` mode gaining a caller is a
-//! DEFECT — something in the tree is treating an empty reply as an answer. A `dead` mode gaining one is the repair this task wants, and the
+//! defect — something in the tree is treating an empty reply as an answer. A `dead` mode gaining one is the repair this task wants, and the
 //! line just has to go. Both are red, because both mean the file is now wrong;
 //! a reader of the failure should not have to guess which they are looking at.
 //!
 //! `dead` is a grandfathered count, in the same discipline as the dev-lint
-//! baseline this repository already carries: it ratchets DOWN. Nothing may be
+//! baseline this repository already carries: it ratchets down. Nothing may be
 //! added to it without a caller being removed, and the check cannot tell the
 //! difference — that part is a review question, which is why the reason field
 //! is not optional.
@@ -105,12 +105,12 @@ fn dispatched(src: &str) -> BTreeSet<String> {
     out
 }
 
-/// Binaries whose calls do NOT count as a caller.
+/// Binaries whose calls do not count as a caller.
 ///
-/// ⚠ WITHOUT THIS THE TWO HOPS COLLAPSE INTO ONE. `lean_serve` is the hop-1
+/// Without this the two hops collapse into one. `lean_serve` is the hop-1
 /// probe: it asks eight modes a question for the sole purpose of proving that
 /// `dispatch` still routes to them, and it is deliberately indifferent to the
-/// answer — several of its cases assert only that the mode failed in its OWN
+/// answer — several of its cases assert only that the mode failed in its own
 /// words. If its calls counted as use, every mode it probes would read as
 /// exercised and this check would assert exactly what `lean_serve` already
 /// asserts. It also asks for `nope`, which is not a mode at all.
@@ -144,9 +144,9 @@ fn exercised(trace: &str) -> BTreeMap<String, BTreeSet<String>> {
     out
 }
 
-/// What an excused mode is excused AS.
+/// What an excused mode is excused as.
 ///
-/// The kinds exist because a caller appearing means OPPOSITE things. On
+/// The kinds exist because a caller appearing means opposite things. On
 /// `Ablation` and `Bless` it is a defect — a gate run that reaches them is
 /// measuring an empty reply or rewriting its own oracle. On `Dead` it is the
 /// repair this task wants, and the only thing left to do is delete the line.
@@ -159,8 +159,8 @@ enum Kind {
     /// Reached only under a bless env var a gate must not set. Caller = defect.
     Bless,
     /// Deliberately kept reachable with no caller expected. `cliMain` reaches
-    /// the handler straight from argv, which does NOT route through this table,
-    /// so the arm is the only way a linked HOST can call it — deleting it would
+    /// the handler straight from argv, which does not route through this table,
+    /// so the arm is the only way a linked host can call it — deleting it would
     /// recreate the linkability problem the ServeEntry split exists to solve.
     /// Not debt, and it does not ratchet.
     Spare,
@@ -216,9 +216,9 @@ fn main() {
     let base_src = std::fs::read_to_string(&baseline_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", baseline_path.display()));
 
-    // ⚠ FAIL CLOSED ON AN ABSENT TRACE. With no file every mode reads as
+    // Fail closed on an absent trace. With no file every mode reads as
     // "exercised by nothing", which is a red gate for the wrong reason — and
-    // with an EMPTY one the check would be judging a run that never happened.
+    // with an empty one the check would be judging a run that never happened.
     // Either way the answer is "this row ran out of order", not a verdict.
     let Ok(trace_src) = std::fs::read_to_string(&trace_path) else {
         eprintln!(

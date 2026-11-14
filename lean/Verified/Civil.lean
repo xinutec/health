@@ -12,18 +12,18 @@ integer computation — Howard Hinnant's `days_from_civil`, the algorithm behind
 every modern civil-calendar implementation. `Int` in Lean is a bignum, so it is
 exact at every year, with no 2038 and no float year drift.
 
-⚠ WHY THIS IS PROVED RATHER THAN TESTED. The failure mode of date arithmetic is
+Why this is PROVED rather than tested. The failure mode of date arithmetic is
 not that it is wrong everywhere; it is that it is right for 1 460 days out of
 every 1 461. A test corpus drawn from the days this app has seen — July and
 August of one year — cannot distinguish a correct implementation from one that
 mishandles February, a century year, or a year divisible by 400. So the round
-trip is a theorem over ALL days in range, not a table of examples, and the
+trip is a theorem over all days in range, not a table of examples, and the
 guards below exist for the boundaries a reader wants to see named.
 
 ## The era trick, since the shifts look arbitrary
 
 Shift the year so it starts in March (`m ≤ 2` borrows from the previous year).
-Then the leap day is the LAST day of the year rather than embedded in it, and
+Then the leap day is the last day of the year rather than embedded in it, and
 month lengths from March follow the exact pattern `(153·m' + 2) / 5`. Grouping
 into 400-year "eras" — 146 097 days, which is exactly divisible by 7, so the
 Gregorian calendar repeats — makes the rest division.
@@ -92,7 +92,7 @@ def formatDate (y : Int) (m : Int) (d : Int) : String :=
 /-- Parse `YYYY-MM-DD` strictly: exactly three all-digit components of the right
 widths, a real month, and a day within that month's length.
 
-⚠ Stricter than `new Date(s)`, deliberately: JavaScript reads 30 February as
+Stricter than `new Date(s)`, deliberately: JavaScript reads 30 February as
 2 March, and accepts an unpadded month and day. Both arrive as user input through a query
 parameter; a parser that rejects is the point. -/
 def parseDate (s : String) : Option (Int × Int × Int) :=
@@ -166,7 +166,7 @@ see, and the ones a wrong implementation gets wrong first. -/
 
 `#guard` checks the examples above. This checks the 730 000-odd days from 1000
 to 3000 — every leap year, every century, every month boundary in any range this
-app can reach — by EXECUTION rather than by induction, which is the honest thing
+app can reach — by execution rather than by induction, which is the honest thing
 to write down: it is a bounded exhaustive check, not a theorem about all `Int`.
 
 A proof over all `Int` is the better artefact and is not written here. Saying so

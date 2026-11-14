@@ -9,13 +9,13 @@
 //! sequence of trips? `tests/golden/journey-baseline.json` records the
 //! ground-truth journeys the pipeline reconstructs.
 //!
-//! ⚠ MOST JOURNEYS DO NOT MATCH, AND THAT IS THE DESIGN. The floor is the
+//! Most journeys do not match, and that is the design. The floor is the
 //! current non-zero set of working ones, so the standing failures are a floor
 //! that can only shrink — the measurement the joint mode+position model
 //! is built against. A journey that never worked is not in the floor and does
 //! not fail; one that used to work and stopped is a hard failure.
 //!
-//! # A match is SHAPE and COVERAGE, and the second conjunct is the quiet one
+//! # A match is shape and coverage, and the second conjunct is the quiet one
 //!
 //! A third of the corpus's unmatched journeys reconstruct their exact expected
 //! mode shape and fail on coverage instead. So this prints
@@ -27,7 +27,7 @@
 //! `JOURNEY_DUMP=<path>` writes the `(gt, states)` pairs this harness feeds
 //! Lean.
 //!
-//! ⚠ The floor is the oracle: a committed count of reconstructed journeys, with
+//! The floor is the oracle: a committed count of reconstructed journeys, with
 //! nothing regressed, nothing newly held and nothing dropped.
 //!
 //! # The split
@@ -36,16 +36,16 @@
 //! `Verified.Eval.JourneyShape`; the ratchet is `Verified.Eval.FloorGate`,
 //! already built for the truth floor. This module replays, resolves and prints.
 //!
-//! ⚠ **SHARDING IS SOUND HERE** and it is not obvious: the floor gate
+//! Sharding is sound here and it is not obvious: the floor gate
 //! is fed `measured_baseline`, the floor filtered to the days this run actually
-//! reported, and it ANNOUNCES the rest as unchecked. A shard that grades
+//! reported, and it announces the rest as unchecked. A shard that grades
 //! half the corpus therefore ratchets half the floor and says so, and between
 //! the shards every floor key is checked exactly once.
 //!
 //! # Local-only
 //!
 //! `tests/golden/{days,ground-truth}` is gitignored. `journey-baseline`
-//! IS tracked: unix timestamps and nothing else. Announces a skip rather than
+//! is tracked: unix timestamps and nothing else. Announces a skip rather than
 //! passing quietly, and prints modes and times, never a place.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -168,7 +168,7 @@ impl Journey {
         let Some(gt) = ground_truth_journeys(date, tz) else {
             return; // no narrative for this day
         };
-        // ⚠ ONLY the three fields the referee is allowed to see. Passing whole
+        // Only the three fields the referee is allowed to see. Passing whole
         // states would let a place name reach a comparison that must not use one.
         let states: Vec<Value> = rep.out["states"]
             .as_array()
@@ -176,7 +176,7 @@ impl Journey {
             .iter()
             .map(|s| json!({ "startTs": s["startTs"], "endTs": s["endTs"], "mode": s["mode"] }))
             .collect();
-        // ⚠ NON-VACUITY: a moved key yields an EMPTY slice, not an error, and
+        // Non-vacuity: a moved key yields an empty slice, not an error, and
         // every journey would then read as unreconstructed at once.
         if states.is_empty() {
             self.failures
@@ -250,7 +250,7 @@ impl Journey {
     }
 
     /// The floor gate over everything this shard graded. Returns the failures
-    /// rather than asserting, so the runner can name WHICH grader failed.
+    /// rather than asserting, so the runner can name which grader failed.
     pub fn finish(self) -> Vec<String> {
         let mut out = self.failures;
         if !out.is_empty() {
@@ -335,7 +335,7 @@ impl Journey {
                 );
             }
         }
-        // ⚠ A drop is the only way a red gate goes green without a fix. Never silent.
+        // A drop is the only way a red gate goes green without a fix. Never silent.
         if !dropped.is_empty() {
             eprintln!(
                 "journeys: {} floor key(s) the narrative no longer describes:",

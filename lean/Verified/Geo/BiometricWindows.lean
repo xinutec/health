@@ -10,13 +10,13 @@ core of bridging stays across biometric gaps.
 Two conventions here are load-bearing and easy to get wrong, so both are
 pinned by `#guard`s:
 
-* **"No Fitbit data" is not "zero steps."** `stepsTotal` / `stepsInWindow`
+* "No Fitbit data" is not "zero steps." `stepsTotal` / `stepsInWindow`
   return `none` when the step series carries no rows for the segment's day at
   all, but `0` when rows exist for the day and simply none landed in the
-  window. Downstream factors must stay OFF for the former and may treat the
+  window. Downstream factors must stay off for the former and may treat the
   latter as real evidence.
-* **Window boundaries.** Segment windows are INCLUSIVE at both ends, but the
-  bridge's gap window is STRICTLY inside — a sample sitting exactly on a gap
+* Window boundaries. Segment windows are inclusive at both ends, but the
+  bridge's gap window is strictly inside — a sample sitting exactly on a gap
   boundary belongs to the bracketing stay, not the gap.
 
 Only the merge decision is here: {@link bridgeStayRuns} returns the merge plan
@@ -131,13 +131,13 @@ def cadenceForSegment (seg : Seg) (stepPoints : List StepPoint) : Float :=
       decide (sp.ts ≥ seg.startTs) && decide (sp.ts ≤ seg.endTs))).foldl (fun a sp => a + sp.steps) 0
     (total / Float.ofInt durationSec) * 60
 
-/-- How long a step row covers. A row's `ts` is the START of its minute, so the
+/-- How long a step row covers. A row's `ts` is the start of its minute, so the
     steps it carries were taken across `[ts, ts + STEP_MINUTE_S)`. -/
 def STEP_MINUTE_S : Int := 60
 
 /-- Does a step row's whole minute lie inside the window?
 
-⚠ **Containment, not membership of the start instant.** A segment ending at
+Containment, not membership of the start instant. A segment ending at
 18:54:12 shares twelve seconds with the minute beginning 18:54; testing
 `sp.ts ≤ seg.endTs` charges it that whole minute's steps. That destroys a
 five-minute shop stay on 06-24: the 82 steps belong to the walk to the next
@@ -180,7 +180,7 @@ private def s1 : Seg := sg (T0 + 3600) (T0 + 7200)
 #guard match enrichSegmentWithBiometrics s1 [] [] [] with
        | r => r.hrMean == none && r.sampleCount == 0 && r.overlapsSleep == false
               && r.sleepFraction == 0 && r.stepsTotal == none
--- Boundary timestamps are INCLUSIVE, so the 3600 and 7200 samples count and
+-- Boundary timestamps are inclusive, so the 3600 and 7200 samples count and
 -- the 3000/9000 ones do not.
 #guard match enrichSegmentWithBiometrics s1
          [hp (T0 + 3000) 200, hp (T0 + 3600) 60, hp (T0 + 5000) 72, hp (T0 + 7200) 81, hp (T0 + 9000) 200] [] [] with

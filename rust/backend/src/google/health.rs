@@ -18,7 +18,7 @@ const PAGE_SIZE: u32 = 1000;
 
 /// A bound on the page walk.
 ///
-/// ⚠ NOT expected to be reached — it exists because a `nextPageToken` that
+/// Not expected to be reached — it exists because a `nextPageToken` that
 /// never changes is an infinite loop against a paid API, and the failure mode
 /// of "hangs until the job deadline kills it" is much worse to diagnose than a
 /// refusal that names the cause.
@@ -46,7 +46,7 @@ struct SampleTime {
 
 #[derive(Debug, Deserialize)]
 struct WeightPoint {
-    /// ⚠ Google sends this as a NUMBER or a STRING depending on magnitude —
+    /// Google sends this as a number or a string depending on magnitude —
     /// the JSON mapping for int64 quotes large values. `serde_json::Value` and
     /// an explicit coercion, because a plain `i64` silently fails to decode the
     /// quoted form and the point is then dropped as malformed.
@@ -88,7 +88,7 @@ fn grams(v: &serde_json::Value) -> Option<i64> {
 
 /// Map one page's data points, skipping those that cannot name a day or a mass.
 ///
-/// ⚠ A point missing either field is dropped rather than refused. That is safe
+/// A point missing either field is dropped rather than refused. That is safe
 /// only because the dedup downstream keys on the civil date: a point with no
 /// date cannot place itself, so keeping it would mean inventing one. It is not
 /// safe to extend this to other fields: dropping a point can move the replace
@@ -109,7 +109,7 @@ pub fn parse_page(body: &str) -> Result<(Vec<Weigh>, Option<String>)> {
 }
 
 /// [`parse_page`] for `body-fat`. Each reading is a [`Weigh`] whose `grams`
-/// holds the percentage in THOUSANDTHS (18.3 % → 18 300), so the same
+/// holds the percentage in thousandths (18.3 % → 18 300), so the same
 /// latest-per-day rule picks the day's value; [`body_fat_pct`] turns it back.
 pub fn parse_body_fat_page(body: &str) -> Result<(Vec<Weigh>, Option<String>)> {
     let page: ListResponse =
@@ -206,7 +206,7 @@ async fn fetch_all_readings(
         pages += 1;
         match next {
             None => break,
-            // ⚠ A token identical to the one just used is a server-side loop,
+            // A token identical to the one just used is a server-side loop,
             // not more data. Caught explicitly so it reads as what it is.
             Some(t) if Some(&t) == page_token.as_ref() => {
                 return Err(anyhow!("google {data_type} paging repeated its page token"));
@@ -225,8 +225,8 @@ async fn fetch_all_readings(
 
 /// A civil day and one aggregated number for it.
 ///
-/// ⚠ The rollup carries `civilStartTime`/`civilEndTime`, not a `date`. The day
-/// is the START — an `end` of the following midnight is the exclusive bound, so
+/// The rollup carries `civilStartTime`/`civilEndTime`, not a `date`. The day
+/// is the start — an `end` of the following midnight is the exclusive bound, so
 /// keying on it would file every value one day late.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DailyValue {
@@ -241,7 +241,7 @@ pub struct DailyValue {
 
 /// The per-type ceiling on `windowSizeDays * pageSize`.
 ///
-/// ⚠ Not a page size. Google bounds the duration a page implies, so a pageSize
+/// Not a page size. Google bounds the duration a page implies, so a pageSize
 /// of 100 with the default one-day window asks for 100 days and is refused,
 /// reported as `INVALID_ROLLUP_QUERY_DURATION` against `range`, which is
 /// blameless: 90 for steps/distance/floors/altitude, 14 for active-minutes and
@@ -253,17 +253,17 @@ const ROLLUP_MAX_DAYS: i64 = 14;
 
 /// One rollup point mapped to a civil day and its summed value, or `None`.
 ///
-/// Split out of the fetch so the part that can file data on the WRONG DAY is
+/// Split out of the fetch so the part that can file data on the wrong day is
 /// testable without the live API.
 pub fn day_of_rollup_point(pt: &serde_json::Value, sum_field: &str) -> Option<DailyValue> {
     let date = pt.get("civilStartTime")?.get("date")?;
     let y = date.get("year")?.as_i64()?;
     let m = date.get("month")?.as_i64()?;
     let d = date.get("day")?.as_i64()?;
-    // ⚠ An absent sum is DROPPED, never defaulted. Zero steps is a real reading;
+    // An absent sum is dropped, never defaulted. Zero steps is a real reading;
     // a missing one is not, and writing 0 turns a gap into a claim.
     //
-    // ⚠ `numeric`, not `as_f64` — the rollup sums are the source for most of
+    // `numeric`, not `as_f64` — the rollup sums are the source for most of
     // `daily_activity`, and a quoted one would drop the whole stream exactly as
     // it did for resting heart rate.
     let value = numeric(pt.pointer(sum_field)?)?;
@@ -283,7 +283,7 @@ pub struct ActiveMinutesDay {
 }
 
 /// Read one `active-minutes` rollup point. A level absent from the day's
-/// breakdown is ZERO minutes at it — the day exists, it just had none, and that
+/// breakdown is zero minutes at it — the day exists, it just had none, and that
 /// reading matches Fitbit on every measured day. A point with no
 /// breakdown at all is no reading.
 pub fn active_minutes_of_rollup_point(pt: &serde_json::Value) -> Option<ActiveMinutesDay> {
@@ -314,7 +314,7 @@ pub fn active_minutes_of_rollup_point(pt: &serde_json::Value) -> Option<ActiveMi
 
 /// Read `[start, end)` of one rollup type, in legal-width chunks.
 ///
-/// ⚠ HALF-OPEN, matching the API: "the inclusive start" and "the exclusive
+/// Half-open, matching the API: "the inclusive start" and "the exclusive
 /// end". A caller passing the same date twice gets nothing, not one day.
 pub async fn fetch_daily_rollup(
     http: &reqwest::Client,
@@ -383,7 +383,7 @@ pub async fn fetch_daily_rollup_points(
 
         let page: serde_json::Value = serde_json::from_str(&text)
             .with_context(|| format!("decoding the {data_type} rollup"))?;
-        // ⚠ `rollupDataPoints`, NOT `dataPoints` — a different key from `list`,
+        // `rollupDataPoints`, not `dataPoints` — a different key from `list`,
         // and reading the wrong one reports every type as empty.
         for pt in page
             .get("rollupDataPoints")
@@ -400,13 +400,13 @@ pub async fn fetch_daily_rollup_points(
 
 /// Every point of a one-per-day type, as `(civil date, value)`.
 ///
-/// ⚠ USES `list`, NOT `dailyRollUp`. The daily aggregates ARE sample types
-/// here — `daily-respiratory-rate` and friends answer `list` and REFUSE
+/// Uses `list`, not `dailyRollUp`. The daily aggregates are sample types
+/// here — `daily-respiratory-rate` and friends answer `list` and refuse
 /// `dailyRollUp` ("the following actions are supported: list, reconcile"). The
 /// two shapes are not interchangeable and picking the wrong one returns 400 or,
 /// worse, 200 and nothing.
 ///
-/// ⚠ The list is ordered NEWEST FIRST with no ascending sort, so this walks
+/// The list is ordered newest first with no ascending sort, so this walks
 /// every page to see the whole series. That is a few pages for a daily
 /// aggregate and must never be pointed at an intraday type.
 pub async fn fetch_daily_series(
@@ -430,7 +430,7 @@ pub async fn fetch_daily_series(
 /// carries stages and awakenings and a heart-rate point carries a timestamp to
 /// the second.
 ///
-/// ⚠ `list` IS NEWEST FIRST and there is no ascending sort, so a caller that
+/// `list` is newest first and there is no ascending sort, so a caller that
 /// wants chronological order must sort. Nothing here does it, because the
 /// writers key on a primary key and do not care.
 pub async fn fetch_all_points(
@@ -443,12 +443,12 @@ pub async fn fetch_all_points(
 
 /// {@link fetch_all_points}, bounded by an AIP-160 `filter` expression.
 ///
-/// # ⚠ AN INTRADAY TYPE CANNOT BE WALKED WITHOUT ONE
+/// # An intraday type cannot be walked without one
 ///
 /// `heart-rate` carries ~34,000 points a day and the list is newest-first with
 /// no ascending sort, so the unbounded walk hits `MAX_PAGES` years short of the
 /// oldest point — it cannot ever finish, only fail. The filter is how the API
-/// bounds a walk by time. The fields are the PROTO names, snake_case, NOT the
+/// bounds a walk by time. The fields are the proto names, snake_case, not the
 /// camelCase the JSON payload spells them with:
 ///
 ///   heart_rate.sample_time.physical_time >= "2026-08-25T00:00:00Z"
@@ -480,7 +480,7 @@ async fn fetch_points(
         let mut url =
             reqwest::Url::parse(&format!("{BASE}/users/me/dataTypes/{data_type}/dataPoints"))
                 .with_context(|| format!("building the {data_type} URL"))?;
-        // ⚠ 10,000 — the documented maximum — WHEN FILTERED, because filtered
+        // 10,000 — the documented maximum — when filtered, because filtered
         // means intraday and 1,000 per page turns one week of heart-rate into
         // 24 round trips. Unfiltered stays at 1,000: that path is the daily
         // aggregates, one page either way, and it is the page size every prod
@@ -527,7 +527,7 @@ async fn fetch_points(
         pages += 1;
         match page.get("nextPageToken").and_then(|t| t.as_str()) {
             Some(t) if !t.is_empty() => {
-                // ⚠ Same guards as the weight walk: a token that never changes
+                // Same guards as the weight walk: a token that never changes
                 // is a server-side loop, not more data.
                 if Some(t) == page_token.as_deref() {
                     return Err(anyhow!("{data_type} paging repeated its page token"));
@@ -548,12 +548,12 @@ async fn fetch_points(
 
 /// One `list` point mapped to its civil day and a value at `value_pointer`.
 ///
-/// ⚠ The date lives under the TYPE's own key — `dailyRespiratoryRate.date`,
-/// `dailyOxygenSaturation.date` — so it is found by SHAPE (an object carrying
+/// The date lives under the type's own key — `dailyRespiratoryRate.date`,
+/// `dailyOxygenSaturation.date` — so it is found by shape (an object carrying
 /// year/month/day) rather than by a path table of guesses.
 /// A Google `civilTime` object as a MariaDB `DATETIME` string.
 ///
-/// ⚠ `seconds` is OPTIONAL — the heart-rate samples carry it, the daily types
+/// `seconds` is optional — the heart-rate samples carry it, the daily types
 /// do not, and a missing one means zero rather than an unreadable point.
 pub fn civil_datetime(v: Option<&serde_json::Value>) -> Option<String> {
     let v = v?;
@@ -572,7 +572,7 @@ pub fn civil_datetime(v: Option<&serde_json::Value>) -> Option<String> {
 
 /// An RFC-3339 instant as a UTC `DATETIME` string.
 ///
-/// ⚠ Parsed, not string-sliced. Google's `physicalTime` is a true instant and
+/// Parsed, not string-sliced. Google's `physicalTime` is a true instant and
 /// may carry any offset; taking the first 19 characters would store a local
 /// clock in the UTC column on any point that is not already `Z`.
 pub fn rfc3339_to_utc_datetime(s: &str) -> Option<String> {
@@ -594,17 +594,17 @@ pub fn utc_datetime_to_rfc3339(s: &str) -> Option<String> {
 }
 
 /// A physical instant plus its protobuf-Duration offset (`"3600s"`) as the
-/// LOCAL wall-clock `DATETIME` string.
+/// local wall-clock `DATETIME` string.
 ///
 /// # Why this exists at all
 ///
-/// Sleep sessions and step intervals carry NO civil fields — unlike the sample
+/// Sleep sessions and step intervals carry no civil fields — unlike the sample
 /// types, whose `sampleTime.civilTime` is served ready-made. The wall clock the
 /// tables key on has to be derived, and physical + utcOffset is the derivation
 /// Google itself intends (the offset is served beside every timestamp).
 ///
-/// ⚠ Both halves parsed, neither spliced: an offset like `"-3600s"` must move
-/// the clock BACK, and a truncation-based reading would quietly keep UTC.
+/// Both halves parsed, neither spliced: an offset like `"-3600s"` must move
+/// the clock back, and a truncation-based reading would quietly keep UTC.
 pub fn wall_clock_from_physical(physical: &str, offset: &str) -> Option<String> {
     let secs: i64 = offset.strip_suffix('s')?.parse().ok()?;
     chrono::DateTime::parse_from_rfc3339(physical)
@@ -622,7 +622,7 @@ pub struct GoogleSleepStage {
     pub ts: String,
     /// The physical instant, for `ts_utc`.
     pub ts_utc: String,
-    /// Fitbit's level vocabulary — `deep`/`light`/`rem`/`wake` for a STAGES
+    /// Fitbit's level vocabulary — `deep`/`light`/`rem`/`wake` for a stages
     /// session — so the rows land beside the Fitbit-written ones unchanged.
     pub stage: String,
     pub duration_seconds: i64,
@@ -631,13 +631,13 @@ pub struct GoogleSleepStage {
 /// One Google sleep session, in the shape the `sleep` table wants.
 pub struct GoogleSleepSession {
     /// Parsed from the dataPoint `name`'s last path segment. It is
-    /// Fitbit-logId-SIZED (18-19 digits) but equality with Fitbit's ids is
-    /// UNVERIFIED — nothing may depend on it. The `(user_id, start_time,
+    /// Fitbit-logId-sized (18-19 digits) but equality with Fitbit's ids is
+    /// unverified — nothing may depend on it. The `(user_id, start_time,
     /// is_main_sleep)` unique key is what merges a night written by both.
     pub log_id: i64,
-    /// The civil date the sleep ENDED.
+    /// The civil date the sleep ended.
     ///
-    /// ⚠ Not always what Fitbit's `dateOfSleep` carries: some Fitbit-written
+    /// Not always what Fitbit's `dateOfSleep` carries: some Fitbit-written
     /// rows date a night to the day it started (21:06 → 08:59 dated to the
     /// first day). So the two writers can disagree about one night, and since
     /// `date` overwrites on duplicate, the last writer decides.
@@ -648,7 +648,7 @@ pub struct GoogleSleepSession {
     pub end_time_utc: String,
     pub duration_ms: i64,
     /// Derived: `minutesAsleep / minutesInSleepPeriod`, rounded to a percent.
-    /// Whether that IS Fitbit's statistic is the comparison's question, not an
+    /// Whether that is Fitbit's statistic is the comparison's question, not an
     /// assumption of this parser.
     pub efficiency: i64,
     pub minutes_asleep: i64,
@@ -663,7 +663,7 @@ pub struct GoogleSleepSession {
 
 /// Google's stage vocabulary as Fitbit's level strings.
 ///
-/// ⚠ CONDITIONAL ON THE SESSION TYPE. For a `STAGES` session `AWAKE` is
+/// Conditional on the session type. For a `STAGES` session `AWAKE` is
 /// Fitbit's `wake`; a `CLASSIC` session's levels (`ASLEEP`/`RESTLESS`/`AWAKE`)
 /// lowercase as themselves, where `awake` is correct. Collapsing the two would
 /// write `wake` rows into a classic night that Fitbit spelled `awake`.
@@ -677,7 +677,7 @@ fn stage_level(session_type: &str, google_type: &str) -> String {
 /// A `sleep` dataPoint as the row set to write, or `None` with the reason
 /// counted by the caller.
 ///
-/// ⚠ Every summary minute is a QUOTED number — `numeric`, never `as_i64`.
+/// Every summary minute is a quoted number — `numeric`, never `as_i64`.
 pub fn parse_sleep_point(pt: &serde_json::Value) -> Option<GoogleSleepSession> {
     let sl = pt.get("sleep")?;
     let log_id: i64 = pt
@@ -757,7 +757,7 @@ pub fn parse_sleep_point(pt: &serde_json::Value) -> Option<GoogleSleepSession> {
 
     Some(GoogleSleepSession {
         log_id,
-        // The END's civil date — `end_time` is `YYYY-MM-DD HH:MM:SS`.
+        // The end's civil date — `end_time` is `YYYY-MM-DD HH:MM:SS`.
         date: end_time[..10].to_string(),
         start_time,
         end_time,
@@ -781,16 +781,16 @@ pub fn parse_sleep_point(pt: &serde_json::Value) -> Option<GoogleSleepSession> {
 
 /// A JSON number, whether or not Google quoted it.
 ///
-/// ⚠ **A quoted number is not an absent one.** `as_f64()` returns `None` on a
+/// ⚠ A quoted number is not an absent one. `as_f64()` returns `None` on a
 /// string, so a field Google serialises as `"62"` is dropped exactly like a
 /// missing one, and a whole stream of them reports as zero days, which reads
 /// as "Google does not carry this". `dailyRestingHeartRate.beatsPerMinute` is
 /// a string, and its real points would vanish while `google-compare` printed
 /// `google 0 days`.
 ///
-/// ⚠ This is NOT a permissive fallback. A string that does not parse still
+/// This is not a permissive fallback. A string that does not parse still
 /// yields `None`, because a value we cannot read is not a value we may guess.
-/// The types differ per FIELD, not per stream, so this cannot be decided once at
+/// The types differ per field, not per stream, so this cannot be decided once at
 /// the call site.
 pub fn numeric(v: &serde_json::Value) -> Option<f64> {
     match v {
@@ -816,7 +816,7 @@ pub fn day_of_list_point(pt: &serde_json::Value, value_pointer: &str) -> Option<
         }
     }
     let (y, m, d) = find_ymd(pt)?;
-    // ⚠ Absent is dropped, never defaulted — a missing reading is not a zero one.
+    // Absent is dropped, never defaulted — a missing reading is not a zero one.
     let value = numeric(pt.pointer(value_pointer)?)?;
     Some(DailyValue {
         date: format!("{y:04}-{m:02}-{d:02}"),

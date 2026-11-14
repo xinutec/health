@@ -1,6 +1,6 @@
-//! `/api/share` answers one of TWO shapes, and the difference is absence.
+//! `/api/share` answers one of two shapes, and the difference is absence.
 //!
-//! ⚠ Why this is a test and not a comment. The two shapes are spelled with
+//! Why this is a test and not a comment. The two shapes are spelled with
 //! `Option<T>` + `skip_serializing_if = "Option::is_none"`, and what that pair
 //! does is invisible in the struct: a reader sees `Option` and reasonably
 //! expects `null` (dev-lint's wire extractor once reported four false drifts
@@ -8,7 +8,7 @@
 //! that settles it, so the serialisation is pinned here.
 //!
 //! The property both halves depend on: with no link the conditional keys are
-//! ABSENT — the settings page renders its create button off `active: false`
+//! absent — the settings page renders its create button off `active: false`
 //! alone — while a link nobody has opened yet carries an explicit
 //! `lastAccessedAt: null`. Collapsing those two would make "no share" and
 //! "unopened share" indistinguishable to the SPA.
@@ -29,7 +29,7 @@ fn no_link_omits_every_conditional_key() {
     })
     .expect("the status serialises");
 
-    // Exact equality, not a field check: an EXTRA key here is the defect —
+    // Exact equality, not a field check: an extra key here is the defect —
     // `{"active": false, "token": null}` would have the SPA render a share it
     // cannot show.
     assert_eq!(v, json!({ "active": false }));

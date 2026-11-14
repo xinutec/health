@@ -12,18 +12,18 @@ so `days=400` is an error, not a year: a clamp would answer a bad request with
 a plausible window, and the caller would never learn it asked for the
 impossible.
 
-⚠ Absent is the only input that becomes the default. `""` is not absent: it
+Absent is the only input that becomes the default. `""` is not absent: it
 reads as `0` and fails the minimum. A host mapping an empty parameter to "no
 parameter" turns a rejection into a 30-day read.
 parameter to "no parameter" turns a rejection into a 30-day read.
 
-## The share window CAPS the read, whatever `days` says
+## The share window caps the read, whatever `days` says
 
-`sinceDateForSession` takes the LATER of `today - days` and the share's `from`.
+`sinceDateForSession` takes the later of `today - days` and the share's `from`.
 A recipient asking for 365 days gets their window and nothing more.
 
-⚠ **Getting this comparison backwards hands a recipient the owner's whole
-history, and the response looks entirely normal** — same shape, same columns,
+⚠ Getting this comparison backwards hands a recipient the owner's whole
+history, and the response looks entirely normal — same shape, same columns,
 just more of them. There is no error to notice.
 
 Pure and total. UNPROVEN; the `#guard`s pin its answers.
@@ -36,10 +36,10 @@ def DAYS_DEFAULT : Int := 30
 
 /-- Validate the `days` query parameter.
 
-The argument is what JS `Number(...)` made of it: `none` ONLY when the parameter
-was absent, `NaN` when it was present and not a number. `none` OUT means reject.
+The argument is what JS `Number(...)` made of it: `none` only when the parameter
+was absent, `NaN` when it was present and not a number. `none` out means reject.
 
-⚠ The host must reproduce `Number`'s coercion, including `Number("") == 0`. See
+The host must reproduce `Number`'s coercion, including `Number("") == 0`. See
 the module note for what mapping `""` to absent would do. -/
 def validateDays (v : Option Float) : Option Int :=
   match v with
@@ -67,9 +67,9 @@ def sinceDate (today : String) (days : Int) : Option String :=
 /-- The earliest date this request may see.
 
 `shareFrom` is the share window's start, or `none` for the owner. The answer is
-the LATER of the two bounds, so a share strictly caps the read.
+the later of the two bounds, so a share strictly caps the read.
 
-⚠ String comparison is correct here and only because `YYYY-MM-DD` orders
+String comparison is correct here and only because `YYYY-MM-DD` orders
 lexicographically as it orders chronologically — the same reason
 `Verified.Share.dateInShareWindow` compares that way. -/
 def earliestVisible (today : String) (days : Int) (shareFrom : Option String) : Option String :=
@@ -87,7 +87,7 @@ def earliestVisible (today : String) (days : Int) (shareFrom : Option String) : 
 #guard validateDays (some 7) == some 7
 #guard validateDays (some 1) == some 1
 #guard validateDays (some 365) == some 365
--- ⚠ REJECTED, not clamped. `days=400` is an error, not a year.
+-- Rejected, not clamped. `days=400` is an error, not a year.
 #guard validateDays (some 0) == none
 #guard validateDays (some (-1)) == none
 #guard validateDays (some 366) == none
@@ -105,17 +105,17 @@ def earliestVisible (today : String) (days : Int) (shareFrom : Option String) : 
 #guard sinceDate "2026-03-01" 1 == some "2026-02-28"
 #guard sinceDate "2026-01-01" 1 == some "2025-12-31"
 #guard sinceDate "2026-03-01" 60 == some "2025-12-31"
--- ⚠ A LEAP DAY. 2024 is a leap year, so the day before 1 March is 29 February.
+-- A leap day. 2024 is a leap year, so the day before 1 March is 29 February.
 #guard sinceDate "2024-03-01" 1 == some "2024-02-29"
 #guard sinceDate "2024-03-01" 2 == some "2024-02-28"
 #guard sinceDate "not-a-date" 1 == none
 
 -- The owner is bounded only by `days`.
 #guard earliestVisible "2026-08-22" 30 none == some "2026-07-23"
--- ⚠ A share recipient asking for a WIDE window gets their own start instead.
+-- A share recipient asking for a wide window gets their own start instead.
 #guard earliestVisible "2026-08-22" 365 (some "2026-08-11") == some "2026-08-11"
 #guard earliestVisible "2026-08-22" 30 (some "2026-08-11") == some "2026-08-11"
--- …and a NARROW request is not widened to the share's start.
+-- …and a narrow request is not widened to the share's start.
 #guard earliestVisible "2026-08-22" 7 (some "2026-08-11") == some "2026-08-15"
 #guard earliestVisible "2026-08-22" 1 (some "2026-08-11") == some "2026-08-21"
 

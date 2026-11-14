@@ -16,15 +16,15 @@ against production, not what the schema says it ought to.
 
 ## The four that surprise
 
-* **DATE is not a date.** It renders as a UTC timestamp, so a `DATE` column
+* DATE is not a date. It renders as a UTC timestamp, so a `DATE` column
   ships as `"YYYY-MM-DDT00:00:00.000Z"`, a full timestamp, not `"YYYY-MM-DD"`.
-* **DECIMAL is a string.** Its exact server text, scale and all.
-* **BIGINT is a string too.**
-* **`TINYINT(1)` is a number, `0` or `1`**, never `true`/`false`. ⚠ sqlx names
+* DECIMAL is a string. Its exact server text, scale and all.
+* BIGINT is a string too.
+* `TINYINT(1)` is a number, `0` or `1`, never `true`/`false`. ⚠ sqlx names
   that column type `"BOOLEAN"`, so a host that trusts the name, decodes a Rust
   `bool` and serialises it emits `true` and silently changes the contract.
 
-⚠ The UTC rendering above is fixed by this module, not by any process
+The UTC rendering above is fixed by this module, not by any process
 timezone: a renderer that used the ambient zone would ship a `DATE` under
 `TZ=Europe/London` as the previous day at 23:00Z.
 
@@ -51,26 +51,26 @@ inductive Shape where
 
 /-- The JSON shape of a column, by the SQL type name its driver reports.
 
-`none` means REFUSE. A host must fail the request rather than guess: a column
+`none` means refuse. A host must fail the request rather than guess: a column
 type nobody has looked at is a column whose rendering nobody has checked, and
 the wrong guess is invisible — it produces a well-formed response of the wrong
 type. The names are sqlx's (`MySqlTypeInfo::name`), which is where the host
 reads them from.
 
-⚠ FLOAT and DOUBLE are refused deliberately: rendering a float to JSON the way a
+Float and DOUBLE are refused deliberately: rendering a float to JSON the way a
 JavaScript client expects means reproducing shortest-round-trip formatting
 exactly, and no table has such a column, so the choice is between a refusal and
 an unverified renderer. -/
 def shapeOf (sqlType : String) : Option Shape :=
   match sqlType with
-  -- ⚠ "BOOLEAN" is sqlx's name for TINYINT(1). The wire carries 0 or 1.
+  -- "Boolean" is sqlx's name for TINYINT(1). The wire carries 0 or 1.
   | "BOOLEAN" => some Shape.num
   | "TINYINT" | "TINYINT UNSIGNED" => some Shape.num
   | "SMALLINT" | "SMALLINT UNSIGNED" => some Shape.num
   | "MEDIUMINT" | "MEDIUMINT UNSIGNED" => some Shape.num
   | "INT" | "INT UNSIGNED" => some Shape.num
   | "YEAR" => some Shape.num
-  -- ⚠ NOT a number: > 2^53 loses precision, which is why the driver was put
+  -- Not a number: > 2^53 loses precision, which is why the driver was put
   -- into `bigIntAsNumber: false` in the first place (Fitbit sleep log ids).
   | "BIGINT" | "BIGINT UNSIGNED" => some Shape.bigintStr
   | "DECIMAL" => some Shape.decimalStr
@@ -96,7 +96,7 @@ def pad3 (n : Int) : String :=
 
 /-- `YYYY-MM-DDTHH:MM:SS.mmmZ`.
 
-⚠ `ms` is truncated to milliseconds, not rounded: a JS `Date` cannot hold
+`ms` is truncated to milliseconds, not rounded: a JS `Date` cannot hold
 more, so a `DATETIME(6)` loses its microseconds here exactly as it does there. -/
 def formatDateTimeIso (y m d h mi s ms : Int) : String :=
   Verified.Civil.formatDate y m d ++ "T" ++
@@ -105,13 +105,13 @@ def formatDateTimeIso (y m d h mi s ms : Int) : String :=
 
 /-! ## Guards -/
 
--- ⚠ The name is "BOOLEAN" and the shape is a NUMBER.
+-- The name is "boolean" and the shape is a number.
 #guard shapeOf "BOOLEAN" == some Shape.num
 #guard shapeOf "TINYINT" == some Shape.num
 #guard shapeOf "SMALLINT" == some Shape.num
 #guard shapeOf "INT" == some Shape.num
 #guard shapeOf "INT UNSIGNED" == some Shape.num
--- ⚠ A string, so 64-bit ids survive.
+-- A string, so 64-bit ids survive.
 #guard shapeOf "BIGINT" == some Shape.bigintStr
 #guard shapeOf "DECIMAL" == some Shape.decimalStr
 #guard shapeOf "VARCHAR" == some Shape.str

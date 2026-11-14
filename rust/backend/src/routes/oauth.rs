@@ -1,6 +1,6 @@
 //! Signing in: Nextcloud for identity.
 //!
-//! ⚠ Nextcloud OAuth here is IDENTITY-ONLY. The access token it returns is used
+//! Nextcloud OAuth here is identity-only. The access token it returns is used
 //! exactly once, to ask "who is this", and then discarded — API access runs on a
 //! long-lived app password obtained separately through Login Flow v2
 //! (`routes::nextcloud_connect`).
@@ -11,11 +11,11 @@
 //! OAuth survives here only because the SPA needs a session cookie before it can
 //! drive the connect button.
 //!
-//! # ⚠ Nextcloud DROPS `state`, so the pending login rides in a cookie
+//! # ⚠ Nextcloud drops `state`, so the pending login rides in a cookie
 //!
 //! When the browser holds no NC session, `oauth2/authorize` bounces to NC's own
 //! login flow and loses every query parameter on the way — the callback arrives
-//! with `state=` EMPTY. A server that looks the pending login up by `state`
+//! with `state=` empty. A server that looks the pending login up by `state`
 //! cannot sign in a cookie-less browser at all. That is not theoretical: it is
 //! what stranded the sibling fleetwatch service's Android WebView.
 //!
@@ -124,7 +124,7 @@ fn start_login(st: &AppState, secret: &str, return_to: Option<&str>, retried: bo
     };
     let cookie_value = session::sign_value(secret, &payload);
 
-    // ⚠ Built with a URL parser rather than `format!`. A client id or redirect
+    // Built with a URL parser rather than `format!`. A client id or redirect
     // containing a `&` would otherwise inject a parameter into the authorize
     // request, and the value that carries an attacker's text here is `state`.
     let url = match reqwest::Url::parse_with_params(
@@ -146,8 +146,8 @@ fn start_login(st: &AppState, secret: &str, return_to: Option<&str>, retried: bo
         Err(e) => return oops(&anyhow::Error::from(e), "building the authorize URL"),
     };
 
-    // ⚠ `SameSite=Lax`, NOT Strict. The callback arrives as a top-level
-    // navigation FROM Nextcloud, and a Strict cookie would not be sent with it —
+    // ⚠ `SameSite=Lax`, not Strict. The callback arrives as a top-level
+    // navigation from Nextcloud, and a Strict cookie would not be sent with it —
     // the login would fail with nothing to point at.
     let cookie = format!(
         "{PENDING_COOKIE}={cookie_value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={}",
@@ -173,7 +173,7 @@ pub async fn callback(
         );
     };
 
-    // ⚠ The cookie names the login this browser started; the URL's `state` must
+    // The cookie names the login this browser started; the URL's `state` must
     // equal its nonce before any code is exchanged.
     let Some(cookie) = jar.get(PENDING_COOKIE) else {
         return sign_in_problem(
@@ -248,7 +248,7 @@ pub async fn callback(
             if let Ok(v) = set.parse() {
                 headers.append(header::SET_COOKIE, v);
             }
-            // ⚠ The login is over: drop the pending cookie so a stale one cannot
+            // The login is over: drop the pending cookie so a stale one cannot
             // be replayed inside its remaining TTL.
             if let Ok(v) = format!("{PENDING_COOKIE}=; Path=/; HttpOnly; Secure; Max-Age=0").parse()
             {
@@ -263,7 +263,7 @@ pub async fn callback(
 /// the sign-in. [`finish_nextcloud_login`] takes one by value and only
 /// [`StateMatched::check`] makes one, so no code is redeemed on a path that
 /// skipped the comparison (RFC 6749 §10.12; dev-lint
-/// DL-RUST-OAUTH-EXCHANGE-UNPROVEN checks the shape).
+/// dl-rust-oauth-exchange-unproven checks the shape).
 #[derive(Debug, PartialEq, Eq)]
 pub struct StateMatched(());
 
@@ -326,7 +326,7 @@ async fn finish_nextcloud_login(
     }
     let tokens: Tokens = res.json().await?;
 
-    // ⚠ Used ONCE, then discarded. See the module note on why API access does
+    // Used once, then discarded. See the module note on why API access does
     // not run on this token.
     let user: UserWrap = st
         .http
@@ -355,7 +355,7 @@ pub async fn logout(State(st): State<AppState>, jar: CookieJar) -> Response {
         && let Ok(policy) = lean::session_policy()
         && let Some(c) = jar.get(&policy.cookie_name)
     {
-        // ⚠ The ROW goes, not just the cookie. Clearing only the cookie would
+        // The row goes, not just the cookie. Clearing only the cookie would
         // leave a valid session id that anyone holding a copy could keep using.
         if let Err(e) = session::destroy(&st.pool, secret, c.value()).await {
             tracing::warn!(error = %format!("{e:#}"), "destroying the session row failed");

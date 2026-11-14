@@ -32,17 +32,17 @@ inside the concourse.
 The station lookup is a function of `(lat, lon, radiusM)` the caller supplies,
 the TubeHop shape.
 
-Wholly EXACT — no trigonometry and no arithmetic beyond a duration subtraction;
+Wholly exact — no trigonometry and no arithmetic beyond a duration subtraction;
 the distances arrive already computed from the adapter.
 
 ## Two things the port had to get right
 
-**A distance tie keeps the earlier station:** the fold improves only on strict
+A distance tie keeps the earlier station: the fold improves only on strict
 `<`. Station order out of the adapter is distance order, and co-located nodes at
 a big interchange tie routinely.
 
-**`segments[i - 1]` at `i = 0` is `undefined` in JS, but `Nat` subtraction
-truncates to 0** and would read the stay itself — which is `stationary`, so it
+`segments[i - 1]` at `i = 0` is `undefined` in JS, but `Nat` subtraction
+truncates to 0 and would read the stay itself — which is `stationary`, so it
 would silently answer "not a train" and look correct while meaning something
 else. Indices here are `Int` and `segAt` returns `none` outside the array, the
 same landmine `WalkAnchors` records.
@@ -115,8 +115,8 @@ to cover genuine long transfers — King's Cross Victoria→Met is a ~10-minute
 concourse walk between separate stations of one interchange. Longer than this is
 a walk to somewhere.
 
-A WEAK discriminator on its own: the venue-vs-interchange call rests on the stay
-being short AND within station range, which is what the stay being labelled must
+A weak discriminator on its own: the venue-vs-interchange call rests on the stay
+being short and within station range, which is what the stay being labelled must
 satisfy, so a short station-sited stay bracketed by trains is a change of trains
 regardless of the transfer walk's exact length. -/
 def INTERCHANGE_WALK_MAX_S : Int := 720
@@ -285,7 +285,7 @@ def stationsFromEnclosed (segments : Array Seg)
 /-- Alighting continuity, the mirror of `stationsBeforeBoarding`: the first stay
 after a train, reached across walks alone, is at the station the train alighted
 at when that station is in range of it. The ride's own label says where it
-alighted (`trainAlight i`), so the stay is named for THAT station and not for
+alighted (`trainAlight i`), so the stay is named for that station and not for
 the nearest; `stationsAt i` is the stations in range of the stay at `i`, or none
 when it must keep its name. The stay's position is the evidence, not the walk's:
 the fixes after surfacing from a platform sit a kilometre out at 400–3000 m
@@ -318,14 +318,14 @@ section Guards
 private def stn (name : String) (distanceM : Float) : NearbyStation :=
   { name, subtype := "station", distanceM }
 
-/-- Two stations, the nearer one SECOND — so a fold that kept the head would
+/-- Two stations, the nearer one second — so a fold that kept the head would
 answer "Far". -/
 private def two (_lat _lon _r : Float) : Array NearbyStation := #[stn "Far" 120, stn "Near" 40]
 /-- Exactly equidistant, so only the tie rule decides. -/
 private def tie (_lat _lon _r : Float) : Array NearbyStation := #[stn "First" 40, stn "Second" 40]
 /-- One station, one metre outside the default radius. -/
 private def beyond (_lat _lon _r : Float) : Array NearbyStation := #[stn "Outside" 151]
-/-- …and one sitting exactly ON it, which the inclusive test admits. -/
+/-- …and one sitting exactly on it, which the inclusive test admits. -/
 private def atRadius (_lat _lon _r : Float) : Array NearbyStation := #[stn "Edge" 150]
 private def noStations (_lat _lon _r : Float) : Array NearbyStation := #[]
 
@@ -354,7 +354,7 @@ private def alight (prev : Option Seg)
 #guard alight (some (md "train")) noStations == none
 #guard alight (some (md "train")) tie == some "First"
 #guard alight (some (md "train")) beyond == none
--- The radius test is INCLUSIVE at the bar.
+-- The radius test is inclusive at the bar.
 #guard alight (some (md "train")) atRadius == some "Edge"
 -- The radius is a parameter, not a constant: the same station admits at 200 m.
 #guard alight (some (md "train")) beyond 200 == some "Outside"
@@ -406,11 +406,11 @@ private def toPlatform (within : Bool) (boardsAt : Option String := some "S")
 #guard BOARDING_WAIT_MAX_S == 5400
 #guard PLATFORM_WALK_MAX_S == 300
 #guard board wait == #[S, none, S, none, S, none]
--- A walk between the stay and the train is going TO the train: no anchor.
+-- A walk between the stay and the train is going to the train: no anchor.
 #guard board #[sg "stationary" 0 1900, sg "walking" 1900 2100, sg "train" 2100 9000]
   == #[none, none, none]
 -- …unless it never leaves the board station: the walk to the platform after the
--- last wait was absorbed into the train (10-01). The chain is at the BOARD
+-- last wait was absorbed into the train (10-01). The chain is at the board
 -- station, so a stay in range of it is named, and one that is not closes it.
 #guard toPlatform (within := true) == #[S, none, S, none, none]
 #guard toPlatform (within := false) == #[none, none, none, none, none]
@@ -423,16 +423,16 @@ private def toPlatform (within : Bool) (boardsAt : Option String := some "S")
 #guard toPlatform (within := true) (walkS := PLATFORM_WALK_MAX_S + 1)
   == #[none, none, none, none, none]
 #guard toPlatform (within := true) (walkS := 9 * 60) == #[none, none, none, none, none]
--- The stay before the platform walk must be in range of the BOARD station.
+-- The stay before the platform walk must be in range of the board station.
 #guard toPlatform (within := true) (others := [(2, #["T"])]) == #[none, none, none, none, none]
--- A stay AFTER a train is the alight rule's, not this one's.
+-- A stay after a train is the alight rule's, not this one's.
 #guard board #[sg "train" 0 600, sg "stationary" 600 900] == #[none, none]
 #guard board #[sg "stationary" 0 300] == #[none]
--- A stay at ANOTHER station, or at none, closes the chain for everything before.
+-- A stay at another station, or at none, closes the chain for everything before.
 #guard board wait [(2, #["T"])] == #[none, none, none, none, S, none]
 #guard board wait [(2, #[])] == #[none, none, none, none, S, none]
 #guard board wait [(4, #[])] == #[none, none, none, none, none, none]
--- The anchor takes its NEAREST station; earlier stays need it only in range.
+-- The anchor takes its nearest station; earlier stays need it only in range.
 #guard board wait [(4, #["T", "S"])] == #[none, none, none, none, some "T", none]
 #guard board wait [(2, #["T", "S"])] == #[S, none, S, none, S, none]
 -- The walk bar is inclusive, and one second over closes the chain.

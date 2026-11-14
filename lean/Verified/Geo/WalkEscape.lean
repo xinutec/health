@@ -10,7 +10,7 @@ import Verified.Geo.Metric
 The explicit, case-based reconstruction of a drawn walk line so it stops running
 through houses:
 
-1. a vertex inside a building is moved OUT onto the nearest street *on that
+1. a vertex inside a building is moved out onto the nearest street *on that
    building's side*;
 2. a gap that is implausible — it crosses a footprint, or it is an urban block
    cut (far off every walkable way in built surroundings) — is routed along the
@@ -118,7 +118,7 @@ def containingBuilding (p : Pt) (buildings : Array Ring) : Option Ring := Id.run
 
 /-! ## Way-segment grid
 
-Grid index over way segments for the badness THRESHOLD tests ("is any way
+Grid index over way segments for the badness threshold tests ("is any way
 within `maxM`?"), which run per 2 m sample over whole legs. Cells are sized to
 the largest query radius, so a 3×3 probe is exact. Reproduced faithfully rather
 than replaced by a linear scan: the cell sizing converts metres to degrees at
@@ -449,9 +449,9 @@ private def sampleSteps (x : Float) : Float × Nat :=
 Badness length (m) of the segment `a→b` — the drawn distance implausible for a
 walk, at 2 m midpoint sampling:
 
-* INSIDE a footprint while more than `onWayM` off every way (a line riding a
+* Inside a footprint while more than `onWayM` off every way (a line riding a
   mapped through-building footway is a legitimate passage, never badness), or
-* an URBAN BLOCK CUT: farther than `offNetworkM` from every way while a
+* an urban block cut: farther than `offNetworkM` from every way while a
   building sits within `buildingProxM`.
 
 Open-ground samples (off-network, no buildings near) contribute nothing.
@@ -608,7 +608,7 @@ def polylineEntersBuilding (pts : Array Pt) (ctx : RingCtx) : Bool := Id.run do
         return true
   return false
 
-/-- First footprint the segment `a→b` passes THROUGH (two boundary crossings). -/
+/-- First footprint the segment `a→b` passes through (two boundary crossings). -/
 def firstCrossedRing (a b : Pt) (ctx : RingCtx) : Option Ring := Id.run do
   let mut best : Option Ring := none
   let mut bestT := posInf
@@ -770,8 +770,8 @@ failing that, around the footprint's corners → failing that, escape each
 interior vertex → failing that, trust the GPS.
 
 Honesty invariants, all enforced here: a reroute needs a route that is at most
-`maxDetourRatio`× the straight line AND reduces the gap's crossing; the whole
-corrected line must cross LESS building than the input; and a correction may not
+`maxDetourRatio`× the straight line and reduces the gap's crossing; the whole
+corrected line must cross less building than the input; and a correction may not
 take the leg from within its pedometer budget to beyond it.
 -/
 def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
@@ -818,7 +818,7 @@ def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
       while runEnd + 1 < segCross.size && (segCross[runEnd+1]?.getD 0) > 0 do
         runEnd := runEnd + 1
 
-      -- Anchors: the nearest vertices OUTSIDE any building bracketing the run —
+      -- Anchors: the nearest vertices outside any building bracketing the run —
       -- routing from inside a footprint would start the path dishonestly.
       let mut a := rs
       let inBuilding (k : Nat) : Bool := match pts[k]? with
@@ -849,13 +849,13 @@ def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
       let dAnchorASnapM := (nearestWalkable anchorA.pt ways).map (·.distM)
       let dAnchorBSnapM := (nearestWalkable anchorB.pt ways).map (·.distM)
 
-      -- CASE 2 and CASE 2.5 are CANDIDATES, scored against each other — not
+      -- Case 2 and case 2.5 are candidates, scored against each other — not
       -- tried in order until one sticks. Case 2's guard asks only "less
       -- implausible than the gap", which a street route that still clips a
-      -- corner passes. ⚠ Reaching case 2.5 only when case 2 FAILS lets a
+      -- corner passes. Reaching case 2.5 only when case 2 fails lets a
       -- mediocre route silently block a detour that eliminates the crossing
       -- outright. Both are computed even when one already reaches
-      -- bad = 0: they then tie on badness and the tie-break, ADDED LENGTH,
+      -- bad = 0: they then tie on badness and the tie-break, added length,
       -- decides. That length is not cosmetic — enough of it trips the whole-leg
       -- step-budget revert, which discards every correction on the leg.
       if runBadM ≥ opts.minCrossingM then
@@ -863,9 +863,9 @@ def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
         dStraightM := straightM
         let mut cands : Array (Outcome × Array Pt × Float × Float) := #[]
 
-        -- CASE 2 — route the gap along the streets. The bound is floored like
+        -- Case 2 — route the gap along the streets. The bound is floored like
         -- the budget: going around a block is legitimately several times a
-        -- NARROW gap's straight line.
+        -- narrow gap's straight line.
         let route := routeOnWalkableIn walkGraph.get anchorA.pt anchorB.pt ways
           { snapRadiusM := opts.routeSnapRadiusM,
             maxRouteM := max opts.minRouteBudgetM (straightM * opts.maxDetourRatio) }
@@ -882,7 +882,7 @@ def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
             if routeBadM < runBadM && addedM ≤ budgetM then
               cands := cands.push (.routed, r, routeBadM, addedM)
 
-        -- CASE 2.5 — corner detour around the footprint(s) themselves. Obeys
+        -- Case 2.5 — corner detour around the footprint(s) themselves. Obeys
         -- the same detour-ratio bound routes obey, and fits the budget.
         match repairChord CORNER_MAX_DEPTH anchorA.pt anchorB.pt ctx.ring with
         | none => pure ()
@@ -915,9 +915,9 @@ def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
           out := out ++ timedAlong pts' cum total anchorA.ts anchorB.ts
           replaced := true
 
-      -- CASE 1 FALLBACK — escape each interior vertex onto its near-side
-      -- street, kept only if it reduces the crossing AND fits the same
-      -- whole-leg budget the routes draw from. Else CASE 3: the gap stands.
+      -- Case 1 fallback — escape each interior vertex onto its near-side
+      -- street, kept only if it reduces the crossing and fits the same
+      -- whole-leg budget the routes draw from. Else case 3: the gap stands.
       if !replaced then
         let gap := pts.extract a (b+1)
         let escaped := escapeBuildingsIn gap ctx opts.toEscapeOptions
@@ -969,7 +969,7 @@ def correctWalkPathIn (ctx : BadnessCtx) (drawn : Array TPt)
 
 /-! ## Passage snap -/
 
-/-- Furthest a passage-snap may MOVE a point (m). Qualification uses `onWayM`
+/-- Furthest a passage-snap may move a point (m). Qualification uses `onWayM`
     (the badness exemption's band), but the measured true passage offsets are
     2–3 m; snapping from deeper pulls the line off the raw corridor. -/
 private def PASSAGE_SNAP_REACH_M : Float := 4
@@ -1017,12 +1017,12 @@ def snapWithWayIn (q : Pt) (ctx : BadnessCtx) (maxM : Float) : Option SnapWay :=
 /--
 The drawing half of the mapped-passage exemption. The badness metric exempts a
 line riding an OSM way through a building, but the exemption tolerates `onWayM`
-of lateral error — which draws the walker over the buildings BESIDE the passage.
-If a stretch is excused as riding the passage, it must be DRAWN riding it.
+of lateral error — which draws the walker over the buildings beside the passage.
+If a stretch is excused as riding the passage, it must be drawn riding it.
 
-Strictly scoped: a segment qualifies only when it is SUBSTANTIALLY inside
+Strictly scoped: a segment qualifies only when it is substantially inside
 (≥ `minCrossingM` of in-building sampled length with a way in reach), and the
-snaps must be COHERENT — same way, monotone along it — which is what traversing
+snaps must be coherent — same way, monotone along it — which is what traversing
 a passage looks like. Incoherent snaps would zigzag, so the stretch is left
 alone instead.
 -/
@@ -1123,14 +1123,14 @@ private def STREETS : Ways :=
 private def HOUSE : Ring := #[P 10 30, P 10 70, P 30 70, P 30 30]
 /-- A bigger block-filling footprint: north 40..80, east 20..80. -/
 private def BLOCKHOUSE : Ring := #[P 40 20, P 40 80, P 80 80, P 80 20]
-/-- A footprint whose south wall sits ON the south street. -/
+/-- A footprint whose south wall sits on the south street. -/
 private def LOWHOUSE : Ring := #[P 0 30, P 0 70, P 30 70, P 30 30]
 
 /-! ### `pointInRing` -/
 
 #guard pointInRing (P 20 50) HOUSE
 #guard !pointInRing (P 50 50) HOUSE
--- A point ON the south wall reads INSIDE: the cast toggles on the east edge
+-- A point on the south wall reads inside: the cast toggles on the east edge
 -- (whose span is half-open at the bottom) and not on the coincident south one.
 #guard pointInRing (P 10 50) HOUSE
 #guard !pointInRing (P 20 50) #[P 10 30, P 10 70]
@@ -1140,11 +1140,11 @@ private def LOWHOUSE : Ring := #[P 0 30, P 0 70, P 30 70, P 30 30]
 -- Nearest wall is the south wall 5 m away; 2 m past it is 8 m from the south
 -- street, inside the 20 m snap → the vertex lands on the street.
 #guard tptsApprox (escapeBuildings #[T 15 50 0] STREETS #[HOUSE]) [T 0 50 0]
--- Nearest wall is the NORTH wall; 2 m past it the nearest street is 68 m away
+-- Nearest wall is the north wall; 2 m past it the nearest street is 68 m away
 -- → case 3, the vertex stands.
 #guard tptsApprox (escapeBuildings #[T 25 50 0] STREETS #[HOUSE]) [T 25 50 0]
 #guard tptsApprox (escapeBuildings #[T 50 50 0] STREETS #[HOUSE]) [T 50 50 0]
--- ON the wall: inside the ring, but the nearest wall is 0 m away, so the
+-- On the wall: inside the ring, but the nearest wall is 0 m away, so the
 -- outward direction is undefined — the degenerate guard leaves the vertex.
 #guard tptsApprox (escapeBuildings #[T 10 50 0] STREETS #[HOUSE]) [T 10 50 0]
 #guard tptsApprox (escapeBuildings #[T 15 50 0] STREETS #[]) [T 15 50 0]
@@ -1183,7 +1183,7 @@ private def LOWHOUSE : Ring := #[P 0 30, P 0 70, P 30 70, P 30 30]
        ⟨51.520728614889350, -0.12882103980214221⟩,
        P 100 50]
   | none => false
--- An endpoint INSIDE a footprint is not a pass-through (needs two boundary
+-- An endpoint inside a footprint is not a pass-through (needs two boundary
 -- crossings), so the chord stands.
 #guard match routeChordAroundBuildings (P 15 50) (P 100 50) #[HOUSE] with
   | some r => ptsApprox r [P 15 50, P 100 50]
@@ -1191,7 +1191,7 @@ private def LOWHOUSE : Ring := #[P 0 30, P 0 70, P 30 70, P 30 30]
 
 /-! ### `snapPassagesIn` -/
 
-/-- The block streets plus a mapped passage THROUGH the house, with a bend the
+/-- The block streets plus a mapped passage through the house, with a bend the
     drawn chord cuts. -/
 private def PASSAGE_WAYS : Ways := STREETS.push #[P 0 50, P 15 52, P 25 48, P 100 50]
 

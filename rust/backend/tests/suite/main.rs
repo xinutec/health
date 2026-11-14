@@ -1,6 +1,6 @@
 //! Every integration test that does not need a binary of its own.
 //!
-//! ⚠ **One binary, and the reason is build time.** Cargo gives every file in
+//! One binary, and the reason is build time. Cargo gives every file in
 //! `tests/` its own crate and its own executable, and each of ours statically
 //! links the Lean runtime: a mean of 58 MB across 115 of them, 6.5 GB of
 //! `target/`. Touching one line in `backend` relinks the lot. On a warm tree,
@@ -14,12 +14,12 @@
 //! The tests themselves are not the cost: 378 of them total 214 s of CPU and
 //! 351 finish inside a second. The row was ~90% compilation.
 //!
-//! ⚠ **Isolation is unchanged.** `nextest` runs one process per test, not per
+//! Isolation is unchanged. `nextest` runs one process per test, not per
 //! binary, so sharing a binary does not share process state. `cargo test` would
 //! thread them together, and that is exactly why the corpus shards below stay
 //! out of here.
 //!
-//! ⚠ **SIX BINARIES ARE DELIBERATELY NOT IN HERE**, because something names
+//! ⚠ six binaries are deliberately not in here, because something names
 //! each by binary and would silently stop selecting it:
 //!
 //! * `corpus_gate`, `hsmm_decode_corpus` — the release row's
@@ -28,17 +28,17 @@
 //! * `decoder_scoreboard` — `scripts/deploy.sh`
 //! * `lean_serve` — `examples/mode_reachability.rs`'s `PROBES`
 //!
-//! ⚠ **`lean_serve` IS THE ONE THAT CAUGHT ME, and it is the instructive one.**
+//! `lean_serve` is the one that caught me, and it is the instructive one.
 //! The other five are named in a gate row or a shell script, which is where
-//! anybody would think to look. This one is named in RUST SOURCE:
-//! `mode_reachability` EXCUSES the modes `lean_serve` asks for, because that
+//! anybody would think to look. This one is named in Rust source:
+//! `mode_reachability` excuses the modes `lean_serve` asks for, because that
 //! file exists to probe that dispatch still routes and is indifferent to the
 //! answers — it also asks for `nope`, which is not a mode at all. Attribution
-//! is by BINARY, since the trace records `current_exe()`, so folding it in here
+//! is by binary, since the trace records `current_exe()`, so folding it in here
 //! made its probes read as real use and the gate failed with "1 mode(s) were
 //! executed but are in no arm this reads: nope".
 //!
-//! The rule for the next merge: grep the binary's name across the WHOLE repo,
+//! The rule for the next merge: grep the binary's name across the whole repo,
 //! not just `gate.dhall` and `scripts/`. A filter keyed on a name fails by
 //! selecting the wrong set, never by erroring.
 //!

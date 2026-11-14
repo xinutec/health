@@ -82,7 +82,7 @@ def MAX_CONSECUTIVE_REJECTS : Nat := 3
 may smooth what its fixes show but may not claim motion they contradict. Over
 one step, motion that does not reverse averages `(v_start + v_end)/2`, so
 `v_end ≤ 2 ×` the step's average — a kinematic identity, not a tuned threshold.
-Applied to the posterior against the last two ACCEPTED measurements: a gated fix
+Applied to the posterior against the last two accepted measurements: a gated fix
 moved no state, so it is not evidence about velocity either. -/
 def VELOCITY_OBSERVABILITY_FACTOR : Float := 2
 /-- …with a floor, so GPS noise around a standstill (or a repeated stale fix,
@@ -237,7 +237,7 @@ private def rowOk (f : FilteredPoint) (ts : Int) (lat lon spd brg : Float) : Boo
 #guard rowOk out[3]! 30 51.500300058631304 (-38.10009182429544923) 4.6 331
 #guard rowOk out[4]! 50 51.50040190162477 (-38.10010327735151499) 1.7 10   -- post-gate
 #guard rowOk out[5]! 60 51.500495664150236 (-38.10019179364539346) 4.4 329
-#guard rowOk out[6]! 4000 51.6 (-38.2) 4.717694629017221 328.1536087263755  -- reset: UNROUNDED
+#guard rowOk out[6]! 4000 51.6 (-38.2) 4.717694629017221 328.1536087263755  -- reset: unrounded
 #guard rowOk out[7]! 4010 51.6001 (-38.2001) 4.7 328
 
 -- The velocity-observability bound, which `track` above never reaches. The

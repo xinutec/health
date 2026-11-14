@@ -4,7 +4,7 @@
 //! per line. This module keeps a pool of those processes and drives the
 //! protocol, including the half the fold adds mid-request: a handler may write
 //! `{"ask":{"what","key"}}` and block until this side answers it on its stdin
-//! with `{"answer": row}` — or `{"answer": null}`, a DECLINE.
+//! with `{"answer": row}` — or `{"answer": null}`, a decline.
 //!
 //! # Why a process and not a linked library
 //!
@@ -18,12 +18,12 @@
 //! up. All of that is one pipe now. Lean's stderr is our stderr, so what the
 //! fold prints is seen rather than captured.
 //!
-//! # A pool, because asks NEST
+//! # A pool, because asks nest
 //!
 //! Answering an ask may itself need Lean — the OSM answerer scores candidate
 //! rows through the `osmspatial` mode and gates reads through `osmcoverage` —
 //! and the worker that asked is blocked waiting for the answer. So a call takes
-//! a worker OUT of the pool, and a nested call takes another; the pool grows to
+//! a worker out of the pool, and a nested call takes another; the pool grows to
 //! the nesting depth (two, in practice) and never deadlocks on itself. Idle
 //! workers beyond `MAX_IDLE` are dropped when returned, so memory stays bounded,
 //! and a worker that has served `LEAN_WORKER_RECYCLE_CALLS` requests (default
@@ -32,7 +32,7 @@
 //!
 //! # Failure is loud and local
 //!
-//! A worker that dies mid-call fails THAT call with what it was doing; the next
+//! A worker that dies mid-call fails that call with what it was doing; the next
 //! call spawns a fresh one. A call that exceeds `LEAN_CALL_TIMEOUT_S` (default
 //! 600) kills its worker by pid and fails. Nothing here retries: a fold that
 //! crashed Lean once will crash it again, and the caller is the one who knows
@@ -64,7 +64,7 @@ pub trait Answerer {
 }
 
 /// Declines everything. What a mode that asks nothing is called with, and how a
-/// day is MEASURED: run it with this and every ask is a key the day needs.
+/// day is measured: run it with this and every ask is a key the day needs.
 #[derive(Debug, Default)]
 pub struct NoAnswers;
 
@@ -272,15 +272,15 @@ impl Worker {
         self.send(request)?;
         let timeout = call_timeout();
         let mut asks = Vec::new();
-        // ⚠ MEMOISED PER CALL. The fold asks the same key more than once — a
+        // Memoised per call. The fold asks the same key more than once — a
         // corridor sample shared by two legs, a stay named twice — and the
         // answer is a function of the key within one request, so the second
         // ask is answered from the first. The answerer may be a database read
         // plus a nested Lean scoring, which is what this spares; the ask is
-        // still RECORDED, because how often the fold asks is a fact about the
+        // still recorded, because how often the fold asks is a fact about the
         // fold, not about the cache.
         //
-        // ⚠ Memoised as the reply line, not the tree. A walkable-roads answer
+        // Memoised as the reply line, not the tree. A walkable-roads answer
         // over a London walk is 20,000 ways as a `Value` (every vertex a
         // two-element array of bit strings, an order of magnitude over its
         // text), and a day asks for several. Holding those trees for the whole
@@ -293,7 +293,7 @@ impl Worker {
         loop {
             let line = self.next_line(timeout)?;
             if let Some(ask) = parse_ask(&line)? {
-                // A remembered walk: answered from the store, and NOT
+                // A remembered walk: answered from the store, and not
                 // recorded — it is not a question about the world, so no count,
                 // capture or fetch queue may see it.
                 if ask.what.starts_with("memo.") {
@@ -357,7 +357,7 @@ pub fn parse_ask(line: &str) -> Result<Option<Ask>> {
 
 /// The body of `{"id":…,"result":BODY}`, textually.
 ///
-/// ⚠ NOT parsed and re-serialised. Lean writes floats as bit-pattern strings, so
+/// Not parsed and re-serialised. Lean writes floats as bit-pattern strings, so
 /// a round trip through `serde_json` would be exact — but a test that compares
 /// this against `verified_cli`'s own output wants the bytes, and a copy is
 /// cheaper than a parse. `Json.compress` emits object keys in sorted order, so

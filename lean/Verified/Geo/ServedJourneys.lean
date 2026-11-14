@@ -4,16 +4,16 @@ import Verified.Geo.EpisodeGeometry
 import Verified.Eval.Journeys
 
 /-!
-# Journeys assembled from the SERVED day states
+# Journeys assembled from the served day states
 
 The timeline draws a run of consecutive travelling rows as one collapsible
 journey. This module is that folding, so the client does not re-derive a
 backend rule.
 
-## The rule is the SERVING rule, not the scorer's
+## The rule is the serving rule, not the scorer's
 
 `Verified.Eval.Journeys.groundTruthJourneys` also groups legs into journeys, and
-it is NOT the same rule: it absorbs a placeless stay (a platform wait) into the
+it is not the same rule: it absorbs a placeless stay (a platform wait) into the
 journey as a pause and ends it only at a stay with a place or a sleep. The
 timeline keeps a stay at a station beside a train or a bus in the journey (the
 wait for the tube is part of going home, `isStationWait`) and ends the run at
@@ -22,28 +22,28 @@ the reader is looking at.
 
 Both are right for their own question. The scorer asks "was this one trip?";
 the timeline asks "what should collapse into one row?". So this module shares
-the `Journey`/`Leg` TYPE with the scorer and keeps the serving rule, rather
+the `Journey`/`Leg` type with the scorer and keeps the serving rule, rather
 than defining a third journey type for the same day.
 
-## ⚠ `isJourneyMode` is NOT `Eval.Journeys.isMovementMode`, and NOT because one is wrong
+## ⚠ `isJourneyMode` is not `Eval.Journeys.isMovementMode`, and not because one is wrong
 
 They cover different vocabularies, and an earlier version of this note got that
 wrong — it claimed `isMovementMode` "omits" `vehicle` and `boat` and that a real
 day would therefore split a drawn journey in two. It cannot. `isMovementMode`
-takes the ground-truth `Mode`, an INDUCTIVE whose constructors are
+takes the ground-truth `Mode`, an inductive whose constructors are
 `sleeping | stationary | walking | cycling | driving | bus | train | plane`.
 There is no `vehicle` and no `boat` to omit: a human audit cell says "driving",
 never "vehicle", because `vehicle` is precisely the pipeline's own label for a
 ride no pass could identify. It never reaches a served state.
 
-This predicate answers the SERVED question instead, over `DayState.mode`, a
+This predicate answers the served question instead, over `DayState.mode`, a
 plain `String` from `WireVocab.DAY_STATE_MODES` — which does carry `vehicle` and
 `boat`, both of them emitted (`SegmentPasses` refines an unidentified ride;
 `RefineMode` names a waterway leg). Neither occurs in the 42-day corpus, so no
 golden day can pin them, which is why the guards below do.
 
 So the predicate here is derived from the drawn-line list rather than restated:
-`EpisodeGeometry.MOVING_MODES` plus `train`, which that list omits ONLY because
+`EpisodeGeometry.MOVING_MODES` plus `train`, which that list omits only because
 rail geometry is built in an earlier branch from the route cache rather than
 from fixes.
 -/
@@ -60,7 +60,7 @@ draws as a track is a mode that travels. -/
 def isJourneyMode (m : Mode) : Bool :=
   Verified.Geo.EpisodeGeometry.MOVING_MODES.contains m || m == "train"
 
-/-- Stations and line come from the way-name label, and ONLY for transit. A road
+/-- Stations and line come from the way-name label, and only for transit. A road
 name containing an arrow is not a station pair, and a `· Line` suffix on a walk
 is not a line — the same rule `Eval.Journeys.lineOf` applies one field over. -/
 def legOfState (s : DayState) : Leg :=
@@ -87,7 +87,7 @@ def isStationWait (states : Array DayState) (i : Nat) : Bool :=
 
 /-- Fold each run of two or more consecutive travelling states into one journey.
 
-A LONE travelling state is not a journey: the timeline leaves it as its own row,
+A lone travelling state is not a journey: the timeline leaves it as its own row,
 because collapsing one leg hides its way-name behind a click and buys nothing.
 That is why the threshold is two and not one. -/
 def servedJourneys (states : Array DayState) : Array Journey := Id.run do
@@ -100,9 +100,9 @@ def servedJourneys (states : Array DayState) : Array Journey := Id.run do
     else acc
   for h : i in [0:states.size] do
     let s := states[i]
-    -- ⚠ A CITY HEADER ENDS A RUN, because in the client it is a ROW and any
+    -- A city header ends a run, because in the client it is a row and any
     -- non-travelling row ends one. The header appears before a state whose city
-    -- is present and differs from the last one seen — tracked across ALL states,
+    -- is present and differs from the last one seen — tracked across all states,
     -- travelling or not, exactly as `buildRowsFromStates` tracks it.
     let header := s.city.isSome && s.city != lastCity
     if s.city.isSome then lastCity := s.city
@@ -130,11 +130,11 @@ private def TRAIN_LABEL : String := "Euston Square → King's Cross St Pancras �
 #guard (servedJourneys #[st 0 60 "walking", st 60 120 "train"])[0]!.endTs == 120
 #guard (servedJourneys #[st 0 60 "walking", st 60 120 "train"])[0]!.legs.size == 2
 
--- A LONE travelling state is not a journey.
+-- A lone travelling state is not a journey.
 #guard (servedJourneys #[st 0 60 "walking"]).size == 0
 #guard (servedJourneys #[st 0 60 "stationary", st 60 120 "walking", st 120 180 "stationary"]).size == 0
 
--- A stay that is not a station wait between two runs ENDS the first — the
+-- A stay that is not a station wait between two runs ends the first — the
 -- timeline's rule, and where it parts company with the scorer, which would
 -- absorb a short placeless stay.
 #guard (servedJourneys #[st 0 60 "walking", st 60 120 "train",
@@ -155,7 +155,7 @@ private def wait (a b : Int) : DayState :=
 -- A run that reaches the end of the day still closes.
 #guard (servedJourneys #[st 0 60 "stationary", st 60 120 "walking", st 120 180 "train"]).size == 1
 
--- ⚠ THE DIVERGENCE THIS MODULE EXISTS TO AVOID. `vehicle` travels, so it joins
+-- The divergence this module exists to avoid. `vehicle` travels, so it joins
 -- the run rather than splitting it in two. `Eval.Journeys.isMovementMode` would
 -- split here, and no corpus day would catch it.
 #guard (servedJourneys #[st 0 60 "walking", st 60 120 "vehicle", st 120 180 "walking"]).size == 1
@@ -180,21 +180,21 @@ private def wait (a b : Int) : DayState :=
 #guard (legOfState (st 0 60 "train" (some "Euston Square → King's Cross St Pancras"))).board
   == some "Euston Square"
 
--- ⚠ A CITY CHANGE SPLITS THE RUN, because the client draws a header row there
+-- A city change splits the run, because the client draws a header row there
 -- and any non-travelling row ends a journey. Two legs either side of the change
 -- are two lone legs, so neither collapses.
 #guard (servedJourneys #[st 0 60 "walking" none (some "Nijmegen"),
                          st 60 120 "train" none (some "Utrecht")]).size == 0
--- The same pair inside ONE city is one journey.
+-- The same pair inside one city is one journey.
 #guard (servedJourneys #[st 0 60 "walking" none (some "Nijmegen"),
                          st 60 120 "train" none (some "Nijmegen")]).size == 1
--- An ABSENT city is not a change: a leg crossing cities carries none
+-- An absent city is not a change: a leg crossing cities carries none
 -- (`commonCity` returns nothing unless both ends agree), and it must not split
 -- the run it sits in the middle of.
 #guard (servedJourneys #[st 0 60 "walking" none (some "Nijmegen"),
                          st 60 120 "train" none none,
                          st 120 180 "walking" none (some "Nijmegen")]).size == 1
--- The FIRST city seen is not a change either — there is no header above the
+-- The first city seen is not a change either — there is no header above the
 -- first row of the day to break anything.
 #guard (servedJourneys #[st 0 60 "walking" none (some "Nijmegen"),
                          st 60 120 "train" none (some "Nijmegen")])[0]!.legs.size == 2

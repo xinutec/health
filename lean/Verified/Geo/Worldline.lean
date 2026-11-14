@@ -96,9 +96,9 @@ def meanCadenceSpm (steps : List FeasibilityStepPoint) (startTs endTs : Int) : O
 #guard parseRailWayName (some "A → B") == some ⟨"A", "B", none⟩
 #guard parseRailWayName (some "no arrow here") == none
 #guard parseRailWayName none == none
--- Both separators take their FIRST occurrence, tail rejoined.
+-- Both separators take their first occurrence, tail rejoined.
 #guard parseRailWayName (some "A → B → C") == some ⟨"A", "B → C", none⟩
--- The line suffix is stripped BEFORE the arrow split, so a ` · ` ahead of the
+-- The line suffix is stripped before the arrow split, so a ` · ` ahead of the
 -- arrow consumes it and leaves no station pair behind.
 #guard parseRailWayName (some "A · X → B") == none
 -- An empty endpoint is not a station pair.

@@ -26,7 +26,7 @@ pub struct NcCredentials {
 
 /// Why a Nextcloud call could not be made or did not succeed.
 ///
-/// The first two are DURABLE, user-visible states rather than failures of this
+/// The first two are durable, user-visible states rather than failures of this
 /// run: both mean the user has to go and do something in a browser, and both
 /// are what `/api/me` reports. They are separate variants rather than one
 /// "unauthorised" because the remedies differ — one is "link an account", the
@@ -53,7 +53,7 @@ pub enum NcError {
 
 /// Load `user_id`'s credentials, refusing if absent or flagged.
 ///
-/// ⚠ The `needs_reauth` check is here rather than at the call site on purpose:
+/// The `needs_reauth` check is here rather than at the call site on purpose:
 /// a stored flag means the password is known-dead, and sending it anyway would
 /// spend a Nextcloud brute-force-counter increment to learn what the row
 /// already says.
@@ -78,7 +78,7 @@ pub async fn get(pool: &MySqlPool, user_id: &str) -> Result<NcCredentials, NcErr
 
 /// Flag the credentials dead after Nextcloud answered 401.
 ///
-/// ⚠ Failing to WRITE this must not be reported as the reason the request
+/// Failing to write this must not be reported as the reason the request
 /// failed. The 401 is the finding; a flag that did not persist means the next
 /// run rediscovers it, which is a wasted call and not a wrong answer. The
 /// caller logs and returns [`NcError::ReauthRequired`] either way.
@@ -93,7 +93,7 @@ pub async fn mark_needs_reauth(pool: &MySqlPool, user_id: &str) -> Result<()> {
 
 /// Store (or replace) a user's Nextcloud app password, marking them active.
 ///
-/// ⚠ Upsert, and it must RESET `status` to `active`. A user relinking after a
+/// ⚠ Upsert, and it must reset `status` to `active`. A user relinking after a
 /// revocation would otherwise land a fresh, working credential in a row still
 /// flagged `needs_reauth`, and every later call would refuse it — a relink that
 /// visibly succeeds and changes nothing.

@@ -10,7 +10,7 @@
 
 use backend::tz_lookup::PolygonLookup;
 
-/// ⚠ THE ARGUMENT ORDER. `tzf` takes longitude first and every other signature
+/// The argument order. `tzf` takes longitude first and every other signature
 /// in this codebase takes latitude first, so the swap lives in exactly one
 /// function. Get it backwards and the lookup does not fail — it confidently
 /// answers with a different continent's zone.
@@ -44,7 +44,7 @@ fn ordinary_coordinates_resolve() {
     }
 }
 
-/// ⚠ THE OCEANS ARE COVERED, so a corrupt-but-in-range fix does NOT fall back.
+/// The oceans are covered, so a corrupt-but-in-range fix does not fall back.
 ///
 /// Mid-Pacific does not yield `None`: `tzf` answers `Etc/GMT+8` there. The
 /// polygons include the nautical zones, so a GPS glitch that drops the phone
@@ -66,7 +66,7 @@ fn open_ocean_gets_a_nautical_zone_not_none() {
 
 /// `None` is reached only by a value that is not a coordinate at all.
 ///
-/// `tzf` returns an EMPTY STRING for these rather than erroring. An empty string
+/// `tzf` returns an empty string for these rather than erroring. An empty string
 /// reaching a `tz` column would look present, parse as no zone, and be invisible
 /// to an `IS NULL` check — so the wrapper has to turn it into `None`, and this
 /// is what proves it does.

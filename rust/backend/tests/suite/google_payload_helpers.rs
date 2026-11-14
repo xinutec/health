@@ -21,7 +21,7 @@ fn civil_time_becomes_a_datetime_and_seconds_are_optional() {
         civil_datetime(Some(&with_seconds)).as_deref(),
         Some("2026-09-01 07:05:09")
     );
-    // ⚠ The daily types omit `seconds` and the heart-rate samples carry it. A
+    // The daily types omit `seconds` and the heart-rate samples carry it. A
     // missing one is zero, not a reason to drop the point.
     let no_seconds = json!({
         "date": { "year": 2026, "month": 9, "day": 1 },
@@ -42,9 +42,9 @@ fn a_civil_time_missing_its_date_is_unreadable_rather_than_defaulted() {
     assert_eq!(civil_datetime(None), None);
 }
 
-/// ⚠ THE WHOLE REASON `physicalTime` IS PARSED RATHER THAN SLICED.
+/// The whole reason `physicalTime` is parsed rather than sliced.
 ///
-/// Taking the first 19 characters off an offset timestamp stores a LOCAL clock
+/// Taking the first 19 characters off an offset timestamp stores a local clock
 /// in the UTC column. Every summer reading would be an hour out, in a column
 /// whose entire purpose is to be the instant.
 #[test]
@@ -61,7 +61,7 @@ fn physical_time_is_converted_to_utc_not_truncated() {
     assert_eq!(rfc3339_to_utc_datetime("not a time"), None);
 }
 
-/// `heartRate.beatsPerMinute` is a QUOTED number — the shape that once
+/// `heartRate.beatsPerMinute` is a quoted number — the shape that once
 /// discarded 1258 `dailyRestingHeartRate` points in silence while
 /// `google-compare` printed `google 0 days`, which reads as "Google does not
 /// carry this".
@@ -70,7 +70,7 @@ fn a_quoted_number_reads_and_a_non_numeric_string_still_does_not() {
     assert_eq!(numeric(&json!("62")), Some(62.0));
     assert_eq!(numeric(&json!(62)), Some(62.0));
     assert_eq!(numeric(&json!("62.5")), Some(62.5));
-    // ⚠ NOT a permissive fallback: a value we cannot read is not one we guess.
+    // Not a permissive fallback: a value we cannot read is not one we guess.
     assert_eq!(numeric(&json!("n/a")), None);
     assert_eq!(numeric(&json!(null)), None);
 }
@@ -96,8 +96,8 @@ fn a_stored_utc_datetime_round_trips_into_a_filter_bound() {
     assert_eq!(utc_datetime_to_rfc3339("not a time"), None);
 }
 
-/// A synthetic sleep point exercising every trap at once: QUOTED minutes, a
-/// non-UTC offset (the wall clock must MOVE), the STAGES vocabulary (AWAKE is
+/// A synthetic sleep point exercising every trap at once: quoted minutes, a
+/// non-UTC offset (the wall clock must move), the stages vocabulary (awake is
 /// Fitbit's `wake`), the end-date convention, and the id in the `name` path.
 #[test]
 fn a_sleep_point_parses_into_the_row_the_table_wants() {
@@ -129,7 +129,7 @@ fn a_sleep_point_parses_into_the_row_the_table_wants() {
     });
     let s = parse_sleep_point(&pt).expect("parses");
     assert_eq!(s.log_id, 7_000_000_000_000_000_001);
-    // +01:00 moves the wall clock; the date is the civil END date.
+    // +01:00 moves the wall clock; the date is the civil end date.
     assert_eq!(s.start_time, "2026-01-01 23:30:00");
     assert_eq!(s.end_time, "2026-01-02 06:30:00");
     assert_eq!(s.date, "2026-01-02");
@@ -138,7 +138,7 @@ fn a_sleep_point_parses_into_the_row_the_table_wants() {
     // 390/420, as an integer percent.
     assert_eq!(s.efficiency, 93);
     assert_eq!((s.minutes_asleep, s.minutes_awake), (390, 30));
-    // stagesSummary: AWAKE lands in minutes_wake for a STAGES session.
+    // stagesSummary: awake lands in minutes_wake for a stages session.
     assert_eq!(s.minutes_deep, Some(80));
     assert_eq!(s.minutes_wake, Some(30));
     assert_eq!(s.minutes_light, None);
@@ -151,7 +151,7 @@ fn a_sleep_point_parses_into_the_row_the_table_wants() {
     assert_eq!(s.stages[1].stage, "wake", "STAGES AWAKE is Fitbit's `wake`");
 }
 
-/// A CLASSIC session keeps Fitbit's classic vocabulary — `awake` stays `awake`.
+/// A classic session keeps Fitbit's classic vocabulary — `awake` stays `awake`.
 #[test]
 fn a_classic_sleep_keeps_awake_unmapped() {
     let pt = json!({
@@ -177,7 +177,7 @@ fn a_classic_sleep_keeps_awake_unmapped() {
     assert_eq!(s.efficiency, 83);
 }
 
-/// A negative offset moves the wall clock BACK — the splice this function
+/// A negative offset moves the wall clock back — the splice this function
 /// exists to prevent would have kept UTC.
 #[test]
 fn a_negative_offset_moves_the_wall_clock_back() {

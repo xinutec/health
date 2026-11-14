@@ -24,7 +24,7 @@ UNPROVEN; pinned by the `#guard`s below.
 them. Treat a change to one as a change to the specification rather than as a
 correction to a transcription.
 
-⚠ A continuation shorter than `MIN_CONTINUATION_S` is not spliced, so the guard
+A continuation shorter than `MIN_CONTINUATION_S` is not spliced, so the guard
 that would pin a one-second inferred stay pins its refusal, and says so where it
 sits.
 -/
@@ -89,14 +89,14 @@ stay onto the trailing edge.
 Three details the port has to carry, each of which reads as incidental and is
 not:
 
-* **The anchor is the latest-ENDING state that STARTED before the day end**, not
+* The anchor is the latest-ending state that started before the day end, not
   the array's last element. Day-state assembly brackets the day with sleep
   windows, so the array can end with tomorrow's early-hours sleep while the last
   thing that actually happened today is an earlier daytime stay. The `endTs`
-  comparison is strict, so a tie keeps the EARLIER state.
-* **The stay centroid is the LAST segment carrying one**, found by reversing —
+  comparison is strict, so a tie keeps the earlier state.
+* The stay centroid is the last segment carrying one, found by reversing —
   not the last segment, which may have none.
-* **An empty `place` or `tz` string is dropped** rather than inherited as `""`.
+* An empty `place` or `tz` string is dropped rather than inherited as `""`.
   Same rule `EpisodeGeometry` records.
 -/
 
@@ -109,17 +109,17 @@ def PLACE_MATCH_M : Float := 120
 
 /-- How long a spliced continuation must run to be worth asserting.
 
-⚠ NOT A NEW BAR. A continuation asserts a VISIT to the anchor's place, and
+Not a new bar. A continuation asserts a visit to the anchor's place, and
 `FocusPlaces.FOCUS_VISIT_MIN_S` is already the pipeline's answer to "how long
-must a dwell last to count as one" — the LOWEST such bar there is, chosen to
+must a dwell last to count as one" — the lowest such bar there is, chosen to
 catch cafés. Asserting a visit the miner would not count is asserting something
 the rest of the pipeline would not record.
 
-⚠ THE NAME IS THE POINT, not the number. Pasting `10 * 60` here would carry the
+The name is the point, not the number. Pasting `10 * 60` here would carry the
 value without the reasoning that sets it, and the two would drift the first time
 the miner's bar moved.
 
-It fires because `dwellContinuation` CLAMPS to the day end: the survival horizon
+It fires because `dwellContinuation` clamps to the day end: the survival horizon
 can want hours and get whatever is left, which is sometimes seconds. Measured
 over the 41-day golden corpus, 15 continuations survive every other guard and
 their lengths are bimodal — 3 s, 76 s and 194 s, then nothing at all until
@@ -152,8 +152,8 @@ private def truthy (s : Option String) : Option String :=
   | some "" => none
   | other => other
 
-/-- The index of the state to continue from: the latest-ENDING state that
-STARTED before the day end. `none` when every state starts at or after it. -/
+/-- The index of the state to continue from: the latest-ending state that
+started before the day end. `none` when every state starts at or after it. -/
 def anchorIndex (states : Array DayState) (dayEndTs : Int) : Option (Fin states.size) := Id.run do
   let mut best : Option (Fin states.size) := none
   for hm_i : i in [0:states.size] do
@@ -164,7 +164,7 @@ def anchorIndex (states : Array DayState) (dayEndTs : Int) : Option (Fin states.
     | none => best := some ⟨i, hm_i.upper⟩
   return best
 
-/-- The day's last observed stay centroid — the LAST segment carrying one. -/
+/-- The day's last observed stay centroid — the last segment carrying one. -/
 def lastCentroid (segments : Array Seg) : Option (Float × Float) :=
   segments.foldl (init := none) fun acc s =>
     match s.centroidLat, s.centroidLon with
@@ -172,7 +172,7 @@ def lastCentroid (segments : Array Seg) : Option (Float × Float) :=
     | _, _ => acc
 
 /-- The nearest focus place within reach of a coordinate, where reach is
-`max PLACE_MATCH_M radiusM`. Improves only on STRICT `<`, so a distance tie
+`max PLACE_MATCH_M radiusM`. Improves only on strict `<`, so a distance tie
 keeps the earlier candidate. -/
 def bindPlace (lat lon : Float) (places : Array DwellCandidate) : Option DwellCandidate :=
   (places.foldl (init := (none, (1.0 : Float) / 0.0)) fun (best, bestD) p =>
@@ -182,7 +182,7 @@ def bindPlace (lat lon : Float) (places : Array DwellCandidate) : Option DwellCa
 
 /-- Splice one inferred stay onto the trailing edge when the day's last stay
 binds to an established focus place. The time past the survival horizon is left
-BLANK — an honest gap beats a fabricated stay.
+blank — an honest gap beats a fabricated stay.
 
 Composes after sleep-bridging and empty-day inference: where those already
 carried the stay to the day end there is no trailing room, so this is a no-op.
@@ -215,7 +215,7 @@ def applyDwellContinuation
           match dwellContinuation place anchor.endTs dayEndTs with
           | none => states
           | some (endTs, _) =>
-            -- ⚠ The bar is here, not in `dwellContinuation`. That function is
+            -- The bar is here, not in `dwellContinuation`. That function is
             -- pinned bit for bit and answers a different question, how far the
             -- prior carries, which the clamp can cut to seconds. Whether a span
             -- that short is worth splicing as a state is this orchestration's
@@ -264,14 +264,14 @@ private def run (states : Array DayState) (segments : Array Seg := here)
 #guard run #[stay] == #[stay, cont 950000 974953 (some "Home") (some "Europe/London")]
 #guard run #[] == #[]
 
--- The anchor is the latest-ENDING state that STARTED before the day end, so the
+-- The anchor is the latest-ending state that started before the day end, so the
 -- next night's sleep bracket cannot claim it, and the splice lands mid-array.
 private def tomorrowSleep : DayState :=
   { startTs := 1010000, endTs := 1040000, mode := "sleeping", place := some "Home" }
 #guard run #[stay, tomorrowSleep]
   == #[stay, cont 950000 974953 (some "Home") (some "Europe/London"), tomorrowSleep]
 
--- An `endTs` tie keeps the EARLIER state — which only shows through `place`.
+-- An `endTs` tie keeps the earlier state — which only shows through `place`.
 private def first : DayState := { startTs := 900000, endTs := 950000, mode := "stationary", place := some "First" }
 private def second : DayState := { startTs := 910000, endTs := 950000, mode := "stationary", place := some "Second" }
 #guard run #[first, second] == #[first, cont 950000 974953 (some "First") none, second]
@@ -288,41 +288,41 @@ private def blank : DayState := { stay with place := some "", tz := some "" }
 private def bare : DayState := { startTs := 900000, endTs := 950000, mode := "stationary" }
 #guard run #[bare] == #[bare, cont 950000 974953 none none]
 
--- The centroid is the LAST segment carrying one, not the last segment…
+-- The centroid is the last segment carrying one, not the last segment…
 #guard run #[stay] (here.push noCentroid) == #[stay, cont 950000 974953 (some "Home") (some "Europe/London")]
--- …and with two real centroids it is the LATER, which is what makes it the
+-- …and with two real centroids it is the later, which is what makes it the
 -- day's last stay: only that one is in reach, so taking the first would refuse.
 #guard run #[stay] #[at' 51.51 (-0.2), at' 51.5 (-0.2)]
   == #[stay, cont 950000 974953 (some "Home") (some "Europe/London")]
--- BOTH coordinates are required — a half-populated centroid is not one.
+-- Both coordinates are required — a half-populated centroid is not one.
 #guard run #[stay] #[noCentroid, { noCentroid with centroidLat := some 51.5 }] == #[stay]
 
--- The place match: within `max(120 m, radiusM)`, nearest wins, ties keep FIRST.
+-- The place match: within `max(120 m, radiusM)`, nearest wins, ties keep first.
 private def far : DwellCandidate := { homeFocus with centroidLat := 51.51 }   -- ~1.1 km
 #guard run #[stay] here #[far] == #[stay]
 #guard run #[stay] here #[{ far with radiusM := some 2000 }]
   == #[stay, cont 950000 974953 (some "Home") (some "Europe/London")]
--- The NEARER place wins even though it is second, and its shorter τ shows it.
+-- The nearer place wins even though it is second, and its shorter τ shows it.
 #guard run #[stay] here #[{ homeFocus with centroidLat := 51.5008 }, { homeFocus with totalDwellSec := some 108000 }]
   == #[stay, cont 950000 952495 (some "Home") (some "Europe/London")]
--- Exactly equidistant: the first survives, and its LONGER τ shows it.
+-- Exactly equidistant: the first survives, and its longer τ shows it.
 #guard run #[stay] here
     #[{ homeFocus with centroidLon := -0.2 + 0.0005 },
       { homeFocus with centroidLon := -0.2 - 0.0005, totalDwellSec := some 108000 }]
   == #[stay, cont 950000 974953 (some "Home") (some "Europe/London")]
 
--- The kernel's own refusals, reached THROUGH the pass.
+-- The kernel's own refusals, reached through the pass.
 #guard run #[stay] here #[{ homeFocus with uniqueDays := 4 }] == #[stay]
 #guard run #[stay] here #[{ centroidLat := 51.5, centroidLon := -0.2, uniqueDays := 30 }] == #[stay]
--- Each missing stat refuses on its OWN, so the two `?? 0` defaults are pinned
+-- Each missing stat refuses on its own, so the two `?? 0` defaults are pinned
 -- separately: a fixture predating either field is a refusal, not a guess.
 #guard run #[stay] here
     #[{ centroidLat := 51.5, centroidLon := -0.2, uniqueDays := 30, visitCount := some 30 }] == #[stay]
 #guard run #[stay] here
     #[{ centroidLat := 51.5, centroidLon := -0.2, uniqueDays := 30, totalDwellSec := some 1080000 }] == #[stay]
--- ⚠ τ = 1 s USED TO SPLICE A ONE-SECOND STAY, and this guard pinned it. The
+-- τ = 1 s used to splice a one-second stay, and this guard pinned it. The
 -- rounding it describes is unchanged — `dwellContinuation` still answers
--- `some (950001, _)`, because a 0.69 s horizon ROUNDS UP — but a one-second
+-- `some (950001, _)`, because a 0.69 s horizon rounds up — but a one-second
 -- visit is not one the miner would count, so `MIN_CONTINUATION_S` refuses to
 -- draw it. The kernel and the splice decision now differ here on
 -- purpose, which is the whole reason the bar sits in the orchestration.
@@ -333,7 +333,7 @@ private def far : DwellCandidate := { homeFocus with centroidLat := 51.51 }   --
 -- …and τ = 0.7 s rounds to 0, which is no room at all — refused one step
 -- earlier, by the kernel, and still worth pinning separately.
 #guard run #[stay] here #[{ homeFocus with totalDwellSec := some 21, visitCount := some 30 }] == #[stay]
--- The bar's OWN EDGE, one second wide. τ = 864 s carries the stay 599 s and is
+-- The bar's own edge, one second wide. τ = 864 s carries the stay 599 s and is
 -- refused; τ = 865 s carries it 600 s and is kept, because the comparison is
 -- strict — exactly the bar is long enough. (The horizon is τ·ln 2, not τ, so
 -- these are 25,920 and 25,950 seconds of total dwell over 30 visits.)

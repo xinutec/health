@@ -1,15 +1,15 @@
 //! `busRouteCache` is filtered to what the day can reach.
 //!
-//! # Why a filter here is sound, and why that has to be TESTED rather than argued
+//! # Why a filter here is sound, and why that has to be tested rather than argued
 //!
 //! `Verified.Geo.Bus.bestPairFor` returns `none` unless `anchorsNear` finds a
-//! stop within `BUS_STOP_ANCHOR_M` (120 m) of BOTH the leg's board fix and its
+//! stop within `BUS_STOP_ANCHOR_M` (120 m) of both the leg's board fix and its
 //! alight fix, and `Env.busFixes` is `env.points`. So a route with no stop near
 //! any fix cannot label any leg, and shipping it only costs the Lean parse —
 //! which is ~20x the text in heap (61 MiB for a 3.0 MB request, against 1 MiB
 //! for everything the fold then computes).
 //!
-//! ⚠ **The danger is a filter that is too tight, and it would be silent**: a
+//! The danger is a filter that is too tight, and it would be silent: a
 //! dropped route is not an error downstream, it is a leg that reads as
 //! `driving` with no bus label. So these tests pin the keep side hardest.
 
@@ -54,7 +54,7 @@ fn a_route_stopping_at_the_day_keeps_and_one_far_away_goes() {
     assert_eq!(refs(&got), vec!["near"], "the far route is unreachable");
 }
 
-/// ⚠ THE SUPERSET PROPERTY, and the one that matters. The Lean gate is 120 m;
+/// The superset property, and the one that matters. The Lean gate is 120 m;
 /// anything inside it must survive, and the grid is deliberately coarser so
 /// that a stop a little beyond 120 m survives too. A filter that trimmed to
 /// exactly 120 m would be correct only if this file and the Lean constant never
@@ -69,7 +69,7 @@ fn every_stop_within_the_matchers_radius_survives() {
     }
 }
 
-/// ⚠ NO FIXES IS NOT "NO BUSES". With nothing to filter against there is no
+/// No fixes is not "no buses". With nothing to filter against there is no
 /// basis for the judgement, and an empty cache reads downstream exactly like a
 /// day with no bus service — a silent wrong answer rather than a loud one.
 #[test]
@@ -86,7 +86,7 @@ fn a_day_with_no_fixes_keeps_the_whole_cache() {
     assert_eq!(refs(&got), vec!["a", "b"], "absent points must not filter");
 }
 
-/// A stop with no usable coordinate cannot be SHOWN unreachable, so the route
+/// A stop with no usable coordinate cannot be shown unreachable, so the route
 /// stays. Erring towards the larger set is the only safe direction here.
 #[test]
 fn a_stop_without_coordinates_keeps_its_route() {

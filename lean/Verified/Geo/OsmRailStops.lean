@@ -14,14 +14,14 @@ the relations that come back are kept.
 carry. Proximity cannot express passing without stopping: Dollis Hill sits within
 300 m of the Metropolitan's fast tracks and the Met does not stop there.
 
-## ⚠ TRAM IS IN, DELIBERATELY
+## Tram is in, deliberately
 
 Several systems this pipeline labels as rail are tagged `tram` in OSM. Mirroring
-a mode the user never rides costs a few rows; NOT mirroring one silently loses a
+a mode the user never rides costs a few rows; not mirroring one silently loses a
 whole network, and the loss looks like "that line has no stops" rather than like
 an error.
 
-## ⚠ RAIL KEEPS A RELATION ON `ref` OR `name`; BUSES REQUIRE `ref`
+## Rail keeps a relation on `ref` or `name`; buses require `ref`
 
 Tube route relations frequently carry no `ref` at all — "Jubilee line: Stanmore →
 Stratford" is a name and nothing else. Requiring `ref` here, as the bus arm does,
@@ -59,12 +59,12 @@ structure RailStopRelation where
 
 /-- The Overpass QL the mirror runs for one tile.
 
-⚠ `node(r)` RETURNS THE FULL STOP LIST of any relation that merely touches the
+`node(r)` returns the full stop list of any relation that merely touches the
 tile, so a line the user rides is mirrored end to end even when only its middle
 crosses the box. That is why tiling small is safe here: a tile is a way of
 finding relations, not of clipping them.
 
-⚠ The coordinates arrive already rendered, as strings: Lean has no
+The coordinates arrive already rendered, as strings: Lean has no
 shortest-round-trip float renderer, so the shell formats them. That is safe
 here and would not be elsewhere: Overpass parses this string, nothing compares
 it, and `51.5` against `51.500000` selects the same box. The same shortcut on
@@ -87,7 +87,7 @@ def extractRailStopRelations (rels : Array RawRelation) (nodes : Array (Nat × R
     if el.relType != some "route" then continue
     let some route := el.route | continue
     if !RAIL_ROUTE_TYPES.contains route then continue
-    -- ⚠ `ref` OR `name`, not both, and not `ref` alone — see the module note.
+    -- `ref` or `name`, not both, and not `ref` alone — see the module note.
     if el.ref.isNone && el.name.isNone then continue
     let stops := resolveOrderedStops el.members nodes
     if stops.isEmpty then continue
@@ -114,7 +114,7 @@ private def R (route : Option String) (ref name : Option String) : RawRelation :
 #guard (extractRailStopRelations #[R (some "subway") (some "JUB") (some "Jubilee")] NODES).size == 1
 #guard (extractRailStopRelations #[R (some "subway") (some "JUB") (some "Jubilee")] NODES)[0]!.stops.size == 2
 
--- ⚠ NAME ALONE IS ENOUGH for rail. Most tube route relations have no `ref`, and
+-- Name alone is enough for rail. Most tube route relations have no `ref`, and
 -- requiring one would drop the London Underground.
 #guard (extractRailStopRelations #[R (some "subway") none (some "Jubilee line")] NODES).size == 1
 -- Ref alone is enough too.

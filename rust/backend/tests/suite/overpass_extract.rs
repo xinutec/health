@@ -1,6 +1,6 @@
 //! The Overpass extraction path, end to end through the Lean FFI.
 //!
-//! ⚠ The fixture is a genuine Overpass response, sliced from a real
+//! The fixture is a genuine Overpass response, sliced from a real
 //! central-London rail tile: two relations and exactly the nodes they
 //! reference. It is not hand-built, and that is the point: a hand-built fixture
 //! can invent a wire format the producer never emits, and tests pass against
@@ -11,7 +11,7 @@
 
 use backend::lean;
 
-/// ⚠ The Lean runtime must be started before any op, and each `#[test]` is its
+/// The Lean runtime must be started before any op, and each `#[test]` is its
 /// own entry point into the process — `init()` is idempotent, so every test
 /// calls it rather than relying on whichever ran first.
 fn setup() {
@@ -40,7 +40,7 @@ fn rail_extraction_matches_the_typescript_arm() {
     assert_eq!(central.route_ref.as_deref(), Some("Central"));
     assert_eq!(central.stops.len(), 36);
 
-    // ⚠ Member order is the ROUTE DIRECTION. Epping is first because the
+    // Member order is the route direction. Epping is first because the
     // relation lists it first, not because it sorts first.
     assert_eq!(central.stops[0].name.as_deref(), Some("Epping"));
     assert_eq!(central.stops[0].seq, 0);
@@ -48,8 +48,8 @@ fn rail_extraction_matches_the_typescript_arm() {
     assert_eq!(central.stops[0].lon, 0.113805);
 }
 
-/// ⚠ THE CASE THAT MAKES RAIL DIFFERENT FROM BUS. This relation carries a `name`
-/// and NO `ref`; the bus arm would drop it. 19 of the 188 relations in the tile
+/// The case that makes rail different from bus. This relation carries a `name`
+/// and no `ref`; the bus arm would drop it. 19 of the 188 relations in the tile
 /// this was sliced from are like this — 10% of London's rail.
 #[test]
 fn a_rail_relation_with_no_ref_is_kept_on_its_name() {
@@ -75,7 +75,7 @@ fn a_rail_relation_with_no_ref_is_kept_on_its_name() {
     );
 }
 
-/// ⚠ THE SAME BYTES THROUGH THE BUS ARM YIELD NOTHING, because these are rail
+/// The same bytes through the bus arm yield nothing, because these are rail
 /// relations. A shared extractor would have to pick one rule, and this is what
 /// picking the wrong one costs.
 #[test]
@@ -102,7 +102,7 @@ fn coordinates_survive_the_ffi_exactly() {
     assert_eq!(seqs, (0..36).collect::<Vec<i64>>());
 }
 
-/// ⚠ `stops_json` is compared row for row, so its field order is fixed. `serde`
+/// `stops_json` is compared row for row, so its field order is fixed. `serde`
 /// follows declaration order, so this pins the declaration.
 #[test]
 fn the_serialised_stop_field_order_matches_json_stringify() {

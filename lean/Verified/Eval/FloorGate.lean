@@ -6,26 +6,26 @@ gate in the golden harness. A floor is a committed per-day set of
 narrative-stable window start times (unix seconds) naming what the pipeline
 currently gets right: the ground-truth journeys it reconstructs, the confirmed
 truth rows it still satisfies. A key in the floor and absent from the current run
-is a REGRESSION and fails the gate; a key present now and absent from the floor
-is an IMPROVEMENT to re-bless. The floor can only grow.
+is a regression and fails the gate; a key present now and absent from the floor
+is an improvement to re-bless. The floor can only grow.
 
-The keys are window STARTS because that is the one property a narrative keeps
+The keys are window starts because that is the one property a narrative keeps
 across an edit to its own prose: rewording a row, sharpening a place name or
 correcting a line label all leave the window alone. It is not a perfect identity
-— moving a boundary DOES move the key — which is what `ratchetUpFloor`'s
+— moving a boundary does move the key — which is what `ratchetUpFloor`'s
 `described` argument is for.
 
-## ⚠ A DATE ABSENT FROM `current` SATISFIES NOTHING
+## ⚠ A DATE absent from `current` satisfies nothing
 
 That is the trap this module documents rather than solves: to a floor gate, "I
 could not measure this day" and "this day lost everything" are the same silence.
 A caller that cannot replay a day must drop it from both sides, or confirmed
 rows read as lost, one re-bless away from being destroyed for real.
 
-## ⚠ WHY BLESSING CANNOT LAUNDER A REGRESSION
+## Why blessing cannot launder a regression
 
 `ratchetUpFloor` takes the UNION, so a key that used to hold and does not now
-STAYS in the floor and keeps failing. The single exception is a key the
+stays in the floor and keeps failing. The single exception is a key the
 narrative no longer `described` — a row rewritten or re-audited away, which a
 floor would otherwise fail on forever because nothing can satisfy it again. Every
 such drop is returned in `dropped` and must be said out loud: it is the only
@@ -52,7 +52,7 @@ structure GateResult where
   /-- Floor keys the current run no longer satisfies — the failures. -/
   regressed : Array Key
   /-- Keys satisfied now but absent from the floor: re-bless to ratchet up.
-  ⚠ NEVER a failure. New testimony revealing standing debt is a measurement,
+  Never a failure. New testimony revealing standing debt is a measurement,
   not a breakage. -/
   improved : Array Key
   deriving Inhabited
@@ -67,7 +67,7 @@ private def byDateThenTs (a b : Key) : Bool :=
 
 /-- Compare a committed floor against the current run.
 
-⚠ Dates absent from `current` satisfy NOTHING — see the module header. -/
+Dates absent from `current` satisfy nothing — see the module header. -/
 def gateFloor (baseline current : Floor) : GateResult :=
   let regressed := baseline.flatMap fun (date, baseTs) =>
     let now := lookup current date
@@ -80,14 +80,14 @@ def gateFloor (baseline current : Floor) : GateResult :=
 structure RatchetResult where
   floor : Floor
   /-- Committed keys the narrative no longer describes, so they left the floor.
-  ⚠ NEVER silent — see the module header. -/
+  Never silent — see the module header. -/
   dropped : Array Key
   deriving Inhabited
 
-/-- Ratchet the floor UP to the current run: the union of the committed keys and
+/-- Ratchet the floor up to the current run: the union of the committed keys and
 the ones satisfied now, minus any the narrative no longer describes.
 
-A date ABSENT from `described` was not measured this run, and its committed floor
+A date absent from `described` was not measured this run, and its committed floor
 passes through untouched rather than being emptied by a silence. -/
 def ratchetUpFloor (committed current described : Floor) : RatchetResult := Id.run do
   let dates := ((committed.map (·.1) ++ current.map (·.1)).foldl
@@ -122,7 +122,7 @@ private def f (xs : List (String × List Int)) : Floor :=
     == #[{ date := "d1", startTs := 30 }]
 #guard (gateFloor (f [("d1", [10])]) (f [("d1", [10])])).regressed == #[]
 #guard (gateFloor (f [("d1", [10])]) (f [("d1", [10])])).improved == #[]
--- ⚠ An absent date satisfies nothing: every one of its keys regresses. This is
+-- An absent date satisfies nothing: every one of its keys regresses. This is
 -- the unmeasured-day shape, and the reason a caller must exclude an unmeasured day itself.
 #guard (gateFloor (f [("d1", [10, 20])]) (f [])).regressed
     == #[{ date := "d1", startTs := 10 }, { date := "d1", startTs := 20 }]
@@ -139,16 +139,16 @@ private def f (xs : List (String × List Int)) : Floor :=
 #guard (ratchetUpFloor (f [("d1", [10])]) (f [("d1", [20])]) (f [("d1", [10, 20])])).floor
     == f [("d1", [10, 20])]
 #guard (ratchetUpFloor (f [("d1", [10])]) (f [("d1", [20])]) (f [("d1", [10, 20])])).dropped == #[]
--- A key the narrative no longer DESCRIBES leaves the floor — and is announced.
+-- A key the narrative no longer describes leaves the floor — and is announced.
 #guard (ratchetUpFloor (f [("d1", [10])]) (f [("d1", [20])]) (f [("d1", [20])])).floor
     == f [("d1", [20])]
 #guard (ratchetUpFloor (f [("d1", [10])]) (f [("d1", [20])]) (f [("d1", [20])])).dropped
     == #[{ date := "d1", startTs := 10 }]
--- ⚠ A date absent from `described` was NOT MEASURED: its floor passes through
+-- A date absent from `described` was not measured: its floor passes through
 -- whole. Emptying it here is the same silence-as-loss bug as the gate's.
 #guard (ratchetUpFloor (f [("d1", [10, 20])]) (f []) (f [])).floor == f [("d1", [10, 20])]
 #guard (ratchetUpFloor (f [("d1", [10, 20])]) (f []) (f [])).dropped == #[]
--- A day described as holding NOTHING loses its whole floor, loudly.
+-- A day described as holding nothing loses its whole floor, loudly.
 #guard (ratchetUpFloor (f [("d1", [10, 20])]) (f []) (f [("d1", [])])).floor == f [("d1", [])]
 #guard (ratchetUpFloor (f [("d1", [10, 20])]) (f []) (f [("d1", [])])).dropped
     == #[{ date := "d1", startTs := 10 }, { date := "d1", startTs := 20 }]

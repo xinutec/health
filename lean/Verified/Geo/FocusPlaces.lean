@@ -18,10 +18,10 @@ Work, then a "Stay" tier), the hour-of-day dwell profiles that
 Time of day comes from longitude (rough solar time), not a tz library, so this
 layer needs no `Intl` and is pure, with two deliberate exceptions:
 
-* **`classifyCluster.reason`**: a human-readable string. Only the label drives
+* `classifyCluster.reason`: a human-readable string. Only the label drives
   behaviour, so `classifyClusterLabel` returns the decision and the display
   string stays shell.
-* **The day of a timestamp**: {@link localDayIndex} returns a day number rather
+* The day of a timestamp: {@link localDayIndex} returns a day number rather
   than a `YYYY-MM-DD` string. Calendar date and day index are in bijection, so
   the distinct count, the only thing `uniqueDayCount` exposes, is identical
   without a civil-date conversion.
@@ -40,7 +40,7 @@ open Verified.Geo.Velocity (localSolarHour)
 /-! ## Calibration -/
 
 def STAY_RADIUS_M : Float := 100
-/-- How long a dwell must last to be MINED as a visit. Short enough to catch
+/-- How long a dwell must last to be mined as a visit. Short enough to catch
 cafés.
 
 Not a bar on whether there is a stay in the track at all. -/
@@ -466,13 +466,13 @@ The dominant amenity name from a weighted vote (typically dwell seconds), or
 to per-visit OSM lookup.
 
 `weightExempt` names venues some stay saw from inside the near field
-(`VenuePrior.NEAR_FIELD_DECISIVE_M`). Such a name skips the DWELL floor and
+(`VenuePrior.NEAR_FIELD_DECISIVE_M`). Such a name skips the dwell floor and
 only the dwell floor: one fix sitting on the venue establishes "you have been
 in here" as well as ten would, so a short first visit is not a reason to
-withhold the label. The MAJORITY floor still applies — being inside a venue
+withhold the label. The majority floor still applies — being inside a venue
 says nothing about which of two contested names is right.
 
-⚠ This is the one focus-mining export no live comparison reaches
+This is the one focus-mining export no live comparison reaches
 (`ServeEntry.lean`), so its only check is the guards below, and a guard cannot
 fail for a parameter that does not exist: a rule missing here goes unnoticed.
 -/
@@ -596,7 +596,7 @@ café and an evening residence under `CLUSTER_RADIUS_M` apart, fused by
 `clusterStays`.
 
 Time-of-day is the separating signal: visits are clustered by their circular
-time-of-day ALONE (midpoint solar hour as a unit-circle angle), then the fit
+time-of-day alone (midpoint solar hour as a unit-circle angle), then the fit
 must clear all three gates — bimodality, both lobes substantial, and the lobes
 spatially distinct. Clustering on time rather than joint (space, time) is
 deliberate: a residence's own ~100 m of indoor-GPS scatter, standardised into
@@ -806,10 +806,10 @@ private def workC : Cluster := mkCluster 2 51.53 (-38.13) (workdays 25 51.53 (-3
 -- The near-field exemption: the winner was seen from inside the venue,
 -- so the dwell floor does not withhold its name.
 #guard pickWinningAmenity [("Cafe A", 90)] 100 0.5 ["Cafe A"] == some "Cafe A"
--- The exemption is keyed on the WINNER, not on membership: exempting a name
+-- The exemption is keyed on the winner, not on membership: exempting a name
 -- that lost buys nothing, and must not rescue the vote.
 #guard (pickWinningAmenity [("Cafe A", 30), ("Cafe B", 60)] 100 0.5 ["Cafe A"]).isNone
--- ⚠ It skips the dwell floor ONLY. A contested vote stays none however close
+-- It skips the dwell floor only. A contested vote stays none however close
 -- the fix was — standing inside one of two candidates does not settle which.
 #guard (pickWinningAmenity [("Cafe A", 52), ("Cafe B", 48)] 100 0.6 ["Cafe A"]).isNone
 -- With no exemption list the behaviour is exactly what it was before it existed.
@@ -828,7 +828,7 @@ private def cafeResidence : Cluster :=
        | [a, b] => approx a.centroidLat 51.520499999999998 && a.totalDwellSec == 14400 && a.stays.length == 4
                    && approx b.centroidLat 51.520899999999997 && b.totalDwellSec == 28800 && b.stays.length == 4
        | _ => false
--- Gate 3: ONE home visited both evening and morning is temporally bimodal but
+-- Gate 3: one home visited both evening and morning is temporally bimodal but
 -- its lobes are ~2 m apart, so it must not split.
 #guard (splitCluster (mkCluster 1 HOME_LAT HOME_LON
         ((List.range 4).flatMap (fun d =>

@@ -20,7 +20,7 @@ pub struct HealthParams {
 
 /// `GET /health` — `ok` as plain text, or a JSON picture with `?detail=1`.
 ///
-/// ⚠ Unauthenticated, and it stays that way: this is what an operator curls
+/// Unauthenticated, and it stays that way: this is what an operator curls
 /// when the dashboard is broken, which is exactly when a login might be too.
 /// Nothing here names a user or a place — counts, a latency and a date.
 pub async fn health(
@@ -37,7 +37,7 @@ pub async fn health(
     let mut osm_cache: Option<i64> = None;
     let mut last_sync: Option<String> = None;
 
-    // ⚠ One failed probe fails the WHOLE detail block rather than reporting
+    // One failed probe fails the whole detail block rather than reporting
     // some counts and a silent gap. A partial answer here reads as a healthy
     // system with an empty table.
     match probe(&st).await {
@@ -81,7 +81,7 @@ async fn probe(st: &AppState) -> anyhow::Result<(i64, i64, Option<String>)> {
 
 /// `GET /version` — the commit the running image was built from.
 ///
-/// ⚠ Deliberately OUTSIDE `/api`: the UI footer reads it to make a stale client
+/// Deliberately outside `/api`: the UI footer reads it to make a stale client
 /// or a half-finished rollout visible at a glance, and a version endpoint that
 /// needs a session cannot answer when the session is what is broken.
 pub async fn version() -> Response {
@@ -91,7 +91,7 @@ pub async fn version() -> Response {
     .into_response()
 }
 
-/// ⚠ HTML MUST REVALIDATE, and shipping without saying so cost a deploy nobody
+/// ⚠ HTML must revalidate, and shipping without saying so cost a deploy nobody
 /// could see.
 ///
 /// With no `Cache-Control` at all a client falls back to heuristic caching from
@@ -104,12 +104,12 @@ pub async fn version() -> Response {
 /// `no-cache` means "ask first", not "never keep": the ETag still turns the
 /// usual case into a 304 with no body.
 ///
-/// ⚠ ONLY text/html, AND ONLY when nothing has already spoken. This layer sees
+/// Only text/html, and only when nothing has already spoken. This layer sees
 /// every response including the API's, so an `else` branch stamping `immutable`
 /// on whatever was left would put a year-long cache on JSON — the same bug
 /// pointing the other way.
 ///
-/// A FILE is decided too: one whose name carries its content hash is
+/// A file is decided too: one whose name carries its content hash is
 /// `immutable`, and any other — an icon, the manifest, the service worker's
 /// files, which keep their names across builds — revalidates, or a WebView keeps
 /// it on heuristics. See [`cache_for`].
@@ -171,16 +171,16 @@ fn is_content_hashed(name: &str) -> bool {
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 
-/// The landing page shown when no Angular build is present — **at the root
-/// only**.
+/// The landing page shown when no Angular build is present — at the root
+/// only.
 ///
-/// ⚠ A fallback for a broken image, not a feature. It says which build state
+/// A fallback for a broken image, not a feature. It says which build state
 /// the pod is in rather than showing a blank page, which is the difference
 /// between "the deploy is wrong" and "the app is broken".
 ///
-/// ⚠ **Every other path is a 404.** `ServeDir`'s fallback is reached for any
-/// file it cannot find, so without this `GET /media/nope.woff2` answers **200
-/// text/html**, the explanation page, handed to a browser that asked for a
+/// Every other path is a 404. `ServeDir`'s fallback is reached for any
+/// file it cannot find, so without this `GET /media/nope.woff2` answers 200
+/// text/html, the explanation page, handed to a browser that asked for a
 /// font. It renders broken icons and reports nothing, on both sides: a 200 is
 /// not an error to the client and not a log line on the server.
 ///
@@ -188,7 +188,7 @@ fn is_content_hashed(name: &str) -> bool {
 /// reason — *"a typo'd .css or .js must still 404"* — and that decision was
 /// correct; what defeated it was the thing it fell through to.
 ///
-/// ⚠ **THE ROOT MUST STAY 200.** `tests/suite/compression.rs` uses this body as the
+/// The root must stay 200. `tests/suite/compression.rs` uses this body as the
 /// largest the router produces without a database and asserts 200 on `/`, and a
 /// build-less deployment still has to account for itself to whoever opens it.
 pub async fn fallback_page(uri: axum::http::Uri) -> Response {

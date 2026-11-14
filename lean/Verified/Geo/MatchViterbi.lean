@@ -157,7 +157,7 @@ theorem pathScore_snoc (Tr : Trellis) {t i j : Nat} {p : List Nat}
   simp only [stepG]
   rw [Score.add_assoc]
 
-/-- **The cell is the max declarative score over all paths reaching it.** The
+/-- The cell is the max declarative score over all paths reaching it. The
 tropical-semiring heart of Viterbi correctness: the DP's running maximum-of-
 sums equals the maximum over enumerated chains, because addition distributes
 over the maximum (`Score.listMax_add_map`). -/
@@ -327,7 +327,7 @@ def decode (Tr : Trellis) : Option (List Nat) :=
   | none => none
   | some (j, _) => decodeTo Tr (Tr.T - 1) j
 
-/-- **Viterbi argmax.** The decoded chain is a full candidate chain and attains
+/-- Viterbi argmax. The decoded chain is a full candidate chain and attains
 the maximum declarative score over every full candidate chain. -/
 theorem decode_argmax (Tr : Trellis) {p : List Nat} (h : decode Tr = some p) :
     p ∈ allFullPaths Tr ∧ ∀ c ∈ allFullPaths Tr, pathScore Tr c ≤ pathScore Tr p := by
@@ -349,8 +349,8 @@ theorem decode_argmax (Tr : Trellis) {p : List Nat} (h : decode Tr = some p) :
     rw [hpscore]
     exact listMax_ge (List.mem_map_of_mem hc)
 
-/-- **The decoder returns `none` exactly when no full candidate chain has a
-finite score.** -/
+/-- The decoder returns `none` exactly when no full candidate chain has a
+finite score. -/
 theorem decode_none_iff (Tr : Trellis) :
     decode Tr = none ↔ ∀ c ∈ allFullPaths Tr, pathScore Tr c = Score.negInf := by
   constructor
@@ -554,13 +554,13 @@ theorem decodeFast_eq (Tr : Trellis) : decodeFast Tr = decode Tr := by
     dsimp only
     exact decodeToFast_eq Tr (buildRows Tr (Tr.T - 1)) (Tr.T - 1) hrows (Tr.T - 1) j (Nat.le_refl _)
 
-/-- **Viterbi argmax, memoised decoder.** The `O(T·W²)` decoded chain attains
+/-- Viterbi argmax, memoised decoder. The `O(T·W²)` decoded chain attains
 the maximum declarative `pathScore` over every full candidate chain. -/
 theorem decodeFast_argmax (Tr : Trellis) {p : List Nat} (h : decodeFast Tr = some p) :
     p ∈ allFullPaths Tr ∧ ∀ c ∈ allFullPaths Tr, pathScore Tr c ≤ pathScore Tr p :=
   decode_argmax Tr (decodeFast_eq Tr ▸ h)
 
-/-- **`none` characterisation, memoised decoder.** -/
+/-- `none` characterisation, memoised decoder. -/
 theorem decodeFast_none_iff (Tr : Trellis) :
     decodeFast Tr = none ↔ ∀ c ∈ allFullPaths Tr, pathScore Tr c = Score.negInf := by
   rw [decodeFast_eq]

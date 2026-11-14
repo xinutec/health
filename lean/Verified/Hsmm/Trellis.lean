@@ -221,7 +221,7 @@ def trellisScore (P : Problem) : Score :=
   if P.T = 0 then Score.zero
   else Score.listMax ((List.range P.S).map fun s => closeB P (P.T - 1) s)
 
-/-- **The trellis recurrence is correct**: its final closure is the oracle's
+/-- The trellis recurrence is correct: its final closure is the oracle's
 best score, for every problem shape (degenerate ones included). -/
 theorem trellisScore_eq_oracleBest (P : Problem) : trellisScore P = oracleBest P := by
   rw [trellisScore]

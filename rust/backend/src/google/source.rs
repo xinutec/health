@@ -3,7 +3,7 @@
 //! # Why this is a table and not a set of call sites
 //!
 //! The Fitbit Web API is closed; Google Health carries most of the
-//! same data and NOT all of it. The migration was per stream and staged, and
+//! same data and not all of it. The migration was per stream and staged, and
 //! each stream's `why` is the measurement that moved it — the durable record
 //! of where a column's history changes source.
 //!
@@ -12,7 +12,7 @@
 //! both, looks exactly like one served correctly. Here it is one list, and the
 //! test pairs it with the writers `google::sync` has.
 //!
-//! ⚠ **A STREAM MUST HAVE EXACTLY ONE OWNER.** Two writers on one table is not
+//! ⚠ A stream must have exactly one owner. Two writers on one table is not
 //! redundancy: the tables are `ON DUPLICATE KEY UPDATE`, so the last run wins
 //! and the value flips with whichever job fired most recently. That reads as
 //! instrument noise and is nearly impossible to trace back to a source conflict.
@@ -26,7 +26,7 @@ pub enum Owner {
 
 /// One biometric stream and its current owner.
 ///
-/// ⚠ THE `why` IS NOT DECORATION. A reader asking why a column's history
+/// The `why` is not decoration. A reader asking why a column's history
 /// changes shape on a date needs the measurement, not the verdict.
 pub struct Stream {
     pub name: &'static str,
@@ -156,10 +156,10 @@ pub const STREAMS: &[Stream] = &[
 
 /// The streams something in `google::sync` actually writes.
 ///
-/// ⚠ A stream in the roster without a writer is served by nobody, silently.
+/// A stream in the roster without a writer is served by nobody, silently.
 /// The test pairing this with `STREAMS` is what makes the two inseparable.
 ///
-/// ⚠ Not derived from `STREAMS`. A list generated from the thing it checks
+/// Not derived from `STREAMS`. A list generated from the thing it checks
 /// agrees with it by construction and proves nothing; this is written by hand
 /// and the test compares them.
 pub const HAS_WRITER: &[&str] = &[

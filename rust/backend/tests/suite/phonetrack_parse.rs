@@ -3,7 +3,7 @@
 //! These points decide which timezone a Fitbit wall clock is stamped with, and
 //! that decision is written to a column and never revisited. So the parser's
 //! failure mode that matters is not "throws on bad input" — it is any path where
-//! a fix is DROPPED or MISPLACED and the result still looks like a well-formed
+//! a fix is dropped or misplaced and the result still looks like a well-formed
 //! quiet day.
 //!
 //! ⚠ The coordinates below are the null island and a round number in the North
@@ -48,7 +48,7 @@ fn absent_optionals_do_not_drop_the_point() {
     }
 }
 
-/// ⚠ The parser does NOT sort, and that is asserted rather than assumed. The
+/// The parser does not sort, and that is asserted rather than assumed. The
 /// range fetch concatenates several devices and several chunks and sorts the
 /// whole; a sort here would be per device and would still leave the result
 /// unordered, while looking like the ordering was handled.
@@ -68,7 +68,7 @@ fn an_empty_device_day_is_an_empty_list_not_an_error() {
     assert!(parse_points("[]").unwrap().is_empty());
 }
 
-/// A malformed body must REFUSE rather than decode to zero points. Zero points
+/// A malformed body must refuse rather than decode to zero points. Zero points
 /// is a real answer — a device that was off — so a parser that returned it on
 /// garbage would report "no fixes that day" for a response nobody could read.
 #[test]
@@ -98,7 +98,7 @@ fn sessions_are_read_from_the_values_not_the_tokens() {
     assert_eq!(ss.len(), 2, "both sessions, keyed by a token nothing reads");
 }
 
-/// A session nothing has ever posted to has NO `devices` key at all. It must
+/// A session nothing has ever posted to has no `devices` key at all. It must
 /// parse — an account with one live session and one empty one is ordinary, and
 /// refusing the listing would cost the live session's fixes too.
 #[test]

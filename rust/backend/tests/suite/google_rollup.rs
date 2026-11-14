@@ -1,13 +1,13 @@
 //! The rollup's civil-day keying and its chunking arithmetic.
 //!
-//! ⚠ The HTTP half is not tested here — it needs the live API. What IS testable
+//! The HTTP half is not tested here — it needs the live API. What is testable
 //! is the part that silently files data on the wrong day, which is the failure
 //! that would survive a green build and show up as a chart shifted by one.
 
 use backend::google::health::{DailyValue, day_of_rollup_point};
 
-/// ⚠ THE DAY IS `civilStartTime`. The rollup also carries `civilEndTime`, which
-/// for a one-day window is the FOLLOWING midnight — the exclusive bound. Keying
+/// The day is `civilStartTime`. The rollup also carries `civilEndTime`, which
+/// for a one-day window is the following midnight — the exclusive bound. Keying
 /// on it files every value one day late, and a whole series shifted by one still
 /// looks like plausible data.
 #[test]
@@ -39,7 +39,7 @@ fn the_date_is_zero_padded() {
     );
 }
 
-/// A point missing the summed field is DROPPED, not defaulted to zero. A zero
+/// A point missing the summed field is dropped, not defaulted to zero. A zero
 /// step count is a real reading; an absent one is not, and writing 0 would turn
 /// a gap into a claim that the day was sedentary.
 #[test]
@@ -64,7 +64,7 @@ fn the_sum_field_is_per_type() {
     );
 }
 
-/// ⚠ Google quotes some numeric fields and not others, per FIELD rather than per
+/// Google quotes some numeric fields and not others, per field rather than per
 /// stream. `dailyRestingHeartRate.beatsPerMinute` is a string; 1258 points were
 /// silently dropped by `as_f64()` and the stream reported as zero days, which
 /// reads as "Google does not carry resting heart rate".
@@ -77,7 +77,7 @@ fn a_quoted_number_is_read_not_dropped() {
     assert_eq!(numeric(&serde_json::json!(62.5)), Some(62.5));
 }
 
-/// ⚠ AND THE CONVERSE, or this is a permissive fallback rather than a fix. A
+/// And the converse, or this is a permissive fallback rather than a fix. A
 /// value we cannot read is not a value we may guess.
 #[test]
 fn a_non_numeric_value_is_still_dropped() {

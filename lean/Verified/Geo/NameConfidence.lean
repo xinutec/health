@@ -15,7 +15,7 @@ So the number shown is the rule's hit rate on his confirmed days, estimated by
 the rule of succession, `(right + 1) / (graded + 2)` — a small sample never
 claims certainty, and a rule no confirmed row has graded reads 0.5, "unknown".
 
-⚠ `COUNTS` IS A MEASUREMENT, NOT A SETTING. The truth gate re-counts it on
+⚠ `COUNTS` is a measurement, not a setting. The truth gate re-counts it on
 every corpus run, day by day, against `tests/golden/name-confidence.jsonl`, and
 a Rust test holds this table to that file's sum. A naming change that moves a
 count fails the gate until it is re-blessed (`NAME_CONFIDENCE_BLESS=1`) and this

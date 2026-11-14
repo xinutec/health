@@ -15,7 +15,7 @@ matcher as an `Env` field, and the matcher it wants is
 
 # Two differences from the walk adapter, both load-bearing
 
-**Names cross.** `WalkMatchAdapt` drops them and says why: `WALK_QPROFILE`
+Names cross. `WalkMatchAdapt` drops them and says why: `WALK_QPROFILE`
 charges nothing for a way change, so a walk way's name decides nothing. The road
 profile is where that field came from — `ROAD_QPROFILE`'s way-switch penalty is
 the turn prior — so dropping a name here would silently change the route. `Way`
@@ -23,7 +23,7 @@ carries one and `QWay` wants one, so it is a straight copy; `osmId` and
 `subtype` are read by the corridor fetch upstream and by nothing the matcher
 does, so they stop here.
 
-**The result is `path`, not `coarsePath`.** `RoadMatchAnnotate` hands
+The result is `path`, not `coarsePath`. `RoadMatchAnnotate` hands
 `matchImprovesDisplay` the same line it draws (`road-match-annotate.ts:115`
 passes `result.path`), unlike the walk pass, which gates on `coarsePath` and
 draws the finer line. `QMatchResult` has no `coarsePath` to confuse it

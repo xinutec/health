@@ -460,7 +460,7 @@ pub async fn sleep_windows(
         .with_context(|| format!("reading sleep for {d}"))?;
         for row in rows {
             let row_tz: Option<String> = row.try_get("tz").context("sleep.tz")?;
-            // The zone used for CONVERSION. `tz` below stays the row's own value so
+            // The zone used for conversion. `tz` below stays the row's own value so
             // the served window still says where the reading came from.
             let tz = row_tz.clone().or_else(|| home_tz.map(str::to_string));
             out.push(json!({
@@ -522,7 +522,7 @@ pub async fn biometrics(
 ) -> Result<Value> {
     let start_dt = utc_seconds_to_datetime_str(start_utc);
     let end_dt = utc_seconds_to_datetime_str(end_utc);
-    // The fallback rows are matched on a WALL CLOCK, which can sit up to a day
+    // The fallback rows are matched on a wall clock, which can sit up to a day
     // either side of the UTC window depending on the zone — so the SQL casts a
     // wider net and the loop below narrows it once the tz is known.
     let day_before = utc_seconds_to_date_str(start_utc - 86_400);
@@ -632,7 +632,7 @@ pub async fn biometrics(
     sleep.sort_by_key(|&(start, _, _)| start);
 
     // ---- stepped minutes --------------------------------------------------
-    // Only non-zero minutes are stored, so a row IS "at least one step here".
+    // Only non-zero minutes are stored, so a row is "at least one step here".
     let mut steps: Vec<(i64, f64)> = Vec::new();
     let rows = sqlx::query(
         "SELECT ts_utc, steps FROM steps_intraday WHERE user_id = ? AND ts_utc >= ? AND ts_utc < ?",

@@ -31,7 +31,7 @@ fn watch(rows: &[Value]) -> Vec<(i64, i64)> {
 #[test]
 fn the_phone_pseudo_device_never_reaches_the_watch_series() {
     lean::init().expect("the Lean runtime must start");
-    // ⚠ MobileTrack is Fitbit's phone step tracker and reports battery 0.
+    // MobileTrack is Fitbit's phone step tracker and reports battery 0.
     // Keeping it draws the watch flat-lining at empty all day.
     let got = watch(&[
         row(100, 0, Some("MobileTrack")),
@@ -39,7 +39,7 @@ fn the_phone_pseudo_device_never_reaches_the_watch_series() {
     ]);
     assert_eq!(got, [(200, 90)]);
 
-    // An untagged row is an UNKNOWN device, not the phone — it stays.
+    // An untagged row is an unknown device, not the phone — it stays.
     assert_eq!(watch(&[row(100, 90, None)]), [(100, 90)]);
 }
 
@@ -71,7 +71,7 @@ fn a_flat_run_collapses_but_a_returning_level_is_a_real_step() {
         "a flat step needs only its start"
     );
 
-    // ⚠ Compared against the previous KEPT sample only, never the whole series.
+    // Compared against the previous kept sample only, never the whole series.
     let returns = watch(&[row(100, 90, None), row(200, 85, None), row(300, 90, None)]);
     assert_eq!(returns, [(100, 90), (200, 85), (300, 90)]);
 }
@@ -79,7 +79,7 @@ fn a_flat_run_collapses_but_a_returning_level_is_a_real_step() {
 #[test]
 fn two_devices_at_one_instant_keep_the_later_row_in_input_order() {
     lean::init().expect("the Lean runtime must start");
-    // ⚠ This is the ROW ORDER of the result set, not a rule about which device
+    // This is the row order of the result set, not a rule about which device
     // is right — which is why the query must not gain an `ORDER BY`.
     assert_eq!(
         watch(&[row(100, 90, None), row(100, 70, None)]),

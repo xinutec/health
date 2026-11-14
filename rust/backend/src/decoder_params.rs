@@ -9,7 +9,7 @@
 //! `DECODER_PARAMS`. Neither set, a replay reads the golden record and the
 //! decode worker refuses: it would store the unfitted model's day.
 //!
-//! ⚠ THE SECRET HOLDS ONE LINE. `scripts/prod-db.sh` mirrors the pod's
+//! ⚠ the secret holds one line. `scripts/prod-db.sh` mirrors the pod's
 //! environment as `NAME=VALUE` lines, so a pretty-printed record reaches a Mac
 //! replay as its first line, `{`, and every day fails to decode.
 //! `fit_emissions` writes it compact.

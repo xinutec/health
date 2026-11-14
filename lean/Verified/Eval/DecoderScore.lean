@@ -10,15 +10,15 @@ The oracle is `tests/golden/decoder-scoreboard.json`: dates and counts a human
 blessed.
 
 The GT journey builder and its leg/journey types are `Verified.Eval.Journeys`;
-this module adds the DECODER side and the counters that compare the two.
+this module adds the decoder side and the counters that compare the two.
 
-⚠ `modeShape` and `bestOverlap` exist in `Verified.Eval.JourneyShape` over its
+`modeShape` and `bestOverlap` exist in `Verified.Eval.JourneyShape` over its
 journey type (the pipeline referee's). The pair below operates on
 `Verified.Eval.Journeys.Journey`, the type the scoreboard was blessed against.
 Two small copies beat one shared abstraction that would let one gate's
 semantics drift the other's.
 
-⚠ Station equality is ASCII-case-insensitive (`String.toLower`). Every station
+Station equality is ASCII-case-insensitive (`String.toLower`). Every station
 name in the corpus is ASCII; a non-ASCII one would compare case-sensitively.
 -/
 
@@ -64,7 +64,7 @@ def isRideModeStr (m : String) : Bool :=
 def isVehicleModeStr (m : String) : Bool :=
   m == "train" || m == "bus" || m == "driving" || m == "cycling" || m == "plane"
 
-/-- Decoded segments to minutes — `t` steps from the RAW `startTs`, not a
+/-- Decoded segments to minutes — `t` steps from the raw `startTs`, not a
 minute-aligned one (`segmentsToMinutes`, `score-decoder-golden.ts:117`). -/
 def segmentsToMinutes (segs : Array Seg) : Array DecoderMinute := Id.run do
   let mut out : Array DecoderMinute := #[]
@@ -238,7 +238,7 @@ def scoreJourneyCounts (gtJourneys : Array Journey) (decJourneys : Array Journey
 private def lower (s : String) : String := s.toLower
 
 /-- The same-mode decoder leg with the most overlap — accepted only when the
-overlap covers a MAJORITY of the truth leg. -/
+overlap covers a majority of the truth leg. -/
 private def bestOverlappingLeg (gt : Leg) (decLegs : Array Leg) : Option Leg := Id.run do
   let mut best : Option Leg := none
   let mut bestOv : Int := 0
@@ -277,14 +277,14 @@ def scoreStations (gtJourneys decJourneys : Array Journey) : StationCounts := Id
       | _, _ => pure ()
   return c
 
-/-- An enforceable-truth span asserting a NON-vehicle mode — what convicts a
+/-- An enforceable-truth span asserting a non-vehicle mode — what convicts a
 phantom ride. -/
 structure ContradictingSpan where
   startTs : Int
   endTs : Int
   deriving Repr, Inhabited
 
-/-- `countPhantomRides`: decoder vehicle legs whose MAJORITY lies inside
+/-- `countPhantomRides`: decoder vehicle legs whose majority lies inside
 enforceable non-vehicle truth. -/
 def countPhantomRides (contradicting : Array ContradictingSpan)
     (decJourneys : Array Journey) : Nat := Id.run do
@@ -301,7 +301,7 @@ def countPhantomRides (contradicting : Array ContradictingSpan)
         phantoms := phantoms + 1
   return phantoms
 
-/-- Whether a row's truth convicts — enforceable and non-vehicle. The MODE
+/-- Whether a row's truth convicts — enforceable and non-vehicle. The mode
 string is the canonical one. -/
 def contradicts (status : Status) (provenance : Provenance) (mode : Mode) : Bool :=
   ((status == .correct) || (status == .wrong)) && trusted provenance
@@ -313,11 +313,11 @@ private def dm (t : Int) (m : String) (l : Option String := none)
     (b : Option String := none) (a : Option String := none) : DecoderMinute :=
   { ts := t, mode := m, lineName := l, board := b, alight := a }
 
--- segmentsToMinutes steps from the RAW start; 90..210 yields 90 and 150.
+-- segmentsToMinutes steps from the raw start; 90..210 yields 90 and 150.
 #guard (segmentsToMinutes #[⟨90, 210, "walking", none, none, none⟩]).map (·.ts) == #[90, 150]
 
 -- Contiguous same-mode same-line minutes merge into one leg; board keeps the
--- FIRST minute's, alight the LAST's (overwritten even to none).
+-- first minute's, alight the last's (overwritten even to none).
 #guard (decoderJourneys #[dm 0 "train" (some "L") (some "A") (some "B"),
                           dm 60 "train" (some "L") none (some "C")]).size == 1
 #guard ((decoderJourneys #[dm 0 "train" (some "L") (some "A") (some "B"),
@@ -356,7 +356,7 @@ private def jj (s e : Int) (legs : Array Leg) : Journey := ⟨s, e, legs⟩
 -- Interchange smoothing: train, walking, train (same vehicle) reads "train".
 #guard modeShape (jj 0 300 #[jleg 0 100 "train", jleg 100 200 "walking", jleg 200 300 "train"])
   == #["train"]
--- A walk between DIFFERENT vehicles is kept.
+-- A walk between different vehicles is kept.
 #guard modeShape (jj 0 300 #[jleg 0 100 "train", jleg 100 200 "walking", jleg 200 300 "bus"])
   == #["train", "walking", "bus"]
 -- Leading and trailing walks are kept.
@@ -371,7 +371,7 @@ private def jj (s e : Int) (legs : Array Leg) : Journey := ⟨s, e, legs⟩
 #guard (scoreStations
     #[jj 0 600 #[jleg 0 600 "train" (some "L") (some "Kings Cross") (some "Oval")]]
     #[jj 0 600 #[jleg 0 600 "train" (some "L") (some "KINGS CROSS") (some "oval")]]).stationsMatching == 1
--- A same-mode overlapping leg with NO stations is `missing`, not wrong.
+-- A same-mode overlapping leg with no stations is `missing`, not wrong.
 #guard (scoreStations
     #[jj 0 600 #[jleg 0 600 "train" (some "L") (some "A") (some "B")]]
     #[jj 0 600 #[jleg 0 600 "train" (some "L")]]).stationsMissing == 1
@@ -379,7 +379,7 @@ private def jj (s e : Int) (legs : Array Leg) : Journey := ⟨s, e, legs⟩
 -- Phantom rides: majority conviction; exactly half does not convict.
 #guard countPhantomRides #[⟨0, 301⟩] #[jj 0 600 #[jleg 0 600 "bus" (some "R")]] == 1
 #guard countPhantomRides #[⟨0, 300⟩] #[jj 0 600 #[jleg 0 600 "bus" (some "R")]] == 0
--- A phantom WALK is not a ride.
+-- A phantom walk is not a ride.
 #guard countPhantomRides #[⟨0, 600⟩] #[jj 0 600 #[jleg 0 600 "walking"]] == 0
 
 end Verified.Eval.DecoderScore

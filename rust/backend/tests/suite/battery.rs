@@ -1,10 +1,10 @@
 //! The battery trace's marshalling, on synthetic rows.
 //!
-//! ⚠ Nothing else covers this. A corpus replay needs the golden days; this
-//! needs neither them nor a database, and it reaches the case a replay CANNOT:
+//! Nothing else covers this. A corpus replay needs the golden days; this
+//! needs neither them nor a database, and it reaches the case a replay cannot:
 //! a PhoneTrack row with no `battery` key at all.
 //!
-//! ⚠ That gap is measured, not assumed. Sending `0` instead of `null` for an
+//! That gap is measured, not assumed. Sending `0` instead of `null` for an
 //! absent reading left all 42 golden days agreeing, because every row the
 //! loader produces carries the key. A branch no fixture reaches is a branch
 //! only a written test can hold.
@@ -35,7 +35,7 @@ fn battery_keeps_the_endpoints_of_a_constant_run() {
 
 #[test]
 fn battery_drops_a_missing_reading() {
-    // ⚠ NO `battery` KEY on the middle row — the case no golden fixture has.
+    // No `battery` key on the middle row — the case no golden fixture has.
     // It must vanish from the series, not arrive as a level of 0, which would
     // draw a cliff to zero and back on the chart.
     let v = vec![
@@ -65,7 +65,7 @@ fn the_cross_day_tail_interpolates_to_the_day_boundary() {
         json!({"ts": 200, "battery": 20}),
     ];
     // The phone went idle at 200 and reported 60 at 400, past the day end at
-    // 300. The chart should climb halfway to 60 and STOP at the boundary rather
+    // 300. The chart should climb halfway to 60 and stop at the boundary rather
     // than run into the next day.
     let out = battery_series(&rows(&v), Some(&json!({"ts": 400, "level": 60})), 300)
         .expect("the series builds");

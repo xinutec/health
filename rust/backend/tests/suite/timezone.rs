@@ -38,7 +38,7 @@ fn a_zone_that_is_not_utc_offset_by_a_whole_hour() {
 
 #[test]
 fn an_absent_timezone_yields_nothing_rather_than_a_guess() {
-    // ⚠ THE CONTRACT. A guess stored in a column declared to hold UTC is worse
+    // The contract. A guess stored in a column declared to hold UTC is worse
     // than an absent value: nothing downstream can tell it was a guess.
     assert_eq!(wall_clock_to_utc_string("2026-08-17 14:30:00", None), None);
 }
@@ -72,7 +72,7 @@ fn the_wall_clock_that_happened_twice_takes_the_later_instant() {
     // 2026-10-25: clocks go 02:00 → 01:00, so 01:30 occurs twice — once on BST
     // (00:30 UTC) and once on GMT (01:30 UTC).
     //
-    // ⚠ Every value here is a stored row's instant, not derived. The earlier
+    // Every value here is a stored row's instant, not derived. The earlier
     // instant is the defensible reading and is not what `wall_clock_to_unix`
     // returns; choosing it would silently re-time rows already in the
     // database.
@@ -108,7 +108,7 @@ fn the_wall_clock_that_never_happened_reads_on_the_post_transition_offset() {
     // must still resolve — a null ts_utc for a real data point loses it — and
     // the resolution must not search.
     //
-    // ⚠ AGAIN, MEASURED. Reading on the PRE-transition offset gives 01:30 UTC
+    // Again, measured. Reading on the pre-transition offset gives 01:30 UTC
     // and is the intuitive answer; production returns 00:30. Values below are
     // the production ones.
     assert!(
@@ -166,7 +166,7 @@ fn the_fall_back_transition_stays_monotonic() {
 
 #[test]
 fn the_spring_forward_gap_is_not_monotonic_and_that_is_recorded_not_repaired() {
-    // ⚠ This test asserts a defect, deliberately. `00:45` maps to `00:45` UTC
+    // This test asserts a defect, deliberately. `00:45` maps to `00:45` UTC
     // and the following `01:00` maps to `00:00`, an hour backwards, rather than
     // an invented monotonic answer.
     //

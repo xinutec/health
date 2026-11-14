@@ -3,7 +3,7 @@ import Verified.Fix
 /-!
 # Worldline feasibility
 
-A model-independent assertion on the OUTPUT timeline: a real worldline is one
+A model-independent assertion on the output timeline: a real worldline is one
 continuous path through space-time, so some outputs are simply impossible
 regardless of how the cascade produced them. This checks the impossibilities the
 pipeline has actually emitted, on the final drawn legs, with no dependency on
@@ -15,23 +15,23 @@ interpretations that can't be right given the data."*
 
 ## The five invariants
 
-* **impossible-mode-kinematics** — a `walking` leg whose fixes sustain a
+* impossible-mode-kinematics — a `walking` leg whose fixes sustain a
   vehicle-paced run over a real distance (the "64 km/h walk down the rail
   corridor"), and its symmetric twin: a `train` leg sustaining a
   pedestrian-paced run while the wearer steps at walking cadence (the "train at
   walking pace down the street").
-* **invalid-rail-triple** — a leg labelled `Board → Alight · Line` naming a
+* invalid-rail-triple — a leg labelled `Board → Alight · Line` naming a
   station that line does not reach.
-* **rail-discontinuity** — two train legs with nothing relocating between them
+* rail-discontinuity — two train legs with nothing relocating between them
   must share a station: you cannot step off at one and instantly board at
   another.
-* **degenerate-train-leg** — a train boarding and alighting at the same station.
-* **teleport** — two stays at different places with nothing relocating between
+* degenerate-train-leg — a train boarding and alighting at the same station.
+* teleport — two stays at different places with nothing relocating between
   them, further apart than he could have walked in the time between, by more
   than the fixes' own location noise. A stay is where its name was asked for
   (`DayState.placeAt`), else where its fixes put it.
 
-## ⚠ ZERO FALSE POSITIVES IS THE DESIGN CONSTRAINT, NOT AN ASPIRATION
+## ⚠ zero FALSE positives is the design constraint, not an aspiration
 
 Every threshold here is set so the check asserts only when there is no innocent
 reading, and each conservatism is load-bearing:
@@ -41,21 +41,21 @@ reading, and each conservatism is load-bearing:
 * Only `train` is asserted for pedestrian pace. Buses and cars genuinely crawl
   at walking pace in traffic, where a bumpy ride's phantom wrist-cadence could
   false-positive.
-* The pedestrian invariant needs FOUR signals to agree — pace band, duration,
+* The pedestrian invariant needs four signals to agree — pace band, duration,
   net displacement and cadence — so a signal-stop crawl (no cadence), a platform
   dwell (no net distance) and a brief slow patch (no duration) never assert.
   Without step data it does not assert at all.
-* Line membership is proximity-inferred and therefore OVER-inclusive, so
-  ABSENCE is the strong signal; over-inclusion can only produce false
-  NEGATIVES. An empty list means the line is unknown, not that it serves
+* Line membership is proximity-inferred and therefore over-inclusive, so
+  absence is the strong signal; over-inclusion can only produce false
+  negatives. An empty list means the line is unknown, not that it serves
   nothing, and never asserts.
-* Rail continuity asserts only when the station pair is DETERMINABLE. A
+* Rail continuity asserts only when the station pair is determinable. A
   bare-line leg breaks the chain rather than producing a false positive.
 
-## ⚠ THE DISTANCE IS EQUIRECTANGULAR, NOT HAVERSINE
+## The distance is equirectangular, not haversine
 
 `fixDistanceM` is a flat-earth approximation with a cosine correction at the
-midpoint latitude — NOT the `haversineMeters` used elsewhere in this codebase.
+midpoint latitude — not the `haversineMeters` used elsewhere in this codebase.
 Substituting haversine would change every threshold comparison slightly and is
 the obvious "tidying" to make here. It is reproduced operation for operation.
 -/
@@ -117,15 +117,15 @@ The physical walking ceiling is 12 km/h; 15 gives the same GPS-noise headroom
 the vehicle-carve and alight-anchor passes use. -/
 def KINEMATIC_VEHICLE_STEP_KMH : Float := 15
 /-- A vehicle-paced run only counts as impossible when it travels an
-inter-station-scale distance. Jitter cannot accumulate this as NET
+inter-station-scale distance. Jitter cannot accumulate this as net
 displacement. -/
 def KINEMATIC_MIN_RUN_NET_M : Float := 250
-/-- …across at least this many consecutive fast steps. A SINGLE fast step is a
+/-- …across at least this many consecutive fast steps. A single fast step is a
 GPS reacquire teleport, not a ride. -/
 def KINEMATIC_MIN_RUN_STEPS : Nat := 2
 
 /-- Per-step pace at or below which a fix pair could be on-foot motion. Brisk
-walking tops out ~7 km/h; 9 leaves GPS-noise headroom. (A train CAN move this
+walking tops out ~7 km/h; 9 leaves GPS-noise headroom. (A train can move this
 slowly — which is why pace alone never asserts; cadence must agree.) -/
 def PEDESTRIAN_STEP_MAX_KMH : Float := 9
 def PEDESTRIAN_MIN_RUN_NET_M : Float := 120
@@ -145,7 +145,7 @@ def WALK_MAX_MPS : Float := KINEMATIC_VEHICLE_STEP_KMH / 3.6
 exceed, beyond what walking covers, to be a teleport. -/
 def TELEPORT_SIGMAS : Float := 3
 
-/-- Modes that do NOT move the user between distinct stations. A stay or sleep
+/-- Modes that do not move the user between distinct stations. A stay or sleep
 between two train legs cannot put you at a different boarding station; a
 walking/driving leg can. -/
 def isNonRelocating (m : String) : Bool :=
@@ -153,7 +153,7 @@ def isNonRelocating (m : String) : Bool :=
 
 /-! ## Distance -/
 
-/-- ⚠ EQUIRECTANGULAR, not haversine — see the module header. -/
+/-- Equirectangular, not haversine — see the module header. -/
 def fixDistanceM (a b : Fix) : Float :=
   let rad := 3.141592653589793 / 180
   let dLat := (b.lat - a.lat) * rad
@@ -173,7 +173,7 @@ structure PacedRun where
 
 /-- The worst sustained vehicle-paced run inside a window's fixes.
 
-⚠ EXTRACTED so a probe can ask this question on modes the INVARIANT
+Extracted so a probe can ask this question on modes the invariant
 deliberately does not assert on, without restating the rule and drifting from
 it. Measuring a mode and asserting on it are different decisions; only the
 second has to be zero-false-positive. -/
@@ -234,9 +234,9 @@ def walkedThrough (steps : Array StepPoint) (fromTs toTs : Int) : Bool := Id.run
 contains movement that is not walking — a ride tail stranded by a mis-placed
 segment boundary.
 
-⚠ WALKING ONLY. See the module header.
+Walking only. See the module header.
 
-A run the wearer stepped through at walking cadence is the FIXES moving, not
+A run the wearer stepped through at walking cadence is the fixes moving, not
 him: 10-07's morning walk drew 385 m at 29 km/h over 120 steps a minute. -/
 def checkModeKinematics (legs : Array Leg) (points : Array Fix)
     (steps : Array StepPoint := #[]) : Array Violation :=
@@ -255,7 +255,7 @@ def checkModeKinematics (legs : Array Leg) (points : Array Fix)
 /-- Mean steps/min over `[startTs, endTs]` from per-minute buckets, or `none`
 when no bucket overlaps the window.
 
-⚠ NO DATA ≠ ZERO CADENCE, and the distinction is what stops the pedestrian
+No data ≠ zero cadence, and the distinction is what stops the pedestrian
 invariant asserting on a day with no step stream at all. -/
 def meanCadenceSpm (steps : Array StepPoint) (startTs endTs : Int) : Option Float := Id.run do
   let mut total : Float := 0
@@ -268,10 +268,10 @@ def meanCadenceSpm (steps : Array StepPoint) (startTs endTs : Int) : Option Floa
   return some (total / max 1 (Float.ofInt (endTs - startTs) / 60))
 
 /-- The symmetric invariant: a `train` leg whose fixes sustain a
-pedestrian-paced run over a real net distance WHILE the wearer steps at walking
+pedestrian-paced run over a real net distance while the wearer steps at walking
 cadence contains movement that is not riding.
 
-⚠ ALL FOUR SIGNALS MUST AGREE — pace band, duration, net displacement, cadence.
+All four signals must agree — pace band, duration, net displacement, cadence.
 See the module header for what each one rules out. -/
 def checkVehiclePedestrianRuns (legs : Array Leg) (points : Array Fix)
     (steps : Array StepPoint) : Array Violation :=
@@ -312,10 +312,10 @@ def checkVehiclePedestrianRuns (legs : Array Leg) (points : Array Fix)
 
 /-- Line → the stations it serves.
 
-⚠ MEMBERSHIP IS PROXIMITY-INFERRED and therefore OVER-inclusive, so ABSENCE is
-the strong signal: a labelled endpoint missing from a NON-EMPTY list is a
+Membership is proximity-inferred and therefore over-inclusive, so absence is
+the strong signal: a labelled endpoint missing from a non-empty list is a
 station nowhere near the line's tracks. Over-inclusion can only produce false
-NEGATIVES, which is what keeps this zero-false-positive. An EMPTY list means the
+negatives, which is what keeps this zero-false-positive. An empty list means the
 line is unknown to the mirror, not that it serves nothing, and never asserts. -/
 abbrev LineMembership := Array (String × Array String)
 
@@ -353,7 +353,7 @@ def checkRailTriples (legs : Array Leg) (lineStations : LineMembership) : Array 
 /-- Where a stay's fixes put it, and how precisely: the mean weighted by
 1/accuracy², and the same weighted mean of the accuracies.
 
-⚠ THE NOISE IS NOT DIVIDED BY √n. Indoors a phone reports the same wrong spot
+The noise is not divided by √n. Indoors a phone reports the same wrong spot
 for minutes, so its errors are correlated and many fixes place a stay no better
 than its best few. Crediting √n called the two halves of one night at Home
 fifteen standard deviations apart. -/
@@ -410,7 +410,7 @@ def checkTeleports (legs : Array Leg) (fixes : Array AccFix) : Array Violation :
 
 The rail chain: assert continuity only when both endpoints are determinable and
 nothing has relocated the user since the previous train. A leg with no
-determinable alight BREAKS the chain rather than being asserted across. -/
+determinable alight breaks the chain rather than being asserted across. -/
 def checkWorldlineFeasibility (legs : Array Leg) (points : Array Fix)
     (steps : Array StepPoint) (lineStations : LineMembership)
     (accFixes : Array AccFix := #[]) : Array Violation := Id.run do
@@ -448,7 +448,7 @@ def checkWorldlineFeasibility (legs : Array Leg) (points : Array Fix)
 
 /-! ## Witnesses
 
-⚠ SYNTHETIC ONLY: coordinates are a bare degree grid and station names
+⚠ synthetic only: coordinates are a bare degree grid and station names
 are Greek letters, so nothing here carries a real place.
 
 `rust/backend/tests/corpus/feasibility.rs` runs it over the real corpus,
@@ -461,8 +461,8 @@ private def fx (ts : Int) (lon : Float) : Fix := { ts, lat := 0, lon }
 private def lg (s e : Int) (m : String) (w : Option String := none) : Leg :=
   { startTs := s, endTs := e, mode := m, wayName := w }
 
--- Equirectangular, and at the equator that is the flat answer. ⚠ 1111.95 m, not
--- 1113.19: `EARTH_R_M` is the MEAN radius 6371000, not the WGS84 equatorial one.
+-- Equirectangular, and at the equator that is the flat answer. 1111.95 m, not
+-- 1113.19: `EARTH_R_M` is the mean radius 6371000, not the WGS84 equatorial one.
 #guard (fixDistanceM (fx 0 0) (fx 0 0.01) - 1111.95).abs < 0.5
 #guard fixDistanceM (fx 0 0) (fx 0 0) == 0
 
@@ -473,25 +473,25 @@ private def fastWalk : Array Fix := #[fx 0 0, fx 30 0.01, fx 60 0.02]
 #guard (worstVehiclePacedRun fastWalk).isSome
 #guard (checkModeKinematics #[lg 0 60 "walking"] fastWalk).size == 1
 #guard (checkModeKinematics #[lg 0 60 "walking"] fastWalk)[0]!.kind == .impossibleModeKinematics
--- ⚠ ONE fast step is a GPS reacquire teleport, not a ride.
+-- One fast step is a GPS reacquire teleport, not a ride.
 #guard (worstVehiclePacedRun #[fx 0 0, fx 30 0.01]) == none
--- ⚠ NET displacement, not distance travelled: jitter is fast and goes nowhere.
+-- Net displacement, not distance travelled: jitter is fast and goes nowhere.
 #guard (worstVehiclePacedRun #[fx 0 0, fx 30 0.01, fx 60 0]) == none
 -- Walking pace never asserts, however long it runs.
 #guard (worstVehiclePacedRun #[fx 0 0, fx 3000 0.01, fx 6000 0.02]) == none
--- ⚠ ONLY `walking` IS ASSERTED — a stationary leg's blackout fixes can teleport
+-- Only `walking` is asserted — a stationary leg's blackout fixes can teleport
 -- in consistent pairs, so asserting there would not be zero-false-positive.
 #guard (checkModeKinematics #[lg 0 60 "stationary"] fastWalk).size == 0
 #guard (checkModeKinematics #[lg 0 60 "train"] fastWalk).size == 0
 #guard (checkModeKinematics #[lg 0 60 "driving"] fastWalk).size == 0
--- …but the MEASUREMENT stays available on those modes, which is why
+-- …but the measurement stays available on those modes, which is why
 -- `worstVehiclePacedRun` is exported separately from the assertion.
 #guard (worstVehiclePacedRun fastWalk).isSome
 -- Fixes outside the leg's window are not its evidence.
 #guard (checkModeKinematics #[lg 100 200 "walking"] fastWalk).size == 0
 -- Stepped through at walking cadence, the run is the fixes moving: no violation.
 #guard (checkModeKinematics #[lg 0 60 "walking"] fastWalk #[⟨0, 120⟩, ⟨60, 118⟩]).size == 0
--- ⚠ One minute of it ridden, or unmeasured, and it asserts.
+-- One minute of it ridden, or unmeasured, and it asserts.
 #guard (checkModeKinematics #[lg 0 60 "walking"] fastWalk #[⟨0, 120⟩, ⟨60, 4⟩]).size == 1
 #guard (checkModeKinematics #[lg 0 60 "walking"] fastWalk #[⟨0, 120⟩]).size == 1
 
@@ -503,16 +503,16 @@ private def cadence (spm : Float) : Array StepPoint :=
   #[{ ts := 0, steps := spm }, { ts := 60, steps := spm }, { ts := 120, steps := spm },
     { ts := 180, steps := spm }]
 #guard (checkVehiclePedestrianRuns #[lg 0 200 "train"] slowTrain (cadence 110)).size == 1
--- ⚠ ALL FOUR SIGNALS MUST AGREE. Cadence separates a walk from a crawling
+-- All four signals must agree. Cadence separates a walk from a crawling
 -- train, and a seated rider shows near-zero steps.
 #guard (checkVehiclePedestrianRuns #[lg 0 200 "train"] slowTrain (cadence 5)).size == 0
--- ⚠ NO STEP DATA IS NOT ZERO CADENCE — it asserts nothing at all.
+-- No step data is not zero cadence — it asserts nothing at all.
 #guard (checkVehiclePedestrianRuns #[lg 0 200 "train"] slowTrain #[]).size == 0
 #guard meanCadenceSpm #[] 0 200 == none
 #guard meanCadenceSpm (cadence 60) 0 120 == some 60
 -- A window no bucket overlaps is unknown, not zero.
 #guard meanCadenceSpm (cadence 60) 100000 100200 == none
--- ⚠ TRAIN ONLY. Buses and cars genuinely crawl in traffic, where a bumpy
+-- Train only. Buses and cars genuinely crawl in traffic, where a bumpy
 -- ride's phantom wrist-cadence could false-positive.
 #guard (checkVehiclePedestrianRuns #[lg 0 200 "bus"] slowTrain (cadence 110)).size == 0
 #guard (checkVehiclePedestrianRuns #[lg 0 200 "driving"] slowTrain (cadence 110)).size == 0
@@ -524,13 +524,13 @@ private def cadence (spm : Float) : Array StepPoint :=
 private def served : LineMembership := #[("Red Line", #["Alpha", "Beta"])]
 #guard (checkRailTriples #[lg 0 9 "train" (some "Alpha → Beta · Red Line")] served).size == 0
 #guard (checkRailTriples #[lg 0 9 "train" (some "Alpha → Gamma · Red Line")] served).size == 1
--- BOTH endpoints are checked, so a leg wrong at both ends reports twice.
+-- Both endpoints are checked, so a leg wrong at both ends reports twice.
 #guard (checkRailTriples #[lg 0 9 "train" (some "Delta → Gamma · Red Line")] served).size == 2
 -- Case and surrounding space do not matter.
 #guard (checkRailTriples #[lg 0 9 "train" (some "alpha → BETA · Red Line")] served).size == 0
--- ⚠ AN UNKNOWN LINE CANNOT ASSERT — absence from the mirror is not evidence.
+-- An unknown line cannot assert — absence from the mirror is not evidence.
 #guard (checkRailTriples #[lg 0 9 "train" (some "Alpha → Gamma · Blue Line")] served).size == 0
--- ⚠ AND AN EMPTY LIST MEANS UNKNOWN, NOT "SERVES NOTHING". Four such entries
+-- And an empty list means unknown, not "serves nothing". Four such entries
 -- exist across the 42 corpus days; without this guard every leg on such a line
 -- is a violation.
 #guard (checkRailTriples #[lg 0 9 "train" (some "Alpha → Beta · Grey Line")]
@@ -551,17 +551,17 @@ private def chain (ls : List Leg) : Array Violation :=
     == .railDiscontinuity
 -- Boarding where you alighted is continuous.
 #guard (chain [lg 0 9 "train" (some "Alpha → Beta"), lg 9 18 "train" (some "Beta → Gamma")]).size == 0
--- ⚠ A STAY DOES NOT RELOCATE YOU — the chain survives it and still asserts.
+-- A stay does not relocate you — the chain survives it and still asserts.
 #guard (chain [lg 0 9 "train" (some "Alpha → Beta"), lg 9 18 "stationary",
                lg 18 27 "train" (some "Gamma → Delta")]).size == 1
 #guard (chain [lg 0 9 "train" (some "Alpha → Beta"), lg 9 18 "sleeping",
                lg 18 27 "train" (some "Gamma → Delta")]).size == 1
--- ⚠ A WALK DOES — you could legitimately have walked to another station.
+-- A walk does — you could legitimately have walked to another station.
 #guard (chain [lg 0 9 "train" (some "Alpha → Beta"), lg 9 18 "walking",
                lg 18 27 "train" (some "Gamma → Delta")]).size == 0
 #guard (chain [lg 0 9 "train" (some "Alpha → Beta"), lg 9 18 "driving",
                lg 18 27 "train" (some "Gamma → Delta")]).size == 0
--- ⚠ AN UNDETERMINABLE PAIR BREAKS THE CHAIN rather than asserting across it.
+-- An undeterminable pair breaks the chain rather than asserting across it.
 #guard (chain [lg 0 9 "train" (some "Red Line"), lg 9 18 "train" (some "Gamma → Delta")]).size == 0
 #guard (chain [lg 0 9 "train" (some "Alpha → Beta"), lg 9 18 "train" (some "Red Line"),
                lg 18 27 "train" (some "Gamma → Delta")]).size == 0
@@ -570,7 +570,7 @@ private def chain (ls : List Leg) : Array Violation :=
 #guard (chain [lg 0 9 "train" (some "Alpha → Alpha")])[0]!.kind == .degenerateTrainLeg
 #guard (chain []).size == 0
 
--- The whole check composes, and each input's ABSENCE silences exactly its own
+-- The whole check composes, and each input's absence silences exactly its own
 -- invariant — the zero-false-positive rule applied to missing data.
 #guard (checkWorldlineFeasibility #[lg 0 60 "walking"] fastWalk #[] #[]).size == 1
 #guard (checkWorldlineFeasibility #[lg 0 60 "walking"] #[] #[] #[]).size == 0
@@ -591,7 +591,7 @@ private def atCafe : Array AccFix := (Array.range 16).map fun k => af (Int.ofNat
 -- The café, then a promenade named 445 m away, then the café: two jumps.
 #guard (checkTeleports #[stay 0 300 "Café" (some 0), stay 300 600 "Promenade" (some 0.004),
     stay 600 900 "Café" (some 0)] atCafe).map (·.kind) == #[.teleport, .teleport]
--- ⚠ WITHOUT the asked-for position the stays sit where their fixes are — all at
+-- Without the asked-for position the stays sit where their fixes are — all at
 -- the café — so a name 445 m off is invisible. The position is the claim.
 #guard (checkTeleports #[stay 0 300 "Café", stay 300 600 "Promenade", stay 600 900 "Café"]
     atCafe).size == 0
@@ -600,7 +600,7 @@ private def atCafe : Array AccFix := (Array.range 16).map fun k => af (Int.ofNat
 -- A walk between relocates him.
 #guard (checkTeleports #[stay 0 300 "Café" (some 0), lg 300 400 "walking",
     stay 400 600 "Promenade" (some 0.004)] atCafe).size == 0
--- ⚠ UNOBSERVED TIME CAN HIDE THE WALK: half an hour of `unknown` reaches 7.5 km.
+-- Unobserved time can hide the walk: half an hour of `unknown` reaches 7.5 km.
 #guard (checkTeleports #[stay 0 300 "Café" (some 0), lg 300 2100 "unknown",
     stay 2100 2400 "Promenade" (some 0.004)] atCafe).size == 0
 -- …but a minute of it reaches 250 m, short of 445.
@@ -611,7 +611,7 @@ private def atCafe : Array AccFix := (Array.range 16).map fun k => af (Int.ofNat
     ((Array.range 16).map fun k => af (Int.ofNat k * 60) 0 300)).size == 0
 -- A stay with no fixes has no noise to judge by, and is not judged.
 #guard (checkTeleports #[stay 0 300 "Café" (some 0), stay 300 600 "Promenade" (some 0.004)] #[]).size == 0
--- ⚠ Sixteen fixes at 10 m place the stay within 10 m, not 2.5.
+-- Sixteen fixes at 10 m place the stay within 10 m, not 2.5.
 #guard (stayLocation atCafe).any fun (_, n) => (n - 10).abs < 1e-9
 -- The weight is 1/accuracy²: one 10 m fix outweighs a 100 m fix a hundredfold.
 #guard match stayLocation #[af 0 0 10, af 60 0.01 100] with

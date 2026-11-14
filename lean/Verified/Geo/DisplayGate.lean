@@ -20,7 +20,7 @@ to the raw fixes:
    stray off-network, the match must follow the network better, and the match
    must stay faithful to where the GPS was;
 4. `spliceMatchedWithDivergentRuns` — the salvage for a match rejected on a
-   LOCAL divergence: keep the matched line where the fixes support it, splice
+   local divergence: keep the matched line where the fixes support it, splice
    the raw fixes back in over each contiguous run that leaves it.
 
 All of it is pure geometry, so all of it ports. Two notes:
@@ -174,7 +174,7 @@ def NearGrid.nearestDist (g : NearGrid) (lat lon : Float) (clampM : Float := pos
     -- Rings past the occupied bounding box (plus one) cannot contain a bucket.
     let maxK :=
       (max (cy - g.minCy) (max (g.maxCy - cy) (max (cx - g.minCx) (max (g.maxCx - cx) 0)))) + 1
-    -- …and rings CLOSER than the box cannot either: a ring at Chebyshev distance
+    -- …and rings closer than the box cannot either: a ring at Chebyshev distance
     -- `k` meets the occupied box only once `k` reaches the box's own Chebyshev
     -- distance. Starting there is exact — the skipped rings hold no buckets — and
     -- it is what stops a far probe walking every empty ring in between.
@@ -185,7 +185,7 @@ def NearGrid.nearestDist (g : NearGrid) (lat lon : Float) (clampM : Float := pos
     for kn in [minK.toNat:maxK.toNat + 1] do
       let k : Int := Int.ofNat kn
       if (Float.ofInt k - RING_STOP_MARGIN) * g.cellM ≥ min best clampM then break
-      -- Cells at Chebyshev distance exactly k, INTERSECTED with the occupied
+      -- Cells at Chebyshev distance exactly k, intersected with the occupied
       -- box. Clipping is what bounds the work: a ring at distance k has 8k
       -- cells, so a far probe walking whole rings stays quadratic in the
       -- distance even once the empty inner rings are skipped. Cells outside the
@@ -299,16 +299,16 @@ structure DisplayMatchDecision where
   rawOffRoadM : Float
   matchedOffRoadM : Float
   strayM : Float
-  /-- How far the MATCHED line travels while making no progress along the GPS
+  /-- How far the matched line travels while making no progress along the GPS
   corridor — the path→fixes direction `strayM` cannot see. -/
   stallM : Float
-  /-- True when the match both stalls badly AND draws more than the pedometer
+  /-- True when the match both stalls badly and draws more than the pedometer
   justifies. Only the conjunction rejects; see `matchImprovesDisplay`. -/
   detour : Bool
-  /-- Building-crossing badness of the RAW line and of the MATCHED line (m), and
-  whether the BUILDING ground alone admitted this match.
+  /-- Building-crossing badness of the raw line and of the matched line (m), and
+  whether the building ground alone admitted this match.
 
-  ⚠ Defaulted, so a caller that passes no buildings — the road matcher — gets
+  Defaulted, so a caller that passes no buildings — the road matcher — gets
   `buildingGround = false` and is bit-for-bit unchanged. -/
   rawBuildingM : Float := 0
   matchedBuildingM : Float := 0
@@ -341,12 +341,12 @@ def matchImprovesDisplay (fixes matchedPath : Array Pt) (ways : Ways)
   let matchedOffRoadM := maxPolylineOffRoad matchedPath ways 15 index
   let strayM := quantilePointDistToPolyline fixes matchedPath strayQuantile
   let stallM := Verified.Geo.CorridorStall.maxCorridorStall fixes stallPath
-  -- ⚠ Stall is measured on `stallPath`, the line that gets drawn, while the
+  -- Stall is measured on `stallPath`, the line that gets drawn, while the
   -- other three clauses stay on `matchedPath` (the coarse route) so the gate,
   -- the salvage and the refinement agree about the route. Stall is about the
   -- geometry a person looks at, and the two diverge: a coarse route can stall
   -- under 200 m while its drawn line stalls 690 m.
-  -- ⚠ The conjunction is the point, and each half alone is wrong. Over the
+  -- The conjunction is the point, and each half alone is wrong. Over the
   -- blessed walks carrying both figures:
   --   over `overBudgetRatio` alone      15 walks
   --   stall over `maxStallM` alone       3 walks
@@ -356,7 +356,7 @@ def matchImprovesDisplay (fixes matchedPath : Array Pt) (ways : Ways)
   -- stall, which is inside its budget (866 m drawn against 1147 m justified)
   -- and is not a detour.
   --
-  -- ⚠ NO STEP DATA MEANS NO VETO. `none` fails OPEN: the claim being made is
+  -- No step data means no veto. `none` fails open: the claim being made is
   -- "those metres were not walked", and the pedometer is the only witness for
   -- it. Without one there is no evidence, and a gate that vetoes on absent
   -- evidence rejects legitimate matches on quiet days.
@@ -364,21 +364,21 @@ def matchImprovesDisplay (fixes matchedPath : Array Pt) (ways : Ways)
     | some b => b > 0 && polylineLength stallPath > b * overBudgetRatio
     | none => false
   let detour := stallM > maxStallM && overBudget
-  -- ⚠ Two grounds, and the second is not a loosened first. The off-road
+  -- Two grounds, and the second is not a loosened first. The off-road
   -- ground asks whether the match moves the line back onto the network. A line
   -- can already be on the network and still cut a building corner, and its
   -- off-road figure has nothing left to improve, so the only ground it could
   -- meet is one about walls (as on 06-15: `offPath 25.8 -> 0.0` with
   -- `rawOffRoadM` unmoved).
   let offRoadGround := rawOffRoadM > needsMatchM && matchedOffRoadM < rawOffRoadM
-  -- ⚠ `≤`, not `<`. The building ground's claim is that the match stops going
-  -- through walls; requiring it to ALSO improve the off-road figure would be
+  -- `≤`, not `<`. The building ground's claim is that the match stops going
+  -- through walls; requiring it to also improve the off-road figure would be
   -- requiring the first ground again, and nothing would ever reach here.
   let buildingGround := rawBuildingM - matchedBuildingM > minBuildingGainM
                         && matchedOffRoadM ≤ rawOffRoadM
-  -- ⚠ MONOTONE-ADDITIVE: `A∧B` became `(A∧B)∨(D∧E)`, so this can only turn a
-  -- decline INTO a use. The 45 walks the matcher already corrects cannot move,
-  -- which is why only the NEW admissions needed adjudicating.
+  -- Monotone-additive: `A∧B` became `(A∧B)∨(D∧E)`, so this can only turn a
+  -- decline into a use. The 45 walks the matcher already corrects cannot move,
+  -- which is why only the new admissions needed adjudicating.
   { use := (offRoadGround || buildingGround) && strayM ≤ maxStrayM && !detour
     rawOffRoadM, matchedOffRoadM, strayM, stallM, detour
     rawBuildingM, matchedBuildingM, buildingGround }
@@ -447,7 +447,7 @@ private def slicePathByArc (path : Array MPt) (cum : Array Float) (s0 s1 : Float
   return out
 
 /--
-Salvage a match the stray gate rejected for a LOCAL divergence: keep the matched
+Salvage a match the stray gate rejected for a local divergence: keep the matched
 line over the spans the fixes support, splice the raw fixes back in over each
 contiguous run that genuinely leaves the matched path (an unmapped station
 forecourt / courtyard the network has no way through).
@@ -472,7 +472,7 @@ def spliceMatchedWithDivergentRuns (fixes matchedPath : Array MPt) (maxStrayM : 
   if nDivergent == 0 then return none
   if Float.ofNat (fixes.size - nDivergent) / Float.ofNat fixes.size < spliceMinSupportedFraction then
     return none
-  -- Forecourt signature only: the divergence must be NEAR the network (not a
+  -- Forecourt signature only: the divergence must be near the network (not a
   -- teleport smear) and coherent (few contiguous runs, not jitter).
   for hm_k : k in [0:fixes.size] do
     have hk : k < fixes.size := hm_k.upper
@@ -501,7 +501,7 @@ def spliceMatchedWithDivergentRuns (fixes matchedPath : Array MPt) (maxStrayM : 
     else
       let s0 := (proj[i]?.map (·.2)).getD 0
       let s1 := (proj[j]?.map (·.2)).getD 0
-      -- A supported run that walks BACKWARD along the path is not a clean local
+      -- A supported run that walks backward along the path is not a clean local
       -- divergence — bail rather than draw a scrambled line.
       if s1 < s0 then return none
       out := out ++ slicePathByArc matchedPath cum s0 s1
@@ -674,15 +674,15 @@ private def dNoFixes := matchImprovesDisplay #[] routed geoWays 10 25 routed non
 -- (`dRoutes.use == true`): it routes around a block the raw line cut through,
 -- which is what the gate is for, so the veto must not fire on it by accident.
 --
--- ⚠ EACH HALF ALONE MUST NOT REJECT. A budget it exceeds, but a stall bar it
+-- Each half alone must not reject. A budget it exceeds, but a stall bar it
 -- clears:
 #guard (matchImprovesDisplay cutting routed geoWays 10 200 routed (some 1) 200 1.5).use == true
 -- …and a stall bar it trips, with no budget to contradict it:
 #guard (matchImprovesDisplay cutting routed geoWays 10 200 routed none 0 1.5).use == true
--- ⚠ Both together, and only then, refuse it.
+-- Both together, and only then, refuse it.
 -- The detour veto.
 --
--- ⚠ A LEGITIMATE REROUTE HAS NO STALL, which is why the veto can be sharp.
+-- A legitimate reroute has no stall, which is why the veto can be sharp.
 -- `routed` goes round the block the raw line cut through — the case the gate
 -- exists for — and its corridor advances the whole way.
 #guard approx dRoutes.stallM 0
@@ -693,38 +693,38 @@ private def dNoFixes := matchImprovesDisplay #[] routed geoWays 10 25 routed non
 -- three original clauses all pass. Only the path→fixes direction can see it.
 private def routedLoop : Array Pt :=
   #[P 0 0, P 0 200, P 100 200, P 100 0, P 0 0, P 0 200, P 100 200]
--- ⚠ BOUNDED, NOT PINNED TO THE BIT. The other figures in this file are exact
+-- Bounded, not pinned to the bit. The other figures in this file are exact
 -- because they were read off a real evaluation; these two are a synthetic loop
 -- whose last digits mean nothing, and writing digits the printer had already
--- rounded is how this guard first failed. What matters is the ORDER: ~400 m of
+-- rounded is how this guard first failed. What matters is the order: ~400 m of
 -- stall on a ~900 m line.
 #guard
   let d := (matchImprovesDisplay cutting routedLoop geoWays 10 500 routedLoop none 200 1.5).stallM
   d > 399.9 && d < 400.1
 #guard polylineLength routedLoop > 899.9 && polylineLength routedLoop < 900.1
 --
--- ⚠ THE THREE FIXTURES BELOW DIFFER ONLY IN THE PEDOMETER. Same match, same
+-- The three fixtures below differ only in the pedometer. Same match, same
 -- stall, same geometry — so this pins that the budget is doing the deciding
 -- and the stall bar alone is not.
 --
--- No step data: fails OPEN. The claim is "those metres were not walked" and
+-- No step data: fails open. The claim is "those metres were not walked" and
 -- there is no witness for it.
 #guard (matchImprovesDisplay cutting routedLoop geoWays 10 500 routedLoop none 200 1.5).use == true
 -- Steps justify 700 m x 1.5 = 1050 m, and the line is 900 m. Within budget, so
 -- the loop is a walk that really happened — no veto, however it stalls.
 #guard (matchImprovesDisplay cutting routedLoop geoWays 10 500 routedLoop (some 700) 200 1.5).use == true
--- Steps justify 400 m x 1.5 = 600 m against a 900 m line. NOW the pedometer
+-- Steps justify 400 m x 1.5 = 600 m against a 900 m line. Now the pedometer
 -- contradicts the drawing, and with the stall it is a detour.
 #guard (matchImprovesDisplay cutting routedLoop geoWays 10 500 routedLoop (some 400) 200 1.5).use == false
 #guard (matchImprovesDisplay cutting routedLoop geoWays 10 500 routedLoop (some 400) 200 1.5).detour == true
--- ⚠ AND THE STALL HALF IS LOAD-BEARING TOO: the same over-budget line with a
--- stall bar it clears is kept. Over-budget ALONE rejects 15 of the corpus's
+-- And the stall half is load-bearing too: the same over-budget line with a
+-- stall bar it clears is kept. Over-budget alone rejects 15 of the corpus's
 -- 235 walks; the conjunction rejects 2.
 #guard (matchImprovesDisplay cutting routedLoop geoWays 10 500 routedLoop (some 400) 500 1.5).use == true
--- ⚠ A ZERO BUDGET IS NOT EVIDENCE OF OVER-DRAWING — `b > 0` guards the ratio,
+-- A zero budget is not evidence of over-drawing — `b > 0` guards the ratio,
 -- or a leg with no recorded steps reads as infinitely over budget.
 #guard (matchImprovesDisplay cutting routedLoop geoWays 10 500 routedLoop (some 0) 200 1.5).use == true
--- ⚠ A ZERO OR ABSENT BUDGET IS NOT EVIDENCE OF OVER-DRAWING. `b > 0` guards
+-- A zero or absent budget is not evidence of over-drawing. `b > 0` guards
 -- the ratio: a leg with no recorded steps would otherwise read as infinitely
 -- over budget and be vetoed for having no data.
 #guard (matchImprovesDisplay cutting routed geoWays 10 200 routed (some 0) 0 1.5).use == true

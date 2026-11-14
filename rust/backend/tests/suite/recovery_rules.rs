@@ -1,6 +1,6 @@
 //! The raw recovery numbers coach reads.
 //!
-//! ⚠ These are NUMBERS, never a readiness score. health does not know what
+//! These are numbers, never a readiness score. health does not know what
 //! readiness means; coach composes it. Two apps scoring the same nights would
 //! drift on what a bad day is, and the athlete would be told two things.
 
@@ -14,7 +14,7 @@ fn s(pairs: &[(&str, Option<f64>)]) -> Vec<(String, Option<f64>)> {
     pairs.iter().map(|(d, v)| ((*d).to_string(), *v)).collect()
 }
 
-/// ⚠ ONE reading has NO baseline, and the mean is that reading rather than
+/// One reading has no baseline, and the mean is that reading rather than
 /// zero. A zero mean would make the first reading look enormously above
 /// baseline; this way any z-score the caller derives is 0, and `n` says why.
 #[test]
@@ -29,7 +29,7 @@ fn a_single_reading_is_its_own_baseline() {
     assert_eq!(hrv.n, 0, "n is how the caller knows not to trust a z-score");
 }
 
-/// A no-wear night is DROPPED, not counted as zero — a missing night is not a
+/// A no-wear night is dropped, not counted as zero — a missing night is not a
 /// night of no sleep.
 #[test]
 fn a_missing_night_is_not_a_zero() {
@@ -54,7 +54,7 @@ fn a_missing_night_is_not_a_zero() {
     assert_eq!(hrv.n, 1);
 }
 
-/// ⚠ A question about a PAST morning must not see the future. Coach's ledger
+/// A question about a past morning must not see the future. Coach's ledger
 /// asks what was known that day; leaking later readings would let it judge a
 /// session against information nobody had.
 #[test]
@@ -99,7 +99,7 @@ fn the_baseline_window_is_bounded_at_both_ends() {
     );
 }
 
-/// ⚠ A too-wide or backwards range is REFUSED, not truncated. Returning 400
+/// A too-wide or backwards range is refused, not truncated. Returning 400
 /// days for a decade-wide request would look complete to the caller.
 #[test]
 fn an_unanswerable_span_is_refused() {

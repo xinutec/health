@@ -1,6 +1,6 @@
 //! `/api/status` parsing: the slot protocol Overpass publishes.
 //!
-//! ⚠ The bodies here are real. The first is what `overpass-api.de` returned to
+//! The bodies here are real. The first is what `overpass-api.de` returned to
 //! isis, pasted unedited apart from the client id. The exhausted shapes are the
 //! documented ones. A hand-invented status page would test the parser against
 //! this file's author rather than against the server.
@@ -26,7 +26,7 @@ fn two_slots_free_is_no_wait() {
     );
 }
 
-/// ⚠ THE REASON THE LIMIT IS CARRIED AT ALL. Two is the number the refresh was
+/// The reason the LIMIT is carried at all. Two is the number the refresh was
 /// violating eighteen times a night; a parser that dropped it would leave the
 /// operator's log unable to say what the ceiling was.
 #[test]
@@ -53,7 +53,7 @@ fn no_slots_waits_for_the_soonest() {
     );
 }
 
-/// ⚠ `0 slots available now.` CAN APPEAR ALONGSIDE the release lines, and the
+/// `0 slots available now.` can appear alongside the release lines, and the
 /// zero must not read as "no information".
 #[test]
 fn an_explicit_zero_still_takes_the_wait() {
@@ -73,7 +73,7 @@ fn one_slot_is_singular_and_still_free() {
     assert_eq!(s.next_in_s, None, "a free slot is not a wait");
 }
 
-/// ⚠ A CHANGED STATUS PAGE MUST NOT STOP THE REFRESH. `None` means "no opinion",
+/// A changed status page must not stop the refresh. `None` means "no opinion",
 /// and the caller proceeds — the breaker and the deadline are what protect the
 /// run. Returning a wait here would let an unrelated HTML error page halt a
 /// nightly job.
@@ -86,7 +86,7 @@ fn something_that_is_not_a_status_page_has_no_opinion() {
     assert_eq!(parse_status(""), None);
 }
 
-/// ⚠ THE SECONDS COME FROM `in N seconds`, NEVER from the timestamp. This body
+/// The seconds come from `in N seconds`, never from the timestamp. This body
 /// quotes a moment in 2019; a parser subtracting it from the local clock would
 /// compute a wait of years out of an answer that says seven seconds.
 #[test]

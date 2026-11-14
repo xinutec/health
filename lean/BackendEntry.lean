@@ -34,7 +34,7 @@ import Verified.VelocityCache
 decisions in `Verified.Session` and its siblings are called by the backend
 rather than reimplemented beside it.
 
-⚠ A `lean_lib`, not a `lean_exe`: an exe's root module emits `main`, and an
+A `lean_lib`, not a `lean_exe`: an exe's root module emits `main`, and an
 archive carrying `_main` silently wins the link in a foreign host, answering
 from the wrong entry point.
 
@@ -80,7 +80,7 @@ private def optStr : Option String → Json
 
 /-- `[{"date": …, "grams": …, "ts": …}, …]`.
 
-⚠ Every field is required, and a malformed element refuses the whole call: a
+Every field is required, and a malformed element refuses the whole call: a
 dropped weigh-in can move the `replaceFrom` boundary later, leaving stale
 forward-filled rows it should have deleted. -/
 private def weighIns? (j : Json) : Option (List Verified.Weight.Weigh) :=
@@ -112,7 +112,7 @@ private def weighJson (w : Verified.Weight.Weigh) : Json :=
 
 /-- A required array of strings.
 
-⚠ A non-string element refuses the whole array: these are column type names,
+A non-string element refuses the whole array: these are column type names,
 and a skipped one would shift every later column onto the wrong shape. -/
 private def strs? (j : Json) (k : String) : Option (List String) :=
   match j.getObjVal? k with
@@ -133,7 +133,7 @@ private def ints? (j : Json) (k : String) : Option (List Int) :=
     | .ok arr => arr.toList.mapM fun e =>
       match e.getInt? with | .ok i => some i | .error _ => none
 
-/-- An OPTIONAL integer, where absent and `null` both mean absent. Distinct
+/-- An optional integer, where absent and `null` both mean absent. Distinct
 from `int?` failing on a wrong type: `seedUtc` is legitimately absent when the
 wall clock did not parse, and that is a decision input rather than a bad call. -/
 private def optInt? (j : Json) (k : String) : Option Int :=
@@ -144,8 +144,8 @@ private def optInt? (j : Json) (k : String) : Option Int :=
 def dispatch (j : Json) : Json :=
   match str? j "op" with
   | none => err "missing op"
-  -- Both answers in ONE call, deliberately: the delete boundary and the rows
-  -- that replace what it deletes have to come from the SAME dedup, or the
+  -- Both answers in one call, deliberately: the delete boundary and the rows
+  -- that replace what it deletes have to come from the same dedup, or the
   -- window and its contents can disagree.
   | some "dedupeWeighIns" =>
     match weighIns? j with
@@ -165,7 +165,7 @@ def dispatch (j : Json) : Json :=
   -- `/velocity`'s cache policy: the map and the in-flight dedup stay in the
   -- host; what crosses here is how long a result may be reused.
   --
-  -- ⚠ `today` must be the viewer's local civil date, not UTC's; Lean has no
+  -- `today` must be the viewer's local civil date, not UTC's; Lean has no
   -- zone database to check it (see `Verified.VelocityCache`).
   | some "velocityTtlMs" =>
     match str? j "date", str? j "today" with
@@ -179,7 +179,7 @@ def dispatch (j : Json) : Json :=
     | some c, some n, some t =>
       Json.mkObj [("value", Json.bool (Verified.VelocityCache.isFresh c n t))]
     | _, _, _ => err "velocityCacheFresh: cachedAtMs, nowMs, ttlMs required"
-  -- ⚠ Answers "is it in the window" only. A session with no share viewer must
+  -- Answers "is it in the window" only. A session with no share viewer must
   -- not reach this, or a missing window would admit the date.
   | some "dateInShareWindow" =>
     match str? j "date", str? j "from", str? j "to" with
@@ -204,7 +204,7 @@ def dispatch (j : Json) : Json :=
     | some e, some n =>
       Json.mkObj [("value", Json.bool (Verified.Session.sessionIsValid e n))]
     | _, _ => err "sessionIsValid: expiresAtMs, nowMs required"
-  -- ⚠ Answers "may this session do this", not "is there a session": `true` is
+  -- Answers "may this session do this", not "is there a session": `true` is
   -- not permission, and the caller's own session gate runs first.
   | some "mayProceed" =>
     match j.getObjVal? "isShareViewer" >>= (·.getBool?) |>.toOption,
@@ -215,7 +215,7 @@ def dispatch (j : Json) : Json :=
     | _, _, _, _ => err "mayProceed: isShareViewer, hidesLocation, method, path required"
   -- The multi-day API window.
   --
-  -- ⚠ `days` is validated, not clamped: `null` out means reject the request,
+  -- `days` is validated, not clamped: `null` out means reject the request,
   -- since a narrowed window would hide that the ask was impossible.
   --
   -- `days` follows JS `Number(...)`: absent is `null`, and an unparseable value
@@ -240,7 +240,7 @@ def dispatch (j : Json) : Json :=
       | none => Json.mkObj [("value", Json.null)]
       | some s => Json.mkObj [("value", Json.str s)]
     | _, _ => err "earliestVisible: today, days required"
-  -- ⚠ `daysBack ≤ 0` and an unparsable `today` both answer null, which the
+  -- `daysBack ≤ 0` and an unparsable `today` both answer null, which the
   -- caller must treat as "share disabled", not "no window".
   | some "shareableDateRange" =>
     match str? j "today", int? j "daysBack" with
@@ -275,7 +275,7 @@ def dispatch (j : Json) : Json :=
   -- How hard a phone should look for itself.
   --
   -- Takes the whole pruned history, since the decision is about a trajectory.
-  -- ⚠ Coordinates cross as IEEE-754 bit patterns: the straightness ratio
+  -- Coordinates cross as IEEE-754 bit patterns: the straightness ratio
   -- divides two haversine distances, and re-rounding moves it across the
   -- walking threshold.
   --
@@ -318,7 +318,7 @@ def dispatch (j : Json) : Json :=
   -- resolve the substring match against a cached name list here, fetch that
   -- geometry with an indexed `name IN (…)` there, then filter by proximity.
   --
-  -- ⚠ The split keeps the query indexed: a leading-wildcard `LIKE '%base%'`
+  -- The split keeps the query indexed: a leading-wildcard `LIKE '%base%'`
   -- scans every railway row, ~28 s a call, and one leg can fan out fifty.
   | some "lineNamesMatching" =>
     match str? j "line", j.getObjVal? "allNames" with
@@ -332,10 +332,10 @@ def dispatch (j : Json) : Json :=
           Json.mkObj [("value", Json.arr
             ((Verified.Geo.LineStations.lineNamesMatching line names).map Json.str))]
     | _, _ => err "lineNamesMatching: needs line and allNames"
-  -- ⚠ Order is part of the answer: journey resolution reads positions out of
+  -- Order is part of the answer: journey resolution reads positions out of
   -- this list, so the stations must arrive in the order the host read them.
   --
-  -- ⚠ Coordinates cross as IEEE-754 bit patterns: the proximity test compares
+  -- Coordinates cross as IEEE-754 bit patterns: the proximity test compares
   -- a distance against 300 m, and re-rounding moves which stations qualify.
   | some "filterStationsByLineProximity" =>
     let stationsOf : Except String (Array Verified.Geo.LineStations.StationCandidate) := do
@@ -370,7 +370,7 @@ def dispatch (j : Json) : Json :=
             , ("lonBits", Json.str (toString st.lon.toBits)) ]))]
   -- One day's decoded segments rolled up into a `presence_log` row.
   --
-  -- ⚠ Order is part of the answer: a tie on minutes keeps the place seen
+  -- Order is part of the answer: a tie on minutes keeps the place seen
   -- first, so the segments must arrive in the decoder's order, unsorted.
   | some "presenceRow" =>
     let segsOf : Except String (List Verified.PresenceLog.Segment) := do
@@ -407,10 +407,10 @@ def dispatch (j : Json) : Json :=
   -- The venues near a stay, which put a venue name on a timeline instead of a
   -- bare "stationary".
   --
-  -- ⚠ Distances cross as IEEE-754 bit patterns: the enclosing-institution rule
+  -- Distances cross as IEEE-754 bit patterns: the enclosing-institution rule
   -- compares one against 80 m.
   | some "shapeLandmarks" =>
-    -- ⚠ A tag pair is a two-element array, `["amenity", "restaurant"]`, as
+    -- A tag pair is a two-element array, `["amenity", "restaurant"]`, as
     -- `ServeEntry.tagsJson` writes it. Read as a `{k, v}` object every pair
     -- parses to nothing, no feature spawns a landmark, and every stay answers
     -- `[]`, claiming "no venues here" while every count reads as answered.
@@ -458,7 +458,7 @@ def dispatch (j : Json) : Json :=
   -- A full recompute every run, so a re-mine after a gate change is
   -- reproducible.
   --
-  -- ⚠ The output's key order is first-seen order. The blob is stored as TEXT
+  -- The output's key order is first-seen order. The blob is stored as TEXT
   -- in `venue_type_priors.priors_json`, so the same numbers in another order
   -- write a different row.
   | some "minePriors" =>
@@ -472,7 +472,7 @@ def dispatch (j : Json) : Json :=
       let lh ← match int? e "localHour" with
         | some i => pure i
         | none => throw "minePriors: a stay has no localHour"
-      -- ⚠ Required, not defaulted: a `startUnix` of 0 would make every stay
+      -- Required, not defaulted: a `startUnix` of 0 would make every stay
       -- 1970 evidence, and an as-of-the-day prior would include all of it.
       let su ← match int? e "startUnix" with
         | some i => pure i
@@ -556,7 +556,7 @@ def dispatch (j : Json) : Json :=
   -- `parseLineMemberships`, the 5-dp `nodeKey` that fuses ways meeting at a
   -- junction, and the 150 m station merge are all below.
   | some "buildWireGraph" =>
-    -- ⚠ Floats cross as IEEE-754 bit patterns: a re-rounded coordinate moves a
+    -- Floats cross as IEEE-754 bit patterns: a re-rounded coordinate moves a
     -- node's 5-dp key, its identity, and junctions stop fusing.
     let jb (v : Json) : Except String Float :=
       match v.getStr? with
@@ -631,7 +631,7 @@ def dispatch (j : Json) : Json :=
       let nm ← need "name"
       let ty ← need "type"
       let sub ← need "subtype"
-      -- ⚠ The field is `distanceM`, a bit-pattern string: the Rust
+      -- The field is `distanceM`, a bit-pattern string: the Rust
       -- `shape_landmarks` wrapper renames `shapeLandmarks`' `distanceMBits` to
       -- it, because `DayEntry.parsePoi` and the trace-fed fold read that name.
       -- Reading `distanceMBits` here refused every landmark.
@@ -704,7 +704,7 @@ def dispatch (j : Json) : Json :=
           | some k => Json.str (Verified.Geo.VenuePrior.categoryOfSubtype k)) ]
   -- Which mined place is the user standing in?
   --
-  -- Nearest within the radius, not highest-ranked. ⚠ Coordinates cross as
+  -- Nearest within the radius, not highest-ranked. Coordinates cross as
   -- IEEE-754 bit patterns: the seventh decimal of a fix moves the answer.
   | some "pickCurrentPlace" =>
     match str? j "latBits", str? j "lonBits" with
@@ -743,7 +743,7 @@ def dispatch (j : Json) : Json :=
   -- Numbers, never a readiness score: coach owns that judgement, and two apps
   -- scoring it would drift.
   --
-  -- ⚠ Floats cross as IEEE-754 bit patterns: `Lean.JsonNumber` prints six
+  -- Floats cross as IEEE-754 bit patterns: `Lean.JsonNumber` prints six
   -- places, so a JSON number would re-round every value.
   | some "recoveryAsOf" =>
     match str? j "day" with
@@ -825,7 +825,7 @@ def dispatch (j : Json) : Json :=
     Json.mkObj [("value", Json.num Verified.Login.PENDING_TTL_MS)]
   -- The PhoneTrack filter's start date.
   --
-  -- ⚠ `hour` and `(y, m, d)` are local: Lean has no zone database, so the host
+  -- `hour` and `(y, m, d)` are local: Lean has no zone database, so the host
   -- resolves them, and UTC parts would shift the 06:00 boundary.
   | some "phonetrackDatemin" =>
     match int? j "y", int? j "m", int? j "d", int? j "hour" with
@@ -846,7 +846,7 @@ def dispatch (j : Json) : Json :=
     match str? j "baseUrl", str? j "token" with
     | some b, some t => Json.mkObj [("value", Json.str (Verified.Share.buildShareUrl b t))]
     | _, _ => err "buildShareUrl: baseUrl, token required"
-  -- ⚠ Clamps, where `validateDays` rejects. `null` here means the value was not
+  -- Clamps, where `validateDays` rejects. `null` here means the value was not
   -- a finite number; out of range is narrowed.
   | some "clampShareDaysBack" =>
     match Verified.Share.clampShareDaysBack (optInt? j "daysBack") with
@@ -854,14 +854,14 @@ def dispatch (j : Json) : Json :=
     | some n => Json.mkObj [("value", Json.num n)]
   -- Whether a linked account is working.
   --
-  -- ⚠ `stored` absent means no row, `not_linked`; an empty string would fall
+  -- `stored` absent means no row, `not_linked`; an empty string would fall
   -- through to `active`.
   | some "connectionStatus" =>
     let st := Verified.Connection.statusOf (str? j "stored")
     Json.mkObj
       [ ("value", Json.str (Verified.Connection.Status.toString st))
       , ("linked", Json.bool (Verified.Connection.isLinked st)) ]
-  -- The day BEFORE `date`. `/location/latest` and `/location/tail` fetch
+  -- The day before `date`. `/location/latest` and `/location/tail` fetch
   -- yesterday as well as today so a fix just after midnight is not the only
   -- point in the window.
   | some "prevDay" =>
@@ -888,7 +888,7 @@ def dispatch (j : Json) : Json :=
     | _, _ => err "tailAfter: tss, since required"
   -- The wire shape of a `selectAll()` row, asked once per column.
   --
-  -- ⚠ `null` means refuse the request, not render a null: an unmapped type's
+  -- `null` means refuse the request, not render a null: an unmapped type's
   -- rendering has never been checked.
   | some "rowShapes" =>
     match strs? j "types" with

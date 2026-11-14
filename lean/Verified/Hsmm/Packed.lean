@@ -17,7 +17,7 @@ scalars — for every value this decoder can produce, provided the inputs are
 bounded (`|v| ≤ pEB` for emissions, `≤ pOB` for the other tensors) and the
 day is bounded (`T ≤ pTMax`). Both are checked
 by the CLI, which refuses rather than decode outside the proven envelope.
-There is **no approximation**: `pAdd`/`Nat.max` are proved to *be* score
+There is no approximation: `pAdd`/`Nat.max` are proved to *be* score
 addition and maximum through the encoding (`enc_add`, `enc_max`), given the
 magnitude bound that `col_bounded` establishes for every trellis cell by
 induction on the recurrence.

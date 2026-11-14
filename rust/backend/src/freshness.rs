@@ -3,11 +3,11 @@
 //! # Why an outcome check and not an error check
 //!
 //! A sync stream can stop for an hour with every run exiting 0 and the only
-//! trace one ERROR line in a pod log that nothing reads (Fitbit once began
+//! trace one error line in a pod log that nothing reads (Fitbit once began
 //! quoting an integer). This asks whether each stream is current.
 //!
-//! ⚠ Watching for a known error string would not have caught it and would not
-//! catch the next one either — a stream that writes nothing WITHOUT erroring
+//! Watching for a known error string would not have caught it and would not
+//! catch the next one either — a stream that writes nothing without erroring
 //! looks identical from the outside. "Did rows arrive?" is the only question
 //! that generalises.
 
@@ -18,13 +18,13 @@ pub struct Freshness {
     pub why: &'static str,
 }
 
-/// ⚠ One bound per stream, not one for all: daily streams are same-day, `sleep`
+/// One bound per stream, not one for all: daily streams are same-day, `sleep`
 /// one night behind, and `body` can be ten days behind and perfectly healthy,
 /// since weigh-ins are irregular. A single threshold is either so loose it
 /// never fires or so tight that `body` screams forever, and an alarm that cries
 /// wolf gets muted, which is worse than no alarm.
 ///
-/// ⚠ Every bound is set ABOVE MEASURED NORMAL and each `why` carries the
+/// Every bound is set above measured normal and each `why` carries the
 /// observation, so a later reader can tell a chosen bound from an invented one.
 pub const FRESHNESS: &[Freshness] = &[
     Freshness {
@@ -116,11 +116,11 @@ pub const FRESHNESS: &[Freshness] = &[
 
 /// Why this stream is not arriving, or `None` if it is fine.
 ///
-/// ⚠ `lag` is `None` for an EMPTY table — `MAX()` over no rows is NULL. That is
-/// maximally stale, NOT a row to skip: skipping it would let a stream that never
+/// `lag` is `None` for an empty table — `MAX()` over no rows is NULL. That is
+/// maximally stale, not a row to skip: skipping it would let a stream that never
 /// arrived at all pass the check, which is the failure this exists to catch.
 ///
-/// ⚠ An UNBUDGETED table is also a failure. A stream added to the query and not
+/// An unbudgeted table is also a failure. A stream added to the query and not
 /// to [`FRESHNESS`] would otherwise be silently unwatched — the same shape of
 /// bug again, one level up.
 pub fn stale_reason(table: &str, lag: Option<i64>) -> Option<String> {

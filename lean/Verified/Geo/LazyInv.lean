@@ -180,8 +180,8 @@ theorem relaxL_inv {g : Graph} {u p : Nat} {edges : Array (Nat × Nat)}
   exact relaxList_inv _ hedge h
 
 /-- One step of the settle loop preserves the bundle at a
-possibly-larger floor and freezes every done vertex — **the settled =
-final step fact**. -/
+possibly-larger floor and freezes every done vertex — the settled =
+final step fact. -/
 theorem lstep_inv {g : Graph} {maxR L : Nat} {s : LState}
     (hwf : WFEdges g) (h : LInv g L s) :
     ∃ L', L ≤ L' ∧ LInv g L' (lstep g maxR s) ∧
@@ -298,7 +298,7 @@ theorem linit_inv {g : Graph} {src : Nat} (hsrc : src < g.n) :
     · rw [Array.getElem?_eq_none (by simpa using hvn)] at hv
       exact absurd hv (by simp)
 
-/-- **Settled = final** (the retired pin): from a valid state, once a
+/-- Settled = final (the retired pin): from a valid state, once a
 vertex is done, its `dist` and `prev` are what every later state of the
 trajectory reports — through any number of steps or fueled settles,
 hence through any interleaving of memoised `settle` calls. -/

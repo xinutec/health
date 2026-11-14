@@ -1,6 +1,6 @@
-//! A fixture carries what it was captured under, and a moved constant REFUSES.
+//! A fixture carries what it was captured under, and a moved constant refuses.
 //!
-//! ⚠ Why this test and not just the code: the thing being guarded against is a
+//! Why this test and not just the code: the thing being guarded against is a
 //! change that leaves every gate green. `ROAD_CORRIDOR_MARGIN_M` is applied
 //! inside `query_ways`, after the trace key is formed, so moving it changes what
 //! production fetches and changes nothing any fixture answers. A guard against
@@ -10,7 +10,7 @@ use serde_json::json;
 
 #[test]
 fn an_absent_stamp_is_not_a_mismatch() {
-    // ⚠ THE 42 EXISTING FIXTURES CARRY NO STAMP. Refusing them would be
+    // The 42 existing fixtures carry no stamp. Refusing them would be
     // claiming they were taken under something they never recorded, and would
     // break every gate on a change that improved nothing.
     assert!(backend::osm_trace::check_capture_inputs(&json!({})).is_ok());
@@ -51,7 +51,7 @@ fn a_moved_constant_refuses_and_says_which() {
 
 #[test]
 fn a_stamp_naming_something_this_build_lost_also_refuses() {
-    // ⚠ A constant REMOVED is as much a divergence as one moved, and the
+    // A constant removed is as much a divergence as one moved, and the
     // obvious implementation — look up each key and compare — silently passes
     // when the key is gone. This is the arm that catches that.
     let meta = json!({ "captureInputs": { "someRetiredKnob": 7 } });

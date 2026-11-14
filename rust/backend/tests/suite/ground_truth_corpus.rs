@@ -13,9 +13,9 @@
 //! filtered by name, so a real narrative that stops producing rows fails here
 //! rather than being excluded.
 //!
-//! ⚠ Unparseable is a count of rows, not of distinct shapes.
+//! Unparseable is a count of rows, not of distinct shapes.
 //!
-//! ⚠ The numbers are a tripwire, not a cross-check: there is no second
+//! The numbers are a tripwire, not a cross-check: there is no second
 //! implementation to re-derive them from. Edit a narrative and they move, which
 //! is the point. Change a constant only with the narrative edit that caused it,
 //! in the same commit, saying which rows moved and why; a constant nudged to
@@ -54,7 +54,7 @@ const POST_TS: &[&str] = &[
     // The Nonos day. It does not pin the raw-mode defect: the raw mode never
     // reaches `statesOut`.
     "2026-09-14.md",
-    // The CONTROL: no known defects, which nothing else in the corpus offers.
+    // The control: no known defects, which nothing else in the corpus offers.
     "2026-09-15.md",
     // The first day off the mirror's ground: the Eurostar to Paris, two zones,
     // the Channel Tunnel; one known miss (the St Pancras wait read as Work).
@@ -129,9 +129,9 @@ const TS_DECLARED_TZ: usize = 9;
 /// where its steps begin and the hop after it is a journey of its own.
 const TS_JOURNEYS: usize = 91;
 const TS_LEGS: usize = 248;
-/// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. The leg total could be reached with the
+/// The histogram, not just the total. The leg total could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
-/// to `stationary`, changes what a leg IS without changing how many there are.
+/// to `stationary`, changes what a leg is without changing how many there are.
 const TS_LEG_MODES: [(&str, usize); 4] =
     [("bus", 3), ("driving", 6), ("train", 82), ("walking", 157)];
 

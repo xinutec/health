@@ -2,7 +2,7 @@
 
 use backend::google::source::{Owner, STREAMS};
 
-/// ⚠ EXACTLY ONE OWNER PER STREAM. The biometric tables are
+/// Exactly one owner per stream. The biometric tables are
 /// `ON DUPLICATE KEY UPDATE`, so two writers means the last job to run wins and
 /// the value flips with scheduling. That reads as instrument noise, not as a
 /// source conflict, and is very hard to trace back.
@@ -14,7 +14,7 @@ fn no_stream_is_listed_twice() {
     }
 }
 
-/// Every entry says WHY, because the verdict alone cannot be re-judged later:
+/// Every entry says why, because the verdict alone cannot be re-judged later:
 /// "Google returns nothing" and "we have not written the client" are the same
 /// owner today and different decisions tomorrow.
 #[test]
@@ -24,7 +24,7 @@ fn every_stream_records_its_evidence() {
     }
 }
 
-/// ⚠ THE ROSTER AND THE WRITER ARE INSEPARABLE. A stream in the roster that
+/// The roster and the writer are inseparable. A stream in the roster that
 /// nothing in `google::sync` writes is served by nobody — silently, from what
 /// reads as a one-line table edit.
 #[test]
@@ -54,7 +54,7 @@ fn no_writer_without_an_owned_stream() {
     }
 }
 
-/// ⚠ A COMPUTED STREAM IS STILL ONE STREAM. `skin_temperature` is written from
+/// A computed stream is still one stream. `skin_temperature` is written from
 /// two Google fields subtracted, which is a different shape from every other
 /// writer — and exactly the kind of special case that gets flipped in the
 /// roster while the writer is still a TODO.
@@ -69,12 +69,12 @@ fn skin_temperature_is_google_owned_and_written() {
     assert!(has_writer("skin_temperature"));
 }
 
-// ⚠ NO PER-STREAM PINS HERE. A test naming one stream as Fitbit-owned has to be
+// No per-stream pins here. A test naming one stream as Fitbit-owned has to be
 // deleted the day that stream moves, writer first. The generic pairing tests
 // below (`every_google_owner_has_a_writer` and its converse) assert the
 // invariant such a pin would be standing in for.
 
-/// ⚠ THE CUTOVER IS HISTORY NOW, AND PINNED. The Fitbit writer assigned every
+/// The cutover is history now, and pinned. The Fitbit writer assigned every
 /// column up to it and Google from it; moving it would put the two writers'
 /// rows on the same days after the fact, where the stored values' provenance
 /// no longer matches the roster's record.
@@ -83,10 +83,10 @@ fn the_cutover_is_pinned() {
     assert!(backend::google::sync::DAILY_ACTIVITY_CUTOVER >= "2026-09-01");
 }
 
-/// ⚠ THE ASSERTION ABOVE IS ABOUT A STRING, NOT ABOUT BEHAVIOUR. It cannot fail
+/// The assertion above is about a string, not about behaviour. It cannot fail
 /// on the day the writer is supposed to start, because it does not run the
 /// writer's decision. Before the cutover `sync_daily_activity` logs "before the
-/// cutover, nothing to write" on every run, so the branch that WRITES never
+/// cutover, nothing to write" on every run, so the branch that writes never
 /// executes in production or in a test — the guard is only ever observed
 /// refusing. These drive it.
 mod the_cutover_opens_exactly_once {
@@ -98,7 +98,7 @@ mod the_cutover_opens_exactly_once {
             .expect("the cutover constant parses")
     }
 
-    /// The day before. `end` is TOMORROW — 2026-09-01 — which EQUALS `start`,
+    /// The day before. `end` is tomorrow, the cutover day, which equals `start`,
     /// and a half-open window of zero width must be refused rather than fetched.
     /// This is the ordering that can fail; a test only on 09-02 would pass with
     /// the comparison written either way.
@@ -107,7 +107,7 @@ mod the_cutover_opens_exactly_once {
         assert_eq!(on(2026, 8, 31), None);
     }
 
-    /// ⚠ THE DAY IT MUST START. If this is `None` the migration silently does
+    /// The day it must start. If this is `None` the migration silently does
     /// nothing on the day it was scheduled for, and `daily_activity` keeps
     /// whatever Fitbit last left — which looks identical to a healthy table
     /// until someone reads the dates.
@@ -146,7 +146,7 @@ mod the_string_filter_is_sound_because_the_producer_pads {
         assert!(!owned_by_google("2023-04-15"));
     }
 
-    /// ⚠ Single-digit month and day, which is exactly where padding decides the
+    /// Single-digit month and day, which is exactly where padding decides the
     /// answer. The first of a month parsed out of the API's integer fields must
     /// come back zero-padded; unpadded, it sorts wrong against the cutover and
     /// the migration's first day vanishes without a trace.
@@ -166,7 +166,7 @@ mod the_string_filter_is_sound_because_the_producer_pads {
     }
 }
 
-/// ⚠ The two writers must partition the table. Two writers in one job, one
+/// The two writers must partition the table. Two writers in one job, one
 /// writing five columns and the other then assigning all twelve seconds later,
 /// error nowhere and lose no row (Fitbit's numbers are real), so a migration
 /// would read as verified while its write path never once survived to the
@@ -175,9 +175,9 @@ mod the_string_filter_is_sound_because_the_producer_pads {
 /// A partition has exactly two ways to break and both are silent, which is why
 /// they are pinned here rather than left to the SQL:
 ///
-///   * a column in NEITHER list is written by nobody past the cutover, and goes
+///   * a column in neither list is written by nobody past the cutover, and goes
 ///     NULL for ever without an error;
-///   * a column in BOTH is assigned by both writers again, and the last job to
+///   * a column in both is assigned by both writers again, and the last job to
 ///     run wins — the overlap the cutover exists to prevent.
 ///
 /// The Fitbit writer is gone with the Web API; its half of the
@@ -186,7 +186,7 @@ mod the_two_writers_partition_daily_activity {
     use backend::google::sync::{ENDED_COLUMNS, GOOGLE_OWNED_COLUMNS};
 
     /// Every data column of `daily_activity` — the schema's, minus the
-    /// `(user_id, date)` key. Written out so a column ADDED to the table and to
+    /// `(user_id, date)` key. Written out so a column added to the table and to
     /// neither writer fails here rather than being discovered as a NULL.
     const EVERY_DATA_COLUMN: &[&str] = &[
         "steps",
@@ -228,7 +228,7 @@ mod the_two_writers_partition_daily_activity {
     }
 
     /// And neither list names a column the table does not have, which is how a
-    /// RENAME turns into a writer that quietly stops writing.
+    /// rename turns into a writer that quietly stops writing.
     #[test]
     fn neither_writer_claims_a_column_that_does_not_exist() {
         for c in GOOGLE_OWNED_COLUMNS.iter().chain(ENDED_COLUMNS) {
@@ -276,7 +276,7 @@ mod step_minutes {
         assert_eq!(m["2026-09-30 13:51:00"].1, 12);
     }
 
-    /// The archive keeps the minutes whose WALL CLOCK falls in `[from, until)`,
+    /// The archive keeps the minutes whose wall clock falls in `[from, until)`,
     /// the clock the stored series is keyed by, so it meets Fitbit's history at
     /// exactly the stored first minute whatever the offsets around it. The fetch
     /// is a day wider either side; those minutes are dropped here.
@@ -475,7 +475,7 @@ mod google_points {
         );
     }
 
-    /// Mid-2024 Google serves up to three activity-level points for ONE minute
+    /// Mid-2024 Google serves up to three activity-level points for one minute
     /// from one watch, often with different levels, and nothing in them tells
     /// them apart. All are kept: each gets a sequence number within its
     /// (start, source), ordered by payload so a re-fetch numbers them the same.

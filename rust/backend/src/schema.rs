@@ -7,7 +7,7 @@
 //! the log says "schema is up to date". Append only, forever. The repeats and
 //! placeholders below are what breaking this rule has cost.
 //!
-//! ⚠ MariaDB DDL is not transactional, so a half-applied statement stays
+//! MariaDB DDL is not transactional, so a half-applied statement stays
 //! half-applied; the advisory lock stops two pods racing during a rolling
 //! deploy.
 
@@ -16,10 +16,10 @@ use sqlx::MySqlPool;
 
 /// Apply anything not yet recorded in `schema_migrations`.
 pub async fn migrate(pool: &MySqlPool) -> Result<()> {
-    // ⚠ An advisory lock: MariaDB DDL is non-transactional and a rolling deploy
+    // An advisory lock: MariaDB DDL is non-transactional and a rolling deploy
     // can put two pods here at once.
     //
-    // ⚠ One pinned connection for the lock's lifetime. `GET_LOCK` and
+    // One pinned connection for the lock's lifetime. `GET_LOCK` and
     // `RELEASE_LOCK` are per-connection, so as two pool queries the release can
     // land on another connection as a silent no-op, and a server process holds
     // `health_migrate` forever; the next pod then cannot start.
@@ -38,7 +38,7 @@ pub async fn migrate(pool: &MySqlPool) -> Result<()> {
 
     let result = apply(pool).await;
 
-    // ⚠ Released even when a migration failed, or one bad statement becomes a
+    // Released even when a migration failed, or one bad statement becomes a
     // stuck deployment. A failed release is loud: swallowing it is how a lock
     // held on the wrong connection hides.
     let released: Option<i64> = sqlx::query_scalar("SELECT RELEASE_LOCK('health_migrate')")
@@ -56,7 +56,7 @@ pub async fn migrate(pool: &MySqlPool) -> Result<()> {
 }
 
 async fn apply(pool: &MySqlPool) -> Result<()> {
-    // ⚠ A fn-local literal array, not a module const: `DL-SQLX-SCHEMA-TRUTH`
+    // A fn-local literal array, not a module const: `DL-SQLX-SCHEMA-TRUTH`
     // replays an inline or fn-local array as the schema and type-checks every
     // other query in this crate against it. A const path is opaque to it.
     //
@@ -488,7 +488,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // a tile that failed while the summary reads like a healthy refresh.
         r#"ALTER TABLE rail_stops_cache ADD COLUMN IF NOT EXISTS tile_key VARCHAR(32) NULL"#,
         r#"ALTER TABLE rail_stops_cache ADD INDEX IF NOT EXISTS idx_rail_stops_tile (tile_key)"#,
-        // ⚠ `is_main_sleep` does not belong in an identity key. Google writes a
+        // `is_main_sleep` does not belong in an identity key. Google writes a
         // session in progress with no `metadata/mainSleep` (read as `false`),
         // and once scored the revision no longer matches its row, so it can
         // only insert a contradictory twin. One person cannot begin two sleeps
@@ -551,7 +551,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, as_of)
   )"#,
-        // ⚠ Append only; see the header.
+        // Append only; see the header.
         //
         // What the serving path could not answer, so a job can fetch it later.
         // The fold declines rather than guesses, and without a record the same
@@ -645,11 +645,11 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     payload        JSON NOT NULL,
     PRIMARY KEY (user_id, data_type, start_utc, source)
   )"#,
-        // Up to three points per minute from ONE source, differing (mid-2024
+        // Up to three points per minute from one source, differing (mid-2024
         // activity-level): the key gains their number (`archive::number_points`).
         r#"ALTER TABLE google_points ADD COLUMN IF NOT EXISTS seq SMALLINT NOT NULL DEFAULT 0,
    DROP PRIMARY KEY, ADD PRIMARY KEY (user_id, data_type, start_utc, source, seq)"#,
-        // ⚠ A repeat of 87, on purpose. The exercise_routes CREATE below was
+        // ⚠ A repeat of 87, on purpose. The exercise_routes create below was
         // once inserted at 87, so production skipped it and recorded this
         // ALTER as 88. A fresh database runs it twice, harmlessly.
         r#"ALTER TABLE google_points ADD COLUMN IF NOT EXISTS seq SMALLINT NOT NULL DEFAULT 0,
@@ -736,7 +736,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
 
     let mut ran = 0usize;
     let mut version: i64 = -1;
-    // ⚠ A plain `for` over the literal array, so `DL-SQLX-SCHEMA-TRUTH` can
+    // A plain `for` over the literal array, so `DL-SQLX-SCHEMA-TRUTH` can
     // resolve every statement; `.iter().enumerate()` defeats it, so the index
     // is counted here.
     for stmt in migrations {
@@ -744,7 +744,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         if applied.contains(&version) {
             continue;
         }
-        // ⚠ Statement first, record second. The other order marks a migration
+        // Statement first, record second. The other order marks a migration
         // applied that then failed, and nothing would ever retry it.
         sqlx::query(stmt)
             .execute(pool)

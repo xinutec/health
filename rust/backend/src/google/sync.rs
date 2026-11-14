@@ -1,6 +1,6 @@
 //! Writing Google Health into the biometric tables.
 //!
-//! ⚠ One writer per stream; `google::source` says which streams these are.
+//! One writer per stream; `google::source` says which streams these are.
 //! The tables upsert, so a stream written by both this and `fitbit::sync`
 //! would flip with whichever job ran last.
 
@@ -135,7 +135,7 @@ struct Hrv {
 
 /// `hrv_daily`, drawn from one Google type through two pointers.
 ///
-/// Both columns match Fitbit's on every shared day. ⚠ Compare and write both:
+/// Both columns match Fitbit's on every shared day. Compare and write both:
 /// a comparison of `daily_rmssd` alone once cleared this stream, and writing
 /// one column would have frozen `deep_rmssd` at Fitbit's last value.
 ///
@@ -208,7 +208,7 @@ pub async fn sync_hrv_daily(
 /// so the value is their difference. It matches Fitbit's on every shared day
 /// to within 0.05 °C, half the 0.1 °C step Fitbit's values come quantised to.
 ///
-/// ⚠ `relativeNightlyStddev30dCelsius` is a different statistic, despite the
+/// `relativeNightlyStddev30dCelsius` is a different statistic, despite the
 /// name: it differs on nearly every day.
 pub async fn sync_skin_temperature(
     pool: &MySqlPool,
@@ -242,7 +242,7 @@ pub async fn sync_skin_temperature(
     let mut written = 0usize;
     let mut unpaired = 0usize;
     for n in &nightly {
-        // ⚠ Both halves or nothing. A missing baseline defaulted to zero
+        // Both halves or nothing. A missing baseline defaulted to zero
         // would store a ~33 °C absolute among ±2 °C deviations, and the
         // readers would plot it. Skipped nights are counted and reported.
         let Some(base) = baseline.get(&n.date) else {
@@ -341,7 +341,7 @@ pub async fn sync_spo2_daily(
 
 /// The date Google takes over `daily_activity`.
 ///
-/// ⚠ This keeps two writers off one table. Google serves steps, distance and
+/// This keeps two writers off one table. Google serves steps, distance and
 /// calories; only Fitbit had `minutes_sedentary` and `active_score`. One owner
 /// per stream cannot express that, so a date splits it: Fitbit writes every
 /// column before it, Google from it, and the Fitbit-only columns keep their
@@ -367,7 +367,7 @@ pub fn cutover_window(
 
 /// The `daily_activity` columns the Google writer owns from the cutover.
 ///
-/// ⚠ Half of a contract with [`ENDED_COLUMNS`]: a test holds the two disjoint
+/// Half of a contract with [`ENDED_COLUMNS`]: a test holds the two disjoint
 /// and exhaustive over the table's data columns. A column in neither goes NULL
 /// from the cutover; one in both is written by two jobs.
 pub const GOOGLE_OWNED_COLUMNS: &[&str] = &[
@@ -393,7 +393,7 @@ pub const ENDED_COLUMNS: &[&str] = &["floors", "elevation_m", "minutes_sedentary
 /// Is this day the Google writer's to write?
 ///
 /// A string compare, sound because both parse boundaries in `google::health`
-/// build zero-padded `YYYY-MM-DD`, where byte and calendar order agree. ⚠ An
+/// build zero-padded `YYYY-MM-DD`, where byte and calendar order agree. An
 /// unpadded month sorts wrong (`-8-` after `-09-`), so the test pins the
 /// producer's padding too.
 ///
@@ -428,7 +428,7 @@ struct Activity {
 /// (`civilTime`), beside the instant and the offset, so no zone lookup is
 /// needed.
 ///
-/// ⚠ `tz` stays NULL: Google gives an offset, and `+01:00` names no IANA zone.
+/// `tz` stays NULL: Google gives an offset, and `+01:00` names no IANA zone.
 /// The upsert keeps whatever the backfill CLI wrote.
 pub async fn sync_heart_rate_intraday(
     pool: &MySqlPool,
@@ -439,7 +439,7 @@ pub async fn sync_heart_rate_intraday(
     // The high-water mark, cast to CHAR to avoid sqlx's DECIMAL/DATETIME decode
     // traps.
     //
-    // ⚠ No `ts_utc IS NOT NULL`: `MAX` skips NULLs anyway, and the predicate
+    // No `ts_utc IS NOT NULL`: `MAX` skips NULLs anyway, and the predicate
     // defeats MariaDB's MIN/MAX optimisation, turning one seek into a 14 s
     // range scan of the whole index.
     let high: Option<String> = sqlx::query_scalar(
@@ -475,7 +475,7 @@ pub async fn sync_heart_rate_intraday(
             skipped += 1;
             continue;
         };
-        // ⚠ `beatsPerMinute` is a string on this type, and `as_f64` returns
+        // `beatsPerMinute` is a string on this type, and `as_f64` returns
         // None on one; `numeric` reads either form.
         let Some(bpm) = hr
             .get("beatsPerMinute")
@@ -594,7 +594,7 @@ pub async fn sync_daily_activity(
 
     let mut written = 0usize;
     for (date, a) in &by_day {
-        // ⚠ `COALESCE(VALUES(col), col)`, not `VALUES(col)`: Google has
+        // `COALESCE(VALUES(col), col)`, not `VALUES(col)`: Google has
         // calories_active for 9% of days, and a plain assignment would write
         // NULL over Fitbit's value on the rest.
         sqlx::query(
@@ -646,7 +646,7 @@ pub async fn sync_daily_activity(
 /// that, since the bound guards a class of stub, not the cases seen.
 pub const SLEEP_SHRINK_REFUSAL_RATIO: i64 = 4;
 
-/// Whether a re-fetched session is a STUB that must not overwrite the night it
+/// Whether a re-fetched session is a stub that must not overwrite the night it
 /// shares a start instant with.
 ///
 /// Pure so the rule can be pinned against the measured pairs without a
@@ -657,7 +657,7 @@ pub fn refuses_as_sleep_stub(new_ms: i64, existing_ms: i64) -> bool {
 
 /// `sleep` + `sleep_stages` from Google's `sleep` session type.
 ///
-/// ⚠ The fetch is filtered with a real page size: a `pageSize=1` request
+/// The fetch is filtered with a real page size: a `pageSize=1` request
 /// returns 200 with no dataPoints for session types. The window starts at
 /// `MAX(end_time_utc)` less a day, so a session revised at the boundary is
 /// re-read; an empty table starts 7 days back (history stays Fitbit's).
@@ -732,7 +732,7 @@ pub async fn sync_sleep(
             skipped += 1;
             continue;
         };
-        // ⚠ A revised night does not shrink by an order of magnitude. Google
+        // A revised night does not shrink by an order of magnitude. Google
         // writes a session while it is in progress and sometimes never revises
         // it, leaving a fragment at the same start instant as the full night,
         // 8.6x to 23x shorter. That instant is `uniq_sleep_user_start`, so the
@@ -769,7 +769,7 @@ pub async fn sync_sleep(
             // The Fitbit writer's column policy: figures overwrite (Google
             // revises a recent night), tz and `start_time_utc` COALESCE-preserve.
             //
-            // ⚠ `date`, `is_main_sleep` and `end_time_utc` overwrite too. An
+            // `date`, `is_main_sleep` and `end_time_utc` overwrite too. An
             // in-progress session has its end inside the start day and no
             // `metadata/mainSleep`; the scored revision moves both. Keeping
             // the first values hid the night from the dashboard, which selects
@@ -814,7 +814,7 @@ pub async fn sync_sleep(
             continue;
         }
 
-        // The stages join on whatever `sleep.log_id` CURRENTLY holds — the
+        // The stages join on whatever `sleep.log_id` currently holds — the
         // upsert above may have merged into a Fitbit-written row keeping its
         // id. Same transaction discipline as the Fitbit writer: the DELETE and
         // the INSERTs commit together or not at all.
@@ -947,8 +947,8 @@ pub async fn sync_hrv_intraday(
 /// Fitbit's display name for a Google `heartRateZoneType`, or `None` for an
 /// unknown value, which the caller counts rather than writes.
 ///
-/// ⚠ Google renamed the zones (LIGHT/MODERATE/VIGOROUS/PEAK, not Fitbit's
-/// OUT_OF_RANGE/FAT_BURN/CARDIO). The mapping is by intensity order and checked
+/// Google renamed the zones (light/moderate/vigorous/peak, not Fitbit's
+/// OUT_OF_RANGE/FAT_BURN/cardio). The mapping is by intensity order and checked
 /// by bounds: `google-compare-zones` requires each zone's min/max bpm to equal
 /// the stored Fitbit row's.
 pub fn zone_display_name(zone_type: &str) -> Option<&'static str> {
@@ -1014,7 +1014,7 @@ pub async fn sync_heart_rate_zones(
     .await
     .context("fetching time-in-heart-rate-zone")?;
 
-    // (date, zone display name) -> summed seconds, keyed on the CIVIL start.
+    // (date, zone display name) -> summed seconds, keyed on the civil start.
     let mut secs: BTreeMap<(String, String), i64> = BTreeMap::new();
     let mut unknown_zone = 0usize;
     for pt in &intervals {
@@ -1113,9 +1113,9 @@ pub async fn sync_heart_rate_zones(
     Ok(written)
 }
 
-/// Google's step intervals as one count per UTC minute, WATCH-FIRST, each
+/// Google's step intervals as one count per UTC minute, watch-first, each
 /// carrying the wall clock it is filed under — and how many were unreadable.
-/// The key is the INSTANT, so one minute served under two offsets is one entry.
+/// The key is the instant, so one minute served under two offsets is one entry.
 pub fn merge_step_points(points: &[serde_json::Value]) -> (BTreeMap<String, (String, i64)>, usize) {
     // Keyed by the UTC minute; the value carries the wall clock it is filed under.
     let mut watch: BTreeMap<String, (String, i64)> = BTreeMap::new();
@@ -1188,7 +1188,7 @@ pub fn merge_step_points(points: &[serde_json::Value]) -> (BTreeMap<String, (Str
 ///
 /// Zero-count minutes are not written: the series marks stillness by absence.
 ///
-/// ⚠ The instant is stored too. `ts` is the wall clock and the key, so a minute
+/// The instant is stored too. `ts` is the wall clock and the key, so a minute
 /// served under two offsets (crossing a zone) would land twice and read as a
 /// copy an hour late. Minutes merge by instant, each is written with `ts_utc`,
 /// and a row holding that instant under another wall clock is removed.
@@ -1294,7 +1294,7 @@ pub fn archive_minutes(
 /// UTC instant with the served wall clock beside it, and how many were
 /// unreadable.
 ///
-/// By INSTANT, as steps are: a reading served under two offsets is one reading,
+/// By instant, as steps are: a reading served under two offsets is one reading,
 /// and the first served keeps its wall clock.
 #[must_use]
 pub fn spo2_samples(points: &[serde_json::Value]) -> (BTreeMap<String, (String, f64)>, usize) {
@@ -1334,7 +1334,7 @@ const SPO2_ARCHIVE_WINDOW_DAYS: i64 = 31;
 /// it, the routine sync: from an hour before the newest stored instant, or a
 /// week back on an empty table.
 ///
-/// ⚠ HOLES ONLY (`INSERT IGNORE`), as the steps archive: a stored reading keeps
+/// Holes only (`INSERT IGNORE`), as the steps archive: a stored reading keeps
 /// its value, and the routine overlap costs nothing.
 pub async fn sync_spo2_intraday(
     pool: &MySqlPool,
@@ -1477,7 +1477,7 @@ pub fn battery_readings(reply: &serde_json::Value) -> Vec<BatteryReading> {
 /// The watch's battery from `users.pairedDevices`, Google's replacement for
 /// Fitbit's devices.json (scope `googlehealth.settings.readonly`).
 ///
-/// ⚠ The instant goes in `ts_utc`, which the reader prefers: Google's
+/// The instant goes in `ts_utc`, which the reader prefers: Google's
 /// `last_sync_time` is UTC, where Fitbit's is the watch's wall clock.
 /// `last_sync_time` carries the UTC clock too, because it is the key.
 ///

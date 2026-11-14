@@ -15,7 +15,7 @@ which is what this module bridges.
 
 `MPt` is `PathPt` — `lat`/`lon`/`ts` as `Float`. `QPt` is `la`/`lo` in 1e-7°
 units and `ts` in epoch seconds, as `Int`. `MatchOut` and `QWalkMatchResult`
-have the SAME two fields, so only the points need translating.
+have the same two fields, so only the points need translating.
 
 # The quantisation is `Math.round(x * 1e7)`, and that is not `toFixed(7)`
 
@@ -27,7 +27,7 @@ The pinned rule:
 
 `Math.round` is round-half-toward-+∞. It is tempting to reach for
 `Verified.JsNum.toFixed`, which is also a 7-decimal JS rounding rule and is
-already in this tree — and it is the WRONG one: `toFixed` strips the sign first
+already in this tree — and it is the wrong one: `toFixed` strips the sign first
 and takes ties on the magnitude, so it and `Math.round` disagree on every
 negative tie. At London's longitudes that is not a hypothetical sign.
 
@@ -70,8 +70,8 @@ def toQ (lat lon : Float) (ts : Float := 0) : QPt :=
 def pathPtToQ (p : Verified.Geo.PathPt) : QPt := toQ p.lat p.lon p.ts
 
 /-- `Int → Float`, sign included.
-⚠ NOT `i.toNat.toFloat`, which is the idiom used elsewhere in this tree and is
-WRONG here: `Int.toNat` CLAMPS at zero, so every London longitude would come
+⚠ not `i.toNat.toFloat`, which is the idiom used elsewhere in this tree and is
+wrong here: `Int.toNat` clamps at zero, so every London longitude would come
 back `0.0`. It is safe at those call sites because the values are durations and
 counts; it is not safe for a coordinate. -/
 def intToFloat (i : Int) : Float :=
@@ -105,7 +105,7 @@ On literals, so these fail on a rule change rather than on a data change. -/
 #guard (toQ 51.5661113948718 (-0.1784117025641026)).la == 515661114
 #guard (toQ 51.5661113948718 (-0.1784117025641026)).lo == -1784117
 
--- Ties go toward +∞, NOT away from zero. `toFixed` would give -1 for the second.
+-- Ties go toward +∞, not away from zero. `toFixed` would give -1 for the second.
 #guard (toQ 0.00000005 0).la == 1
 #guard (toQ (-0.00000005) 0).la == 0
 

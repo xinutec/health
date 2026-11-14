@@ -1,6 +1,6 @@
 //! Render the twelve table endpoints' rows against production.
 //!
-//! ⚠ THIS IS THE ONLY THING THAT CHECKS THE DECODE. `tests/suite/row_json.rs` pins the
+//! ⚠ this is the only thing that checks the decode. `tests/suite/row_json.rs` pins the
 //! rules — which SQL type takes which JSON shape, and that the host's ISO
 //! formatter agrees with Lean's — but a `MySqlRow` cannot be constructed without
 //! a server, so no test has ever watched a DECIMAL come off the wire. That gap
@@ -14,10 +14,10 @@
 //! scripts/prod-db.sh backend rows-check <user> <since> <date> > /tmp/rs.txt
 //! ```
 //!
-//! ⚠ `prod-db.sh` forwards a port and `kubectl` writes its own chatter to
+//! `prod-db.sh` forwards a port and `kubectl` writes its own chatter to
 //! stdout, so filter the file to the endpoint lines before reading it.
 //!
-//! ⚠ CAPTURE BOTH SIDES IN ONE TUNNEL SESSION. The window has no upper bound,
+//! Capture both sides in one tunnel session. The window has no upper bound,
 //! so it includes today, and today's rows are still being written: a sync
 //! landing between two captures moves `steps`, `distance_km` and `synced_at`,
 //! which reads exactly like a rendering difference. It cost one false alarm
@@ -34,7 +34,7 @@ use crate::{lean, row_json};
 pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Result<()> {
     let mut failures = 0usize;
 
-    // ⚠ A fn-local literal array, NOT a reference to `routes::tables`' consts.
+    // A fn-local literal array, not a reference to `routes::tables`' consts.
     // `DL-SQLX-SCHEMA-TRUTH` resolves an inline or fn-local array and checks
     // every query's tables, columns and bind arity against the replayed schema;
     // a const path is opaque to it, and unchecked SQL inside the one command
@@ -74,7 +74,7 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
         ),
     ];
 
-    // ⚠ CHECKED HERE, at the moment of use. A parity run that queried something
+    // Checked here, at the moment of use. A parity run that queried something
     // other than what serves would prove nothing and would look exactly as
     // green, so the duplication above is refused rather than trusted.
     let serving: [&str; 8] = [
@@ -102,7 +102,7 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
             .fetch_all(pool)
             .await
             .with_context(|| format!("{name}: query"))?;
-        // ⚠ An unmapped column type fails HERE rather than serving a response
+        // An unmapped column type fails here rather than serving a response
         // with a field quietly missing, which is what the refusal in
         // `Verified.RowShape` is for.
         failures += emit(name, row_json::rows_to_json(&rows))?;
@@ -111,7 +111,7 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
     // `sleep/stages` resolves its main-sleep log first, exactly as the endpoint
     // does — including the absent `ORDER BY`.
     //
-    // ⚠ No `ensure!` guards the stage query, and that is stronger rather than
+    // No `ensure!` guards the stage query, and that is stronger rather than
     // weaker: it is the route's own macro, so there is one literal and drift is
     // not possible to write. The arrays above still compare against consts
     // because they hold their own copies, and a copy can drift. A runtime
@@ -161,8 +161,8 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
         .context("heartrate/intraday: query")?;
     failures += emit("heartrate/intraday", row_json::rows_to_json(&hr))?;
 
-    // ⚠ `/me`'s status read, which is `fetch_optional` and therefore answers
-    // `not_linked` by ABSENCE. Included here so the parity diff covers the one
+    // `/me`'s status read, which is `fetch_optional` and therefore answers
+    // `not_linked` by absence. Included here so the parity diff covers the one
     // endpoint whose answer is computed from a missing row.
     let statuses: [(&str, &str); 1] = [(
         "me/nextcloud",

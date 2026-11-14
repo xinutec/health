@@ -9,18 +9,18 @@
 //! offers it here ([`offer`]), one background worker snaps it from the day's
 //! own fixes ([`geometry`]), and the next fold of the day draws it on rails.
 //!
-//! * **The nightly row wins.** The fill only inserts where no row exists; the
+//! * The nightly row wins. The fill only inserts where no row exists; the
 //!   nightly upsert then replaces it with the pooled geometry.
-//! * **One at a time, through the fold slot.** A snap reads up to
+//! * One at a time, through the fold slot. A snap reads up to
 //!   [`RAIL_CORRIDOR_LINE_LIMIT`] ways and holds them like a fold does, so it
 //!   waits for the slot rather than adding its peak to a fold's.
-//! * **A refusal is remembered for [`REFUSED_FOR`].** A label the snap cannot
+//! * A refusal is remembered for [`REFUSED_FOR`]. A label the snap cannot
 //!   route stays unroutable on the same fixes; without the wait every fold of
 //!   the day would snap it again.
-//! * **No Overpass.** The nightly job's relation fallback for long mainline
+//! * No Overpass. The nightly job's relation fallback for long mainline
 //!   rides fetches from Overpass; the serving pod never calls out for this.
 //!
-//! ⚠ ONLY THE SERVING PROCESS FILLS. [`start`] is called where the server
+//! Only the serving process fills. [`start`] is called where the server
 //! starts; everywhere else (the nightly job, gates, the CLI) [`offer`] is
 //! never reached, so a measurement never writes the cache.
 
@@ -59,7 +59,7 @@ pub fn line_bits(wkt: &str) -> Vec<Value> {
 
 /// `POINT(lon lat)` → `(lat, lon)`.
 ///
-/// ⚠ WKT IS `lon lat`, THE OTHER WAY ROUND. Backwards, every station lands in
+/// ⚠ WKT is `lon lat`, the other way round. Backwards, every station lands in
 /// the wrong hemisphere and the snap simply never resolves one.
 pub fn parse_point_wkt(wkt: &str) -> Option<(f64, f64)> {
     let inner = wkt
@@ -75,10 +75,10 @@ pub fn parse_point_wkt(wkt: &str) -> Option<(f64, f64)> {
 /// The corridor around a fix cloud, snapped — `computeRailRoute`'s twin.
 ///
 /// Corridor-weighted snap first; if that refuses (thin cloud, ambiguous
-/// corridor) and the key names a line, route between the two stations over ONLY
-/// that line's ways. `None` means LEAVE IT RAW — never a guessed path.
+/// corridor) and the key names a line, route between the two stations over only
+/// that line's ways. `None` means leave it raw — never a guessed path.
 ///
-/// ⚠ The line-restricted retry passes the SAME way list. Lean's
+/// The line-restricted retry passes the same way list. Lean's
 /// `snapTrainSegmentOnLine` does the filtering itself with `wayOnLine`, so
 /// nothing is asked of this caller beyond the full list — which is why the
 /// fallback needs no second query and no station lookup here.
@@ -103,8 +103,8 @@ pub async fn geometry(
         min_lon = min_lon.min(*lo);
         max_lon = max_lon.max(*lo);
     }
-    // ⚠ A METRES margin converted to degrees, with the longitude term corrected
-    // for latitude — NOT a fixed degree pad. A constant 0.01 deg would be ~1.1 km
+    // A metres margin converted to degrees, with the longitude term corrected
+    // for latitude — not a fixed degree pad. A constant 0.01 deg would be ~1.1 km
     // north-south everywhere but only ~700 m east-west in London and ~1.1 km at
     // the equator, so the corridor would silently narrow the further north the
     // ride was. This mirrors `corridorBox`.
@@ -119,7 +119,7 @@ pub async fn geometry(
          {min_lon} {max_lat},{min_lon} {min_lat}))"
     );
 
-    // ⚠ `feature_type = 'railway'`, the mirror's BUCKET. `subtype` carries the
+    // `feature_type = 'railway'`, the mirror's bucket. `subtype` carries the
     // OSM value (rail, subway, station, …); filtering on subtype here would
     // drop the ways `isRailSubtype` is meant to judge.
     let line_rows = sqlx::query(
@@ -311,7 +311,7 @@ async fn fill_one(pool: &MySqlPool, c: &FillCandidate) -> Result<Option<usize>> 
     if geom.len() < 2 {
         return Ok(None);
     }
-    // ⚠ Not `INSERT IGNORE`: that also swallows a key too long for the column,
+    // Not `INSERT IGNORE`: that also swallows a key too long for the column,
     // truncating it into a row no leg's label ever matches.
     sqlx::query(
         "INSERT INTO rail_route_cache (route_key, geometry_json) VALUES (?, ?) \

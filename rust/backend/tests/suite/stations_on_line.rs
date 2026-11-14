@@ -1,12 +1,12 @@
-//! `stationsOnLine` is keyed by a LINE NAME, and that is why it went unanswered.
+//! `stationsOnLine` is keyed by a line name, and that is why it went unanswered.
 //!
 //! Every other table the answerer serves is keyed by a coordinate, so the
 //! dispatch parsed `lat|lon|…` out of the key before matching the table name. A
 //! bare line name has no `|`, so it fell out of the dispatch before reaching any
 //! arm — 13 declines a day, silently, while every other table was wired.
 //!
-//! ⚠ What a missing answer COSTS here is not a missing name. It is a missing
-//! MERGE: the table tells the tube-hop pass which stations a line serves, and
+//! What a missing answer costs here is not a missing name. It is a missing
+//! merge: the table tells the tube-hop pass which stations a line serves, and
 //! without it consecutive legs of one ride arrive as separate segments. The
 //! symptom is a timeline with more entries than it should have, every one of
 //! them correctly labelled — which is why no name comparison caught it.
@@ -15,7 +15,7 @@
 //! so it measures agreement with the oracle rather than self-consistency.
 //!
 //! ⚠ `tests/golden/days` is gitignored — the fixtures carry real coordinates and
-//! place names. Like `corpus_gate`, this ANNOUNCES A SKIP rather than passing
+//! place names. Like `corpus_gate`, this announces a skip rather than passing
 //! quietly when the corpus is absent.
 
 use backend::lean;
@@ -30,7 +30,7 @@ const DAY: &str = concat!(
     "/../../tests/golden/days/2026-05-22-pippijn.json"
 );
 
-/// `None` when the corpus is absent, which the callers report as a SKIP.
+/// `None` when the corpus is absent, which the callers report as a skip.
 fn fixture() -> Option<Value> {
     if !std::path::Path::new(DAY).exists() {
         eprintln!("SKIPPED: no golden corpus at {DAY}; see this file's header.");
@@ -86,7 +86,7 @@ fn the_fixture_arm_reproduces_the_recorded_answers() {
             .map(|s| s["name"].as_str().expect("recorded name is not a string"))
             .collect();
 
-        // ⚠ ORDER, not set equality. Downstream journey resolution reads
+        // Order, not set equality. Downstream journey resolution reads
         // positional relationships out of this list, so a set-equal-but-
         // reordered answer is a different answer — the port says so itself.
         assert_eq!(
@@ -99,9 +99,9 @@ fn the_fixture_arm_reproduces_the_recorded_answers() {
     }
 }
 
-/// A name whose base token no way carries is an EMPTY answer, not a decline.
+/// A name whose base token no way carries is an empty answer, not a decline.
 ///
-/// ⚠ This is the one place an empty answer is honest: "no way of this name"
+/// This is the one place an empty answer is honest: "no way of this name"
 /// really is "no stations on it" (a siding, a junction curve). Declining would
 /// leave the fold asking about it forever.
 #[test]

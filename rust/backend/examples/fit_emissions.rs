@@ -11,7 +11,7 @@
 //! mode join into a run; a run's net displacement is the decoder's own window
 //! over it (`emissionDebug.segments`).
 //!
-//! The FORM is not fitted: which terms are on (`speedWindow`, `dispPosterior`,
+//! The form is not fitted: which terms are on (`speedWindow`, `dispPosterior`,
 //! `centreAnchor`, …), the outlier range, the pseudo-counts, and
 //! the parameters no narrated minute reaches (cycling, plane, the inert
 //! beta-binomial) come from `--form <dir>` (the golden fits); every number the
@@ -1353,7 +1353,7 @@ fn write_fit(
         "days": days.keys().filter(|d| !exclude.contains(d)).collect::<Vec<_>>(),
         "heldOut": exclude,
     });
-    // ONE LINE: the record travels as an environment value, and
+    // One line: the record travels as an environment value, and
     // `scripts/prod-db.sh` mirrors the pod's environment line by line.
     std::fs::write(
         format!("{dir}/{RECORD}.json"),

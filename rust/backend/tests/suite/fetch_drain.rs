@@ -2,7 +2,7 @@
 
 use backend::fetch_drain::{FIX_CELL_DEG, Fix, cells_of};
 
-/// A fix every 30 s along a slow walk asks ONE question per cell, not one per
+/// A fix every 30 s along a slow walk asks one question per cell, not one per
 /// fix; the first fix in a cell is the one kept.
 #[test]
 fn cells_keep_one_fix_per_cell_in_first_seen_order() {

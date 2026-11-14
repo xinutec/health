@@ -6,7 +6,7 @@ import Verified.Geo.StaySplit
 # Naming one stay from its own fixes
 
 What is left of the OSM enrichment loop:
-the stationary branch for ONE stay, with the window's centroid and scatter
+the stationary branch for one stay, with the window's centroid and scatter
 computed here, and the record of lookups it reads. `walkDwell` names a stop it
 carved out of a walk with it ({@link Verified.Geo.StayEnrich.enrichStay}), so a
 carved stop is elected and named by the same rules as every other stay.
@@ -15,7 +15,7 @@ carved stop is elected and named by the same rules as every other stay.
 namespace Verified.Geo.EnrichFold
 
 open Verified.Geo.SegmentMerge (Seg ResolvedPlace)
--- `Shed` is TOP-LEVEL, not nested under `StaySplit`.
+-- `Shed` is top-level, not nested under `StaySplit`.
 open Shed (PointF)
 open Verified.Hsmm.FloatScore (haversineMeters)
 
@@ -32,12 +32,12 @@ structure Reads where
   that pass none — the resolver takes a different path on each, so they are not
   the same question asked with a default. -/
   place : Float → Float → Bool → Option (Int × Int × String) → Option ResolvedPlace
-  /-- `tzLookup(lat, lon)`, asked at the coordinate being NAMED rather than at
+  /-- `tzLookup(lat, lon)`, asked at the coordinate being named rather than at
   the segment's own centroid — the snap arm names a stay at the mined place's
   stored coordinates and resolves the zone there too. -/
   tzAt : Float → Float → String
 
-/-- Name ONE stay from its own fixes (Home and Work outright, a residence at its
+/-- Name one stay from its own fixes (Home and Work outright, a residence at its
 place, the rest at the naming coordinate), with its `focusPlaceId`. A window
 with no fixes comes back unchanged. -/
 def nameStay (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
@@ -61,12 +61,12 @@ def nameStay (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
     acc + d * d) 0) / n)
   let minutes := max 1.0 (Float.ofInt (seg.endTs - seg.startTs) / 60)
   let observed := min 1.0 (n / minutes)
-  -- Floored BEFORE the inflation: three coincident fixes have no scatter and
+  -- Floored before the inflation: three coincident fixes have no scatter and
   -- would otherwise inflate to nothing.
   let spreadM := max scatterM Verified.Geo.StayEnrich.SPREAD_FLOOR_M / Float.sqrt observed
   Verified.Geo.StayEnrich.enrichStay
     { stations := reads.stations
-      -- The window and the zone are the SEGMENT's, so they are bound here
+      -- The window and the zone are the segment's, so they are bound here
       -- rather than passed through the cascade: which coordinate to ask about
       -- is the cascade's decision, and the zone follows the coordinate.
       place := fun lat lon pref withStay =>

@@ -1,22 +1,22 @@
 //! One replay of one golden day, shared by every corpus grader.
 //!
-//! ⚠ **The replay is paid once.** Four graders (`day_corpus`, `truth_corpus`,
+//! The replay is paid once. Four graders (`day_corpus`, `truth_corpus`,
 //! `journey_corpus`, `walk_gate`) grading the same day each rebuilt it from the
 //! same fixture: `user` 2934 s against 718 s wall on one row, because the walk
 //! matcher's ~305 s was paid per harness rather than per day. `corpus_gate`
 //! replays once per day and hands the result to all four.
 //!
-//! ⚠ **The graders do not all replay the same input, which is why `priors`
-//! is a parameter rather than read from the environment here.** `day_corpus`
+//! The graders do not all replay the same input, which is why `priors`
+//! is a parameter rather than read from the environment here. `day_corpus`
 //! and `truth_corpus` replace the fixture's captured `venuePriors` with
 //! `VENUE_PRIORS_FILE` when it is set; `journey_corpus` and `walk_gate` never
 //! inject. A shared replay that guessed would either feed those two priors they
 //! did not ask for, or quietly stop the injected arm being an arm, and
-//! **neither fails**: both produce plausible numbers. So `corpus_gate` replays
+//! neither fails: both produce plausible numbers. So `corpus_gate` replays
 //! each arm it needs: one when `VENUE_PRIORS_FILE` is unset (every grader wants
 //! the fixture's own blob, so they share it), two when it is set.
 //!
-//! ⚠ **THE TRACE IS INDEXED ONCE PER DAY, BEFORE ANY ARM,** and both arms
+//! The trace is indexed once per day, before any arm, and both arms
 //! borrow it. `load_trace` is separate from `replay` for that reason, not by
 //! accident.
 
@@ -33,13 +33,13 @@ pub mod walk;
 
 /// One day, replayed once: the fixture as it was fed in, and what the fold said.
 ///
-/// ⚠ `dead_code` is allowed because **the graders use different subsets** —
+/// `dead_code` is allowed because the graders use different subsets —
 /// `day` reads `rounds` and `unanswerable`, `walk` reads `request`, the others
 /// read neither.
 // dev-lint: allow-keep-allow `corpus` is compiled into several test binaries, and dead_code fires in some and not others
 #[allow(dead_code, reason = "the graders use different subsets (doc above)")]
 pub struct Replay {
-    /// The fixture, AFTER any priors injection — so a grader reads the same
+    /// The fixture, after any priors injection — so a grader reads the same
     /// inputs the fold saw rather than what was on disk.
     pub fx: Value,
     /// The fold's reply, parsed.
@@ -77,7 +77,7 @@ impl Replay {
 
 /// Every golden day, sorted.
 ///
-/// ⚠ It does NOT apply `CORPUS_DAYS` — `restrict` does, separately, so that an
+/// It does not apply `CORPUS_DAYS` — `restrict` does, separately, so that an
 /// empty corpus and a mistyped filter cannot produce the same message: they are
 /// different faults.
 pub fn day_names(golden: &str) -> Vec<String> {
@@ -93,12 +93,12 @@ pub fn day_names(golden: &str) -> Vec<String> {
 
 /// Narrow the corpus to a comma-separated list of date prefixes.
 ///
-/// ⚠ **A SUBSET RUN IS NOT A GATING RUN, and it says so rather than passing
-/// quietly**: every floor comparison downstream is a verdict over the days that
+/// A subset run is not a gating run, and it says so rather than passing
+/// quietly: every floor comparison downstream is a verdict over the days that
 /// actually replayed. This is what makes a four-arm ablation affordable — the
 /// full corpus is ~390 s a run.
 ///
-/// ⚠ **A typo must not retain silently.** A `CORPUS_DAYS` date in month 13
+/// A typo must not retain silently. A `CORPUS_DAYS` date in month 13
 /// matches no fixture, and a clean run over nothing reads exactly like a clean run over
 /// everything; reported as "the corpus directory is empty", it would name the
 /// wrong cause.
@@ -189,7 +189,7 @@ impl Injection {
                     let Some(as_of) = file.strip_suffix(".json") else {
                         continue;
                     };
-                    // ⚠ `<=` on the ISO date string, and never a LATER snapshot:
+                    // `<=` on the ISO date string, and never a later snapshot:
                     // a day before the first one falls through to `current`.
                     if as_of.len() == 10
                         && as_of <= date
@@ -221,12 +221,12 @@ pub fn with_priors(fx: &Value, priors: Option<&Value>) -> Value {
 /// Index the day's recorded walkable roads, buildings and drivable ways, so the
 /// fold's walk pass runs the way production runs it.
 ///
-/// ⚠ **WITHOUT A TRACE THE WALK PASS DOES NOT RUN**. The matcher's
-/// `walkableRoads` ask is DECLINED unless a trace answers it — and on a decline
+/// Without a trace the walk pass does not run. The matcher's
+/// `walkableRoads` ask is declined unless a trace answers it — and on a decline
 /// `annotateWalkMatches` bails per leg, so the raw drawing survives looking
 /// exactly like a leg the matcher considered and left alone.
 ///
-/// ⚠ **Presence of the key is not presence of a trace.** A fixture can carry
+/// Presence of the key is not presence of a trace. A fixture can carry
 /// all three sections as empty objects; a key-presence check calls that
 /// capturable and the loader then refuses it. Count the entries.
 ///
@@ -240,7 +240,7 @@ pub fn load_trace(
     buildings: bool,
     drivable: bool,
 ) -> Result<Option<TraceAnswerer>, String> {
-    // ⚠ Refuse a fixture captured under constants this build no longer uses.
+    // Refuse a fixture captured under constants this build no longer uses.
     // The margin and the candidate limit are applied after the ask key is
     // formed, so moving one changes production and changes nothing any fixture
     // answers: the gate stays green while the served day differs. An absent
@@ -257,10 +257,10 @@ pub fn load_trace(
         },
     )
     .map_err(|e| format!("{name}: osm trace: {e}"))?;
-    // ⚠ AN EMPTY BUILDING ANSWER IS UNMEASURED, NOT CLEAN, and the
-    // referee knows that per LEG (`WalkIn.buildingsMeasured`), so a partial
+    // An empty building answer is unmeasured, not clean, and the
+    // referee knows that per leg (`WalkIn.buildingsMeasured`), so a partial
     // capture is answered as far as it goes rather than refused. What replaces
-    // a refusal is the REPORT: `walks:` prints the measured / unmeasured tally
+    // a refusal is the report: `walks:` prints the measured / unmeasured tally
     // and names each unmeasured leg on every run.
     Ok(trace.has_walk_capture().then_some(trace))
 }
@@ -318,9 +318,9 @@ pub fn replay(name: &str, mut fx: Value, trace: Option<&TraceAnswerer>) -> Resul
     })
 }
 
-/// ⚠ **TRANSITIONAL** — the pre-shared-runner entry point, for graders
+/// Transitional — the pre-shared-runner entry point, for graders
 /// not yet moved into `corpus_gate`. It reads the fixture per caller, which is
-/// the cost the move exists to remove, and it deliberately does NOT load the
+/// the cost the move exists to remove, and it deliberately does not load the
 /// trace: a grader still on this path must keep replaying the arm it was
 /// blessed against until it moves and is re-blessed together with the flip.
 // dev-lint: allow-keep-allow `corpus` is compiled into several test binaries, and dead_code fires in some and not others

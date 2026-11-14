@@ -26,16 +26,16 @@ namespace Verified.Weight
 
 `grams` is an integer because that is how Google stores it; the conversion to
 kilograms happens at the write and is not a decision. `ts` is the RFC-3339
-instant, used ONLY to order two weigh-ins that fall on the same civil date. -/
+instant, used only to order two weigh-ins that fall on the same civil date. -/
 structure Weigh where
   date : String
   grams : Int
   ts : String
   deriving Repr, BEq, Inhabited
 
-/-- Keep one weigh-in per civil date — the LATEST by `ts` — sorted by date.
+/-- Keep one weigh-in per civil date — the latest by `ts` — sorted by date.
 
-⚠ `ts` is compared as a string, correct only while every timestamp shares one
+`ts` is compared as a string, correct only while every timestamp shares one
 format and offset: `2026-01-01T13:00:00+01:00` is the same instant as
 `2026-01-01T12:00:00Z` and compares greater. Google returns Z-normalised
 instants; if that changes, a day weighed twice picks the wrong weigh-in
@@ -56,7 +56,7 @@ def dedupeByDate (ms : List Weigh) : List Weigh :=
 /-- The date from which stored weight is replaced: the earliest deduped day.
 
 `none` for an empty fetch, and that is the whole guard. ⚠ An empty result must
-NOT be read as "replace from the beginning of time" — a Google outage, a revoked
+not be read as "replace from the beginning of time" — a Google outage, a revoked
 token or a scope change all produce zero points, and treating that as a boundary
 would delete every weight row the table has. The caller writes nothing on
 `none`. -/
@@ -77,10 +77,10 @@ private def w (d : String) (g : Int) (t : String) : Weigh := ⟨d, g, t⟩
 -- Sorted by date regardless of arrival order.
 #guard (dedupeByDate [w "2026-08-03" 3 "c", w "2026-08-01" 1 "a", w "2026-08-02" 2 "b"]).map (·.date)
   == ["2026-08-01", "2026-08-02", "2026-08-03"]
--- ⚠ A tie keeps the first.
+-- A tie keeps the first.
 #guard dedupeByDate [w "2026-08-01" 111 "same", w "2026-08-01" 222 "same"]
   == [w "2026-08-01" 111 "same"]
--- ⚠ An EMPTY `ts` loses to any real one, whichever arrives first.
+-- An empty `ts` loses to any real one, whichever arrives first.
 #guard dedupeByDate [w "2026-08-01" 111 "", w "2026-08-01" 222 "2026-08-01T07:00:00Z"]
   == [w "2026-08-01" 222 "2026-08-01T07:00:00Z"]
 #guard dedupeByDate [w "2026-08-01" 222 "2026-08-01T07:00:00Z", w "2026-08-01" 111 ""]
@@ -93,7 +93,7 @@ private def w (d : String) (g : Int) (t : String) : Weigh := ⟨d, g, t⟩
 -- The boundary is the earliest day, not the earliest point received.
 #guard replaceFrom [w "2026-08-03" 3 "c", w "2026-08-01" 1 "a"] == some "2026-08-01"
 #guard replaceFrom [w "2026-08-01" 1 "a"] == some "2026-08-01"
--- ⚠ THE GUARD THAT MATTERS: an empty fetch names no boundary, so nothing is
+-- The guard that matters: an empty fetch names no boundary, so nothing is
 -- deleted. A Google outage returns zero points and must not empty the table.
 #guard replaceFrom [] == none
 

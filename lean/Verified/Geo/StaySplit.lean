@@ -15,7 +15,7 @@ put it wrong, each in its own namespace, over the fix helpers in `Shed`:
 * `StepDeparture` — `claimSteplessDepartures` (`staySteplessDeparture`), a walk's
   stepless head that is still the stay before it.
 
-All discrete branches + arithmetic, no transcendentals ⇒ EXACT. UNPROVEN;
+All discrete branches + arithmetic, no transcendentals ⇒ exact. UNPROVEN;
 pinned by the `#guard`s.
 -/
 
@@ -46,7 +46,7 @@ def sortedIn (points : Array PointF) (startTs endTs : Int) : Array PointF :=
     fun a b => a.ts ≤ b.ts).toArray
 
 /--
-Rebuild a walk over a new window from its OWN fixes.
+Rebuild a walk over a new window from its own fixes.
 
 `ridePrecedes` is true for the remainder that begins where a ride ends. The ride
 owns its boundary fixes — the fix *at* the boundary is the one the vehicle
@@ -90,7 +90,7 @@ end Shed
 
 /-! ## Walk→stay arrival boundary (`claimStayArrivalFromWalk`)
 
-A walk's TAIL that is already standing at the stay after it goes to that stay. -/
+A walk's tail that is already standing at the stay after it goes to that stay. -/
 namespace FootArrival
 
 open Verified.Geo.SegmentMerge (Seg)
@@ -107,8 +107,8 @@ private def stepKmh (fixes : Array PointF) (i j : Fin fixes.size) : Float :=
     haversineMeters fixes[i].lat fixes[i].lon fixes[j].lat fixes[j].lon / Float.ofInt dt * 3.6
   else 0
 
-/-- Noise floor on the trailing still run, NOT the discriminator: the run is
-anchored at the walk's LAST fix, so a pause at a crossing cannot qualify —
+/-- Noise floor on the trailing still run, not the discriminator: the run is
+anchored at the walk's last fix, so a pause at a crossing cannot qualify —
 the walking that follows one breaks the run before it reaches the end. -/
 def FOOT_ARRIVAL_MIN_DWELL_S : Int := 60
 /-- Above this the tail is slow movement, not a held position, and where the
@@ -163,7 +163,7 @@ private def footArrival (cur next : Seg) (points : Array PointF) : Option (Seg �
       -- `repairVehicleHandoff` absorbs 27 minutes of it into the adjacent train
       -- as an impossible vehicle hand-off.
       --
-      -- The NAME is a different matter: the shorter walk is a shorter stretch
+      -- The name is a different matter: the shorter walk is a shorter stretch
       -- of street, and the name it carries was derived from a line drawn
       -- through the part it overran onto. `needsRename` asks `reenrich` for
       -- that and for nothing else.
@@ -241,7 +241,7 @@ private def runOn (dwellS : Int) (spread : Float := 4) : Array Seg :=
   FootArrival.claimStayArrivalFromWalk segs pts
 
 -- The boundary lands on the first standing fix, not on the segmenter's window
--- edge: 1000616, where HEAD left it at 1000784 (168 s late).
+-- edge: 1000616, where head left it at 1000784 (168 s late).
 #guard (runOn 140)[0]!.endTs == 1000616
 -- It does not force re-derivation: that redoes the mode too, and a shortened
 -- leg comes back `cycling` on 04-29 and is absorbed into a train.
@@ -256,7 +256,7 @@ private def runOn (dwellS : Int) (spread : Float := 4) : Array Seg :=
 -- A tail that drifts 80 m is slow movement, not an arrival.
 #guard (runOn 140 80)[0]!.endTs == ((dayFor 140 80).1)[0]!.endTs
 
--- Only a walk followed by a STAY is eligible.
+-- Only a walk followed by a stay is eligible.
 #guard
   let (segs, pts) := dayFor 140
   let toTrain := #[segs[0]!, { segs[1]! with mode := "train" }]
@@ -526,7 +526,7 @@ private def cut := splitWalksOnDwell #[WALK] STOP [] unnamed
 -- 19, not 20: `walkRemainder` counts `[startTs, endTs)`, its family's convention.
 #guard (cut.map (·.pointCount)) == #[10, 11, 19]
 
--- The same stop walked THROUGH at 60 steps a minute: a frozen GPS, left alone.
+-- The same stop walked through at 60 steps a minute: a frozen GPS, left alone.
 private def marching : Array Verified.Geo.Worldline.FeasibilityStepPoint :=
   (Array.range 20).map fun i => { ts := Int.ofNat i * 60, steps := 60 }
 #guard (splitWalksOnDwell #[WALK] STOP marching.toList unnamed).size == 1

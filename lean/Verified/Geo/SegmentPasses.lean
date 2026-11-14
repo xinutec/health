@@ -7,7 +7,7 @@ import Verified.Geo.PathPoint
 pass has claimed it. `driving` doubles as the placeholder for "a vehicle-speed
 run I have not identified yet", and an *unfinished* ride reaches the UI wearing
 the name of a car. The rule keys on incompleteness (last segment, nothing after
-it), NOT on absence of evidence — two user-confirmed taxis carry no road match
+it), not on absence of evidence — two user-confirmed taxis carry no road match
 either. It keys on `effectiveMode`, so a leg some earlier pass refined is judged
 by what it now is.
 
@@ -76,7 +76,7 @@ private def DEMOTED (startTs : Int) (mode : Mode) : Int × Mode × Option Mode �
 -- The trailing unclaimed placeholder is demoted (07-12).
 #guard iview (resolveVehicleIdentity #[sg 0 100 "stationary", sg 100 200 "driving"])
   == #[(0, "stationary", none, none), DEMOTED 100 "driving"]
--- A FINISHED ride keeps what the cascade concluded — the two confirmed taxis.
+-- A finished ride keeps what the cascade concluded — the two confirmed taxis.
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving", sg 200 300 "stationary"])
   == #[(100, "driving", none, none), (200, "stationary", none, none)]
 -- Any claim at all exempts it: a matched road, a named street, a bus route.
@@ -94,13 +94,13 @@ private def DEMOTED (startTs : Int) (mode : Mode) : Int × Mode × Option Mode �
 -- Only the `driving` placeholder is doubted.
 #guard iview (resolveVehicleIdentity #[sg 100 200 "train" (some TRAIN)]) == #[(100, "train", none, none)]
 #guard iview (resolveVehicleIdentity #[sg 100 200 "walking"]) == #[(100, "walking", none, none)]
--- `effectiveMode` again: refined TO driving is a candidate…
+-- `effectiveMode` again: refined to driving is a candidate…
 #guard iview (resolveVehicleIdentity #[sg 100 200 "stationary" (refinedMode := some "driving")])
   == #[DEMOTED 100 "stationary"]
--- …refined AWAY from driving is not.
+-- …refined away from driving is not.
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (refinedMode := some "train")])
   == #[(100, "driving", some "train", none)]
--- Unlike the hand-off pass, an existing reason is REPLACED, not appended to.
+-- Unlike the hand-off pass, an existing reason is replaced, not appended to.
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (refinedReason := some "earlier note")])
   == #[DEMOTED 100 "driving"]
 #guard resolveVehicleIdentity #[] == #[]

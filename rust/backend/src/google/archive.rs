@@ -5,7 +5,7 @@
 //! sedentary-period 19k, respiratory-rate-sleep-summary 1.4k, nutrition-log 2,
 //! back to 2023 (2022 for nutrition).
 //!
-//! ⚠ LOSSLESS, NOT TYPED. The time is normalised into columns (both instants to
+//! Lossless, not typed. The time is normalised into columns (both instants to
 //! the millisecond, both offsets, the wall clock) and the rest of the type's
 //! object is kept whole as `payload`. A reader that needs a typed table derives
 //! it; nothing Google serves is dropped on the way in.
@@ -116,7 +116,7 @@ pub fn parse_point(pt: &serde_json::Value, key: &str) -> Option<PointRow> {
 
 /// Number the points that share a `(start, source)`: 0, 1, … in payload order.
 ///
-/// ⚠ Not serving order. Mid-2024 Google serves up to three activity-level points
+/// Not serving order. Mid-2024 Google serves up to three activity-level points
 /// for one minute from one watch, often with different levels, with nothing in
 /// them to tell them apart (thousands of such minutes a month). Keeping all of
 /// them needs a key part; ordering by payload makes a re-fetch number them the
@@ -154,7 +154,7 @@ const WINDOW_DAYS: i64 = 31;
 /// it, the routine sync: from a day before the type's newest stored start, or a
 /// week back when none is stored. A type with no filter field is read whole.
 ///
-/// ⚠ HOLES ONLY (`INSERT IGNORE` on user, type, start, source, seq — see
+/// Holes only (`INSERT IGNORE` on user, type, start, source, seq — see
 /// `number_points`): a stored point
 /// keeps its row. The returned pair is `(fetched, written)`; a fetched point
 /// that wrote nothing was already stored, or collided on the key — the log

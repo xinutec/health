@@ -1,30 +1,30 @@
-//! A landmark table that ANSWERS EMPTY names nothing, and counts as answered.
+//! A landmark table that answers empty names nothing, and counts as answered.
 //!
 //! `nearbyLandmarks` is what puts a venue name on a timeline instead of a bare
 //! "stationary". If the shaping returns an empty list, every ask still reads as
 //! answered, the stay still renders, and venue names silently vanish: a day
 //! where all six asks answer and all six are empty.
 //!
-//! ⚠ The fixture here is SYNTHETIC on purpose: a tracked test must not
+//! ⚠ The fixture here is synthetic on purpose: a tracked test must not
 //! carry a real coordinate and a real venue, which together record where
 //! someone was. The defect does not need real data to reproduce — it is an
 //! encoding mismatch, and it fires on any tagged feature at any coordinate.
 //!
-//! ⚠ The two defects this pins are both ENCODING mismatches between the two
+//! The two defects this pins are both encoding mismatches between the two
 //! Lean entry points, and neither is detectable by shape:
 //!
-//! * `ServeEntry.tagsJson` writes a tag pair as a two-element ARRAY, and
-//!   `BackendEntry`'s shaping read it as a `{k, v}` OBJECT. Both are
+//! * `ServeEntry.tagsJson` writes a tag pair as a two-element array, and
+//!   `BackendEntry`'s shaping read it as a `{k, v}` object. Both are
 //!   well-formed JSON. A feature whose tags parse to nothing spawns no
 //!   landmark, so the answer was `[]` for every stay everywhere.
-//! * `distanceM` crosses as an IEEE-754 BIT PATTERN in a string, which is what
+//! * `distanceM` crosses as an IEEE-754 bit pattern in a string, which is what
 //!   `DayEntry.parsePoi` reads with `jBits`. Emitting a JSON number instead
 //!   fails the fold's decode with "String expected" — and that one is only
-//!   REACHABLE once the shaping stops being empty, which is how it hid behind
+//!   reachable once the shaping stops being empty, which is how it hid behind
 //!   the first.
 //!
 //! So the assertion is not "the call succeeded": it is that a named, tagged
-//! feature within the radius comes back AS a landmark, spelled the way the fold
+//! feature within the radius comes back as a landmark, spelled the way the fold
 //! reads it.
 
 use backend::lean::Answerer;
@@ -32,7 +32,7 @@ use backend::lean::Ask;
 use backend::rowset_answerer::{OsmAnswerer, RowSource};
 use serde_json::{Value, json};
 
-/// The three rail reads, declined. These doubles exist to exercise the SPATIAL
+/// The three rail reads, declined. These doubles exist to exercise the spatial
 /// decline paths; a rail read they cannot vouch for must decline for the same
 /// reason, not answer an empty list.
 macro_rules! declines_rail {
@@ -57,7 +57,7 @@ const VENUE_LON: f64 = -0.1;
 
 /// One tagged point POI and no lines — a node-mapped venue, the common case.
 ///
-/// ⚠ Answers `Some` for BOTH buckets. Either returning `None` declines the
+/// Answers `Some` for both buckets. Either returning `None` declines the
 /// whole table, and a decline is loud where an empty answer is not; this test
 /// would pass for the wrong reason if the line side declined.
 struct OneVenue;
@@ -116,7 +116,7 @@ fn a_tagged_venue_in_range_becomes_a_landmark() {
         .expect("the answerer errored")
         .expect("the answerer DECLINED — it must answer when both buckets vouch");
 
-    // ⚠ FOUR elements: `[lat, lon, radius, answer]`. The three-element form
+    // Four elements: `[lat, lon, radius, answer]`. The three-element form
     // `nearbyWays` uses is a different row, and the fold reads it as malformed.
     let parts = row.as_array().expect("the row is not an array");
     assert_eq!(parts.len(), 4, "row arity: {row}");
@@ -135,14 +135,14 @@ fn a_tagged_venue_in_range_becomes_a_landmark() {
     );
     assert_eq!(l.get("type").and_then(Value::as_str), Some("amenity"));
     assert_eq!(l.get("subtype").and_then(Value::as_str), Some("restaurant"));
-    // The tag that only survives if the PAIR decoded — a landmark keeps its
+    // The tag that only survives if the pair decoded — a landmark keeps its
     // opening hours, and reading the pair wrongly loses this with the rest.
     assert_eq!(
         l.get("openingHours").and_then(Value::as_str),
         Some("Mo-Su 11:00-22:00")
     );
 
-    // ⚠ A BIT-PATTERN STRING, because `DayEntry.parsePoi` reads it with
+    // A bit-pattern string, because `DayEntry.parsePoi` reads it with
     // `jBits`. A JSON number here fails the fold's decode outright.
     let d = l
         .get("distanceM")
@@ -155,7 +155,7 @@ fn a_tagged_venue_in_range_becomes_a_landmark() {
     );
 }
 
-/// The enclosing-institution override needs `encloses` from the LINE side, so a
+/// The enclosing-institution override needs `encloses` from the line side, so a
 /// point-only source must still answer rather than decline.
 #[test]
 fn no_venues_in_range_is_an_empty_answer_not_a_decline() {

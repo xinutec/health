@@ -9,7 +9,7 @@ import Verified.Hsmm.ByStart
 /-!
 # Compile-time parity checks: trellis vs brute-force oracle
 
-Every `#guard` here is evaluated during `lake build` — the build FAILS if the
+Every `#guard` here is evaluated during `lake build` — the build fails if the
 trellis ever disagrees with the exhaustive oracle on these instances. This is
 the executable stand-in for the equivalence theorem until it is proved.
 
@@ -123,7 +123,7 @@ private def checkTrellis (P : Problem) : Bool :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
   decodeFast blocked == viterbi blocked
 
--- The checkpointed decoder is proved equal to decode for EVERY stride K
+-- The checkpointed decoder is proved equal to decode for every stride K
 -- (`decodeCk_eq`); pin a few strides — degenerate (0: `% 0` stores nothing
 -- beyond the t=0 entry), dense (1: every column stored), and sparse (7, 64:
 -- most queried columns recomputed via `colFrom`).

@@ -1,6 +1,6 @@
-//! The signing half of auth — the part that is NOT in Lean.
+//! The signing half of auth — the part that is not in Lean.
 //!
-//! # ⚠ The expected signatures come from the reference, not this implementation
+//! # The expected signatures come from the reference, not this implementation
 //!
 //! Every string below is a recorded signature, not this code's output. That
 //! matters because the failure modes here are all silent: base64url output is
@@ -29,7 +29,7 @@ fn the_signature_is_the_one_node_produces() {
         sign_value(SECRET, ""),
         ".Gwy8Vn-Udg7RoBWLlBnuCbCfqomk6ukwlgH4H6oC_aY"
     );
-    // ⚠ A value containing dots: the signature covers the WHOLE value.
+    // A value containing dots: the signature covers the whole value.
     assert_eq!(
         sign_value(SECRET, "a.b.c"),
         "a.b.c.rz4iZ2vhkfcX3itWuB-78c1muFA3QJViF28h2mU1bqs"
@@ -50,7 +50,7 @@ fn the_signature_is_unpadded_base64url() {
     backend::lean::init().expect("the Lean runtime must start");
     let signed = sign_value(SECRET, "abc");
     let sig = signed.rsplit_once('.').expect("there is a separator").1;
-    // ⚠ SHA-256 is 32 bytes, which is not a multiple of 3, so padded base64
+    // SHA-256 is 32 bytes, which is not a multiple of 3, so padded base64
     // would end in `=`. This is the assertion that catches a padded port even
     // if the reference strings above were ever regenerated wrongly.
     assert!(!sig.contains('='), "Node's base64url is unpadded: {sig}");
@@ -84,8 +84,8 @@ fn a_signed_value_verifies_and_a_tampered_one_does_not() {
     // A signature that is not base64 at all.
     assert_eq!(verify_value(SECRET, "abc.not-a-signature!!").unwrap(), None);
 
-    // ⚠ THE CASE THE FRAMING RULE EXISTS FOR. `a.b.c` signs to
-    // `a.b.c.<sig>`; a verifier splitting on the FIRST dot would check `a`
+    // The case the framing rule exists for. `a.b.c` signs to
+    // `a.b.c.<sig>`; a verifier splitting on the first dot would check `a`
     // against `b.c.<sig>` and reject a cookie it issued itself.
     let signed = sign_value(SECRET, "a.b.c");
     assert_eq!(
@@ -93,7 +93,7 @@ fn a_signed_value_verifies_and_a_tampered_one_does_not() {
         Some("a.b.c")
     );
 
-    // ⚠ A signature of the RIGHT LENGTH with the wrong bytes — the case a
+    // A signature of the right length with the wrong bytes — the case a
     // length-only comparison waves through.
     let sig = signed.rsplit_once('.').unwrap().1;
     let mut flipped: Vec<char> = sig.chars().collect();
@@ -109,7 +109,7 @@ fn a_session_id_is_thirty_two_bytes_of_entropy_and_never_repeats() {
     assert_eq!(a.len(), 64, "32 bytes, hex");
     assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
 
-    // ⚠ Not a randomness test — it cannot be one. This catches the failure that
+    // Not a randomness test — it cannot be one. This catches the failure that
     // actually happens: a generator seeded once, or a buffer that is never
     // refilled, hands back the same id for every session.
     let ids: std::collections::HashSet<String> =

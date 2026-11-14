@@ -52,9 +52,9 @@ pub async fn set(pool: &MySqlPool, user_id: &str, key: &str, value: &str) -> Res
     set_with(pool, user_id, key, value).await
 }
 
-/// The same upsert against ANY executor, so it can join a caller's transaction.
+/// The same upsert against any executor, so it can join a caller's transaction.
 ///
-/// ⚠ Exists for `refresh-focus-places`. It derives `home_tz` from the Home
+/// Exists for `refresh-focus-places`. It derives `home_tz` from the Home
 /// cluster and writes it alongside the `focus_places` rows; through the pool
 /// that write would land outside the transaction, so a half-failed refresh
 /// would leave a residence zone derived from rows that were rolled back.

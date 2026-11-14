@@ -2,7 +2,7 @@
 //!
 //! ⚠ This is the security boundary of `/api/telemetry`, not formatting. A label
 //! is verbatim UI text written into a line as `label=…`, so a newline inside it
-//! forges WHOLE LOG LINES — including further `client-event` lines attributed to
+//! forges whole log lines — including further `client-event` lines attributed to
 //! someone else. A log the observed thing can write into is not evidence.
 //!
 //! Every expectation is a recorded `oneLine` answer, with the Unicode tables
@@ -14,7 +14,7 @@ fn init() {
     lean::init().expect("lean host");
 }
 
-/// ⚠ THE ATTACK, and the separators a bare `\n` check would miss.
+/// The attack, and the separators a bare `\n` check would miss.
 #[test]
 fn line_breaking_characters_cannot_reach_the_log() {
     init();
@@ -23,11 +23,11 @@ fn line_breaking_characters_cannot_reach_the_log() {
         ("a\nclient-event user=victim", "a client-event user=victim"),
         ("a\rb", "a b"),
         ("a\r\nb", "a b"),
-        // U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR end a line in
+        // U+2028 line separator and U+2029 paragraph separator end a line in
         // readers that only `\n` would not.
         ("a\u{2028}b", "a b"),
         ("a\u{2029}b", "a b"),
-        // ⚠ A bidi override reorders the line AS DISPLAYED, so a label can lie
+        // A bidi override reorders the line as displayed, so a label can lie
         // about which field it is without containing a newline at all.
         ("a\u{202e}b", "a b"),
         // Zero-width space and BOM.
@@ -53,7 +53,7 @@ fn whitespace_collapses_and_ends_are_trimmed() {
         ("  a  b  ", "a b"),
         ("\t\n\r a", "a"),
         ("   ", ""),
-        // ⚠ Whitespace that is NOT control-like: NBSP and IDEOGRAPHIC SPACE
+        // Whitespace that is not control-like: NBSP and ideographic space
         // survive the first replacement and are collapsed by the second. A host
         // using one character set for both steps would get these wrong.
         ("a\u{00a0}b", "a b"),
@@ -68,7 +68,7 @@ fn whitespace_collapses_and_ends_are_trimmed() {
     }
 }
 
-/// ⚠ The cap counts CODE POINTS. Counting UTF-16 units could split a surrogate
+/// The cap counts code points. Counting UTF-16 units could split a surrogate
 /// pair and put half a character in the log.
 #[test]
 fn the_cap_counts_code_points() {
@@ -76,7 +76,7 @@ fn the_cap_counts_code_points() {
     assert_eq!(lean::one_line("abcdef", 3).expect("oneLine"), "abc");
     assert_eq!(lean::one_line("abc", 10).expect("oneLine"), "abc");
     assert_eq!(lean::one_line("abcdef", 0).expect("oneLine"), "");
-    // U+1D11E MUSICAL SYMBOL G CLEF is one code point and two UTF-16 units.
+    // U+1D11E musical symbol G clef is one code point and two UTF-16 units.
     let got = lean::one_line("\u{1D11E}\u{1D11E}\u{1D11E}", 2).expect("oneLine");
     assert_eq!(got.chars().count(), 2);
     assert_eq!(got, "\u{1D11E}\u{1D11E}");

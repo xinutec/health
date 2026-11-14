@@ -24,7 +24,7 @@ verdict, and place datum, riding on the composition's own pins
 
 The `date → tz`-resolved context and the shell-parsed edges / station annotation
 enter as already-built Lean structures (the settled I/O boundary). Still deferred
-(NOT in the served flag set or null in prod): the `placeNearLine` station-graph
+(not in the served flag set or null in prod): the `placeNearLine` station-graph
 transition hard-zero, learned emissions, per-place HR. UNPROVEN; pinned by the
 `#guard`s.
 -/
@@ -138,7 +138,7 @@ def WAIT_MARK : String := "wait"
 
 /-- The longest segment the HSMM will consider, in minutes.
 
-⚠ A model parameter, not a tuning knob: the `maxD` of the `O(T·S·maxD)` trellis.
+A model parameter, not a tuning knob: the `maxD` of the `O(T·S·maxD)` trellis.
 This is the only copy, so the shell omits `maxD` and lets the request default to
 it rather than spelling 240 in Rust.
 
@@ -194,8 +194,8 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
       let trainStates := (buildStateSpace (places.map (·.1)) lines
         ++ [(⟨.train, none, some Emissions.UNKNOWN_METRO⟩ : State)]).filter (·.mode == .train)
       -- Walked minutes (cadence at `INTERCHANGE_CADENCE_SPM` or more) and the
-      -- run each belongs to. An INTERCHANGE minute is a walked minute whose run
-      -- lies ENTIRELY inside the gap: a run touching the gap's first bookend
+      -- run each belongs to. An interchange minute is a walked minute whose run
+      -- lies entirely inside the gap: a run touching the gap's first bookend
       -- is the walk to the platform (06-09: 20:21–20:28 past the 20:26 fix),
       -- one touching its last is the walk off the train. No length is asked
       -- of it — the interchange at King's Cross was a walk–pause–walk whose

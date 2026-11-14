@@ -11,10 +11,10 @@
 //! # Every rule is bracketed
 //!
 //! Each decision below is asserted against a near-identical input that differs
-//! in ONE field and decides the other way. A test that only ever sees a flip
+//! in one field and decides the other way. A test that only ever sees a flip
 //! cannot tell a working rule from one that flips everything.
 //!
-//! ⚠ ONE `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
+//! One `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
 //! starts a runtime and several tests racing on it would flake.
 
 use backend::fold_payload::bits;
@@ -37,7 +37,7 @@ fn seg(start: i64, end: i64, mode: &str, refined: Option<&str>, kinds: &[&str], 
 
 /// Per-minute pedometer rows over `[from, to]`, `spm` steps in each.
 ///
-/// ⚠ Runs PAST `to`: `hasFreshData` requires a reading at or after the
+/// Runs past `to`: `hasFreshData` requires a reading at or after the
 /// segment's end, so steps that stop at the boundary make the pass decline for
 /// a reason that has nothing to do with cadence.
 fn steps(from: i64, to: i64, spm: f64) -> Vec<Value> {
@@ -82,7 +82,7 @@ fn the_cadence_passes_decide_what_their_rules_say() {
         "and it is tagged so revert can find it: {d}"
     );
 
-    // The bracket: the SAME segment, walked properly. Only the cadence differs.
+    // The bracket: the same segment, walked properly. Only the cadence differs.
     let brisk = run(
         "cadence",
         &[seg(s, e, "walking", None, &[], 4.0)],
@@ -157,7 +157,7 @@ fn the_cadence_passes_decide_what_their_rules_say() {
         beside_a_drive[1]
     );
 
-    // ⚠ And a SIBLING FLIP MUST NOT VOUCH — otherwise a run of flips would
+    // And a sibling flip must not vouch — otherwise a run of flips would
     // vouch for each other and none would ever revert. This is the rule
     // `isRealDrive` exists for, and it is the one a careless refactor loses.
     let beside_a_flip = run(

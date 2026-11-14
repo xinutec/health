@@ -86,7 +86,7 @@ fn ring_to_pairs(ring: &Value) -> Value {
 }
 
 /// The raw fixes the fold was given, as `[latBits, lonBits]` inside the leg's
-/// window. ⚠ From `env.rawFixes`, where the day request nests them: a pointer
+/// window. From `env.rawFixes`, where the day request nests them: a pointer
 /// at the wrong key yields an empty slice, not an error. The bit strings pass
 /// through untouched.
 fn raw_in_window(request: &Value, start: i64, end: i64) -> Value {
@@ -238,7 +238,7 @@ fn walking_legs(out: &Value, request: &Value, windows: &[(i64, i64, String)]) ->
             }
             let (start, end) = (e.get("startTs")?.as_i64()?, e.get("endTs")?.as_i64()?);
             // `lat`/`lon` ride as IEEE-754 bit strings and are passed through
-            // UNTOUCHED — the Lean wire reads either encoding, so nothing is
+            // untouched — the Lean wire reads either encoding, so nothing is
             // re-rounded between the fold and the referee.
             let drawn: Vec<Value> = pts
                 .iter()
@@ -336,7 +336,7 @@ pub struct Walk {
     graded: usize,
     osm_asked: u64,
     osm_missed: u64,
-    /// Misses on days the capture itself recorded the mirror DECLINING (no
+    /// Misses on days the capture itself recorded the mirror declining (no
     /// coverage: the travel days off the mirror's ground, 09-30 and 10-01).
     /// A coverage gap, not a key the fold spells and the capture lacks, so it
     /// is reported beside the ratio rather than in it.
@@ -568,7 +568,7 @@ impl Walk {
             "referee refused the request: {reply}"
         );
 
-        // Every walk the fold drew was measured. This is the CHAIN assertion —
+        // Every walk the fold drew was measured. This is the chain assertion —
         // the one thing that can be checked while the floor is stale.
         let measured: usize = r["current"].as_array().map_or(0, |ds| {
             ds.iter()
@@ -638,12 +638,12 @@ impl Walk {
         }
 
         // "never compared anything". Both read as zero regressions. So count, on
-        // the raw numbers, how many paired walks actually MOVED — a run where
-        // the gate is silent AND nothing moved is agreement; silent while
+        // the raw numbers, how many paired walks actually moved — a run where
+        // the gate is silent and nothing moved is agreement; silent while
         // everything moved would mean the pairing quietly matched nothing.
         let mut compared = 0usize;
         let mut moved = 0usize;
-        // The building-crossing SIGNAL, counted on both sides. See the guard
+        // The building-crossing signal, counted on both sides. See the guard
         // below for why a count and not a value.
         let mut floor_crossings = 0usize;
         let mut now_crossings = 0usize;
@@ -754,7 +754,7 @@ impl Walk {
                     let report: Vec<String> = raw
                         .iter()
                         .map(|(n, u)| {
-                            // Denominator is the NAMED arc only — unnamed ways
+                            // Denominator is the named arc only — unnamed ways
                             // never reach this report, so these sum to 100%
                             // and do not describe the whole route.
                             let pct = if total == 0 {

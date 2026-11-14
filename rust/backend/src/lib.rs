@@ -5,7 +5,7 @@
 //! The user's rule: *"We want no TS backend. Logic should be in Lean. A bit of
 //! IO glue needs to be in Rust."* This crate is the IO glue: configuration, a
 //! connection pool, the cursor store, the HTTP routes, the ingestion, and the
-//! entrypoint that ties them together. **Nothing here decides anything.** If a
+//! entrypoint that ties them together. Nothing here decides anything. If a
 //! module in this crate grows a rule about what a day means or when a segment
 //! is a walk, that rule belongs in Lean and its presence here is the bug.
 //!
@@ -15,7 +15,7 @@
 //! worked example and the shape to copy; the split is not 50/50 and was not a
 //! judgement call:
 //!
-//!   * generating a share token reads the CSPRNG → **Rust**. There is nothing
+//!   * generating a share token reads the CSPRNG → Rust. There is nothing
 //!     to prove about 32 random bytes beyond that they were asked for, and a
 //!     Lean model of them would be fiction.
 //!   * building the share URL, the shareable date range and the clamp on days

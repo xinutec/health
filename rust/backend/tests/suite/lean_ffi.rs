@@ -1,10 +1,10 @@
 //! The Lean decisions, called through the C ABI.
 //!
-//! The point of asking Lean at all is that the rules the backend runs ARE the
+//! The point of asking Lean at all is that the rules the backend runs are the
 //! ones in Lean, and a pipe that carries the question wrongly
 //! would look exactly like one that works.
 //!
-//! ⚠ ONE `#[test]` FUNCTION, DELIBERATELY. `health_backend_init` starts a
+//! One `#[test]` function, deliberately. `health_backend_init` starts a
 //! process-global runtime, and Rust runs a test binary's tests on many threads.
 //! Cargo gives this file its own binary but does not serialise the tests inside
 //! it, so several `#[test]`s racing on initialisation would flake in a way that
@@ -33,7 +33,7 @@ fn the_lean_decisions_answer_through_the_ffi() {
         lean::midnight_utc("1969-12-31").unwrap() < 0,
         "pre-epoch dates are negative, not unsigned garbage"
     );
-    // ⚠ Stricter than JavaScript's `new Date`, which rolls 30 February forward
+    // Stricter than JavaScript's `new Date`, which rolls 30 February forward
     // to March and turns "nonsense" into `NaN`, reaching a query string as the
     // literal text `NaN`.
     for bad in ["2026-02-30", "nonsense", "", "2026-8-17"] {

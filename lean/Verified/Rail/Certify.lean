@@ -11,7 +11,7 @@ what the result *claims* —
 
 * the returned path is a valid simple `src → dst` path whose cost equals
   the settled distance `D`, and
-* the final `done`/`dist` arrays form a **feasible cut** (`feasibleCut`):
+* the final `done`/`dist` arrays form a feasible cut (`feasibleCut`):
   every edge out of a settled vertex `u` either stays inside the settled
   set without shortcutting it (`dist v ≤ dist u + w`), or crosses out of
   it at cost already `≥ D`.
@@ -283,7 +283,7 @@ private theorem feasibleCut_spec {g : Graph} {done : Array Bool}
     exact of_decide_eq_true hbranch
 
 /-- The heart of the correctness argument: a feasible cut forces `D` to
-lower-bound the cost of **every** path from a settled, correctly-priced
+lower-bound the cost of every path from a settled, correctly-priced
 vertex to `dst` — walk the path while it stays settled (chaining the
 no-shortcut inequality), and the first crossing edge already costs `≥ D`. -/
 theorem cut_bound {g : Graph} {done : Array Bool} {dist : Array (Option Nat)}
@@ -505,7 +505,7 @@ theorem certify_oracle {g : Graph} {src dst : Nat} {done : Array Bool}
   -- Assemble: the enumeration is nonempty and its running minimum is D.
   exact oracleDist_eq hlow (hc0 ▸ hc0mem)
 
-/-- **V3 goal theorem (soundness).** Any path `dijkstraC` returns is a
+/-- V3 goal theorem (soundness). Any path `dijkstraC` returns is a
 valid `src → dst` path attaining the true simple-path minimum. -/
 theorem dijkstraC_correct {g : Graph} {src dst : Nat} {p : List Nat}
     (h : dijkstraC g src dst = some p) :
@@ -525,7 +525,7 @@ theorem dijkstraC_correct {g : Graph} {src dst : Nat} {p : List Nat}
           exact ⟨hvalid, by rw [hcost, horacle]⟩
         · cases h
 
-/-- **V3 goal theorem (never wrong on disconnection).** If no `src → dst`
+/-- V3 goal theorem (never wrong on disconnection). If no `src → dst`
 path exists, `dijkstraC` cannot return one. -/
 theorem dijkstraC_disconnected {g : Graph} {src dst : Nat}
     (h : oracleDist g src dst = none) : dijkstraC g src dst = none := by

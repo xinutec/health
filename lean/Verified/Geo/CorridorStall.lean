@@ -5,11 +5,11 @@ import Verified.FloatConst
 # Corridor stall — how far a drawn line travels without advancing along the GPS
 
 The witness `scoreWalk` cannot see, because `scoreWalk` never looks at the raw
-fixes: how far the drawn line travels while making no progress ALONG the GPS
+fixes: how far the drawn line travels while making no progress along the GPS
 corridor. High for an invented detour, ~0 for a faithful line, a gap-fill (the
 corridor advances) or a there-and-back the GPS actually traced.
 
-## ⚠ WHY THIS IS IN `Geo` AND NOT IN THE REFEREE THAT MEASURES IT
+## Why this is in `Geo` and not in the referee that measures it
 
 It is a geometry primitive over two polylines, and the decision gate needs it
 as well as the walk referee: `matchImprovesDisplay` accepts detours precisely
@@ -17,18 +17,18 @@ because it has no path→fixes term. `Verified.Geo` imports `Verified.Eval`
 nowhere and must not start (the direction is Eval → Geo), so it lives here and
 the referee calls it.
 
-⚠ **THE MOVE IS FLOAT-SAFE AND THAT WAS CHECKED, NOT ASSUMED.** `WalkMetrics`
+The move is float-safe and that was checked, not assumed. `WalkMetrics`
 carried its own `LatLon` and `metersBetween`; the structures are identical
 (`{lat, lon : Float}`) and the two distance functions are arithmetically the
 same expression — same `pi`, same 111320.0, same midpoint `cos`, and
 `hyp x y` is literally `Float.sqrt (x*x + y*y)`. The six `#guard`s that pin
-stall stayed in `WalkMetrics` and now run THROUGH the conversion, so they are
+stall stayed in `WalkMetrics` and now run through the conversion, so they are
 the equivalence test for this move rather than a copy of it.
 
-## ⚠ AND IT IS NOT A COVERAGE MEASURE
+## And it is not a coverage measure
 
 Stall catches a path that travels while the corridor does not — an invented
-detour. It says NOTHING about a path that covers LESS of the walk than the
+detour. It says nothing about a path that covers less of the walk than the
 fixes did: there the corridor advances fine and the path simply stops short.
 That is a different defect with the opposite signature, and reading a low stall
 as "the line is faithful" is how it would be missed.
@@ -41,19 +41,19 @@ open Verified.Geo.WalkableRoute (Pt metersBetween)
 open Verified.FloatConst (posInf hyp pi)
 private def clamp01 (t : Float) : Float := max 0 (min 1 t)
 
-/-- The DP allocates `V*S` floats TWICE (`dist`, `arc`). Above this it declines
+/-- The DP allocates `V*S` floats twice (`dist`, `arc`). Above this it declines
 to answer.
 
-⚠ **IT IS A SERVING-PATH BOUND, NOT A TUNING KNOB.** The referee runs this once
-per FINAL walk and can afford anything the corpus contains. The DECISION gate
-runs it per CANDIDATE match, on the finer display line — more vertices, more
+It is a serving-path bound, not a tuning knob. The referee runs this once
+per final walk and can afford anything the corpus contains. The decision gate
+runs it per candidate match, on the finer display line — more vertices, more
 calls — and an unbounded allocation there is a defect whatever today's corpus
 happens to hold. 4e6 is ~32 MB per array, which is affordable; the largest walk
 measured is far below it.
 
-⚠ **IT FAILS OPEN, and that direction is deliberate.** Above the cap this
+It fails open, and that direction is deliberate. Above the cap this
 returns 0, which reads as "no stall" and so casts no vote. The alternative —
-returning something large — would VETO a match on the strength of a measurement
+returning something large — would veto a match on the strength of a measurement
 that was never taken. Same principle as the absent pedometer in
 `matchImprovesDisplay`: no evidence means no veto, never a veto by default. -/
 def maxCorridorStallCap : Nat := 4000000
@@ -61,10 +61,10 @@ def maxCorridorStallCap : Nat := 4000000
 /-- The longest run of `path` that travels far while its monotone projection
 onto the time-ordered `fixes` polyline barely advances (m).
 
-⚠ The projection is the MIN-COST MONOTONE ASSIGNMENT (a DP), not a greedy
+The projection is the min-cost monotone assignment (a DP), not a greedy
 nearest-projection ratchet. The greedy version mis-scored out-and-back walks: on
-a street walked TWICE, the locally-nearest projection of an early vertex could
-land on the RETURN pass, ratcheting the floor forward so the whole rest of the
+a street walked twice, the locally-nearest projection of an early vertex could
+land on the return pass, ratcheting the floor forward so the whole rest of the
 walk read as one giant stall — measured, a line ≤12 m off a 118 m-stall matched
 line scored 2169 m. Choosing the jointly-cheapest assignment puts each pass of
 the drawn line on the pass of the fixes it actually follows. An invented detour
@@ -73,7 +73,7 @@ signal this exists to catch is unchanged. -/
 def maxCorridorStall (fixes path : Array Pt) (tolM : Float := 15) : Float := Id.run do
   if path.size < 2 || fixes.size < 2 then return 0
   if path.size * (fixes.size - 1) > maxCorridorStallCap then return 0
-  -- ⚠ THE GRIDS ARE FLAT, `k * S + i`, and every index below is in range by
+  -- The grids are flat, `k * S + i`, and every index below is in range by
   -- construction (`k < V`, `i < S`, a rank `< S`) — a product no index tactic can
   -- bound, so the reads say their default instead: `0`, the neutral value a
   -- `!` read would have produced, and `-1` (no parent) for `parent`. No day

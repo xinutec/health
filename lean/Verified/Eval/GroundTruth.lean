@@ -34,9 +34,9 @@ inductive Status where
   | correct | wrong | «partial» | unclear
   deriving BEq, Repr, Inhabited
 
-/-- How a verdict is KNOWN — the provenance ladder, strongest first.
+/-- How a verdict is known — the provenance ladder, strongest first.
 
-⚠ `inferred` is read back from the pipeline's own output and is not truth: a
+`inferred` is read back from the pipeline's own output and is not truth: a
 "hair appointment" once wore a `correct` badge that way. `unspecified` is
 treated the same, so an unannotated legacy row cannot gate a regression check. -/
 inductive Provenance where
@@ -57,7 +57,7 @@ structure Truth where
   mode : Mode
   /-- Focus-place name. `none` for movement modes and train. -/
   place : Option String := none
-  /-- OSM way name from "walking on X" — a WEAKER signal than `place`, since
+  /-- OSM way name from "walking on X" — a weaker signal than `place`, since
   it is the nearest road rather than a destination. -/
   wayName : Option String := none
   /-- Trailing parenthetical, e.g. "(hotel)" — surfaces the amenity the human
@@ -66,7 +66,7 @@ structure Truth where
   trainFrom : Option String := none
   trainTo : Option String := none
   /-- Named line or bus route, asserted only with a `· Line` suffix. A trailing
-  parenthetical after the alight is COMMENTARY and is not a line assertion. -/
+  parenthetical after the alight is commentary and is not a line assertion. -/
   lineName : Option String := none
   deriving BEq, Repr, Inhabited
 
@@ -111,7 +111,7 @@ def stripStars (s : String) : String :=
 
 /-- `text.replace(/\{[^}]*\}/g, "")` — drop brace runs.
 
-⚠ `[^}]*` cannot span a `}`, so an unclosed `{` swallows the rest of the string
+`[^}]*` cannot span a `}`, so an unclosed `{` swallows the rest of the string
 only if no `}` follows. -/
 def stripBraceRuns (s : String) : String := Id.run do
   let mut out : String := ""
@@ -192,7 +192,7 @@ def splitVerb (t : String) : Option (Mode × String) := Id.run do
 
 /-- `/^(.+?)\s+→\s+([^·]+?)(?:\s*·\s*(.+))?$/` — a transit leg.
 
-⚠ The arrow split and the middle-dot split are both the first: `(.+?)` is
+The arrow split and the middle-dot split are both the first: `(.+?)` is
 non-greedy and `[^·]` cannot cross a `·`. A station name containing either
 would split early; none in the corpus does. -/
 def splitTransit (rest : String) : Option (String × String × Option String) := Id.run do
@@ -303,7 +303,7 @@ private def two (cs : List Char) (i : Nat) : Option Nat :=
 
 /-- `/^(\d{2}):(\d{2})\s*[–-]\s*(\d{2}):(\d{2})$/`.
 
-⚠ Both dashes: the corpus uses an en dash, and a plain hyphen also matches;
+Both dashes: the corpus uses an en dash, and a plain hyphen also matches;
 accepting only one would drop rows without failing. -/
 def parseWindow (t : String) : Option (Nat × Nat × Nat × Nat) := Id.run do
   let cs := t.toList
@@ -324,7 +324,7 @@ def parseWindow (t : String) : Option (Nat × Nat × Nat × Nat) := Id.run do
   return some (sh, sm, eh, em)
 
 /-- `/^Times:\s*(zone)\s*$/m` — a file may declare the zone its clock times were
-written in, which OVERRIDES the caller's. Needed when a narrative was written in
+written in, which overrides the caller's. Needed when a narrative was written in
 the zone the day was lived in rather than the fixture's display zone. -/
 def declaredTz (markdown : String) : Option String := Id.run do
   for line in markdown.splitOn "\n" do
@@ -344,7 +344,7 @@ private def isSeparatorRow (cells : Array String) : Bool :=
 
 /-- Parse one narrative into structured, day-anchored rows.
 
-⚠ The day cursor is the subtle part. Rows are walked in table order; when a
+The day cursor is the subtle part. Rows are walked in table order; when a
 row's start time decreases from the previous row's, the cursor advances a day.
 That is how a table puts tonight's sleep at the bottom.
 
@@ -450,7 +450,7 @@ private def cell (s : String) : Option Truth := parseTruthCell s
 #guard cell "stationary @ Riverside General (hospital)"
        == some { mode := .stationary, place := some "Riverside General", placeQualifier := some "hospital" }
 
--- Ways. ⚠ A way name may contain a comma and stays whole.
+-- Ways. A way name may contain a comma and stays whole.
 #guard cell "walking on Example Rise" == some { mode := .walking, wayName := some "Example Rise" }
 #guard cell "walking on Hofweg, Molenstraat"
        == some { mode := .walking, wayName := some "Hofweg, Molenstraat" }
@@ -474,8 +474,8 @@ private def cell (s : String) : Option Truth := parseTruthCell s
        == some { mode := .bus, trainFrom := some "Northgate", trainTo := some "Southgate",
                  lineName := some "38" }
 
--- ⚠ A TRAILING PARENTHETICAL ON THE ALIGHT IS COMMENTARY, NOT A LINE. Only a
--- `· Line` suffix asserts one, so this must NOT set `lineName`.
+-- A trailing parenthetical on the alight is commentary, not a line. Only a
+-- `· Line` suffix asserts one, so this must not set `lineName`.
 #guard cell "train Northgate → Southgate (Circle/H&C/Met)"
        == some { mode := .train, trainFrom := some "Northgate", trainTo := some "Southgate" }
 
@@ -485,7 +485,7 @@ private def cell (s : String) : Option Truth := parseTruthCell s
 #guard cell "train on Circle Line" == some { mode := .train, lineName := some "Circle Line" }
 #guard cell "bus on Market Street" == some { mode := .bus, wayName := some "Market Street" }
 
--- ⚠ `\b` after the verb: a longer word that merely STARTS with a mode name is
+-- `\b` after the verb: a longer word that merely starts with a mode name is
 -- not that mode. Without the boundary check "planeload" would parse as `plane`.
 #guard (cell "planeload of freight").isNone
 #guard (cell "buses replaced the service").isNone
@@ -499,7 +499,7 @@ private def cell (s : String) : Option Truth := parseTruthCell s
 #guard normaliseStatus "wrong" == .wrong
 #guard normaliseStatus "partial" == .«partial»
 #guard normaliseStatus "**wrong**" == .wrong
--- ⚠ The provenance tag is stripped before the verdict is matched. Without that,
+-- The provenance tag is stripped before the verdict is matched. Without that,
 -- every annotated row would fall through to `unclear` and gate nothing.
 #guard normaliseStatus "correct {user}" == .correct
 #guard normaliseStatus "**wrong** {derived}" == .wrong
@@ -514,7 +514,7 @@ private def cell (s : String) : Option Truth := parseTruthCell s
 #guard parseProvenance "no tag here" == .unspecified
 #guard parseProvenance "{inferred}" == .inferred
 
--- ⚠ THE PROVENANCE LADDER IS WHAT STOPS A PIPELINE GUESS GATING A CHECK.
+-- The provenance ladder is what stops a pipeline guess gating a check.
 -- `inferred` is read back from the pipeline's own output; `unspecified` is an
 -- un-annotated legacy row. Neither may enforce.
 #guard trusted .corroborated && trusted .user && trusted .derived
@@ -546,7 +546,7 @@ private def doc (rows : List String) : String :=
                            ["", "## Notes after the table", "",
                             "| 09:00 – 10:00 | walking | correct |"])
 
--- Rows before the audit heading and after the NEXT heading are both ignored:
+-- Rows before the audit heading and after the next heading are both ignored:
 -- the table is the structured signal, the prose around it is not.
 #guard (parseGroundTruth (doc ["| 09:00 – 10:00 | walking | correct |"])
           "2026-05-15" "Europe/London").rows.size == 1
@@ -557,7 +557,7 @@ private def doc (rows : List String) : String :=
                                "| 09:00 – 10:00 | walking | correct |", "| 11:00 – 12:00 |"])
           "2026-05-15" "Europe/London").rows.size == 1
 
--- ⚠ BOTH DASHES parse. The corpus uses an en dash; accepting only one would
+-- Both dashes parse. The corpus uses an en dash; accepting only one would
 -- drop rows silently rather than fail.
 #guard parseWindow "09:00 – 10:00" == some (9, 0, 10, 0)
 #guard parseWindow "09:00 - 10:00" == some (9, 0, 10, 0)
@@ -576,21 +576,21 @@ private def days (rows : List String) : List (String × String) :=
              "| 11:00 – 12:00 | stationary @ Work | correct |"]
        == [("2026-05-15", "2026-05-15"), ("2026-05-15", "2026-05-15")]
 
--- ⚠ A START THAT DECREASES ADVANCES THE CURSOR. That is how a table puts
--- tonight's sleep at the bottom and means the NEXT calendar day.
+-- A start that decreases advances the cursor. That is how a table puts
+-- tonight's sleep at the bottom and means the next calendar day.
 #guard days ["| 09:00 – 10:00 | walking | correct |",
              "| 23:00 – 07:00 | sleeping @ Home | correct |",
              "| 08:00 – 09:00 | walking | correct |"]
        == [("2026-05-15", "2026-05-15"), ("2026-05-15", "2026-05-16"),
            ("2026-05-16", "2026-05-16")]
 
--- ⚠ THE FIRST ROW ANCHORS TO THE PREVIOUS DAY ONLY IF IT WRAPS. An overnight
+-- The first row anchors to the previous day only if it wraps. An overnight
 -- stay that starts after noon and ends at or before its own start belongs to
 -- the previous evening.
 #guard days ["| 23:16 – 09:08 | sleeping @ Home | correct |"]
        == [("2026-05-14", "2026-05-15")]
 
--- ...and an after-noon activity that does NOT wrap stays on the date. Without
+-- ...and an after-noon activity that does not wrap stays on the date. Without
 -- the wrap test this anchored a full day early and could never match a state.
 #guard days ["| 19:27 – 20:40 | stationary @ Home | correct |"]
        == [("2026-05-15", "2026-05-15")]
@@ -602,7 +602,7 @@ private def days (rows : List String) : List (String × String) :=
 
 /-! #### The declared zone -/
 
--- ⚠ A FILE MAY OVERRIDE THE CALLER'S ZONE, and two of the 32 real narratives
+-- A file may override the caller's zone, and two of the 32 real narratives
 -- do — one written in CEST for a Netherlands trip, one transcribed from UTC.
 -- Reading them in the fixture's display zone would shift every row.
 #guard (parseGroundTruth (doc ["| 09:00 – 10:00 | walking | correct |"])
@@ -614,7 +614,7 @@ private def days (rows : List String) : List (String × String) :=
 
 /-! #### Cells -/
 
--- ⚠ A NOTES CELL THAT OVERFLOWED PAST ITS CLOSING PIPE IS STILL REAL. The
+-- A notes cell that overflowed past its closing pipe is still real. The
 -- trailing empty is dropped only when the line genuinely ends with `|`.
 #guard splitTableRow "| a | b | c |" == #[" a ", " b ", " c "]
 #guard splitTableRow "| a | b | c " == #[" a ", " b ", " c "]
@@ -625,7 +625,7 @@ private def days (rows : List String) : List (String × String) :=
 #guard ((parseGroundTruth (doc ["| 09:00 – 10:00 | walking | correct |"])
           "2026-05-15" "Europe/London").rows[0]!).correctVersionText == none
 
--- Provenance is read from the status AND the notes cell together.
+-- Provenance is read from the status and the notes cell together.
 #guard ((parseGroundTruth (doc ["| 09:00 – 10:00 | walking | correct | {derived} from cadence |"])
           "2026-05-15" "Europe/London").rows[0]!).provenance == .derived
 

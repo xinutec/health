@@ -3,7 +3,7 @@ import Std.Data.HashSet
 /-!
 # Per-line route connectivity
 
-Route-rail's `connected` fact: does a path of edges ALL carrying line `L` join
+Route-rail's `connected` fact: does a path of edges all carrying line `L` join
 the fixes near the boarding platform to those near the alighting platform? A BFS
 in the subgraph of `L`-only edges, over the node adjacency the route graph
 already indexes (two edges share a node iff their endpoints collapse to the same
@@ -11,7 +11,7 @@ already indexes (two edges share a node iff their endpoints collapse to the same
 also the termination argument, so the search is total without a lemma about
 the graph.
 
-Pure graph traversal — no floats, so EXACT. The adjacency (node ids, incident
+Pure graph traversal — no floats, so exact. The adjacency (node ids, incident
 edges) is resolved by the graph builder and passed in; the BFS is opaque over
 string ids, so the `nodeKey` `toFixed` rounding stays with the builder. The Bool
 result is traversal-order-independent (reachability), so fidelity needs only the

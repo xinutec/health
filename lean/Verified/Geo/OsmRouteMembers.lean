@@ -7,22 +7,22 @@ member nodes by id, then read each relation's stops from its members in order,
 preferring PT-v2 `stop_position` roles and falling back to platforms when a
 route is mapped without them.
 
-## ⚠ MEMBER ORDER IS THE ROUTE DIRECTION
+## ⚠ member order is the route direction
 
 The sequence is not sorted and must not be. OSM models each direction of a
-service as its own relation, and the member order within one relation IS the
+service as its own relation, and the member order within one relation is the
 order the vehicle calls at those stops. `seq` is assigned from the position in
-the KEPT list, not from the position among the members — a member that does not
+the kept list, not from the position among the members — a member that does not
 resolve leaves no gap.
 
-## ⚠ THE PLATFORM FALLBACK IS ALL-OR-NOTHING
+## The platform fallback is all-or-nothing
 
 `resolveOrderedStops` does not mix the two role sets. If `stop_position` members
 resolve to fewer than two stops the whole sequence is re-read from platforms
 instead — because a half-and-half sequence would interleave two different
 mappings of the same route and the resulting order would be neither.
 
-A route that cannot reach two stops under EITHER set resolves to nothing. One
+A route that cannot reach two stops under either set resolves to nothing. One
 stop cannot anchor a call pattern, and guessing the rest is what this whole
 mirror exists to avoid.
 -/
@@ -40,7 +40,7 @@ structure Member where
 
 /-- A node the mirror resolved: coordinates, and a name when OSM has one.
 
-⚠ `name` STAYS `none` RATHER THAN BECOMING `""`. An unnamed `stop_position` is
+`name` stays `none` rather than becoming `""`. An unnamed `stop_position` is
 kept deliberately — its coordinates still resolve against station footprints via
 the route graph's 150 m merge radius — and an empty string would make it look
 like a station called nothing. -/
@@ -85,7 +85,7 @@ def stopsForRoles (members : Array Member) (nodes : Array (Nat × ResolvedNode))
     let some role := m.role | continue
     if !roles.contains role then continue
     let some node := lookup nodes ref | continue
-    -- ⚠ `seq` counts the KEPT stops, so an unresolvable member leaves no hole.
+    -- `seq` counts the kept stops, so an unresolvable member leaves no hole.
     stops := stops.push { name := node.name, lat := node.lat, lon := node.lon, seq := stops.size }
   return stops
 
@@ -112,19 +112,19 @@ private def NODES : Array (Nat × ResolvedNode) := #[N 1 (some "A"), N 2 (some "
 #guard (resolveOrderedStops #[M 1 "stop", M 2 "stop", M 3 "stop"] NODES).map (·.name)
         == #[some "A", some "B", none]
 
--- ⚠ MEMBER ORDER IS THE DIRECTION — reversing the members reverses the stops.
+-- Member order is the direction — reversing the members reverses the stops.
 -- Nothing sorts, and a guard is the only thing standing between that and a
 -- well-meaning `.qsort` on name.
 #guard (resolveOrderedStops #[M 2 "stop", M 1 "stop"] NODES).map (·.name) == #[some "B", some "A"]
 
--- An unnamed stop is KEPT with `none`, because its coordinates still resolve.
+-- An unnamed stop is kept with `none`, because its coordinates still resolve.
 #guard (resolveOrderedStops #[M 3 "stop", M 1 "stop"] NODES).map (·.name) == #[none, some "A"]
 
 -- One stop cannot anchor a call pattern.
 #guard (resolveOrderedStops #[M 1 "stop"] NODES).isEmpty
 #guard (resolveOrderedStops #[] NODES).isEmpty
 
--- ⚠ A member whose node is absent from the response leaves NO GAP: the second
+-- A member whose node is absent from the response leaves no gap: the second
 -- kept stop is seq 1, not seq 2.
 #guard (resolveOrderedStops #[M 1 "stop", M 99 "stop", M 2 "stop"] NODES).map (·.seq) == #[0, 1]
 
@@ -134,8 +134,8 @@ private def NODES : Array (Nat × ResolvedNode) := #[N 1 (some "A"), N 2 (some "
 
 -- The platform fallback fires only when stop_position cannot reach two.
 #guard (resolveOrderedStops #[M 1 "platform", M 2 "platform"] NODES).size == 2
--- ⚠ ALL OR NOTHING: one stop_position plus two platforms yields the two
--- PLATFORMS, not a mixture of all three. Mixing would interleave two different
+-- All or nothing: one stop_position plus two platforms yields the two
+-- platforms, not a mixture of all three. Mixing would interleave two different
 -- mappings of one route and the order would be neither of them.
 #guard (resolveOrderedStops #[M 3 "stop", M 1 "platform", M 2 "platform"] NODES).map (·.name)
         == #[some "A", some "B"]

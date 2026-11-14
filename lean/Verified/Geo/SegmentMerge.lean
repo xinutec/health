@@ -9,7 +9,7 @@ import Verified.PlaceSource
 
 `Seg` is the record every pass reads and rewrites. Beside it:
 
-* `composeWayName` — a way label composed from each contributor's DURATION;
+* `composeWayName` — a way label composed from each contributor's duration;
 * `samePlace` — two stays are one visit when they carry the same name;
 * `absorbMoveInsidePlace` — a moving run between two stays at one place that
   never left it is that stay.
@@ -29,7 +29,7 @@ open Verified.JsNum (jsRound)
 /-- Per-segment HR, sleep and step aggregates — what `enrichSegmentWithBiometrics`
 (`Verified.Geo.BiometricWindows`) computes and the `biomEnrich` pass attaches.
 
-Declared HERE rather than beside the function that fills it in, because `Seg`
+Declared here rather than beside the function that fills it in, because `Seg`
 carries one and the dependency only runs one way: the segment record is the
 leaf every pass shares, so a field of it cannot name a module that imports it. -/
 structure BiometricEnrichment where
@@ -80,11 +80,11 @@ structure Seg where
   centroidLat : Option Float := none
   centroidLon : Option Float := none
   focusPlaceId : Option Int := none
-  /-- Whether `linearity` MEANS anything for this segment — whether it moved
+  /-- Whether `linearity` means anything for this segment — whether it moved
   farther than its own GPS error. See
   `Verified.Geo.Segments.WindowFeatures.directionResolvable`.
 
-  ⚠ DEFAULT `true`. Every existing construction omits it and must keep its
+  Default `true`. Every existing construction omits it and must keep its
   behaviour: "we have no reason to doubt the direction" is the status quo, and
   a segment with no accuracy reported is not thereby suspect. -/
   directionResolvable : Bool := true
@@ -99,9 +99,9 @@ structure Seg where
   right; the full re-derivation would cost a mode on 04-29.
   -/
   needsRename : Bool := false
-  /-- The bus passes' judgement of a road-vehicle leg: which KIND of vehicle it
+  /-- The bus passes' judgement of a road-vehicle leg: which kind of vehicle it
   is. The day-state flattening gives this precedence over `refinedMode`, so a
-  pass that promotes a leg to `train` must CLEAR it or the timeline renders the
+  pass that promotes a leg to `train` must clear it or the timeline renders the
   train as a bus. `Verified.Geo.PlaceOverride` is the pass that does. -/
   vehicleKind : Option String := none
   /-- The share of this leg's GPS samples that sit nearer a drivable road than
@@ -121,13 +121,13 @@ structure Seg where
   matchedPath : Option (Array PathPt) := none
   /-- This walking leg drawn on the walkable network (`annotateWalkMatches`). -/
   walkMatchedPath : Option (Array PathPt) := none
-  /-- This walking leg drawn by the MAP reconstruction instead of the matcher,
+  /-- This walking leg drawn by the map reconstruction instead of the matcher,
   attached only where the reconstruction is substantially shorter. Takes
   precedence over `walkMatchedPath` when present. -/
   walkSmoothedPath : Option (Array PathPt) := none
-  /-- Whether the walk annotation had building outlines for THIS leg's ground:
+  /-- Whether the walk annotation had building outlines for this leg's ground:
   `some true` when the `buildingsNear` read answered (possibly
-  with no rings: ground with none), `some false` when it was DECLINED, `none`
+  with no rings: ground with none), `some false` when it was declined, `none`
   when no read was made (no ways to draw on, or the pass did not run). The
   wall metric means something only when this is `some true`: over unmeasured
   ground a line crosses no wall for the wrong reason. -/
@@ -136,15 +136,15 @@ structure Seg where
   `biomEnrich` pass. `none` until it runs — distinct from an enrichment whose
   own fields are empty because Fitbit had nothing for the day. -/
   biometrics : Option BiometricEnrichment := none
-  /-- **A DEBUG SURFACE, AND NOTHING READS IT.** The walk matcher's
-  identity report for this leg: how much of the chosen route ran along each NAMED
+  /-- A debug surface, and nothing reads it. The walk matcher's
+  identity report for this leg: how much of the chosen route ran along each named
   way, longest first. Unnamed arcs are dropped.
 
-  ⚠ **THE UNIT IS THE MATCHER'S OWN AND DOES NOT CONVERT TO METRES** — see
-  `MatchOut.wayUm`. Read these as SHARES; an `m` suffix would invent a precision
+  ⚠ the unit is the matcher's own and does not convert to metres — see
+  `MatchOut.wayUm`. Read these as shares; an `m` suffix would invent a precision
   nobody measured.
 
-  ⚠ **UNGATED, AND DELIBERATELY WIDER THAN `wayName`.** `drawMatcher` adopts a
+  Ungated, and deliberately wider than `wayName`. `drawMatcher` adopts a
   route name only on an unnamed, unspliced leg inside the stray bar. A
   diagnostic filtered the same way could not show a route riding the wrong way
   on a leg that kept its cascade name. -/
@@ -170,14 +170,14 @@ def WAY_LABEL_MAX_CHARS : Nat := 30
 def WAY_LABEL_MIN_COVERAGE : Float := 0.15
 def WAY_LABEL_MAX_NAMES : Nat := 3
 
-/-- Compose a way label from per-name DURATION contributions.
+/-- Compose a way label from per-name duration contributions.
 
-Ranked longest-first (a STABLE sort, so equal durations keep insertion order —
+Ranked longest-first (a stable sort, so equal durations keep insertion order —
 JS `Array#sort` is TimSort and `List.mergeSort` merges left-biased), filtered to
 contributors covering ≥ 15% of the total, capped at three names, then joined
 while the running label stays inside 30 characters.
 
-Note the join BREAKS rather than skips: once a candidate would overflow the
+Note the join breaks rather than skips: once a candidate would overflow the
 budget the loop stops, so a shorter fourth-ranked name never sneaks in behind a
 long second. `none` when nothing survives, and when the durations total zero —
 which is a real case (`total === 0`), not just an empty map.
@@ -205,7 +205,7 @@ def composeWayName (contribs : Array (String × Float)) : Option String :=
 
 /-- Two stays are at the same place when they carry the same non-empty name.
 
-⚠ Not the same mined place. For the carved stop that comes out `Subway` beside a
+Not the same mined place. For the carved stop that comes out `Subway` beside a
 stay the same election named `O2 Centre` (05-22), the identity test would also
 merge Currys and Lidl, 57 m apart under one mined cluster on 06-24, and lose a
 confirmed row. A mined cluster is wider than a venue, so its id cannot say two
@@ -407,7 +407,7 @@ private def cw (xs : List (String × Float)) : Option String := composeWayName x
 #guard cw [("Euston Road", 600)] == some "Euston Road"
 -- Both over the coverage floor and inside the 30-char budget.
 #guard cw [("Gower St", 600), ("Store St", 300)] == some "Gower St, Store St"
--- The join BREAKS on overflow rather than skipping: a shorter third-ranked name
+-- The join breaks on overflow rather than skipping: a shorter third-ranked name
 -- never sneaks in behind a long second.
 #guard cw [("Tottenham Court Road", 600), ("Great Russell Street", 500), ("Bury Pl", 400)]
   == some "Tottenham Court Road"
@@ -417,19 +417,19 @@ private def cw (xs : List (String × Float)) : Option String := composeWayName x
 #guard cw [("Main St", 900), ("Alley", 100)] == some "Main St"
 -- …and exactly at the floor it survives.
 #guard cw [("Main St", 850), ("Alley", 150)] == some "Main St, Alley"
--- At most three names, and the CAP is what excludes the fourth: all four clear
+-- At most three names, and the cap is what excludes the fourth: all four clear
 -- the coverage floor here, so nothing else can be doing it.
 #guard cw [("A", 250), ("B", 250), ("C", 250), ("D", 250)] == some "A, B, C"
 -- The char budget from both sides: a 30-character join is accepted (`> 30`
 -- rejects), 31 breaks and leaves the leader alone.
 #guard cw [("Abbey Road", 600), ("Seventeen Chars Xx", 500)] == some "Abbey Road, Seventeen Chars Xx"
 #guard cw [("Abbey Road", 600), ("Nineteen Chars Xxxx", 500)] == some "Abbey Road"
--- A zero TOTAL is its own arm, distinct from an empty map.
+-- A zero total is its own arm, distinct from an empty map.
 #guard cw [("Nowhere", 0)] == none
 #guard cw [] == none
 
-/-- A segment carrying the STRUCTURE's field defaults. `default` (from
-`Inhabited`) does NOT: it zeroes every field, so a guard built on it silently
+/-- A segment carrying the structure's field defaults. `default` (from
+`Inhabited`) does not: it zeroes every field, so a guard built on it silently
 merges point counts of 0. -/
 private def blank : Seg := { startTs := 0, endTs := 0, mode := "" }
 
@@ -440,7 +440,7 @@ private def named (n : String) (id : Option Int := none) : Seg :=
 -- The same name is the same place, with or without an election.
 #guard samePlace (named "Costa") (named "Costa") == true
 #guard samePlace (named "Costa" (some 3)) (named "Costa" (some 4)) == true
--- The same mined place under two names is NOT — see the doc: Currys and Lidl
+-- The same mined place under two names is not — see the doc: Currys and Lidl
 -- share a cluster.
 #guard samePlace (named "Subway" (some 9)) (named "O2 Centre" (some 9)) == false
 -- Two unnamed stays are not the same place either: an absent name never

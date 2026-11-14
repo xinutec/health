@@ -6,7 +6,7 @@
 //! tables do not ride in it: the fold asks for those, and `lookup_rows` below
 //! turns a fixture's recorded trace into the rows it will be answered with.
 //!
-//! ⚠ Floats cross as their bit pattern. `bits` renders an `f64` as the decimal
+//! Floats cross as their bit pattern. `bits` renders an `f64` as the decimal
 //! of its IEEE-754 payload, so the fold reads the pipeline's exact double.
 //! Formatting the number instead (`{}`, `{:.6}`, `to_string`) silently changes
 //! coordinate precision, where 1e-7° is what the match gate adjudicates.
@@ -28,7 +28,7 @@ pub fn bits(x: f64) -> String {
 
 /// `bits`, but `null` survives as `null`.
 ///
-/// ⚠ Absent and zero are different facts: a segment with no `refinedMode` is
+/// Absent and zero are different facts: a segment with no `refinedMode` is
 /// not one refined to nothing.
 pub fn opt_bits(x: Option<f64>) -> Value {
     match x {
@@ -61,7 +61,7 @@ fn opt_str_at(v: Option<&Value>) -> Value {
     }
 }
 
-/// A field passed through UNENCODED.
+/// A field passed through unencoded.
 ///
 /// Timestamps, counts and ids are not bit-encoded: JSON carries an integer
 /// exactly. It also carries string keys (`routeKey`, the enum-ish `mode`
@@ -93,7 +93,7 @@ fn path(v: Option<&Value>) -> Value {
 
 /// One segment in the shape `Day.parseSeg` reads.
 ///
-/// ⚠ Thirty fields, and the tail is the easy half to miss. A short encoding
+/// Thirty fields, and the tail is the easy half to miss. A short encoding
 /// is no parse error in Lean: absent fields take `Seg`'s defaults, and the fold
 /// answers about a segment that has lost its enrichment.
 pub fn encode_seg(seg: &Value) -> Value {
@@ -298,7 +298,7 @@ pub fn encode_mode_stats(v: Option<&Value>) -> Value {
 
 /// A required float field: `bits`, with a default when absent.
 ///
-/// ⚠ Not [`num_bits`]: these fields are a number Lean always reads, whereas
+/// Not [`num_bits`]: these fields are a number Lean always reads, whereas
 /// `num_bits` keeps absent as `null`. The wrong one turns "unknown" into a
 /// value or the reverse.
 fn num_bits_or(o: &Map<String, Value>, k: &str, dflt: f64) -> Value {
@@ -307,7 +307,7 @@ fn num_bits_or(o: &Map<String, Value>, k: &str, dflt: f64) -> Value {
 
 /// The mined places, six ways, as `env` carries them.
 ///
-/// ⚠ One source list, six tuples, none redundant: each stage reads the columns
+/// One source list, six tuples, none redundant: each stage reads the columns
 /// it needs and Lean indexes them positionally. The stay detector wants a
 /// display name to snap to; the dwell continuation wants visit counts; the
 /// enrichment stage wants the whole row. Five of six, or six in the wrong
@@ -386,7 +386,7 @@ pub fn encode_places(known: Option<&Value>) -> Map<String, Value> {
 }
 
 /// The 24-hour visit profile: every entry `bits`, or `null` for the whole
-/// thing. ⚠ `null` means "no profile", which is not a profile of zeroes.
+/// thing. `null` means "no profile", which is not a profile of zeroes.
 fn hour_profile(v: Option<&Value>) -> Value {
     match v.and_then(Value::as_array) {
         None => Value::Null,
@@ -436,7 +436,7 @@ fn fix_cells(points: Option<&Value>) -> std::collections::HashSet<(i64, i64)> {
 /// Worth doing because `busRouteCache` is about half the request, and Lean's
 /// `Json.parse` costs ~20x the text in heap.
 ///
-/// ⚠ With no fixes the input is returned unfiltered: a silent empty cache would
+/// With no fixes the input is returned unfiltered: a silent empty cache would
 /// read downstream as a day with no bus service.
 pub fn reachable_bus_routes(bus_routes: Option<&Value>, points: Option<&Value>) -> Option<Value> {
     let cells = fix_cells(points);
@@ -468,7 +468,7 @@ pub fn reachable_bus_routes(bus_routes: Option<&Value>, points: Option<&Value>) 
         })
         .cloned()
         .collect();
-    // ⚠ Stderr: `dump_day_request` and `replay-corpus-states.sh` write the
+    // Stderr: `dump_day_request` and `replay-corpus-states.sh` write the
     // request to stdout.
     eprintln!(
         "busRouteCache: {} of {} route(s) reachable from {} fix cell(s)",
@@ -496,7 +496,7 @@ fn stops(v: Option<&Value>) -> Value {
 
 /// The route and decode caches, as `env` carries them.
 ///
-/// ⚠ `railRouteCache` holds its geometry as a JSON string inside the row, and
+/// `railRouteCache` holds its geometry as a JSON string inside the row, and
 /// a row that does not parse is an error, not a skip. A corrupt row silently
 /// becoming "this route does not exist" would score a day against a route set
 /// with something missing; an empty polyline is a route that goes nowhere, a
@@ -584,7 +584,7 @@ pub fn encode_caches(
 fn key_nums(k: &str) -> Vec<f64> {
     k.split('|')
         .filter(|s| !s.is_empty())
-        // The NaN is the PARITY, not a sentinel — see the note above: it is what
+        // The NaN is the parity, not a sentinel — see the note above: it is what
         // `Number("x")` yields on the other side, and it survives as a bit
         // pattern. An Option here would diverge from the oracle this mirrors.
         // dev-lint: allow-nan-sentinel
@@ -650,7 +650,7 @@ fn venue_stats(v: &Value) -> Value {
 
 /// The mined visit-shape priors, or `null`.
 ///
-/// ⚠ `null` is "no evidence about any venue", and `rankVenues` drops the shape
+/// `null` is "no evidence about any venue", and `rankVenues` drops the shape
 /// term; an empty object would turn a dropped term into a uniform one.
 pub fn encode_venue_priors(v: Option<&Value>) -> Value {
     let Some(o) = v.and_then(Value::as_object) else {
@@ -677,7 +677,7 @@ pub fn encode_venue_priors(v: Option<&Value>) -> Value {
 
 /// The default radii, in metres, of lookups whose callers omit one.
 ///
-/// ⚠ They decide whether a recorded answer is found or missed. Changing one
+/// They decide whether a recorded answer is found or missed. Changing one
 /// does not change what the mirror was asked, only which recorded answer the
 /// fold is offered.
 pub mod default_radius_m {
@@ -697,7 +697,7 @@ fn list_of<F: Fn(&Map<String, Value>) -> Value>(v: &Value, f: F) -> Value {
 /// fold's asks are answered with, keyed as the fold spells the ask.
 ///
 /// The row shapes are the ones `DayEntry`'s `entry2`/`entry3`/… parsers read,
-/// and the key is derived FROM the row so the two cannot disagree: three-key
+/// and the key is derived from the row so the two cannot disagree: three-key
 /// tables spell `row[0]|row[1]|row[2]`, two-key tables `row[0]|row[1]`,
 /// `reverseGeocode` `lat|lon|zoom`, `bestPlace` `lat|lon|start|end|tz`, and
 /// `stationsOnLine` the bare line name.
@@ -850,7 +850,7 @@ fn best_place(section: Option<&Value>) -> Result<Value> {
     Ok(Value::Array(out))
 }
 
-/// `[line, [[name, latBits, lonBits], …]]` — keyed by LINE NAME, not by
+/// `[line, [[name, latBits, lonBits], …]]` — keyed by line name, not by
 /// coordinate, so there is no key parsing and no radius.
 fn stations_on_line(section: Option<&Value>) -> Value {
     Value::Array(
@@ -875,12 +875,12 @@ fn stations_on_line(section: Option<&Value>) -> Value {
 }
 
 /// `reverseGeocode`'s `zoom = 18` default, so a key that omitted it records the
-/// EFFECTIVE argument rather than a blank.
+/// effective argument rather than a blank.
 pub const NOMINATIM_DEFAULT_ZOOM: f64 = 18.0;
 
 /// `[latBits, lonBits, zoom, address|null]`.
 ///
-/// ⚠ The zoom crosses as a plain integer, unlike every other numeric: it is a
+/// The zoom crosses as a plain integer, unlike every other numeric: it is a
 /// literal the caller writes. So this table cannot reuse `table3`, which would
 /// bit-encode the zoom and miss every key.
 ///

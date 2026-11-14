@@ -100,7 +100,7 @@ structure Seg where
   roads : Array String := #[]
   displayTz : Option String := none
   /-- The metro area the leg sits in, where both its ends agree on one
-  (`Enrich.commonCity`). Absent on a leg that CROSSES cities. -/
+  (`Enrich.commonCity`). Absent on a leg that crosses cities. -/
   city : Option String := none
   deriving Inhabited, BEq
 
@@ -115,7 +115,7 @@ private def REST_MODES : List Mode := ["stationary", "sleeping"]
     would punish the honest "we didn't see this". -/
 private def CONTIGUITY_MAX_GAP_S : Int := 120
 
-/-- A gap no segment covers is a SEAM, not unobserved time, when it is
+/-- A gap no segment covers is a seam, not unobserved time, when it is
     contiguous and touches a moving segment: nobody sleeps between getting up
     and the walk out. Sleep is not synthesised there, or a Fitbit sleep running
     half an hour past the getting up leaves half-minute "sleeping" rows either
@@ -195,7 +195,7 @@ def stateForInterval (start finish : Int) (seg : Option Seg) (sleep : Option Sle
                  placeSource := some "sleep", placeAt := w.placeAt,
                  tz := if w.tz.isSome then w.tz else s.displayTz,
                  minutesAsleep := if w.minutesAsleep > 0 then some w.minutesAsleep else none }
-        -- Stationary AT the sleep place: rewrite to sleeping.
+        -- Stationary at the sleep place: rewrite to sleeping.
         else if w.place.isSome && s.place == w.place then
           -- Prefer the window's tz over the segment's displayTz so the
           -- rewritten half matches the synthesized half — otherwise strict
@@ -243,21 +243,21 @@ def stripPartialMinutesAsleep (states : List DayState) (sleeps : List SleepWindo
 /-- The city header the timeline draws above a state — a port of the client's
 `cityForState`, not a new rule.
 
-⚠ COMPUTED AFTER THE MERGE, on the merged span, because that is where the client
+Computed after the merge, on the merged span, because that is where the client
 computes it. Taking the city from a contributing segment instead would answer
 differently for any state that merged across a city edge, and the whole point is
 that the drawn timeline does not move.
 
 Two lookups, in the client's order:
 
-* the segment whose span CONTAINS the state's midpoint and has a city. The
+* the segment whose span contains the state's midpoint and has a city. The
   bounds are inclusive at both ends there, and the midpoint is float — so the
   comparison is doubled here rather than floored, which is the same question in
   exact integers (`2·segStart ≤ start + end ≤ 2·segEnd`).
-* failing that, ANY segment sharing the state's place. This is not decoration: a
+* failing that, any segment sharing the state's place. This is not decoration: a
   synthesised sleeping state runs beyond segment coverage (morning sleep before
   the first fix), so its midpoint lands in a gap, and without the fallback the
-  header sits BELOW the sleep row instead of above it.
+  header sits below the sleep row instead of above it.
 -/
 def cityForState (segments : List Seg) (s : DayState) : Option String :=
   let mid2 := s.startTs + s.endTs
@@ -325,14 +325,14 @@ private def PLACE_FALLBACK_MAX_GAP_SEC : Int := 6 * 3600
 /--
 The place naming a sleep window, or `none`.
 
-You **cannot relocate while asleep**, so the location is anchored at sleep
-ONSET and the wake side only confirms it. Candidates are ranked first by side
+You cannot relocate while asleep, so the location is anchored at sleep
+onset and the wake side only confirms it. Candidates are ranked first by side
 (overlap 0 < bedtime 1 < wake 2), then by smallest gap. This is why a
-bedtime-side home beats a wake-side hospital that is nearer in TIME: on a
+bedtime-side home beats a wake-side hospital that is nearer in time: on a
 "walked straight out of home" morning the first stationary place after waking
-is where you went TO, not where you slept. It is continuity, not a residential
+is where you went to, not where you slept. It is continuity, not a residential
 bias — the same rule keeps inpatient nights at the hospital, whose bedtime side
-IS the hospital.
+is the hospital.
 -/
 def derivePlaceForSleepAt (winStart winEnd : Int) (segments : List Seg) :
     Option (String × Option (Float × Float)) :=
@@ -431,7 +431,7 @@ def snapClusterToPlace (cLat cLon : Float) (places : List StayKnownPlace) :
     | none => some (p, d)
     | some (_, bd) => if decide (d < bd) then some (p, d) else acc) none).map (·.1)
 
-/-- Candidate stays: one per dwell cluster that snaps to a NAMED known place.
+/-- Candidate stays: one per dwell cluster that snaps to a named known place.
     Deliberately narrow — a cluster that does not snap is no better than the
     no-data fallback, so it is dropped rather than surfaced unnamed. -/
 def detectKnownPlaceStays (fixes : List StayFix) (knownPlaces : List StayKnownPlace) :
@@ -523,7 +523,7 @@ private def sw (startTs endTs : Int) (place : Option String) (minutesAsleep : In
   [sw T0 (T0+3600) (some "Home") 55 (some "Europe/London")]).head!.tz == some "Europe/London"
 #guard (segmentsToDayStates [sg T0 (T0+3600) (place := some "Home") (displayTz := some "Europe/Dublin")]
   [sw T0 (T0+3600) (some "Home") 55 none]).head!.tz == some "Europe/Dublin"
--- Stationary somewhere ELSE defers to GPS — no sleeping rewrite.
+-- Stationary somewhere else defers to GPS — no sleeping rewrite.
 #guard (segmentsToDayStates [sg T0 (T0+3600) (place := some "Work")]
   [sw T0 (T0+3600) (some "Home") 55]).head!.mode == "stationary"
 -- Moving through a sleep window keeps its mode and gains `asleep`.
@@ -549,14 +549,14 @@ private def upAndOut : List Seg :=
 #guard (segmentsToDayStates
   [sg T0 (T0+1000) (place := some "Home"), sg (T0+1120) (T0+1600) "walking"]
   [sw T0 (T0+3600) (some "Home") 55]).head!.endTs == T0+1000
--- The synthesized half and the rewritten half of ONE sleep merge into one row,
+-- The synthesized half and the rewritten half of one sleep merge into one row,
 -- and because the merged row spans the full window minutesAsleep survives.
 #guard segmentsToDayStates
   [sg (T0+1800) (T0+3600) (place := some "Home") (displayTz := some "Europe/London")]
   [sw T0 (T0+3600) (some "Home") 55 (some "Europe/London")]
   == [{ startTs := T0, endTs := T0+3600, mode := "sleeping", place := some "Home", placeSource := some "sleep",
         tz := some "Europe/London", minutesAsleep := some 55 }]
--- A sleeping row covering only PART of its window loses minutesAsleep.
+-- A sleeping row covering only part of its window loses minutesAsleep.
 #guard segmentsToDayStates [sg (T0+1800) (T0+3600) (place := some "Work")]
   [sw T0 (T0+3600) (some "Home") 55]
   == [{ startTs := T0, endTs := T0+1800, mode := "sleeping", place := some "Home", placeSource := some "sleep" },
@@ -648,7 +648,7 @@ private def mkFixes (startTs : Int) (n : Nat) (stepSec : Int) (lat lon : Float) 
 #guard detectKnownPlaceStays (mkFixes T0 10 120 (HOME_LAT + 0.0006) HOME_LON) [homePlace] == []
 #guard (detectKnownPlaceStays (mkFixes T0 10 120 (HOME_LAT + 0.0006) HOME_LON)
   [{ homePlace with radiusM := some 150 }]).length == 1
--- A slow drift stays ONE run: each step is inside the radius of the running mean.
+-- A slow drift stays one run: each step is inside the radius of the running mean.
 #guard (detectKnownPlaceStays
   ((List.range 10).map (fun i =>
     { ts := T0 + Int.ofNat i * 120, lat := HOME_LAT + Float.ofNat i * 0.0001, lon := HOME_LON }))

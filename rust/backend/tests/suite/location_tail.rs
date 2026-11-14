@@ -2,8 +2,8 @@
 //!
 //! `/location/tail` filters and caps its buffer inline rather than asking Lean
 //! per poll — a tail is thousands of points and shipping them across the FFI
-//! every ten seconds would cost more than the fetch it saves. ⚠ THIS FILE IS
-//! THEREFORE THE ONLY THING holding the host's copy against the rule, and the
+//! every ten seconds would cost more than the fetch it saves. This file is
+//! therefore the only thing holding the host's copy against the rule, and the
 //! same goes for the three constants restated in `lean.rs`.
 
 use backend::lean;
@@ -23,7 +23,7 @@ fn points(tss: &[i64]) -> Vec<TailPoint> {
         .collect()
 }
 
-/// ⚠ The constants are restated in Rust for the serving path. If Lean's move
+/// The constants are restated in Rust for the serving path. If Lean's move
 /// and these do not, the host quietly serves a different policy.
 #[test]
 fn constants_match_lean() {
@@ -34,7 +34,7 @@ fn constants_match_lean() {
     assert_eq!(lean::TAIL_TTL_MS, tail_ttl);
 }
 
-/// ⚠ THE DRIFT GUARD for the filter and the cap.
+/// The drift guard for the filter and the cap.
 #[test]
 fn tail_agrees_with_lean() {
     init();
@@ -60,7 +60,7 @@ fn tail_agrees_with_lean() {
     }
 }
 
-/// The filter is STRICT: the point the caller already holds is not resent.
+/// The filter is strict: the point the caller already holds is not resent.
 #[test]
 fn since_is_exclusive() {
     let got = tail_after(&points(&[1, 2, 3]), 2.0);
@@ -71,9 +71,9 @@ fn since_is_exclusive() {
     );
 }
 
-/// The cap keeps the NEWEST points.
+/// The cap keeps the newest points.
 ///
-/// ⚠ Taking the first 2000 instead would answer a live map with the OLDEST
+/// Taking the first 2000 instead would answer a live map with the oldest
 /// points in the buffer and never reach the present — which looks like lag
 /// rather than like a bug, so nothing else would catch it.
 #[test]

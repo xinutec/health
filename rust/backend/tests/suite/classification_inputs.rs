@@ -1,11 +1,11 @@
 //! The day-input loaders' parsing decisions.
 //!
-//! ⚠ NOTHING HERE TOUCHES A DATABASE, and that is a limit worth stating rather
+//! Nothing here touches a database, and that is a limit worth stating rather
 //! than hiding: the queries are proven by `backend check` against production,
 //! because no test in this crate executes SQL and "it compiles" says nothing
 //! about a column name, a bind order, or the decode of a DECIMAL.
 //!
-//! What IS testable off a database is what the loader does with a blob it
+//! What is testable off a database is what the loader does with a blob it
 //! cannot read — which is where a masking fallback would live.
 
 use backend::classification_inputs::{js_num, next_date_string, parse_hour_profile, parse_stops};
@@ -13,7 +13,7 @@ use serde_json::Value;
 
 #[test]
 fn an_absent_hour_profile_is_null_not_empty() {
-    // ⚠ null, NOT []. `hourProfileMatch` tests for null to mean "no
+    // null, not []. `hourProfileMatch` tests for null to mean "no
     // time-of-day signal"; an empty array is a profile asserting every hour is
     // equally unlikely.
     assert_eq!(parse_hour_profile(None), Value::Null);
@@ -23,7 +23,7 @@ fn an_absent_hour_profile_is_null_not_empty() {
 
 #[test]
 fn a_real_hour_profile_is_comma_separated_per_mille_integers() {
-    // ⚠ The format: `round(f * 1000)` joined by commas into a VARCHAR. Read as
+    // The format: `round(f * 1000)` joined by commas into a VARCHAR. Read as
     // JSON, every profile decodes to empty and the loader still reports success.
     //
     // Taken from a real stored value rather than invented, because inventing
@@ -58,7 +58,7 @@ fn a_non_numeric_bucket_voids_the_profile_rather_than_zeroing_it() {
 
 #[test]
 fn an_empty_bucket_is_zero_because_that_is_what_number_does() {
-    // ⚠ NOT a Rust decision. JS `Number("")` is 0, so `parseHourProfile` reads
+    // Not a Rust decision. JS `Number("")` is 0, so `parseHourProfile` reads
     // `1,,1,…` as a zero bucket rather than voiding the row, and this has to
     // agree with the reader the writer was built against. `str::parse` errors
     // on "", so the case is handled before parsing.
@@ -76,8 +76,8 @@ fn an_empty_bucket_is_zero_because_that_is_what_number_does() {
 
 #[test]
 fn a_route_with_fewer_than_two_stops_is_no_answer() {
-    // ⚠ This is the rule, not a size guard. The matcher anchors a leg's FIRST
-    // and LAST fix to a route's stops, so a one-stop route cannot be matched
+    // This is the rule, not a size guard. The matcher anchors a leg's first
+    // and last fix to a route's stops, so a one-stop route cannot be matched
     // against at all — keeping it would put a row in the candidate set that no
     // input can ever select, which reads as "considered and rejected".
     assert_eq!(parse_stops("[]"), None);
@@ -90,7 +90,7 @@ fn a_corrupt_stops_blob_drops_the_route_rather_than_the_day() {
     // Bus and rail-stop naming are additive evidence: the cost of a bad row is
     // an unnamed leg, and the cost of throwing is a timeline nobody can see.
     assert_eq!(parse_stops("{not json"), None);
-    // An OBJECT is not a stop list. Without the array check this hands a map to
+    // An object is not a stop list. Without the array check this hands a map to
     // a consumer that walks it by index.
     assert_eq!(parse_stops(r#"{"a":1,"b":2}"#), None);
     assert_eq!(parse_stops("null"), None);
@@ -98,7 +98,7 @@ fn a_corrupt_stops_blob_drops_the_route_rather_than_the_day() {
 
 #[test]
 fn the_stop_array_is_passed_through_verbatim() {
-    // ⚠ ORDER IS THE ROUTE'S DIRECTION. The matcher reads it to tell an
+    // Order is the route's direction. The matcher reads it to tell an
     // outbound leg from an inbound one, so this must not be normalised,
     // sorted, or re-keyed on the way through.
     let raw = r#"[{"name":"first","lat":1.5},{"name":"second","lat":2.5},{"name":"third"}]"#;
@@ -111,7 +111,7 @@ fn the_stop_array_is_passed_through_verbatim() {
 
 #[test]
 fn the_evening_night_is_filed_under_tomorrow() {
-    // A sleep row is filed under the date it ENDS on, so the night starting
+    // A sleep row is filed under the date it ends on, so the night starting
     // tonight is stored under tomorrow. Getting this wrong loses the evening
     // window silently — the day still renders, just without a night.
     assert_eq!(next_date_string("2026-06-16").unwrap(), "2026-06-17");
@@ -140,7 +140,7 @@ fn a_date_that_is_not_a_date_is_an_error_not_a_guess() {
 
 #[test]
 fn an_integral_double_renders_without_a_fraction() {
-    // ⚠ The point is the byte string, not the value. JavaScript has one number
+    // The point is the byte string, not the value. JavaScript has one number
     // type, so `JSON.stringify(25)` is `25`; serde_json keeps the f64-ness and
     // writes `25.0`, so a 25 m radius would render differently to a client while
     // being the same number.
@@ -148,7 +148,7 @@ fn an_integral_double_renders_without_a_fraction() {
     assert_eq!(js_num(0.0).to_string(), "0");
     assert_eq!(js_num(998.0).to_string(), "998");
     assert_eq!(js_num(-3.0).to_string(), "-3");
-    // ⚠ INVISIBLE TO A `jq` DIFF, which is how this survived the first parity
+    // Invisible to A `jq` diff, which is how this survived the first parity
     // pass: jq parses both sides to doubles, so 25.0 == 25 and a keyed
     // comparison reports no mismatch. Only the serialised text shows it.
     assert_ne!(serde_json::json!(25.0_f64).to_string(), "25");
@@ -156,7 +156,7 @@ fn an_integral_double_renders_without_a_fraction() {
 
 #[test]
 fn a_fractional_double_keeps_its_fraction() {
-    // A cast to i64 would have changed the VALUE rather than the rendering, and
+    // A cast to i64 would have changed the value rather than the rendering, and
     // `radius_m` is fractional for most places.
     assert_eq!(js_num(25.5).to_string(), "25.5");
     assert_eq!(js_num(0.059).to_string(), "0.059");
@@ -165,7 +165,7 @@ fn a_fractional_double_keeps_its_fraction() {
 
 #[test]
 fn a_value_outside_i64_is_left_alone_rather_than_saturated() {
-    // `as i64` SATURATES, so an out-of-range integral double would otherwise
+    // `as i64` saturates, so an out-of-range integral double would otherwise
     // become i64::MAX — a wrong number that looks like a right one.
     assert!(js_num(f64::NAN).is_null() || js_num(f64::NAN) == "null");
     // serde and JavaScript agree on the exponent form here: both write `1e+30`.

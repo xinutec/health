@@ -5,7 +5,7 @@ import Verified.Hsmm.FloatScore
 
 The observation-only core of the train-candidate generator: from the per-minute
 GPS speeds and the bracketing fixes, find the disjoint `[start, end]` windows the
-user was plausibly on a train — via observed train speed OR a bracketed GPS-null
+user was plausibly on a train — via observed train speed or a bracketed GPS-null
 displacement implying train velocity. Pure over the observation tensor; the
 station/line matching (`enumerateTrainCandidates`) is the graph-dependent
 follow-on that consumes these windows.

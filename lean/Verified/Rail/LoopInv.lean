@@ -1241,7 +1241,7 @@ theorem dijkstra_certifies {g : Graph} {src dst : Nat} (hwf : WFEdges g)
       omega
     exact exit_certify hwf hcore hsrcdone hdstdone hD hexc (.inl hDL) hnocheap
 
-/-- **The pin, retired.** On in-range adjacency the checker never
+/-- The pin, retired. On in-range adjacency the checker never
 changes the answer: `dijkstraC = dijkstra`. -/
 theorem dijkstraC_eq_dijkstra {g : Graph} (hwf : WFEdges g) (src dst : Nat) :
     dijkstraC g src dst = dijkstra g src dst := by
@@ -1309,7 +1309,7 @@ private theorem closure_done {g : Graph} {src L : Nat} {st : DState}
         exact closure_done hwf hcore hrel hempty (b' :: q') b' b rfl hl
           (by rw [hc2]; rfl) hbdone
 
-/-- **Completeness**: a connected pair always yields a path. -/
+/-- Completeness: a connected pair always yields a path. -/
 theorem dijkstra_complete {g : Graph} {src dst : Nat} (hwf : WFEdges g)
     (hsrc : src < g.n) (hdst : dst < g.n) {D : Nat}
     (hor : oracleDist g src dst = some D) :
@@ -1337,7 +1337,7 @@ theorem dijkstra_complete {g : Graph} {src dst : Nat} (hwf : WFEdges g)
   simp only [dijkstra]
   rw [if_neg (show ¬(src ≥ g.n ∨ dst ≥ g.n) by omega), hD', hreb]
 
-/-- **The V3 contract, proved end to end**: `none` exactly on
+/-- The V3 contract, proved end to end: `none` exactly on
 disconnection. -/
 theorem dijkstra_none_iff {g : Graph} (hwf : WFEdges g) {src dst : Nat}
     (hsrc : src < g.n) (hdst : dst < g.n) :

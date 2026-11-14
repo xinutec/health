@@ -1,4 +1,4 @@
-//! Session credentials by hand: `mint-session` (WRITES a credential) and `drop-
+//! Session credentials by hand: `mint-session` (writes a credential) and `drop-
 //! session`.
 
 use anyhow::{Context, Result};
@@ -6,7 +6,7 @@ use backend::{config::Config, db};
 
 /// Mint a session and print its cookie value, for end-to-end verification.
 ///
-/// ⚠ This creates real credentials. It exists to check an authenticated
+/// This creates real credentials. It exists to check an authenticated
 /// response end to end: a session minted here is as valid as one from a
 /// login.
 ///
@@ -38,7 +38,7 @@ pub(crate) async fn drop_session(cookie: &str) -> Result<()> {
     let pool = db::connect(&cfg.db.url()).await?;
     let gone = backend::auth::session::destroy(&pool, secret, cookie).await?;
     pool.close().await;
-    // ⚠ Reported rather than assumed: a "destroyed" that removed no row means
+    // Reported rather than assumed: a "destroyed" that removed no row means
     // the credential is still live somewhere.
     eprintln!("session removed: {gone}");
     if !gone {
@@ -48,7 +48,7 @@ pub(crate) async fn drop_session(cookie: &str) -> Result<()> {
 }
 
 /// Only mirror around focus places seen this recently — drops stale travel
-/// history so the mirror tracks where the user lives NOW.
+/// history so the mirror tracks where the user lives now.
 pub(crate) const MIRROR_RECENT_DAYS: i64 = 120;
 /// Two focus places are the same metropolitan region within this. Comfortably
 /// larger than a city's diameter, far smaller than the gap between cities.

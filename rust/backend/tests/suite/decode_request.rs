@@ -1,6 +1,6 @@
 //! The `assemblesegments` request `decode-day` actually sends.
 //!
-//! ⚠ Every field on this wire is `serde_json::Value`, so nothing on the Rust
+//! Every field on this wire is `serde_json::Value`, so nothing on the Rust
 //! side can tell a wrong shape from a right one. Lean refuses by name, which is
 //! the only check there is — and it only runs if something sends a realistic
 //! request.
@@ -40,7 +40,7 @@ fn request(places: serde_json::Value, place_near_line: serde_json::Value) -> ser
     }))
 }
 
-/// ⚠ THE ROW SHAPE IS REFUSED BY NAME. This is the exact request `decode-day`
+/// The row shape is refused by name. This is the exact request `decode-day`
 /// would have sent on the first run that got past the observation tensor, and
 /// the error is the one a production log would have carried.
 #[test]
@@ -59,7 +59,7 @@ fn the_focus_places_row_shape_is_refused() {
 }
 
 /// And the mapped shape is accepted — which is what makes the refusal above a
-/// statement about the SHAPE rather than about the request as a whole.
+/// statement about the shape rather than about the request as a whole.
 #[test]
 fn the_mapped_shape_is_accepted() {
     setup();
@@ -76,7 +76,7 @@ fn the_mapped_shape_is_accepted() {
         .expect("the mapped shape must be accepted");
 }
 
-/// ⚠ A ROW WITH NO CENTROID IS A ROW THIS CODE HAS MISREAD, and it must say so
+/// A row with no centroid is a row this code has misread, and it must say so
 /// rather than decode a place in the Gulf of Guinea. `known_places` already
 /// refuses to write one; this refuses to forward one.
 #[test]
@@ -111,7 +111,7 @@ fn no_places_is_an_empty_list_not_an_error() {
     );
 }
 
-/// ⚠ THE LINE LIST IS LEAN'S. A Rust copy would let the shell resolve stations
+/// The line list is lean's. A Rust copy would let the shell resolve stations
 /// for a different set of lines than the model has states for, and neither side
 /// would report it: extra pairs never match a state, missing ones silently drop
 /// a hard zero.
@@ -124,8 +124,8 @@ fn the_known_lines_come_from_the_model() {
     assert_eq!(lines.len(), 11, "the served state space's train lines");
 }
 
-/// ⚠ THE HARD CONSTRAINT ITSELF. A place 100 m from a Central Line station may
-/// board it; a place 40 km away may not, and the ABSENCE of its key is what says
+/// The hard constraint itself. A place 100 m from a Central Line station may
+/// board it; a place 40 km away may not, and the absence of its key is what says
 /// so. An empty result is therefore not a neutral one — it removes every hard
 /// zero rather than adding them.
 #[test]
@@ -145,7 +145,7 @@ fn a_place_is_near_the_line_it_can_walk_to_and_no_other() {
     assert_eq!(pairs, vec!["1|Central Line", "2|Circle Line"]);
 }
 
-/// ⚠ A LINE THE MIRROR ANSWERED WITH NOTHING CONTRIBUTES NOTHING, and it reads
+/// A line the mirror answered with nothing contributes nothing, and it reads
 /// the same as a line every place is far from. That is deliberate: an OSM gap is
 /// not evidence that nobody lives near the Piccadilly Line.
 #[test]
@@ -163,7 +163,7 @@ fn a_line_with_no_stations_yields_no_pairs() {
     );
 }
 
-/// ⚠ THE PAIRS REACH THE DECODER AS PAIRS. `placeNearLine` crosses as a list of
+/// The pairs reach the decoder as pairs. `placeNearLine` crosses as a list of
 /// `"id|line"` strings and Lean rebuilds the set; a shape the decoder could not
 /// read would be swallowed as "no place is near any line", which is the failure
 /// this whole path exists to avoid.
@@ -181,7 +181,7 @@ fn the_pairs_are_accepted_by_assemblesegments() {
         .expect("the decoder must accept the pairs this pipeline produces");
 }
 
-/// ⚠ THE CHAIN SEED IS FOUR FIELDS, NOT ONE — the third field-shape defect on
+/// The chain seed is four fields, not one — the third field-shape defect on
 /// this request. `{priorPlaceId}` alone is refused. Both halves are asserted,
 /// because the refusal alone
 /// would still pass if the replacement shape were also wrong.
@@ -209,7 +209,7 @@ fn the_continuity_seed_needs_all_four_fields() {
     .expect("the four-field seed must be accepted");
 }
 
-/// ⚠ `priorPlaceCoord` is a pair on the wire. The object form is refused, and a
+/// `priorPlaceCoord` is a pair on the wire. The object form is refused, and a
 /// null one is the documented ungated case rather than an error.
 #[test]
 fn the_prior_place_coord_is_a_pair_and_may_be_null() {
@@ -230,7 +230,7 @@ fn the_prior_place_coord_is_a_pair_and_may_be_null() {
     );
 }
 
-/// ⚠ NO PRIOR DAY IS A CHAIN START, NOT A FAULT. `null` must decode — the first
+/// No prior day is a chain start, not a fault. `null` must decode — the first
 /// day of a user's history has no seed, and so does any day after a gap.
 #[test]
 fn a_null_continuity_is_a_chain_start() {
@@ -240,14 +240,14 @@ fn a_null_continuity_is_a_chain_start() {
     lean::assemble_segments(&r).expect("a chain start must decode");
 }
 
-/// ⚠ THE FIFTH SHAPE DEFECT, AND THE ONLY ONE ENTIRELY INSIDE THIS REPOSITORY.
+/// The fifth shape defect, and the only one entirely inside this repository.
 /// `buildWireGraph` emits every coordinate as an IEEE-754 bit pattern — on
 /// purpose, because a re-rounded coordinate moves a node's 5-dp key, which is
 /// its identity. `assemblesegments` read only JSON numbers and refused the
 /// output of the entry point next door with `number expected`. Two Lean files,
 /// one wire, no agreement, and nothing between them to notice.
 ///
-/// `jFloat` now takes either encoding. This sends the wire graph EXACTLY as
+/// `jFloat` now takes either encoding. This sends the wire graph exactly as
 /// `lean::build_wire_graph` returns it.
 #[test]
 fn the_wire_graph_is_accepted_in_the_encoding_it_is_produced_in() {
@@ -255,7 +255,7 @@ fn the_wire_graph_is_accepted_in_the_encoding_it_is_produced_in() {
     let (edges, nodes) = lean::build_wire_graph(
         &[serde_json::json!({
             "id": "w1",
-            // ⚠ `[latBits, lonBits]` PAIRS on the way in, `{lat, lon}` OBJECTS
+            // `[latBits, lonBits]` pairs on the way in, `{lat, lon}` objects
             // on the way out — `parse_linestring_wkt` builds the pairs and
             // `buildWireGraph` emits the objects. The asymmetry is real; this
             // test uses the producer's shape on both sides rather than a
@@ -271,7 +271,7 @@ fn the_wire_graph_is_accepted_in_the_encoding_it_is_produced_in() {
         &[],
     )
     .expect("buildWireGraph");
-    // ⚠ Asserted, not assumed: the whole point is that this side is strings.
+    // Asserted, not assumed: the whole point is that this side is strings.
     assert!(
         edges[0]["geometry"][0]["lat"].is_string(),
         "the producer emits bit patterns, and that is what makes this a test"
@@ -299,7 +299,7 @@ fn a_plain_number_coordinate_still_parses() {
     lean::assemble_segments(&r).expect("the plain-number encoding must still parse");
 }
 
-/// ⚠ AND A STRING THAT IS NOT A BIT PATTERN IS STILL AN ERROR. Accepting two
+/// And a string that is not a bit pattern is still an error. Accepting two
 /// encodings is not the same as accepting anything: a lenient parse here would
 /// read an unusable coordinate as zero and put the way in the Gulf of Guinea.
 #[test]

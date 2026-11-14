@@ -130,7 +130,7 @@ def pop (h : Heap) : Option ((Nat × Nat) × Heap) :=
 
 /-! ### The same functions, compiled in place
 
-Each reads what it needs BEFORE it writes, so the array has one owner when it
+Each reads what it needs before it writes, so the array has one owner when it
 is written and Lean updates it in place. The definitions above read the array
 again after writing it (`(a.set i (a.getD j)).set j (a.getD i)`, `h.a.pop` then
 `h.a.getD`), which makes every write a copy: a pop cost the whole heap, and the

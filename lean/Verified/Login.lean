@@ -4,17 +4,17 @@
 Two rules that guard the sign-in redirect. Both are small, both are security
 boundaries, and both fail in ways a user would not notice.
 
-## `return_to` is an OPEN-REDIRECT guard
+## `return_to` is an open-redirect guard
 
 `/login?return_to=…` exists so a reconnect banner can land the user back where
 they were. It is also the classic phishing lever: a link like
-`/login?return_to=//evil.com` sends the browser off-site AFTER a successful
+`/login?return_to=//evil.com` sends the browser off-site after a successful
 login, when the user has every reason to trust what they are looking at.
 
 ⚠ The accepted shape is deliberately narrow, and the two rejections that matter
 are not obvious:
 
-* `//evil.com` is PROTOCOL-RELATIVE. It looks like a path and is not.
+* `//evil.com` is protocol-relative. It looks like a path and is not.
 * `/\evil.com` — some browsers normalise a backslash to a slash, so this
   becomes the previous case inside the browser and not inside a naive check.
 
@@ -23,16 +23,16 @@ unconditionally rather than carrying a branch that might be forgotten.
 
 ## The pending login rides in a cookie, not in `state`
 
-⚠ Nextcloud DROPS the `state` parameter when the browser has no NC session: it
+Nextcloud drops the `state` parameter when the browser has no NC session: it
 bounces to its own login flow and comes back with `state=` empty. A server that
 looks a pending login up by `state` therefore cannot sign in a cookie-less
-browser AT ALL — found in the sibling fleetwatch service, whose Android WebView
+browser at all — found in the sibling fleetwatch service, whose Android WebView
 lost its NC cookie and could never sign in again.
 
-So `state` is still sent and still checked WHEN RETURNED, and the cookie is what
+So `state` is still sent and still checked when returned, and the cookie is what
 binds the callback to the browser that started it.
 
-⚠ Residual risk, accepted deliberately rather than overlooked: when NC returns
+Residual risk, accepted deliberately rather than overlooked: when NC returns
 an empty `state`, the cookie is the only binding, so a login-CSRF is possible
 for someone who can both reach this VPN-only host and land a callback in the
 victim's browser inside the ten-minute window. The alternative is a login that
@@ -63,7 +63,7 @@ def validateReturnTo (raw : Option String) : String :=
       let cs := s.toList
       match cs with
       | '/' :: second :: _ =>
-        -- ⚠ BOTH of these become protocol-relative in a browser.
+        -- Both of these become protocol-relative in a browser.
         if second == '/' || second == '\\' then "/"
         else if cs.all isSafePathChar then s else "/"
       | _ => "/"
@@ -73,7 +73,7 @@ def validateReturnTo (raw : Option String) : String :=
 `retried` says this login was already sent back to Nextcloud once for a missing
 `state`; a second miss is refused.
 
-⚠ `returnTo` is LAST so a `|` inside a query string cannot shift the fields. A
+`returnTo` is last so a `|` inside a query string cannot shift the fields. A
 format putting it in the middle would let a crafted `return_to` rewrite the
 expiry. -/
 def encodePending (expiresAt : Int) (nonce : String) (retried : Bool) (returnTo : Option String) : String :=
@@ -121,12 +121,12 @@ def Callback.name : Callback → String
 /-- What may this callback do?
 
 `state` is what Nextcloud returned: `none` or empty when it was lost through
-the login flow. Present means it MUST match. ⚠ Lost is never accepted
+the login flow. Present means it must match. Lost is never accepted
 (RFC 6749 §10.12): nothing then ties the URL's code to this browser, so anyone's
 code would sign it in. It is retried once — the retry finds Nextcloud signed
 in, so `state` comes back — and a second miss is refused.
 
-⚠ Expiry is strict — an entry exactly at its deadline is expired. -/
+Expiry is strict — an entry exactly at its deadline is expired. -/
 def acceptPending (expiresAt : Int) (nonce : String) (retried : Bool) (state : Option String)
     (now : Int) : Callback :=
   if expiresAt < now then .refuse
@@ -142,7 +142,7 @@ def acceptPending (expiresAt : Int) (nonce : String) (retried : Bool) (state : O
 #guard validateReturnTo (some "/your-day?date=2026-08-22") == "/your-day?date=2026-08-22"
 #guard validateReturnTo (some "/") == "/"
 #guard validateReturnTo none == "/"
--- ⚠ THE ATTACK, both spellings.
+-- The attack, both spellings.
 #guard validateReturnTo (some "//evil.com") == "/"
 #guard validateReturnTo (some "/\\evil.com") == "/"
 -- Absolute URLs are not paths.
@@ -165,13 +165,13 @@ def acceptPending (expiresAt : Int) (nonce : String) (retried : Bool) (state : O
 -- Live, and the nonce agrees, on the first try or the retry.
 #guard acceptPending 1000 "n" false (some "n") 999 == .accept
 #guard acceptPending 1000 "n" true (some "n") 999 == .accept
--- ⚠ NC lost the state: retried, never accepted.
+-- NC lost the state: retried, never accepted.
 #guard acceptPending 1000 "n" false none 999 == .retry
 #guard acceptPending 1000 "n" false (some "") 999 == .retry
 -- A second miss is refused.
 #guard acceptPending 1000 "n" true none 999 == .refuse
 #guard acceptPending 1000 "n" true (some "") 999 == .refuse
--- A returned state that DISAGREES is refused.
+-- A returned state that disagrees is refused.
 #guard acceptPending 1000 "n" false (some "other") 999 == .refuse
 -- Expired.
 #guard acceptPending 1000 "n" false (some "n") 1001 == .refuse

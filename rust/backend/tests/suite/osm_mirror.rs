@@ -22,8 +22,8 @@ fn query(bucket: &str, bbox: &Bbox) -> anyhow::Result<String> {
     overpass_query(bucket, bbox, &venue())
 }
 
-/// ⚠ THE PRECEDENCE IS THE RULE. A way carrying both tags buckets under the
-/// FIRST match, and railway beats highway because the rail signal is rarer.
+/// The precedence is the rule. A way carrying both tags buckets under the
+/// first match, and railway beats highway because the rail signal is rarer.
 #[test]
 fn railway_wins_over_highway_on_an_element_carrying_both() {
     let el = json!({
@@ -36,7 +36,7 @@ fn railway_wins_over_highway_on_an_element_carrying_both() {
     assert_eq!(f.subtype.as_deref(), Some("rail"));
 }
 
-/// A building that is ALSO a venue was already caught by an earlier rule; only
+/// A building that is also a venue was already caught by an earlier rule; only
 /// a plain one falls through. Without this the landmark bucket loses every
 /// shop that happens to have a footprint.
 #[test]
@@ -128,7 +128,7 @@ fn a_named_beach_is_a_landmark() {
     assert!(q.contains(r#"way["natural"~"^(beach)$"]["name"]"#), "{q}");
 }
 
-/// ⚠ NODES ONLY. A way tagged `highway=bus_stop` is not a stop, and letting one
+/// Nodes only. A way tagged `highway=bus_stop` is not a stop, and letting one
 /// into `transit_stop` would put a line in a bucket the bus/car discriminator
 /// reads as point evidence.
 #[test]
@@ -141,7 +141,7 @@ fn a_bus_stop_node_is_furniture_and_a_bus_stop_way_is_not() {
     assert_eq!(parse(&way).expect("way").feature_type, "highway");
 }
 
-/// ⚠ `ref` IS THE FALLBACK AND IT NAMES THE MOTORWAYS. The A41 carries no
+/// `ref` is the fallback and it names the motorways. The A41 carries no
 /// `name`; without this every trunk road in the mirror is anonymous.
 #[test]
 fn a_way_with_only_a_ref_is_named_by_it() {
@@ -186,7 +186,7 @@ fn an_untagged_element_is_skipped_rather_than_failing() {
     );
 }
 
-/// ⚠ OVERPASS WRITES `(south, west, north, east)` — the opposite pairing from
+/// Overpass writes `(south, west, north, east)` — the opposite pairing from
 /// the WKT three functions away in the same module.
 #[test]
 fn the_query_bbox_is_south_west_north_east() {
@@ -216,8 +216,8 @@ fn an_unknown_bucket_has_no_query_rather_than_an_empty_one() {
     }
 }
 
-/// ⚠ THE REASON THE BOX IS SIZED TO THE QUESTION. `osm_covered` asks whether
-/// the search disc lies inside SOME SINGLE box, so a fetch narrower than the
+/// The reason the box is sized to the question. `osm_covered` asks whether
+/// the search disc lies inside some single box, so a fetch narrower than the
 /// question leaves it uncovered and re-queued on the next fold — forever.
 /// Measured over the 44 golden days, the walk disc reaches 1832 m.
 #[test]
@@ -238,7 +238,7 @@ fn a_small_question_still_fetches_the_typescripts_box() {
     assert_eq!(half_width_for("building", 50.0).expect("ok"), 500.0);
 }
 
-/// ⚠ REFUSED, NOT UNDER-FETCHED. Silently fetching less would write a coverage
+/// Refused, not under-fetched. Silently fetching less would write a coverage
 /// row that does not answer the question it was written for.
 #[test]
 fn a_question_past_the_cap_is_refused_and_says_why() {
@@ -250,7 +250,7 @@ fn a_question_past_the_cap_is_refused_and_says_why() {
 }
 
 /// The box is centred on the point and symmetric in metres, so the longitude
-/// half-width is WIDER in degrees than the latitude one at London's latitude.
+/// half-width is wider in degrees than the latitude one at London's latitude.
 #[test]
 fn the_box_is_centred_and_wider_in_longitude_degrees() {
     let b = fetch_bbox_around(51.5, -0.1, 5000.0);
@@ -261,7 +261,7 @@ fn the_box_is_centred_and_wider_in_longitude_degrees() {
     assert!(d_lon > d_lat, "lat {d_lat} lon {d_lon}");
 }
 
-/// ⚠ THE KEY IS THE QUESTION, at full precision. A rounded one records a
+/// The key is the question, at full precision. A rounded one records a
 /// decline against a question nobody asks, and the real one is then answered.
 #[test]
 fn a_queue_key_round_trips_at_full_precision() {
@@ -279,7 +279,7 @@ fn a_key_that_is_not_three_numbers_is_refused() {
     assert_eq!(parse_queue_key("51.5|here|50"), None);
 }
 
-/// ⚠ NAMESPACED, so the Overpass kinds cannot be confused with the geocode
+/// Namespaced, so the Overpass kinds cannot be confused with the geocode
 /// drain's `nominatim_z<n>` rows in the same table.
 #[test]
 fn a_kind_round_trips_and_a_geocode_kind_is_not_one_of_ours() {

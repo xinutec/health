@@ -10,15 +10,15 @@
 //! which zone a row was recorded in — a decision written into `tz` and
 //! `ts_utc` columns and never revisited. They are still the day's track.
 //!
-//! ⚠ **A device whose fetch fails contributes zero points, which is exactly
-//! what a device that was switched off contributes.** Returning the survivors
+//! A device whose fetch fails contributes zero points, which is exactly
+//! what a device that was switched off contributes. Returning the survivors
 //! alone would make a travel day whose only fixes came from the one device
 //! that failed indistinguishable from a day spent at home, and the rows would
 //! be stamped with the profile zone, confidently and wrongly.
 //!
 //! This port does not paper over that by failing the whole fetch, because the
 //! partial answer really is better than none for the common case of one stale
-//! device on an account with two. What it does instead is stop THROWING AWAY the
+//! device on an account with two. What it does instead is stop throwing away the
 //! count: [`TrackFetch`] carries `failed_devices` out, so the caller can say so
 //! in a log line that names a number rather than leaving the evidence scattered
 //! across per-device warnings nobody correlates.
@@ -50,12 +50,12 @@ pub struct RawTrackPoint {
 /// Halve an inclusive window of whole seconds, or `None` when it is already one
 /// second wide.
 ///
-/// ⚠ **THE TWO HALVES COVER THE INPUT EXACTLY — no gap and no overlap.** Both
+/// The two halves cover the input exactly — no gap and no overlap. Both
 /// bounds are inclusive, so the split has to be `[a, mid]` and `[mid + 1, b]`. Splitting at `mid` on both
 /// sides would re-fetch whatever sits exactly on the boundary, and moving the
 /// low end instead would drop it.
 ///
-/// ⚠ **`hi` is strictly narrower than the input**, which is what makes the
+/// `hi` is strictly narrower than the input, which is what makes the
 /// caller's loop terminate rather than split a two-second window forever.
 pub fn split_window(a: i64, b: i64) -> Option<((i64, i64), (i64, i64))> {
     if b <= a {
@@ -72,14 +72,14 @@ pub struct TrackFetch {
     pub points: Vec<RawTrackPoint>,
     /// Devices whose points call failed and were skipped.
     ///
-    /// ⚠ NOT an error count to be summed and forgotten. A non-zero value means
-    /// `points` is a SUBSET of the day, and every consumer that reads absence as
+    /// Not an error count to be summed and forgotten. A non-zero value means
+    /// `points` is a subset of the day, and every consumer that reads absence as
     /// evidence is now reading it wrongly.
     pub failed_devices: usize,
-    /// Windows that came back at the cap and could NOT be split any further
+    /// Windows that came back at the cap and could not be split any further
     /// because they were already one second wide.
     ///
-    /// ⚠ THE ONLY REMAINING WAY TO LOSE POINTS HERE, and it is now counted
+    /// The only remaining way to lose points here, and it is now counted
     /// instead of invisible. Splitting resolves every ordinary case; this is
     /// over 10 000 fixes inside a single second from one device, which is not a
     /// capture rate but a fault. Non-zero means `points` is a subset.
@@ -95,12 +95,12 @@ struct WireDevice {
 #[derive(Debug, Deserialize)]
 pub struct Session {
     id: i64,
-    /// Absent for a session nothing has ever posted to. ⚠ `Option` and not
+    /// Absent for a session nothing has ever posted to. `Option` and not
     /// `#[serde(default)]` into an empty map: "no devices yet" and "devices
     /// omitted from this response" would otherwise both read as zero devices,
     /// and only one of them is a fact about the account.
     ///
-    /// ⚠ **`BTreeMap`, and the order is the point.** The range fetch
+    /// `BTreeMap`, and the order is the point. The range fetch
     /// concatenates points device by device and then sorts by timestamp with a
     /// stable sort, so points sharing a timestamp keep whatever order this walk
     /// produced. A `HashMap` randomises iteration per process, which would make
@@ -127,7 +127,7 @@ struct WirePoint {
 /// Only the values matter here — the token is the caller's own secret and
 /// nothing downstream keys on it.
 pub fn parse_sessions(body: &str) -> anyhow::Result<Vec<Session>> {
-    // ⚠ `BTreeMap` for the same reason as `Session::devices` — this map's values
+    // `BTreeMap` for the same reason as `Session::devices` — this map's values
     // become `self.sessions`, which the range fetch walks in order.
     let map: std::collections::BTreeMap<String, Session> =
         serde_json::from_str(body).context("decoding the phonetrack sessions listing")?;
@@ -136,7 +136,7 @@ pub fn parse_sessions(body: &str) -> anyhow::Result<Vec<Session>> {
 
 /// One device's points, in PhoneTrack's wire shape.
 ///
-/// ⚠ NOT sorted here. A single device's points arrive ordered, but the range
+/// Not sorted here. A single device's points arrive ordered, but the range
 /// fetch concatenates several devices and several chunks, so the sort belongs
 /// where the concatenation happens or it would be a sort per device that still
 /// left the whole unsorted.
@@ -200,7 +200,7 @@ impl PhoneTrack {
     /// Fetch every device's points between two dates, inclusive of both
     /// midnights.
     ///
-    /// ⚠ The bounds are UTC midnights from [`lean::midnight_utc`], not local
+    /// The bounds are UTC midnights from [`lean::midnight_utc`], not local
     /// ones, for a reason worth stating: the window exists to find fixes near a
     /// wall clock whose zone is unknown, so resolving its bounds in a local zone
     /// would need the answer the fetch is being run to produce.
@@ -217,10 +217,10 @@ impl PhoneTrack {
 
     /// The same walk, bounded by explicit Unix seconds.
     ///
-    /// ⚠ EXISTS BECAUSE NOT EVERY WINDOW IS DATE-ALIGNED. The day loader asks
+    /// Exists because not every window is date-aligned. The day loader asks
     /// for four ranges and only one of them starts at a midnight: the others
     /// are `<date>T12:00:00Z` cut-offs and an 18-hour battery-tail look-ahead
-    /// off the LOCAL day end. `fetchTrackPointsRange` takes strings and lets
+    /// off the local day end. `fetchTrackPointsRange` takes strings and lets
     /// `new Date(...)` parse either shape; splitting the bound resolution out
     /// here is the same thing said in a type.
     pub async fn fetch_window(
@@ -230,11 +230,11 @@ impl PhoneTrack {
         max_ts: i64,
     ) -> Result<TrackFetch, NcError> {
         let mut out = TrackFetch::default();
-        // ⚠ EVERY DEVICE AT ONCE, in a fixed order. One request per device per
+        // Every device at once, in a fixed order. One request per device per
         // window, awaited one after the other, was the day's `load.phonetrack`
         // — 0.5 to 1.2 s on the pod, a round trip at a
         // time. The requests are independent GETs under basic auth, so they go
-        // out together; the RESULTS are read back in the order the devices
+        // out together; the results are read back in the order the devices
         // were listed, so the stable sort below sees the same insertion order
         // and fixes at an equal timestamp come out as they always did.
         let devices: Vec<(i64, i64)> = self
@@ -259,7 +259,7 @@ impl PhoneTrack {
                     out.points.extend(points);
                     out.capped_windows += capped;
                 }
-                // ⚠ A revoked app password is NOT a per-device problem and
+                // A revoked app password is not a per-device problem and
                 // must not be swallowed device by device: every other call
                 // fails the same way, and the durable answer the user needs
                 // ("relink Nextcloud") would be buried under a warning per
@@ -278,26 +278,26 @@ impl PhoneTrack {
         Ok(out)
     }
 
-    /// One device's points for `[min_ts, max_ts]`, SPLITTING when the response
+    /// One device's points for `[min_ts, max_ts]`, splitting when the response
     /// comes back at the cap.
     ///
-    /// ⚠ **PhoneTrack truncates at `maxPoints` and says nothing.** A full
+    /// ⚠ PhoneTrack truncates at `maxPoints` and says nothing. A full
     /// response is shaped exactly like a device that happened to record that
-    /// many, so the tail is lost in silence. This reads the SYMPTOM — a
+    /// many, so the tail is lost in silence. This reads the symptom — a
     /// response of exactly the cap — rather than predicting a capture rate, and
     /// so it is right whether or not any device is fast enough today. The
     /// arithmetic that motivated it: a 7-day chunk at one fix per minute is
     /// 10 080 points from a single device, against a 10 000 cap.
     ///
-    /// ⚠ **THE HALVES DO NOT OVERLAP.** The bounds are inclusive at both ends,
+    /// The halves do not overlap. The bounds are inclusive at both ends,
     /// so `[a, mid]` and `[mid + 1, b]` cover `[a, b]` exactly, with no gap and no repeated fix.
     ///
-    /// ⚠ **Iterative, not recursive**, because an async fn that calls itself
+    /// Iterative, not recursive, because an async fn that calls itself
     /// needs boxing; the stack here is the recursion made visible. It
     /// terminates: every split strictly narrows a window of whole seconds, and
     /// a window one second wide is not split again.
     ///
-    /// The returned count is windows that were AT the cap and one second wide,
+    /// The returned count is windows that were at the cap and one second wide,
     /// which is the only case that still loses points — over 10 000 fixes in a
     /// single second from one device, which is a fault rather than a rate.
     async fn fetch_device_window(
@@ -355,7 +355,7 @@ impl PhoneTrack {
 
 /// The per-request point cap.
 ///
-/// ⚠ PhoneTrack truncates at this rather than paginating, and there is no field
+/// PhoneTrack truncates at this rather than paginating, and there is no field
 /// in the response saying it did. The arithmetic is uncomfortably close: a
 /// 7-day window at one fix per minute is 10 080 points from a single device,
 /// over this cap. Whether real capture rates reach that is not measured, and

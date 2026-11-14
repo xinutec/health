@@ -1,19 +1,19 @@
-//! Does the row-set prefilter change any ANSWER?
+//! Does the row-set prefilter change any answer?
 //!
 //! `RowSetAnswerer` drops rows before shipping them to Lean, because asking
 //! about one coordinate otherwise sends an entire feature bucket — 26,812
 //! highway rows and 157,489 coordinate pairs on a single London day.
 //!
-//! # ⚠ Why this test exists rather than the argument in the source
+//! # Why this test exists rather than the argument in the source
 //!
-//! The argument is that the filter is EXACT: Lean compares a degree-space
+//! The argument is that the filter is exact: Lean compares a degree-space
 //! distance against `radiusM / mPerDegAt(lat)`, so a way whose own bounding box
 //! misses that same box cannot hold a point inside the radius. That argument is
 //! probably right, and "probably right" is exactly how a prefilter silently
 //! deletes data — the result stays well-formed, just quietly emptier, and the
 //! fold answers it without complaint.
 //!
-//! So this compares ANSWERS, filtered against unfiltered, on real query points
+//! So this compares answers, filtered against unfiltered, on real query points
 //! taken from the corpus. Local-only, and announces a skip.
 
 use std::path::Path;

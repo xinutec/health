@@ -1,8 +1,8 @@
 //! `/velocity`'s gate: who reaches it, and what it refuses before computing.
 //!
-//! ⚠ NO DATABASE, so this cannot test a computed day — that is `corpus/day.rs`
+//! No database, so this cannot test a computed day — that is `corpus/day.rs`
 //! offline and `backend day-mirror` against production. What it covers is
-//! everything the route decides BEFORE any work happens, which is where a
+//! everything the route decides before any work happens, which is where a
 //! mistake is both cheap to make and invisible:
 //!
 //!   * an unauthenticated request never reaches the handler at all;
@@ -30,7 +30,7 @@ fn state() -> AppState {
                 .port(1)
                 .database("nowhere"),
         );
-    // ⚠ A signing key is REQUIRED even for tests that never sign anything. Its
+    // A signing key is required even for tests that never sign anything. Its
     // absence is its own refusal — `require_session` answers 500 rather than
     // "not logged in" — so a state without one would make every gate test
     // report that rule instead of the one it names.
@@ -39,7 +39,7 @@ fn state() -> AppState {
     AppState::new(pool, cfg, reqwest::Client::new())
 }
 
-/// The real router, so the LAYER ORDER is under test too — that order is the
+/// The real router, so the layer order is under test too — that order is the
 /// security boundary, and a test that mounted the handler directly would prove
 /// nothing about it.
 fn app() -> axum::Router {
@@ -75,7 +75,7 @@ async fn get(app: axum::Router, uri: &str) -> (StatusCode, serde_json::Value) {
     let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
         .await
         .unwrap();
-    // ⚠ FAILS LOUDLY rather than defaulting to null. A response body that did
+    // Fails loudly rather than defaulting to null. A response body that did
     // not parse is a broken handler, and reading it as "no fields" would make
     // every field assertion below fail for the wrong reason — or pass, when the
     // assertion happens to be about something absent.
@@ -101,7 +101,7 @@ fn viewer() -> UserSession {
 async fn an_unauthenticated_request_never_reaches_the_handler() {
     backend::lean::init().expect("the Lean runtime must start");
     let (status, _) = get(app(), "/api/velocity?date=2026-08-14").await;
-    // ⚠ 401 and not 500: the handler would need the database, so reaching it
+    // 401 and not 500: the handler would need the database, so reaching it
     // would show up as a pool error. This asserts the gate ran first.
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
@@ -123,7 +123,7 @@ async fn a_share_viewer_is_refused_outside_the_window_before_any_work() {
     let (status, body) = get(app_as(viewer()), "/api/velocity?date=2026-08-18").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"], "out_of_share_window");
-    // ⚠ The window is echoed, so the client can say what IS visible rather than
+    // The window is echoed, so the client can say what is visible rather than
     // just that this is not.
     assert_eq!(body["from"], "2026-08-11");
     assert_eq!(body["to"], "2026-08-17");
@@ -136,7 +136,7 @@ async fn a_share_viewer_is_refused_outside_the_window_before_any_work() {
 #[tokio::test]
 async fn a_date_inside_the_window_gets_past_the_gate_and_hits_the_dead_database() {
     backend::lean::init().expect("the Lean runtime must start");
-    // ⚠ The POINT of this test is that it is NOT 403. A boundary date must be
+    // The point of this test is that it is not 403. A boundary date must be
     // admitted, and the only way to show it was admitted is that the request
     // then failed on the database it was allowed to reach.
     for date in ["2026-08-11", "2026-08-14", "2026-08-17"] {
@@ -163,7 +163,7 @@ async fn a_malformed_date_or_an_unknown_zone_is_refused_rather_than_guessed() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "date={bad}");
     }
 
-    // ⚠ An unknown zone is REFUSED, not defaulted to UTC. A day rendered in the
+    // An unknown zone is refused, not defaulted to UTC. A day rendered in the
     // wrong zone is a plausible, wrong day, and the caller asked for a specific
     // one.
     let (status, _) = get(
@@ -176,7 +176,7 @@ async fn a_malformed_date_or_an_unknown_zone_is_refused_rather_than_guessed() {
 
 /// The `/api` group's layer stack, with a POST route added.
 ///
-/// ⚠ THIS EXISTS BECAUSE AN ABLATION CAME BACK CLEAN. Reversing the two layers
+/// This exists because an ablation came back clean. Reversing the two layers
 /// in `routes::router` changed no test, and that was honest: the group currently
 /// holds one GET route, and for a GET the order genuinely does not matter — an
 /// anonymous request is refused by `require_session` either way.
@@ -185,19 +185,19 @@ async fn a_malformed_date_or_an_unknown_zone_is_refused_rather_than_guessed() {
 /// the session from the request extensions, and `require_session` is what puts
 /// it there. Run them the wrong way round and a share viewer's POST is judged
 /// before their session exists — it looks like an anonymous request, which is
-/// not a share viewer, so it is ALLOWED, and `require_session` then attaches the
+/// not a share viewer, so it is allowed, and `require_session` then attaches the
 /// session and runs the route. A read-only link would be able to write.
 ///
-/// ⚠ This mirrors the real stack rather than importing it, so it does not
+/// This mirrors the real stack rather than importing it, so it does not
 /// protect the production order: flipping the two layers in `routes::mod`
 /// fails none of the tests here or in `auth_middleware.rs`, because every one
 /// builds its own copy of the stack. `tests/suite/share_route.rs` asserts the
 /// order through the real router.
 ///
-/// What protects the order now is `require_may_proceed` FAILING CLOSED on a
+/// What protects the order now is `require_may_proceed` failing closed on a
 /// missing session extension, which turns a misordering into an immediate 500
 /// on every request — caught by `share_route.rs`'s anonymous test, which uses
-/// the real router. What this file still tests is the RULE, which is worth
+/// the real router. What this file still tests is the rule, which is worth
 /// keeping.
 fn api_stack_with_a_write_route(session: UserSession) -> axum::Router {
     axum::Router::new()
@@ -208,7 +208,7 @@ fn api_stack_with_a_write_route(session: UserSession) -> axum::Router {
         .layer(axum::middleware::from_fn(
             move |mut req: axum::extract::Request, next: axum::middleware::Next| {
                 // Stands in for `require_session`: it establishes the session
-                // BEFORE `require_may_proceed` gets to judge it, which is the
+                // before `require_may_proceed` gets to judge it, which is the
                 // property under test.
                 let s = session.clone();
                 async move {

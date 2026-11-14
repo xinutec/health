@@ -34,7 +34,7 @@
 //! whole-network walk graph). If that lands, this module and its table can go;
 //! nothing else depends on them.
 //!
-//! ⚠ ONLY THE SERVING PROCESS KEEPS ANYTHING. [`init`] is called where the
+//! Only the serving process keeps anything. [`init`] is called where the
 //! server starts; everywhere else (gates, captures, the CLI) the store is unset,
 //! every `memo.walkGet` answers nothing and every walk is drawn, which is what a
 //! test of the drawing has to do. The asks are answered in the worker's loop and
@@ -75,7 +75,7 @@ thread_local! {
 }
 
 /// What the in-memory store has been asked, for the test that proves the
-/// second replay READ it: `memo.walkGet`s served, `memo.walkGet`s missed,
+/// second replay read it: `memo.walkGet`s served, `memo.walkGet`s missed,
 /// `memo.walkPut`s. A clock cannot say that — once drawing is fast, "four
 /// times faster when remembered" is noise.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -129,8 +129,8 @@ pub async fn init(pool: &MySqlPool) -> Result<()> {
     Ok(())
 }
 
-/// Run one database call to completion from whatever thread asks. ⚠ ON A
-/// THREAD OF ITS OWN: the worker's loop may sit inside the runtime or on a
+/// Run one database call to completion from whatever thread asks. On A
+/// thread of its own: the worker's loop may sit inside the runtime or on a
 /// blocking thread, and `block_on` from the former panics.
 fn block<T: Send>(
     handle: &tokio::runtime::Handle,

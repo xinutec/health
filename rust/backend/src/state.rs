@@ -23,7 +23,7 @@ pub struct AppState {
     /// The freshest PhoneTrack fix per user, for ten seconds.
     pub latest_fix:
         Arc<crate::location_cache::LocationCache<Option<crate::location_cache::LatestFix>>>,
-    /// The raw tail buffer per user, for ten seconds. Held WHOLE and filtered
+    /// The raw tail buffer per user, for ten seconds. Held whole and filtered
     /// per request: `since` differs between callers, so caching the filtered
     /// answer would key on it and defeat the point.
     pub tail_points:
@@ -33,7 +33,7 @@ pub struct AppState {
     /// connection pool on every request.
     /// In-flight Nextcloud Login Flow v2 handshakes, one per user.
     ///
-    /// ⚠ Process-local and deliberately not persisted: a flow is meaningless
+    /// Process-local and deliberately not persisted: a flow is meaningless
     /// across a restart, since the task polling for it is gone. A stored
     /// "pending" would be a lie nobody could clear.
     pub flows: Arc<crate::routes::nextcloud_connect::PendingFlows>,
@@ -42,7 +42,7 @@ pub struct AppState {
     pub owntracks: Arc<crate::routes::owntracks::ProxyState>,
     /// When this process started, for `/health?detail=1`'s uptime.
     ///
-    /// ⚠ Process uptime, NOT pod age. They differ after a container restart
+    /// Process uptime, not pod age. They differ after a container restart
     /// inside the same pod, and the one that explains "why did my session
     /// vanish" is this one.
     pub started: std::time::Instant,

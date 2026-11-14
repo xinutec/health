@@ -184,7 +184,7 @@ theorem linit_hinv {g : Graph} {src : Nat} (hsrc : src < g.n) : HInv g (linit g.
 
 /-! ## The payoff: a vertex settles at its own distance -/
 
-/-- **Settle price = distance.** When `lstep` pops `u` at price `p` to settle it
+/-- Settle price = distance. When `lstep` pops `u` at price `p` to settle it
 (it was unsettled with `dist[u] = some d`), `p = d`: a smaller live entry would
 have popped first (`HInv` + `pop_min`), and `LazyInv.wf` bounds it below. This
 is the fact weight-optimality rests on — the search settles each vertex exactly

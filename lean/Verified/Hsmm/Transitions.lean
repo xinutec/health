@@ -5,7 +5,7 @@ import Verified.Hsmm.Emissions
 The row-normalised static-prior transition matrix, in Lean `Float`. For each
 `src` state: the self-loop holds `exp(selfLoop)` of the mass; the rest is split
 across the valid (non-hard-zero) cross destinations in proportion to
-`transitionWeight`. This is the BASE path — the station-graph hard-zero
+`transitionWeight`. This is the base path — the station-graph hard-zero
 (`placeNearLine`) needs the place↔line adjacency this pure module doesn't carry,
 so it's a follow-on brick, exactly as `buildTransitionMatrix` behaves with no
 `placeNearLine` provided.
@@ -35,7 +35,7 @@ def isVehicleMode : Mode → Bool
 def sameState (a b : State) : Bool :=
   a.mode == b.mode && a.placeId == b.placeId && a.lineName == b.lineName
 
-/-- `transitionWeight`: `exp(-8)` for a direct hop between two DISTINCT vehicle
+/-- `transitionWeight`: `exp(-8)` for a direct hop between two distinct vehicle
     modes (no non-vehicle state between), else `1`. -/
 def transitionWeight (src dst : State) : Float :=
   if src.mode != dst.mode && isVehicleMode src.mode && isVehicleMode dst.mode then

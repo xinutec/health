@@ -2,7 +2,7 @@
 //! the route and the CLI use (`backend::lean::serve`), with each rule bracketed
 //! by an input that differs in one thing and decides the other way.
 //!
-//! ⚠ ONE `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
+//! One `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
 //! starts a runtime and several tests racing on it would flake.
 
 use serde_json::{Value, json};

@@ -15,9 +15,9 @@
 //! `chrono-tz` has the real zone data, so this asks the question directly and
 //! the two ambiguous cases are visible rather than implicit:
 //!
-//!   * SPRING FORWARD: the wall clock never happened. 01:30 on a night the
+//!   * Spring forward: the wall clock never happened. 01:30 on a night the
 //!     clocks jump 01:00 → 02:00 names no instant at all.
-//!   * FALL BACK: the wall clock happened twice, an hour apart.
+//!   * Fall back: the wall clock happened twice, an hour apart.
 //!
 //! ⚠ The choices below keep existing rows' instants stable. They are written
 //! down because the next person to touch this needs to know a decision was
@@ -55,15 +55,15 @@ pub fn parse_wall_clock(s: &str) -> Option<NaiveDateTime> {
 /// At a DST boundary both cases take the post-transition offset, which keeps
 /// existing rows' instants stable:
 ///
-///   * ambiguous (fall back) → the LATER instant. `2026-10-25 01:30` in London
-///     is 01:30 UTC (GMT), not 00:30 UTC (BST).
-///   * nonexistent (spring forward) → read on the offset in force AFTER the
+///   * ambiguous (fall back) → the later instant. `01:30` on London's autumn
+///     change is 01:30 UTC (GMT), not 00:30 UTC (BST).
+///   * nonexistent (spring forward) → read on the offset in force after the
 ///     jump. `2026-03-29 01:30` is 00:30 UTC.
 ///
-/// ⚠ The defensible reading is the other way on both (earlier instant,
+/// The defensible reading is the other way on both (earlier instant,
 /// pre-transition offset), and it disagrees with the rows already stored.
 ///
-/// ⚠ The gap is not monotonic: `01:00` maps to `00:00` UTC while the preceding
+/// The gap is not monotonic: `01:00` maps to `00:00` UTC while the preceding
 /// `00:45` maps to `00:45`. That is a real property of the post-transition
 /// reading and it is not repaired, because it cannot arise from a device: the
 /// watch's own clock jumps too, so no Fitbit sample ever carries a wall clock
@@ -76,7 +76,7 @@ pub fn wall_clock_to_unix(s: &str, tz: &str) -> Option<i64> {
         chrono::offset::LocalResult::Single(dt) => Some(dt.timestamp()),
         chrono::offset::LocalResult::Ambiguous(_earlier, later) => Some(later.timestamp()),
         chrono::offset::LocalResult::None => {
-            // In the gap. An hour LATER is always a real instant on the
+            // In the gap. An hour later is always a real instant on the
             // post-transition offset, so resolve there and step back — this
             // terminates rather than searching.
             let after = naive + chrono::TimeDelta::hours(1);
@@ -108,7 +108,7 @@ pub struct DayBounds {
 /// The UTC bounds of a civil date in a zone: its local midnight to the next.
 ///
 /// The calendar arithmetic could be Lean's — `Verified.Civil` has it — but the
-/// ZONE cannot: that file's own header says "nothing here needs a `Float`, a
+/// zone cannot: that file's own header says "nothing here needs a `Float`, a
 /// timezone database, or a clock", and a tz database is data about what
 /// governments did, not a rule a proof constrains.
 ///
@@ -176,7 +176,7 @@ pub fn local_hour_of(ts_unix: i64, tz: &str) -> Result<u32> {
 /// `Verified.VelocityCache`; this only answers what day it is where the viewer
 /// is.
 ///
-/// ⚠ An absent zone is UTC, mirroring the API's own fallback, and not a safe
+/// An absent zone is UTC, mirroring the API's own fallback, and not a safe
 /// default: at 23:30 in London the UTC date has already rolled over, so a
 /// caller that loses the viewer's zone freezes their evening an hour early
 /// rather than failing.
@@ -199,13 +199,13 @@ pub fn local_date_at(ts_unix: i64, tz: Option<&str>) -> Result<String> {
 /// resolves the whole table once and the decoder reads it by index, exactly as
 /// `local_stay_samples` does for opening hours.
 ///
-/// ⚠ SUNDAY IS 0 HERE. `local_stay_samples` is Monday-based because the
+/// Sunday is 0 here. `local_stay_samples` is Monday-based because the
 /// opening-hours table is; the observation tensor's `dayOfWeekLocal` follows
 /// JavaScript's `Date`, where Sunday is 0. The two live in one file and disagree
 /// on purpose — a shared helper would have to pick one and silently shift the
 /// other by a day.
 ///
-/// ⚠ THE TABLE IS RESOLVED PER MINUTE, NOT DERIVED FROM `start_utc`. A DST
+/// The table is resolved per minute, not derived from `start_utc`. A DST
 /// transition inside the day repeats or skips an hour, so `(m / 60) % 24` is
 /// wrong on exactly the two days a year the decoder is hardest to debug.
 pub fn local_ctx_table(start_utc: i64, end_utc: i64, tz: &str) -> Result<Vec<[u32; 2]>> {
@@ -231,11 +231,11 @@ pub fn local_ctx_table(start_utc: i64, end_utc: i64, tz: &str) -> Result<Vec<[u3
 /// but instant → local `(weekday, minute)` is tzdata, so the shell resolves the
 /// pairs and puts them on the wire.
 ///
-/// ⚠ `dayIdx` is Monday-based (`Mon = 0 … Sun = 6`). `chrono`'s
+/// `dayIdx` is Monday-based (`Mon = 0 … Sun = 6`). `chrono`'s
 /// `num_days_from_sunday` is not it, and getting this wrong shifts every
 /// opening-hours judgement by one day without changing the shape of anything.
 ///
-/// ⚠ One entry per minute. An eight-hour stay is 480 pairs, and a day's worth
+/// One entry per minute. An eight-hour stay is 480 pairs, and a day's worth
 /// of stays is why this table dominates the request. It steps by 60 seconds
 /// from `start` rather than snapping to minute boundaries, so a stay beginning
 /// at 09:00:30 samples :30 of each minute, which is what the scorer was

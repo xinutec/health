@@ -1,17 +1,17 @@
 //! Share management's gate.
 //!
-//! ⚠ NO DATABASE. The pool here can never answer, so nothing below tests what a
+//! No database. The pool here can never answer, so nothing below tests what a
 //! share row becomes — that is what `backend rows-check` and the handlers'
-//! own queries do. What IS tested is the part that must hold before any query
-//! runs, and which is now real rather than hypothetical: **`/share` is the
-//! first write route in this router**.
+//! own queries do. What is tested is the part that must hold before any query
+//! runs, and which is now real rather than hypothetical: `/share` is the
+//! first write route in this router.
 //!
 //! A share recipient must not be able to rotate, retune or revoke the link they
 //! were given. That is enforced by `require_may_proceed`, which reads the
 //! session out of the request extensions — and `require_session` is what puts
 //! it there. Mounted the wrong way round, a recipient's POST is judged before
-//! their session exists, looks anonymous, is therefore NOT a share viewer, and
-//! is ALLOWED. `tests/velocity_route.rs` has asserted that invariant against a
+//! their session exists, looks anonymous, is therefore not a share viewer, and
+//! is allowed. `tests/velocity_route.rs` has asserted that invariant against a
 //! stand-in write route since before one existed; this asserts it against the
 //! real thing.
 
@@ -37,12 +37,12 @@ fn state() -> AppState {
     AppState::new(pool, cfg, reqwest::Client::new())
 }
 
-/// The REAL router, so the layer order is what is under test.
+/// The real router, so the layer order is what is under test.
 fn app() -> axum::Router {
     backend::routes::router(state())
 }
 
-/// ⚠ REQUIRED before any request. `require_session` asks Lean for the session
+/// Required before any request. `require_session` asks Lean for the session
 /// policy, so without the host every one of these answers 500 — which looks
 /// like a refusal and is not one.
 fn init() {
@@ -58,12 +58,12 @@ async fn status(app: axum::Router, method: &str, uri: &str) -> StatusCode {
     app.oneshot(req).await.expect("response").status()
 }
 
-/// ⚠ THE ONE THAT ACTUALLY EXERCISES THE REAL ROUTER'S LAYER ORDER.
+/// The one that actually exercises the real router's layer order.
 ///
 /// A 401 here says two things: `/share` is inside the authenticated group at
-/// all, and `require_session` runs FIRST. The second only became testable once
+/// all, and `require_session` runs first. The second only became testable once
 /// `require_may_proceed` started failing closed — before that, flipping the two
-/// layers in `routes::mod` still produced a 401 here, and MEASURABLY failed
+/// layers in `routes::mod` still produced a 401 here, and measurably failed
 /// zero of the eleven tests covering this area.
 #[tokio::test]
 async fn anonymous_is_refused_before_the_handler() {
@@ -82,7 +82,7 @@ async fn anonymous_is_refused_before_the_handler() {
 
 /// A share recipient may not rotate, retune or revoke the link they were given.
 ///
-/// ⚠ This tests the RULE, not the wiring: reaching `require_may_proceed`
+/// This tests the rule, not the wiring: reaching `require_may_proceed`
 /// through the real router needs an authenticated share session, which needs a
 /// database this test does not have. The wiring is covered by
 /// `anonymous_is_refused_before_the_handler` above, and by the fail-closed
@@ -96,7 +96,7 @@ async fn a_share_viewer_may_not_write_to_share() {
             "{method} /api/share must be refused for a share viewer"
         );
     }
-    // …and the same session may still READ it, which is what makes the refusal
+    // …and the same session may still read it, which is what makes the refusal
     // a distinction rather than a blanket block.
     assert!(
         backend::lean::may_proceed(true, false, "GET", "/api/share").expect("mayProceed"),

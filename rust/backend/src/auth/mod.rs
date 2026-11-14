@@ -1,6 +1,6 @@
 //! Authentication: the crypto and the storage.
 //!
-//! ⚠ THE RULES ARE NOT HERE. When a session has expired, how a signed cookie is
+//! The rules are not here. When a session has expired, how a signed cookie is
 //! framed, and what a share recipient may do are `Verified.Session`, reached
 //! through `crate::lean`. What is in this module is the part a Lean model of
 //! would be fiction — an HMAC, a CSPRNG, a constant-time compare — plus the

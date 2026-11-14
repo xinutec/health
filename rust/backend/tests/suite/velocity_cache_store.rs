@@ -1,11 +1,11 @@
 //! The `/velocity` cache's mechanics.
 //!
-//! `tests/velocity_cache.rs` covers the POLICY — Lean's TTL, freshness and
+//! `tests/velocity_cache.rs` covers the policy — Lean's TTL, freshness and
 //! window. This covers the parts the host owns: the LRU order, eviction, and
 //! the single-flight that stops two tabs firing two OSM enrichment runs over
 //! the same rows.
 //!
-//! ⚠ These call Lean for freshness, because the cache does. So they need the
+//! These call Lean for freshness, because the cache does. So they need the
 //! runtime up even though nothing here is a decision.
 
 use std::sync::Arc;
@@ -100,7 +100,7 @@ async fn reading_a_key_makes_it_the_most_recent() {
     for k in ["a", "b", "c"] {
         put(&c, k, 1_000, p, json!(k)).await;
     }
-    // ⚠ Touch "a", so the oldest is now "b". Without the LRU bump the next
+    // Touch "a", so the oldest is now "b". Without the LRU bump the next
     // insert would evict the key the user is actually looking at.
     assert_eq!(put(&c, "a", 1_001, p, json!("miss")).await, json!("a"));
 
@@ -135,7 +135,7 @@ async fn concurrent_requests_for_one_key_compute_it_once() {
     let c = Arc::new(VelocityCache::new());
     let runs = Arc::new(AtomicUsize::new(0));
 
-    // ⚠ The compute SLEEPS, so the second task is guaranteed to arrive while
+    // The compute sleeps, so the second task is guaranteed to arrive while
     // the first is still running. Without that the test could pass by finishing
     // before the race it exists to exercise.
     let tasks: Vec<_> = (0..4)
@@ -169,7 +169,7 @@ async fn different_keys_do_not_block_each_other() {
     backend::lean::init().expect("the Lean runtime must start");
     let c = Arc::new(VelocityCache::new());
 
-    // By CONSTRUCTION, not by the clock: x's compute waits for a signal that
+    // By construction, not by the clock: x's compute waits for a signal that
     // only y's compute sends. If a per-key lock serialised different days, y
     // could not start until x returned, x could not return until y ran, and
     // the join below would time out. The bound is a hang guard, not a latency
@@ -204,7 +204,7 @@ async fn different_keys_do_not_block_each_other() {
     assert_eq!((vx, vy), (json!("x done"), json!("y done")));
 }
 
-/// ⚠ An expired entry is released by any traffic, not only by a read of its own
+/// An expired entry is released by any traffic, not only by a read of its own
 /// key: parsed days held past their window pin the serving pod at its memory
 /// limit.
 #[tokio::test]
@@ -215,7 +215,7 @@ async fn expired_entries_are_swept_by_traffic_on_other_keys() {
     put(&c, "a", 1_000, p, json!({"day": "a"})).await;
     put(&c, "b", 1_000, p, json!({"day": "b"})).await;
     assert_eq!(c.len(), 2);
-    // A read of a THIRD key, past both windows: both are gone, and the miss
+    // A read of a third key, past both windows: both are gone, and the miss
     // that seats "c" leaves only "c".
     let v = put(&c, "c", 1_000 + TTL + 1, p, json!({"day": "c"})).await;
     assert_eq!(v, json!({"day": "c"}));

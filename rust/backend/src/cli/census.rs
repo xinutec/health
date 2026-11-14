@@ -13,7 +13,7 @@ use backend::db;
 /// measures this side, so the two can be compared instead of one being assumed
 /// from the other.
 ///
-/// ⚠ FIVE GOOGLE STREAMS AGREEING ON ONE DATE IS NOT CORROBORATION. It is one
+/// Five Google streams agreeing on one date is not corroboration. It is one
 /// observation of one system, and it could as easily be an artefact of how the
 /// probe asks as a fact about the data. A backfill sized from it alone would be
 /// sized from a single unchecked number.
@@ -25,23 +25,18 @@ use backend::db;
 /// arithmetic.
 ///
 /// Read-only: every statement is a SELECT over a fixed table list compiled in.
-/// Report any stream that has stopped arriving, and FAIL if one has.
+/// Report any stream that has stopped arriving, and fail if one has.
 ///
 /// # Why this is an outcome check and not an error check
 ///
 /// A sync stream can stop for an hour with every run exiting 0 and the only
-/// trace one ERROR line in a pod log that nothing reads (Fitbit once began
+/// trace one error line in a pod log that nothing reads (a source that starts
 /// quoting an integer). This asks the outcome question instead.
 ///
-/// ⚠ Watching for a known error string would not have caught it, and would not
-/// catch the NEXT one either — a stream that writes nothing without erroring
+/// Watching for a known error string would not have caught it, and would not
+/// catch the next one either — a stream that writes nothing without erroring
 /// looks identical from the outside. This asks the only question that
 /// generalises: did rows actually arrive?
-///
-/// ⚠ **THIS WILL FIRE BY DESIGN IN SEPTEMBER** for every stream still owned by
-/// Fitbit — the Web API is decommissioned and they stop. That is a true alarm,
-/// not a false one: it is the migration's remaining scope going quiet, and it
-/// should be read as "these streams are now gone" rather than muted.
 pub(crate) async fn freshness() -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
@@ -49,11 +44,11 @@ pub(crate) async fn freshness() -> Result<()> {
         .await
         .context("connecting to the database")?;
 
-    // ⚠ `DATEDIFF` in SQL rather than parsing dates here, so the comparison is
-    // against the DATABASE's today. A local clock in another zone would shift
+    // `DATEDIFF` in SQL rather than parsing dates here, so the comparison is
+    // against the database's today. A local clock in another zone would shift
     // every lag by a day.
     //
-    // ⚠ The intraday tables store a LOCAL WALL CLOCK, not an instant (see
+    // The intraday tables store a local wall clock, not an instant (see
     // fitbit::sync::hrv) — which is why every bound here is in days, where a
     // sub-day offset cannot change the verdict.
     let rows = sqlx::query(
@@ -104,7 +99,7 @@ pub(crate) async fn freshness() -> Result<()> {
         println!("\nall {checked} streams fresh");
         return Ok(());
     }
-    // ⚠ NON-ZERO, and the names in the message. A check that reports a problem
+    // Non-zero, and the names in the message. A check that reports a problem
     // by printing and exiting 0 is the failure it is meant to detect.
     anyhow::bail!(
         "{} stream(s) not arriving: {}",
@@ -115,21 +110,21 @@ pub(crate) async fn freshness() -> Result<()> {
 
 /// What shape is `heart_rate_zones` actually in?
 ///
-/// ⚠ The row count alone cannot tell junk from duplication: rows starting in
+/// The row count alone cannot tell junk from duplication: rows starting in
 /// 2010 where every other biometric table starts in 2023, at ~19 a day
 /// where Fitbit reports four or five zones, are either dates the watch never
 /// saw or a zone axis nobody expected. Those need opposite repairs, and deleting
 /// before knowing which would be a guess.
 ///
-/// The primary key is `(user_id, date, zone_name)`, so rows ARE distinct
+/// The primary key is `(user_id, date, zone_name)`, so rows are distinct
 /// triples: `rows / (days x zones x users)` is 1 when the table is exactly what
 /// its key says, and anything else names which axis grew.
 ///
 /// Three queries rather than one union, because they have different shapes and
 /// the tunnel cost of two extra round trips is far below the cost of reading a
-/// column that means something different per arm. ⚠ Each literal is INLINE at
+/// column that means something different per arm. Each literal is inline at
 /// its call site: the crate refuses a dynamically built SQL string and
-/// dev-lint's DL-SQLX-SCHEMA-TRUTH refuses even a `const` held in a variable.
+/// dev-lint's dl-sqlx-schema-truth refuses even a `const` held in a variable.
 pub(crate) async fn zones_census() -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
@@ -160,7 +155,7 @@ pub(crate) async fn zones_census() -> Result<()> {
     println!(
         "heart_rate_zones: {total} rows, {days} distinct dates, {zones} zone names, {users} user(s), {span}"
     );
-    // ⚠ SAY THE PRODUCT OUT LOUD. "19 rows a day" is the number that made this
+    // Say the product out loud. "19 rows a day" is the number that made this
     // look wrong, and it is only wrong against an expected zone count — naming
     // the identity is what turns the surprise into an axis.
     let expect = days.saturating_mul(zones).saturating_mul(users);
@@ -183,11 +178,11 @@ pub(crate) async fn zones_census() -> Result<()> {
         println!("  {z:<24} {n:>7} rows over {d} dates");
     }
 
-    // ⚠ The oldest dates, not a sample. A sentinel date is at one end by
+    // The oldest dates, not a sample. A sentinel date is at one end by
     // construction, and the question is whether the earliest date is one row or
     // a decade of them, which `LIMIT 20` from the oldest end answers and a
     // random sample cannot.
-    // ⚠ `CAST(SUM(...) AS CHAR)`, not the bare SUM. `SUM` over INT widens to
+    // `CAST(SUM(...) AS CHAR)`, not the bare SUM. `SUM` over INT widens to
     // DECIMAL in MariaDB, which sqlx decodes as neither i64 nor f64, leaving the
     // one number that decides junk versus real unreadable. A cast on some
     // columns is not a cast.
@@ -207,7 +202,7 @@ pub(crate) async fn zones_census() -> Result<()> {
         println!("  {d}  {n} rows, {tm} zone-minutes");
     }
 
-    // ⚠ WHERE THE REAL DATA STARTS — and NOT by asking for zero minutes, which
+    // WHERE THE REAL DATA STARTS — and NOT by asking for zero minutes, which
     // was the obvious guess and is wrong. A date with no heart-rate data comes
     // back from Fitbit as `Out of Range = 1440`: the whole day, counted as
     // below the first zone. So every date in the table sums to a full day and
@@ -215,7 +210,7 @@ pub(crate) async fn zones_census() -> Result<()> {
     // asked the zero question and got 0 dates back, which reads as "it is all
     // real" and is the opposite of the truth.
     //
-    // The discriminator is minutes OUTSIDE `Out of Range`. A day the watch
+    // The discriminator is minutes outside `Out of Range`. A day the watch
     // actually recorded puts some minutes in Fat Burn, Cardio or Peak; a
     // synthesised day cannot.
     let bound = sqlx::query(
@@ -251,11 +246,11 @@ pub(crate) async fn coverage() -> Result<()> {
         .await
         .context("connecting to the database")?;
 
-    // ⚠ ONE STATIC QUERY, INLINE: not a loop over a table list, and not a
+    // One static query, inline: not a loop over a table list, and not a
     // `const` bound above.
     //
     // Two guards want this. The crate refuses a dynamically built SQL string, so
-    // a `format!`-ed table name will not compile; dev-lint's DL-SQLX-SCHEMA-TRUTH
+    // a `format!`-ed table name will not compile; dev-lint's dl-sqlx-schema-truth
     // then refuses even a `const` held in a variable, because schema checking
     // reads the argument at the call site. And the prod tunnel is latency-bound:
     // eleven separate reads over it would cost far more than eleven arms of one.
@@ -297,7 +292,7 @@ pub(crate) async fn coverage() -> Result<()> {
         let lo: Option<String> = row.try_get("lo").unwrap_or(None);
         let hi: Option<String> = row.try_get("hi").unwrap_or(None);
         match (lo, hi) {
-            // ⚠ An empty table is said out loud. A blank span beside a zero
+            // An empty table is said out loud. A blank span beside a zero
             // count reads as a failed query.
             (None, _) | (_, None) => println!("{t:<22} {n:>10}  (empty)"),
             (Some(lo), Some(hi)) => println!("{t:<22} {n:>10}  {lo} → {hi}"),
@@ -336,7 +331,7 @@ fn is_iso_date(s: &str) -> bool {
 /// has a row for the day, `null` where the row holds no value.
 /// `~/Code/dicom-scan/refresh_hr_data.py` reads it through `scripts/prod-db.sh`.
 ///
-/// ⚠ DECIMAL columns are read as CHAR and parsed here — sqlx refuses them on a
+/// DECIMAL columns are read as CHAR and parsed here — sqlx refuses them on a
 /// real row ([[reference_sqlx_mysql_type_traps]]).
 pub(crate) async fn hr_trend(since: &str, json: bool) -> Result<()> {
     use sqlx::Row as _;
@@ -353,7 +348,7 @@ pub(crate) async fn hr_trend(since: &str, json: bool) -> Result<()> {
     > = Default::default();
     for (table, metric, key) in HR_TREND_SOURCES {
         // `AssertSqlSafe`: the table and column are constants from `HR_TREND_SOURCES`;
-        // `since` is BOUND.
+        // `since` is bound.
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT DATE_FORMAT(date, '%Y-%m-%d') AS d, CAST({metric} AS CHAR) AS v              FROM {table} WHERE date >= ? ORDER BY d"
         )))
@@ -405,11 +400,11 @@ pub(crate) async fn hr_trend(since: &str, json: bool) -> Result<()> {
 /// reproducible rather than hand-tallied.
 ///
 /// `backend hr-trend --averages <FROM> <BOUNDARY>` — `{"windows", "preop",
-/// "postop"}` where `preop` covers `[FROM, BOUNDARY)` and `postop`
+/// "postop"}` where `preop` covers `[from, boundary)` and `postop`
 /// `[BOUNDARY, now)`, each `{key: {"avg", "n"}}`. `resp` also carries
 /// `without_deep`: how many of its `n` nights had no deep-sleep reading, so
 /// their figure is Google's fallback rather than the deep-sleep rate.
-/// The dates are the CALLER's:
+/// The dates are the caller's:
 /// this repository is public, and which day divides the two windows belongs
 /// to the case file that asks, not here.
 pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> {
@@ -436,7 +431,7 @@ pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> 
                         "SELECT CAST(AVG({metric}) AS CHAR) AS a, CAST(COUNT({metric}) AS CHAR) AS n                          FROM {table} WHERE date >= ?"
                     ),
                 };
-                // Table and column come from the constant list above; the dates are BOUND.
+                // Table and column come from the constant list above; the dates are bound.
                 let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(lo.clone());
                 if let Some(h) = &hi {
                     q = q.bind(h.clone());
@@ -502,7 +497,7 @@ pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> 
 /// The full HRV + resting-HR history as CSV, `date,hrv,rhr`, one row per day
 /// present in either table, ascending; an empty cell is a missing reading.
 ///
-/// `backend hrv-history` backs the long-term chart in the case file. ⚠ A
+/// `backend hrv-history` backs the long-term chart in the case file. A
 /// recorded zero counts as missing: an RMSSD of 0 ms is a failed reading, not a
 /// measurement. Dropped here and not at ingest: `hrv_daily` keeps what Fitbit
 /// recorded, verbatim.
@@ -548,7 +543,7 @@ pub(crate) async fn hrv_history() -> Result<()> {
 /// The OwnTracks proxy's decisions, newest last.
 ///
 /// The same fields as the `owntracks …` log line, read from the table the
-/// route writes beside it, so the answer survives a rollout. ⚠ `CAST(... AS
+/// route writes beside it, so the answer survives a rollout. `CAST(... As
 /// CHAR)` on every column: this is a readout, and a TINYINT or an unsigned
 /// INT decoding as a Rust integer fails on real rows in ways an empty table
 /// never shows.

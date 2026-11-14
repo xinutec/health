@@ -9,7 +9,7 @@
 //!   * which train legs want a route fill — `Verified.Geo.RailRouteFill`
 //!   * the day itself — the head, then the fold.
 //!
-//! # ⚠ The clip is applied AFTER the cache, per request
+//! # The clip is applied after the cache, per request
 //!
 //! The cached value is the full deterministic day. `now` advances and a cached
 //! value does not, so clipping before seating would freeze the horizon at
@@ -41,7 +41,7 @@ pub struct Params {
 /// `YYYY-MM-DD`, and nothing else.
 /// Folds run one at a time per process.
 ///
-/// ⚠ A fourteen-day browse at fourteen seconds a day stacked three folds, and
+/// A fourteen-day browse at fourteen seconds a day stacked three folds, and
 /// the kernel killed the backend at 428 MiB anonymous memory (the 512 MiB pod
 /// limit, three Lean children beside it), then again at 472 MiB with two in
 /// flight once the arenas of the first burst were resident. A fold's working
@@ -49,7 +49,7 @@ pub struct Params {
 /// ask over a London walk), and two of those do not fit beside what the
 /// previous one leaves behind.
 ///
-/// Requests QUEUE here rather than stack. The permit is taken inside the
+/// Requests queue here rather than stack. The permit is taken inside the
 /// cache-miss path, so a day already seated is served while another folds, and
 /// two requests for the same day still share one fold through the cache's
 /// per-key lock.
@@ -68,7 +68,7 @@ pub fn fold_slot_free() -> bool {
     FOLD_SLOT.available_permits() > 0
 }
 
-/// One day's fold AS PRODUCTION RUNS IT: the slot, the compute, the heap
+/// One day's fold as production runs it: the slot, the compute, the heap
 /// handed back. The route's cache-miss path and `backend velocity-many` both
 /// come through here, so what the smoke job measures is what serves.
 pub async fn fold_day(
@@ -111,7 +111,7 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
     let now_ms = chrono::Utc::now().timestamp_millis();
     let now_s = now_ms / 1000;
 
-    // ⚠ The default date is today in UTC, not the viewer's local date, even
+    // The default date is today in UTC, not the viewer's local date, even
     // though `tz` may say otherwise. Changing it would silently move which day
     // a bare `/velocity` returns for anyone east or west of UTC at the
     // boundary; that is a product decision.
@@ -121,7 +121,7 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
     if !valid_date(&date) {
         return Ok(bad_request("date must be YYYY-MM-DD"));
     }
-    // An unknown zone is REFUSED rather than defaulted to UTC: a day rendered in
+    // An unknown zone is refused rather than defaulted to UTC: a day rendered in
     // the wrong zone is a plausible, wrong day, and the caller asked for a
     // specific one.
     if let Some(tz) = p.tz.as_deref()
@@ -132,8 +132,8 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
     let tz = p.tz.as_deref();
     let walk_match = p.walk_match.as_deref() != Some("0");
 
-    // ⚠ Share-viewers see only dates inside their window, and the check happens
-    // BEFORE any work. `mayProceed` already stopped them writing; this is the
+    // Share-viewers see only dates inside their window, and the check happens
+    // before any work. `mayProceed` already stopped them writing; this is the
     // separate question of what they may read.
     if let Some((from, to)) = &session.share_viewer
         && !lean::date_in_share_window(&date, from, to)?
@@ -147,7 +147,7 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
 
     // The viewer's civil date decides whether this day is still in progress, and
     // therefore how long the answer may be reused. Lean has no zone database, so
-    // the date is resolved here and the DECISION is made there.
+    // the date is resolved here and the decision is made there.
     let today = timezone::local_date_at(now_s, tz)?;
     let (ttl_ms, max_entries) = lean::velocity_ttl_ms(&date, &today)?;
 
@@ -169,7 +169,7 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
         })
         .await?;
 
-    // ⚠ PER REQUEST, on the cached value. See the module note.
+    // Per request, on the cached value. See the module note.
     let observed = cached.get("decodedThrough").and_then(Value::as_i64);
     let states = cached
         .get("states")
@@ -238,9 +238,9 @@ pub async fn warm_recent(st: &AppState) {
 
 /// Compute one day. Only reached on a cache miss.
 ///
-/// ⚠ `pub`, not `pub(crate)`, and the difference is not style: `backend` is a
-/// separate BINARY crate from the library, so `pub(crate)` is invisible to it.
-/// `backend velocity` calls this to run the ASSEMBLY against production — the
+/// `pub`, not `pub(crate)`, and the difference is not style: `backend` is a
+/// separate binary crate from the library, so `pub(crate)` is invisible to it.
+/// `backend velocity` calls this to run the assembly against production — the
 /// gate above it has tests, but nothing else anywhere proves this produces a
 /// real response body.
 pub async fn compute(st: &AppState, user_id: &str, date: &str, tz: Option<&str>) -> Result<Value> {
@@ -249,7 +249,7 @@ pub async fn compute(st: &AppState, user_id: &str, date: &str, tz: Option<&str>)
 
 /// [`compute`] with the pedestrian matcher switchable.
 ///
-/// ⚠ `walk_match = false` is `?walkMatch=0`, the raw baseline the map compares
+/// `walk_match = false` is `?walkMatch=0`, the raw baseline the map compares
 /// the matched line against. It reaches the fold as `env.walkMatch`; spent only
 /// on the cache key, both arms would compute the identical day and the A/B
 /// would compare a value with itself.
@@ -270,7 +270,7 @@ pub async fn compute_with(
         .clone()
         .unwrap_or_else(|| classification_inputs::DAY_NEXTCLOUD_BASE_URL.to_string());
 
-    // ⚠ PER-PHASE WALL CLOCK, and it ships in the response. The frontend's
+    // Per-phase wall clock, and it ships in the response. The frontend's
     // `VelocityData.timing` reads it, and it is the only thing that says WHERE a
     // slow day went — the first production run of this route took 37.6 s, and
     // without this the answer would have been a guess.
@@ -278,7 +278,7 @@ pub async fn compute_with(
     let mut phase = std::time::Instant::now();
     let mut mark = |timing: &mut serde_json::Map<String, Value>, name: &str| {
         timing.insert(name.into(), json!(phase.elapsed().as_millis() as u64));
-        // ⚠ RSS printed, never shipped. `timing` goes over the wire into
+        // RSS printed, never shipped. `timing` goes over the wire into
         // `VelocityData.timing`, so a memory figure in it would change the
         // served shape and the generated TS types for a diagnostic.
         // `FOLD_SPLIT` already gates the per-round half of the same picture.
@@ -288,7 +288,7 @@ pub async fn compute_with(
         phase = std::time::Instant::now();
     };
 
-    // Where the stored decode had data to, read BEFORE the decode itself: a
+    // Where the stored decode had data to, read before the decode itself: a
     // decode written in between then pairs newer segments with an earlier
     // horizon, which marks more as a guess, never less. Only short of the
     // day's end: a finished day's states past midnight (the next morning's
@@ -309,11 +309,11 @@ pub async fn compute_with(
         Some(&home_tz),
     )
     .await?;
-    // ⚠ CARRIED IN `inputs` rather than through four signatures. `run_day` and
+    // Carried in `inputs` rather than through four signatures. `run_day` and
     // `build_day_request` are shared with the gates and `decode-day`, and a
     // parameter none of them can answer would have to be given a default at
     // every call site — which is the same field, spelled four times, with four
-    // chances to disagree. Only written when the raw baseline was ASKED for, so
+    // chances to disagree. Only written when the raw baseline was asked for, so
     // every other caller's request is byte-for-byte what it was.
     let mut inputs = inputs;
     if !walk_match && let Some(o) = inputs.as_object_mut() {
@@ -322,7 +322,7 @@ pub async fn compute_with(
     let inputs = inputs;
     // A day whose stored decode does not stand for these inputs is queued for
     // the decode worker; this read serves what is stored.
-    // ⚠ The HOME zone's day, as `decode-day` records it: judged against the
+    // The home zone's day, as `decode-day` records it: judged against the
     // display zone's, a day viewed west of home would never read as current.
     if let Ok(home) = timezone::date_bounds_utc(date, Some(&home_tz)) {
         backend_queue_if_stale(&st.pool, user_id, date, home.end_utc, &inputs).await;
@@ -353,7 +353,7 @@ pub async fn compute_with(
     mark(&mut timing, "head");
 
     let now_ms = chrono::Utc::now().timestamp_millis();
-    // ⚠ Reset first. The counter is process-wide, so a previous request's
+    // Reset first. The counter is process-wide, so a previous request's
     // queries would otherwise be charged to this one.
     mirror_source::take_queries();
     mirror_source::take_db_nanos();
@@ -375,24 +375,24 @@ pub async fn compute_with(
         ledger.insert(format!("fold.{label}.n"), json!(n));
     }
 
-    // ⚠ THE SIGNAL THAT WAS MISSING FOR WEEKS. `walkableRoads`,
-    // `buildingsNear` and `drivableRoads` answer an EMPTY Vec when the mirror
+    // The signal that was missing for weeks. `walkableRoads`,
+    // `buildingsNear` and `drivableRoads` answer an empty Vec when the mirror
     // refuses or fails, and empty is a legitimate answer — "no roads here". So a
     // fold with every OSM read refused produced a well-formed day, a normal
     // summary line, and a map drawing every walk as a raw chord through
     // buildings. Nothing downstream could tell it apart.
     //
-    // ⚠ NOT AN ERROR, DELIBERATELY. A day is still worth serving on raw chords,
+    // Not an error, deliberately. A day is still worth serving on raw chords,
     // and failing the request would turn a degraded map into no map. What it
-    // must not do is stay SILENT.
+    // must not do is stay silent.
     //
-    // ⚠ A GATE CANNOT CARRY THIS CHECK. Every gate answers from a captured
+    // A gate cannot carry this check. Every gate answers from a captured
     // trace with no mirror configured, so `pool()` returns before the counter is
     // touched and the count is zero for the wrong reason. The assertion
     // only means something where a mirror is real, which is here.
     mark(&mut timing, "fold");
 
-    // ⚠ A day whose asks were DECLINED was built from DEFAULTS for them, and
+    // A day whose asks were declined was built from defaults for them, and
     // that is not the same day. It is not an error — unfetched ground declines
     // by design and is queued for the drain beside the pod — but it must be
     // visible, because the response looks identical either way.
@@ -414,7 +414,7 @@ pub async fn compute_with(
     timing.append(&mut ledger);
     let segments = out.get("segs").cloned().unwrap_or_else(|| json!([]));
 
-    // ⚠ Drawn geometry ships ONCE, in `episodes`. The segment-level path arrays
+    // Drawn geometry ships once, in `episodes`. The segment-level path arrays
     // are pipeline intermediates `episodes` already consumed server-side; no
     // frontend code reads them, and on a data-rich day they duplicate every
     // polyline in the response — its dominant weight.
@@ -448,7 +448,7 @@ pub async fn compute_with(
             "ts": p.ts, "lat": p.lat, "lon": p.lon,
             "speedKmh": p.speed_kmh, "bearing": p.bearing,
         })).collect::<Vec<_>>(),
-        // ⚠ From `display_fixes`, which is PRE-SNAP: the cleaned track the
+        // From `display_fixes`, which is pre-snap: the cleaned track the
         // matchers actually consumed, so the overlay is an honest comparison
         // against the drawn line rather than a second copy of it.
         "rawFixes": h.display_fixes.iter().map(|f| json!({
@@ -459,7 +459,7 @@ pub async fn compute_with(
         // Past this the states are the decoder's guess for minutes it had no
         // data for; the per-request clip marks them (`DayState.clipFuture`).
         "decodedThrough": decoded_through,
-        // ⚠ DECODED, not forwarded. See `decode_episode_bits` — the fold's
+        // Decoded, not forwarded. See `decode_episode_bits` — the fold's
         // bit-string coordinates hung the Android app for a full day.
         "episodes": decode_episode_bits(out.get("episodes").cloned().unwrap_or_else(|| json!([]))),
         // The timeline's collapsible journeys, assembled server-side.
@@ -467,7 +467,7 @@ pub async fn compute_with(
         // `Battery` is already `(ts, level)` pairs — the chart's own shape.
         "battery": h.battery.iter().map(|(ts, l)| json!({ "ts": ts, "level": l })).collect::<Vec<_>>(),
         "watchBattery": watch_battery.iter().map(|(ts, l)| json!({ "ts": ts, "level": l })).collect::<Vec<_>>(),
-        // ⚠ The fold's ASK COUNT rides here too: how many lookups the day
+        // The fold's ask count rides here too: how many lookups the day
         // made and how many were answered, which is what distinguishes a slow
         // day from a deep one.
         "timing": timing_with(
@@ -491,11 +491,11 @@ fn timing_with(
     let mut out = t.clone();
     out.insert("asks".into(), json!(asks));
     out.insert("answered".into(), json!(answered));
-    // ⚠ The DENOMINATOR for `fold`. Measured from a laptop, that duration is
+    // The denominator for `fold`. Measured from a laptop, that duration is
     // dominated by round trips over an SSH tunnel; with the count beside it the
     // two can be compared against an in-cluster run instead of guessed at.
     out.insert("mirrorQueries".into(), json!(mirror_queries));
-    // ⚠ The two halves of `fold`, so nobody divides it by the query count and
+    // The two halves of `fold`, so nobody divides it by the query count and
     // calls the result a per-query cost. `fold` minus these two is the fold's
     // own work.
     out.insert("foldDbMs".into(), json!(db_ms));
@@ -540,14 +540,14 @@ fn rail_fill_candidates(out: &Value, h: &head::Head) -> Result<Vec<lean::FillCan
 /// Decode the fold's IEEE-754 bit-string coordinates into the numbers the
 /// client's wire type declares.
 ///
-/// ⚠ **THE CLIENT MUST NEVER SEE A BIT STRING.** The fold encodes coordinates
+/// ⚠ the client must never see a bit string. The fold encodes coordinates
 /// that way so nothing is re-rounded on its internal wire; forwarding them made
 /// Leaflet read `"4632454559779392337"` as a latitude, spinning WebView's
 /// compositor at a full core. `points` and `rawFixes` are built here from typed
 /// `f64`s and were always numbers — only `episodes` was forwarded raw.
 ///
-/// ⚠ **TOLERANT OF NUMBERS**, so a fold that starts emitting them is not
-/// double-decoded, and **LEAVES WHAT IT CANNOT PARSE** rather than defaulting to
+/// Tolerant of numbers, so a fold that starts emitting them is not
+/// double-decoded, and leaves what it cannot parse rather than defaulting to
 /// zero — a zeroed coordinate is a point off the coast of Africa that draws a
 /// line across the planet.
 pub fn decode_episode_bits(episodes: Value) -> Value {
@@ -603,10 +603,10 @@ fn bad_request(msg: &str) -> Response {
     (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
 }
 
-/// ⚠ The two Nextcloud states are NOT failures and must not read as one.
+/// The two Nextcloud states are not failures and must not read as one.
 ///
 /// An unlinked account has no PhoneTrack source at all, so the honest answer is
-/// an EMPTY timeline with a 200 — the day genuinely has no location data. A
+/// an empty timeline with a 200 — the day genuinely has no location data. A
 /// token needing reauth is a 409 with a structured error, so the SPA can render
 /// its reconnect banner instead of "No timeline data available", which is what a
 /// bare failure would produce and which tells the user nothing they can act on.

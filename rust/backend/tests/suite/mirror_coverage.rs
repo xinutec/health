@@ -1,10 +1,10 @@
-//! A route mirror whose area is mostly stale must FAIL its run, on both arms.
+//! A route mirror whose area is mostly stale must fail its run, on both arms.
 //!
-//! ⚠ THIS DRIVES THE REAL PATH. The rule is Lean's, and these go through the
+//! This drives the real path. The rule is Lean's, and these go through the
 //! same `lean::mirror_staleness` FFI call the CronJob makes — not a
 //! re-implementation of the arithmetic here, which would test its own copy.
 //!
-//! ⚠ ONE `#[test]` FUNCTION, DELIBERATELY, for the reason `lean_ffi.rs` gives:
+//! One `#[test]` function, deliberately, for the reason `lean_ffi.rs` gives:
 //! `health_backend_init` starts a process-global runtime and cargo does not
 //! serialise the tests inside one binary, so several racing on initialisation
 //! flake in a way that reads as a Lean bug.
@@ -35,14 +35,14 @@ fn a_mostly_stale_area_fails_the_run() {
         None
     );
 
-    // ---- ⚠ AN EMPTY CACHE BOOTSTRAPS ---------------------------------------
+    // ---- an empty cache bootstraps ---------------------------------------
     // With nothing in it there is nothing old to be mistaken for current.
     assert_eq!(
         lean::mirror_staleness(0, 35, 36, 14).expect("answers"),
         None
     );
 
-    // ---- ⚠ THE BOUNDARY, both sides ----------------------------------------
+    // ---- the boundary, both sides ----------------------------------------
     // A check only at 2/36 passes with the comparison written either way round.
     assert_eq!(
         lean::mirror_staleness(531, 18, 36, 14).expect("answers"),

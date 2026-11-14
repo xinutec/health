@@ -3,7 +3,7 @@ import Verified.FloatConst
 /-!
 # GPS quality-control pre-filter
 
-Runs BEFORE the Kalman filter: drop physically-incoherent runs of GPS fixes
+Runs before the Kalman filter: drop physically-incoherent runs of GPS fixes
 (underground / cell-tower garbage) so downstream gap-inference sees an honest
 temporal gap. An anchor walk — keep the last trusted fix as an anchor; a
 candidate reachable from it at a plausible speed is kept and becomes the new
@@ -14,8 +14,8 @@ poor-accuracy jitter that never travelled (kept).
 
 Pure over the track; the only transcendental is `cos` in `distanceM` (≤1 ULP),
 and every decision is a threshold well clear of the boundary on real data, so the
-KEPT SET is exact (a subset of the input, coords unchanged — like `dropGpsOutliers`).
-WHICH fixes it keeps is pinned by the `#guard`s below; THAT it can only keep — it
+kept set is exact (a subset of the input, coords unchanged — like `dropGpsOutliers`).
+Which fixes it keeps is pinned by the `#guard`s below; that it can only keep — it
 never invents or moves a fix — is a theorem, `mem_of_mem_qualityFilterGps`.
 -/
 
@@ -51,7 +51,7 @@ def impliedSpeedKmh (a b : GpsPoint) : Float :=
 /-- Unreachable from the anchor at any plausible ground speed — always garbage. -/
 def speedUnreachable (anchor cand : GpsPoint) : Bool := decide (impliedSpeedKmh anchor cand > SPEED_CEILING_KMH)
 
-/-- Cell-tower-grade movement: poor-accuracy AND moved at non-pedestrian speed. -/
+/-- Cell-tower-grade movement: poor-accuracy and moved at non-pedestrian speed. -/
 def inaccurateMotion (anchor cand : GpsPoint) : Bool :=
   match cand.accuracy with
   | some acc => decide (acc > ACCURACY_CEILING_M) && decide (impliedSpeedKmh anchor cand > GARBAGE_MIN_SPEED_KMH)
@@ -112,7 +112,7 @@ the same shape) but the jumps can: nobody is still somewhere they reached and
 left at 60 km/h. Indoor frozen runs (the library, Work, the hospital) are
 entered and left by metres.
 
-The run is dropped BEFORE the anchor walk, with the accuracy-disclaimed fixes:
+The run is dropped before the anchor walk, with the accuracy-disclaimed fixes:
 kept, it would anchor the walk itself. Identity of coordinates is the test here,
 not a still radius — a café stop varies by metres, a re-report does not — so no
 cadence is needed at this stage. -/
@@ -285,7 +285,7 @@ private def duplicateTs : Array GpsPoint := #[
 
 -- `findBridge` → `none` at the `BRIDGE_WINDOW_S` horizon. The garbage fix at
 -- t=100 has no surfacing fix within 1800 s (the next is t=2000), so the scan
--- gives up and the candidate is KEPT rather than bridged across half an hour.
+-- gives up and the candidate is kept rather than bridged across half an hour.
 private def bridgeHorizon : Array GpsPoint := #[
   gp 0 51.5 (-38.1) 20, gp 10 51.501 (-38.1) 20, gp 100 51.52 (-38.1) 100, gp 2000 51.53 (-38.1) 20, gp 2010 51.531 (-38.1) 20]
 #guard (qualityFilterGps bridgeHorizon).map (·.ts) == #[0, 10, 100, 2000, 2010]
@@ -298,7 +298,7 @@ private def incoherentSuccessor : Array GpsPoint := #[
   gp 70 51.9 (-38.1) 20, gp 120 51.503 (-38.1) 20, gp 130 51.504 (-38.1) 20]
 #guard (qualityFilterGps incoherentSuccessor).map (·.ts) == #[0, 10, 120, 130]
 
--- `walk` → `speedUnreachable ∨ travelled`, with only the LEFT disjunct true. A
+-- `walk` → `speedUnreachable ∨ travelled`, with only the left disjunct true. A
 -- teleport that returns: net displacement across the run is far under
 -- MIN_TRANSIT_DISPLACEMENT_M, so `travelled` is false and the run is bridged on
 -- unreachability alone. A port testing only displacement would keep the
@@ -308,7 +308,7 @@ private def unreachableNotTravelled : Array GpsPoint := #[
 #guard (qualityFilterGps unreachableNotTravelled).map (·.ts) == #[0, 10, 30, 40]
 
 -- ACCURACY_CEILING_M, both sides. These two tracks differ only in 80 → 80.001
--- and must NOT agree: `>` keeps the fix at exactly the ceiling and drops the
+-- and must not agree: `>` keeps the fix at exactly the ceiling and drops the
 -- one a thousandth over. `≥` in either comparison collapses them.
 private def accuracyAtCeiling : Array GpsPoint := #[
   gp 0 51.5 (-38.1) 20, gp 10 51.501 (-38.1) 20, gp 100 51.52 (-38.1) 80, gp 160 51.53 (-38.1) 20, gp 170 51.531 (-38.1) 20]
@@ -334,7 +334,7 @@ private def disclaimed : Array GpsPoint := #[
   gpf 1510 10, gpf 1525 10, gpf 1540 10, gpf 1555 10]
 #guard (qualityFilterGps disclaimed).map (·.ts) == #[1000, 1015, 1030, 1045, 1510, 1525, 1540, 1555]
 
--- The pre-filter runs BEFORE the ≤2 pass-through, so a track that is short only
+-- The pre-filter runs before the ≤2 pass-through, so a track that is short only
 -- because most of it is disclaimed does not get waved past. A port that filters
 -- after the size check keeps all three.
 #guard (qualityFilterGps #[gpf 0 10, gpf 10 5000, gpf 20 10]).map (·.ts) == #[0, 20]

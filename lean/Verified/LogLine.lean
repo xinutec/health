@@ -2,8 +2,8 @@
 # Flattening client text into one log field
 
 `/api/telemetry` writes UI text the browser sent into a log line as `label=…`.
-That makes this a SECURITY BOUNDARY rather than tidiness: a newline inside a
-label forges WHOLE LOG LINES, including further `client-event` lines attributed
+That makes this a security boundary rather than tidiness: a newline inside a
+label forges whole log lines, including further `client-event` lines attributed
 to someone else. The log stops being evidence, which is the one thing it is for.
 
 Two character classes and a cap:
@@ -14,20 +14,20 @@ Two character classes and a cap:
 
 Each part earns its place:
 
-* **The category set** covers more than `\n`. `\r` alone moves a cursor, U+2028
+* The category set covers more than `\n`. `\r` alone moves a cursor, U+2028
   and U+2029 end a line in some readers, and the `Cf` formatting characters
   include bidi overrides that can reorder a line as displayed — so a label can
   lie about which field it is without containing a newline at all.
-* **`\s+ → " "`** collapses what is left, including the spaces the first step
+* `\s+ → " "` collapses what is left, including the spaces the first step
   just produced.
-* **The cap counts CODE POINTS**, not UTF-16 units and not bytes, so a
+* The cap counts code points, not UTF-16 units and not bytes, so a
   multi-byte glyph is never split down the middle into a replacement character.
 
-⚠ The ranges below are the ones a JavaScript engine's regexes matched, derived
+The ranges below are the ones a JavaScript engine's regexes matched, derived
 by testing every code point in `[0, 0x10FFFF]`, not transcribed from a Unicode
 chart, which would have meant guessing the Unicode version.
 
-⚠ So they are a snapshot of one Unicode version. A newer one could classify a
+So they are a snapshot of one Unicode version. A newer one could classify a
 new code point as `Cf` and this would not know. The failure direction is a
 character passing through unflattened, so the cap and the whitespace collapse
 still hold.
@@ -46,7 +46,7 @@ def CATEGORY_RANGES : List (Nat × Nat) :=
 
 /-- `\s`. Inclusive.
 
-⚠ NOT the same set as above and neither contains the other. U+00A0 and the
+Not the same set as above and neither contains the other. U+00A0 and the
 U+2000 block are whitespace but not control-like, so they survive the first
 replacement and are collapsed by the second. -/
 def WHITESPACE_RANGES : List (Nat × Nat) :=
@@ -68,7 +68,7 @@ private def collapse (cs : List Char) : List Char :=
     | [], _ => []
     | c :: rest, prevWs =>
       if isJsWhitespace c then
-        -- ⚠ ONE space per RUN, not one per character.
+        -- One space per run, not one per character.
         if prevWs then go rest true else ' ' :: go rest true
       else c :: go rest false
   let collapsed := go cs false
@@ -76,8 +76,8 @@ private def collapse (cs : List Char) : List Char :=
   let dropped := collapsed.dropWhile isJsWhitespace
   (dropped.reverse.dropWhile isJsWhitespace).reverse
 
-/-- Flatten client text to a single harmless log field, capped at `max` CODE
-POINTS. -/
+/-- Flatten client text to a single harmless log field, capped at `max` code
+points. -/
 def oneLine (raw : String) (max : Nat) : String :=
   let flattened := raw.toList.map (fun c => if isControlLike c then ' ' else c)
   String.ofList ((collapse flattened).take max)
@@ -88,12 +88,12 @@ def oneLine (raw : String) (max : Nat) : String :=
 #guard oneLine "Refresh" 160 == "Refresh"
 #guard oneLine "" 160 == ""
 
--- ⚠ THE ATTACK. A newline would otherwise forge a second log line attributed to
+-- ⚠ the attack. A newline would otherwise forge a second log line attributed to
 -- someone else.
 #guard oneLine "a\nclient-event user=victim" 160 == "a client-event user=victim"
 #guard oneLine "a\rb" 160 == "a b"
 #guard oneLine "a\r\nb" 160 == "a b"
--- U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR end a line in readers
+-- U+2028 line separator and U+2029 paragraph separator end a line in readers
 -- that a bare `\n` check would miss.
 #guard oneLine "a b" 160 == "a b"
 #guard oneLine "a b" 160 == "a b"
@@ -103,12 +103,12 @@ def oneLine (raw : String) (max : Nat) : String :=
 #guard oneLine "a​b" 160 == "a b"
 #guard oneLine "a﻿b" 160 == "a b"
 
--- Runs collapse to ONE space, and the ends are trimmed.
+-- Runs collapse to one space, and the ends are trimmed.
 #guard oneLine "a   b" 160 == "a b"
 #guard oneLine "  a  b  " 160 == "a b"
 #guard oneLine "\t\n\r a" 160 == "a"
 #guard oneLine "   " 160 == ""
--- Whitespace that is NOT control-like still collapses.
+-- Whitespace that is not control-like still collapses.
 #guard oneLine "a b" 160 == "a b"
 #guard oneLine "a　b" 160 == "a b"
 
@@ -116,7 +116,7 @@ def oneLine (raw : String) (max : Nat) : String :=
 #guard oneLine "abcdef" 3 == "abc"
 #guard oneLine "abc" 10 == "abc"
 #guard oneLine "abcdef" 0 == ""
--- ⚠ An astral character is ONE code point, not two UTF-16 units — a cap that
+-- An astral character is one code point, not two UTF-16 units — a cap that
 -- counted units could split a surrogate pair and emit a lone half.
 #guard (oneLine "𝄞𝄞𝄞" 2).length == 2
 #guard oneLine "𝄞𝄞𝄞" 2 == "𝄞𝄞"

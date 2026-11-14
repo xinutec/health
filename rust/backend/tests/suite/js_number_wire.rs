@@ -1,7 +1,7 @@
 //! `JsNumber` must render exactly as `js_number_value` does, for every case the
 //! encoder documents.
 //!
-//! ⚠ WHY A TEST AND NOT A GLANCE. The two paths are used side by side —
+//! Why a test and not a glance. The two paths are used side by side —
 //! `rows_to_json` goes through `js_number_value`, a typed response struct goes
 //! through `JsNumber` — and a route converted from one to the other must not
 //! move a single byte. A plain `f64` field differs on integral values and on

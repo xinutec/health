@@ -4,16 +4,16 @@
 Ranking the candidate places a stay might have happened at, by summed
 log-evidence in nats — the same discipline as the mode factor scorer:
 
-* **distance** — Gaussian in metres; gentle in the near field where GPS noise
+* distance — Gaussian in metres; gentle in the near field where GPS noise
   lives, decisive across a large gap.
-* **venue** — a fixed offset for real venue types (amenity/tourism/shop) over
+* venue — a fixed offset for real venue types (amenity/tourism/shop) over
   areas (parks, squares, ways).
-* **shape** — the MINED visit-shape prior: `log P(subtype)` +
+* shape — the mined visit-shape prior: `log P(subtype)` +
   `log P(dwell bucket | subtype)` + `log P(hour | subtype)`, each relative to
   uniform, with subtype → category → uniform backoff. No hand-tuned venue
   numbers: empty priors score exactly 0 everywhere (pinned by a `#guard`).
-* **hours** — opening-hours evidence: open is weak support, closed is strong
-  but out-votable. A missing or unparseable tag is NO evidence, never
+* hours — opening-hours evidence: open is weak support, closed is strong
+  but out-votable. A missing or unparseable tag is no evidence, never
   "closed".
 
 Also here: the attribution gate that decides which stays may train the prior,
@@ -88,8 +88,8 @@ structure VenuePriors where
   bySubtype : List (String × VenueTypeStats)
   byCategory : List (String × VenueTypeStats)
   totalVisits : Float
-  -- `BEq` so the as-of path can be pinned against `minePriors` as a WHOLE
-  -- blob. Comparing field by field would let the key ORDER differ unnoticed,
+  -- `BEq` so the as-of path can be pinned against `minePriors` as a whole
+  -- blob. Comparing field by field would let the key order differ unnoticed,
   -- and that order is what `shapeScore` reads as the universe size.
   deriving Inhabited, BEq
 
@@ -162,14 +162,14 @@ def VENUE_VOTE_MAX_DIST_M : Float := 50
 
 /--
 The amenity vote's gate: a landmark may name a cluster only if it is a real
-venue type AND close enough to be the place the stay is actually at.
+venue type and close enough to be the place the stay is actually at.
 
 A park (`leisure`) the stay merely sits near, a pedestrian way, or a café 80 m
-off all fail — they name an AREA, not a venue, and the cluster is better left
+off all fail — they name an area, not a venue, and the cluster is better left
 with no `amenity_label` (the runtime then resolves a neutral area/address)
 than labelled with a place the user was never inside.
 
-⚠ Takes the two fields rather than a `Landmark`, because it is asked of both
+Takes the two fields rather than a `Landmark`, because it is asked of both
 landmark shapes: `rankVenues`' input (`VenuePrior.Landmark`) and the shaped
 output of `nearbyLandmarks` (`Landmarks.Landmark`).
 
@@ -355,7 +355,7 @@ Rank landmark candidates for a stay by summed log-evidence, best first.
 `stay` and `priors` are optional — without them the ranking degrades to
 distance + venue-over-area. Enclosing institutions outrank everything; a real
 point venue inside `NEAR_FIELD_DECISIVE_M` outranks any farther candidate
-EXCEPT when opening hours say it is closed (then either OSM is stale or you
+except when opening hours say it is closed (then either OSM is stale or you
 are somewhere else, so proximity stops being decisive and the scored ranking
 weighs the closed penalty).
 -/
@@ -381,7 +381,7 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
     ({ landmark := l,
        total := total,
        parts := ⟨distance, venue, shape, hours⟩,
-       -- ⚠ Near-field dominance is a VETO over the summed evidence, so it may
+       -- Near-field dominance is a veto over the summed evidence, so it may
        -- only go to a candidate whose own evidence is at least neutral. A
        -- bookmaker at 10.9 m with −1.09 nats (never visited, wrong dwell,
        -- wrong hour) would out-rank a restaurant at 13.4 m with +2.79.
@@ -398,8 +398,8 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
       -- Two near-field venues: one whose opening hours say it was open beats
       -- one OSM gives no hours for — inside 12 m the metres are GPS noise, and
       -- a bike shop at 5 m beat an open café at 10 m for an 85-min midday stay
-      -- (10-05). (A near-field candidate WITH hours scored them ≥ 0.)
-      -- Otherwise the nearer one is what you are sitting on. ⚠ Not the summed
+      -- (10-05). (A near-field candidate with hours scored them ≥ 0.)
+      -- Otherwise the nearer one is what you are sitting on. Not the summed
       -- evidence: that put a phone shop over the 09-30 dinner and broke 05-18.
       else if na && nb && a.parts.hours.isSome != b.parts.hours.isSome then
         a.parts.hours.isSome
@@ -421,10 +421,10 @@ private def sortByDistance (xs : List Landmark) : List Landmark :=
 /--
 The venue this stay is unambiguously at, or `none`.
 
-A stay trains the prior only when ONE venue is geometrically unambiguous:
+A stay trains the prior only when one venue is geometrically unambiguous:
 close enough to be "at" (≤30 m, the urban building-footprint scale) and clear
 of the runner-up by a margin GPS noise cannot flip (20 m). Everything else is
-exactly the ambiguity the scorer must PREDICT — training on a guess there
+exactly the ambiguity the scorer must predict — training on a guess there
 would launder the old picker's mistakes into the prior.
 -/
 def attributeStayVenue (landmarks : List Landmark) : Option Landmark :=
@@ -461,10 +461,10 @@ structure AttributedStay where
   durationSec : Float
   /-- Local hour of the stay midpoint; negatives wrap (`-3` ⇒ 21). -/
   localHour : Int
-  /-- When the stay STARTED.
+  /-- When the stay started.
 
-  ⚠ Carried so a prior can be taken AS OF a past day. Without it a day
-  in May is scored against a prior mined over a window ending TODAY, which is
+  Carried so a prior can be taken as of a past day. Without it a day
+  in May is scored against a prior mined over a window ending today, which is
   how re-mining silently rewrites historical labels. Measured over 42 days,
   re-mining changed three labels, broke one that was right and improved none.
   The value was always in scope at the only construction site and was dropped
@@ -491,20 +491,20 @@ row per user, overwritten in place with no history, so a historical day is
 scored against a window ending today — and re-mining then rewrites what past
 days were called.
 
-⚠ **THE EVIDENCE IS SHIPPED, NOT A SUMMARY OF IT.** The obvious shape is
+The evidence is shipped, not a summary of it. The obvious shape is
 monthly buckets of the existing stats, and it is worse in both directions. It
-is BIGGER — `totalVisits` is ~52, so the whole mined evidence is about fifty
+is bigger — `totalVisits` is ~52, so the whole mined evidence is about fifty
 events, against thirteen subtypes times twelve buckets of a 31-float summary —
-and it is INEXACT, because the bucket containing the target day also holds the
-stays that came AFTER it, which is the very anachronism being removed.
+and it is inexact, because the bucket containing the target day also holds the
+stays that came after it, which is the very anachronism being removed.
 
 So the unit here is the mined event itself, and `priorsAsOf` re-aggregates the
 prefix. That makes the cut exact at the second and keeps `VenuePriors`
-unchanged, which matters: `shapeScore` reads `bySubtype`'s LENGTH as the
+unchanged, which matters: `shapeScore` reads `bySubtype`'s length as the
 subtype-universe size, so a reshaped blob would move the score for a second,
 unrelated reason. -/
 
-/-- One unit of mined prior evidence: which subtype, WHEN, where it falls on the
+/-- One unit of mined prior evidence: which subtype, when, where it falls on the
     two shape axes, and how much of a visit it is worth.
 
     `weight` is how much of a visit it is: 1 for an attributed stay. -/
@@ -523,7 +523,7 @@ def eventsOfAttributed (stays : List AttributedStay) : List PriorEvent :=
       dwell := dwellBucket s.durationSec, hour := (s.localHour.emod 24).toNat,
       weight := 1 }
 
-/-- Aggregate the events whose stay STARTED at or before `asOfUnix`.
+/-- Aggregate the events whose stay started at or before `asOfUnix`.
 
     ⚠ INCLUSIVE, and the bound is the stay's START rather than its end: a stay
     in progress at the cut is evidence that had begun, and keying on the end
@@ -638,7 +638,7 @@ private def names (cs : List VenueCandidateScore) : List String := cs.map (·.la
        == ["Cafe"]
 -- ...unless it is all there is.
 #guard names (rankVenues [LM "Post Box" "amenity" "post_box" 2] none none) == ["Post Box"]
--- A three-way tie on total AND distance falls through to name collation.
+-- A three-way tie on total and distance falls through to name collation.
 #guard names (rankVenues [LM "Zebra" "amenity" "cafe" 20, LM "apple" "amenity" "cafe" 20,
                           LM "Beta" "amenity" "cafe" 20] none none) == ["apple", "Beta", "Zebra"]
 
@@ -651,14 +651,14 @@ private def stayEve : StayShape := ⟨1778688000, 1778692440, 19⟩
 private def LMH (name type subtype : String) (d : Float) (frac : Option Float) : Landmark :=
   ⟨name, type, subtype, d, frac, false, false⟩
 
--- Near-field is a VETO over the summed evidence, so it goes only to a candidate
+-- Near-field is a veto over the summed evidence, so it goes only to a candidate
 -- whose own evidence is at least neutral. 09-06 18:20 local:
 -- a bookmaker at 10.9 m the user never visits (base rate −2) against the
 -- restaurant at 13.4 m his history is full of. With no priors at all the
 -- bookmaker's evidence is neutral-plus and near-field still decides.
 private def restoStats : VenueTypeStats :=
   ⟨40, [0, 10, 30, 0], (List.range 24).map (fun h => if h == 19 then 40 else 0)⟩
--- A YEAR's prior (400 visits): there "never visited" pays the full −2 clamp.
+-- A year's prior (400 visits): there "never visited" pays the full −2 clamp.
 -- With `BASE_RATE_PSEUDO` at 2 a 50-visit prior is thin, an unseen subtype
 -- costs 1.4, and this synthetic bookmaker — no category pool, so no dwell or
 -- hour evidence against it, unlike the real one — would cross the veto's floor.
@@ -678,7 +678,7 @@ private def bookieVsResto : List Landmark :=
        | o :: c :: [] => approx o.total 1.8800000000000001 && approxO o.parts.hours (some 0.7)
                          && approx c.total (-1.1012500000000001) && approxO c.parts.hours (some (-2.5))
        | _ => false
--- A venue OSM says is CLOSED forfeits near-field dominance at 8 m.
+-- A venue OSM says is closed forfeits near-field dominance at 8 m.
 #guard names (rankVenues [LMH "ClosedPharm" "amenity" "pharmacy" 8 (some 0),
                           LMH "OpenResto" "amenity" "restaurant" 32 (some 1)] (some stayEve) none)
        == ["OpenResto", "ClosedPharm"]
@@ -686,7 +686,7 @@ private def bookieVsResto : List Landmark :=
                          LMH "OpenResto" "amenity" "restaurant" 32 (some 1)] (some stayEve) none with
        | _ :: c :: [] => c.nearField == false && approx c.total (-1.02)
        | _ => false
--- An unparseable tag is NO evidence (the shell passes `none`), not "closed".
+-- An unparseable tag is no evidence (the shell passes `none`), not "closed".
 #guard match rankVenues [LMH "Odd" "amenity" "cafe" 25 none] (some stayEve) none with
        | [c] => c.parts.hours == none && approx c.total 1.3046875 && c.nearField == false
        | _ => false
@@ -724,27 +724,27 @@ private def priors : VenuePriors := minePriors attributed
 
 /-! ### As-of-the-day priors
 
-⚠ THE FIRST GUARD IS THE ONE THAT MAKES THIS SAFE TO LAND. Re-aggregating the
-events with no cut must reproduce `minePriors` EXACTLY — same numbers, same keys,
+The first guard is the one that makes this safe to land. Re-aggregating the
+events with no cut must reproduce `minePriors` exactly — same numbers, same keys,
 in the same order — because `shapeScore` reads the key count. Until that holds,
 nothing downstream may be switched over to the event path. -/
 
 #guard priorsOfEvents (eventsOfAttributed attributed) == priors
 
--- A cut BEFORE everything is no evidence, not a crash.
+-- A cut before everything is no evidence, not a crash.
 #guard (priorsAsOf (eventsOfAttributed attributed) 0).totalVisits == 0
 #guard (priorsAsOf (eventsOfAttributed attributed) 0).bySubtype == []
 
--- ⚠ The cut is INCLUSIVE and reads the stay's START: at 3000 the third stay
+-- The cut is inclusive and reads the stay's start: at 3000 the third stay
 -- counts, so `restaurant` appears with one visit and the universe is 2 keys.
 #guard (priorsAsOf (eventsOfAttributed attributed) 3000).totalVisits == 3
 #guard (priorsAsOf (eventsOfAttributed attributed) 3000).bySubtype.map (·.1)
        == ["cafe", "restaurant"]
 #guard (priorsAsOf (eventsOfAttributed attributed) 2999).bySubtype.map (·.1) == ["cafe"]
 
--- ⚠ THE SUBTYPE UNIVERSE SHRINKS WITH THE CUT, and that is the point rather
+-- The subtype universe shrinks with the cut, and that is the point rather
 -- than a side effect: `shapeScore` reads this length as the universe size, so a
--- day in the past is scored against the types known THEN. `hospital` is the
+-- day in the past is scored against the types known then. `hospital` is the
 -- last stay mined, and it is absent from every earlier day.
 #guard (priorsAsOf (eventsOfAttributed attributed) 6999).bySubtype.length == 3
 #guard priors.bySubtype.length == 4
@@ -767,7 +767,7 @@ nothing downstream may be switched over to the event path. -/
        | b :: w :: [] => approxO b.parts.shape (some 1.113245196552383)
                          && approxO w.parts.shape (some (-0.3629054936893685))
        | _ => false
--- THE load-bearing property: empty priors contribute exactly 0, everywhere.
+-- The load-bearing property: empty priors contribute exactly 0, everywhere.
 #guard match rankVenues [LM "Resto" "amenity" "restaurant" 30] (some stayEve) (some ⟨[], [], 0⟩) with
        | [c] => c.parts.shape == some 0 && approx c.total 1.21875
        | _ => false
@@ -790,7 +790,7 @@ nothing downstream may be switched over to the event path. -/
        == some "Cafe"
 #guard (attributeStayVenue [LM "Cafe" "amenity" "cafe" 10, LM "Shop" "shop" "books" 30]).map (·.name)
        == some "Cafe"
--- The margin is measured against the nearest DIFFERENTLY-NAMED venue, so a
+-- The margin is measured against the nearest differently-named venue, so a
 -- duplicate mapping of the same place does not defeat attribution.
 #guard (attributeStayVenue [LM "Cafe" "amenity" "cafe" 10, LM "Cafe" "shop" "bakery" 12,
                             LM "Other" "shop" "books" 80]).map (·.name) == some "Cafe"
@@ -803,7 +803,7 @@ nothing downstream may be switched over to the event path. -/
 #guard isLabelWorthyVenue "amenity" 10
 #guard isLabelWorthyVenue "tourism" 10
 #guard isLabelWorthyVenue "shop" 10
--- ⚠ `leisure` is a PRIOR type but not a VOTE type: a park names an area, and
+-- `leisure` is a prior type but not a vote type: a park names an area, and
 -- the two lists differ by exactly this entry.
 #guard !isLabelWorthyVenue "leisure" 10
 #guard !isLabelWorthyVenue "place" 1

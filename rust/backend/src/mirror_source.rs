@@ -125,7 +125,7 @@ pub const CANDIDATE_LIMIT: i64 = 20_000;
 /// cluster. [`take_db_nanos`] measures the time itself.
 static QUERIES: AtomicU64 = AtomicU64::new(0);
 
-/// Nanoseconds spent INSIDE [`MirrorSource::block`] — the database, and nothing
+/// Nanoseconds spent inside [`MirrorSource::block`] — the database, and nothing
 /// else. Paired with [`QUERIES`] so a per-query cost can be stated rather than
 /// derived from the fold's total.
 static DB_NANOS: AtomicU64 = AtomicU64::new(0);
@@ -233,7 +233,7 @@ pub struct MirrorSource {
     /// Coverage boxes per feature bucket, read once each: a day asks each bucket
     /// dozens of times.
     coverage: HashMap<String, Vec<CoverageRow>>,
-    /// Coverage VERDICTS, keyed by the question rather than the bucket: the
+    /// Coverage verdicts, keyed by the question rather than the bucket: the
     /// local-data probe is two indexed queries and the same coordinate is asked
     /// for several tables.
     decided: HashMap<(String, u64, u64, u64), bool>,
@@ -265,7 +265,7 @@ impl MirrorSource {
     }
 
     /// Read every tile the box touches that `buckets` have not been read for,
-    /// in ONE query over the tiles still missing (a lookup whose box straddles
+    /// in one query over the tiles still missing (a lookup whose box straddles
     /// four tiles is still one read), each row filed under every tile it meets.
     fn fetch_tiles(&mut self, geo: Geo, buckets: &[&str], bx: &[f64; 4]) -> Result<()> {
         let mut missing: Vec<(String, i64, i64)> = Vec::new();
@@ -443,7 +443,7 @@ impl MirrorSource {
         [lat - d, lat + d, lon - d, lon + d]
     }
 
-    /// [`candidate_box`](Self::candidate_box) as a closed WKT ring. ⚠ WKT writes
+    /// [`candidate_box`](Self::candidate_box) as a closed WKT ring. WKT writes
     /// `lon lat`; the other order is a box in the wrong hemisphere that still
     /// parses.
     fn mbr_box_wkt(lat: f64, lon: f64, radius_m: f64) -> String {
@@ -608,7 +608,7 @@ impl MirrorSource {
         Self::check_limit_at(n, table, bucket, CANDIDATE_LIMIT)
     }
 
-    /// The matcher reads' backstop: `true` means DECLINE this ask. Loud, so a
+    /// The matcher reads' backstop: `true` means decline this ask. Loud, so a
     /// day drawn on a raw chord is never a silent one. See [`CANDIDATE_LIMIT`].
     fn matcher_backstop(n: usize, table: &str, bucket: &str, radius_m: f64) -> bool {
         if (n as i64) < CANDIDATE_LIMIT {
@@ -863,7 +863,7 @@ impl RowSource for MirrorSource {
             return Ok(Some(vec![]));
         }
         // An exact `name IN (…)` so the index serves it; the substring match
-        // already ran in Lean over the cached names (a leading-wildcard LIKE
+        // already ran in Lean over the cached names (a leading-wildcard like
         // would scan ~28 s).
         let placeholders = std::iter::repeat_n("?", names.len())
             .collect::<Vec<_>>()
@@ -1098,12 +1098,12 @@ impl<A: crate::lean::Answerer> crate::lean::Answerer for WalkableOnly<A> {
     }
 }
 
-/// Re-record ONLY a golden fixture's `walkableRoads` from the live mirror.
+/// Re-record only a golden fixture's `walkableRoads` from the live mirror.
 ///
 /// The day is replayed exactly as the corpus gate replays it — its own trace,
 /// then its own row set — except that the walkable section is withheld and
 /// answered by the mirror instead. So the walk legs, and therefore the walkable
-/// questions, are the ones the gate will ask; and every OTHER table keeps the
+/// questions, are the ones the gate will ask; and every other table keeps the
 /// answers the day was blessed on. A decline the gate would see stays a decline
 /// here: the mirror answers nothing but `walkableRoads`.
 ///
@@ -1153,7 +1153,7 @@ pub async fn rerecord_walkable(
     .context("the mirror thread panicked")?
 }
 
-/// Answer, from the live mirror, ONLY the lookups a golden fixture's own record
+/// Answer, from the live mirror, only the lookups a golden fixture's own record
 /// cannot.
 ///
 /// The day is replayed as the corpus gate replays it — its trace, then its row
@@ -1164,7 +1164,7 @@ pub async fn rerecord_walkable(
 /// replay measures the change and not the data's drift since capture.
 ///
 /// Returns the fold, the new matcher-read and geocode answers as `osmTrace`
-/// sections, and how many map ROWS the mirror had to serve — which a caller
+/// sections, and how many map rows the mirror had to serve — which a caller
 /// must refuse, since rows belong in `osmRowSet` and are not merged here.
 pub async fn rerecord_unanswered(
     pool: MySqlPool,

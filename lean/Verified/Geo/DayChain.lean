@@ -35,12 +35,12 @@ same day.
 venue resolution against the OSM mirror, the same class as `Env.bestPlace` in the
 fold. It is a lookup, so it crosses as an ask the host answers.
 
-The empty-day arm (`inferEmptyDayStatesFromBracket`) is NOT here. It fires only
-when the day has no states AND no points, reads a cross-day bracket this env does
+The empty-day arm (`inferEmptyDayStatesFromBracket`) is not here. It fires only
+when the day has no states and no points, reads a cross-day bracket this env does
 not carry, and resolves its label through the mirror. A separate stage rather
 than a branch of this one.
 
-`checkWorldlineFeasibility` is not here either: it is a LOG, not an output. It
+`checkWorldlineFeasibility` is not here either: it is a log, not an output. It
 computes nothing the served day carries.
 
 UNPROVEN.
@@ -62,7 +62,7 @@ structure RawSleepWindow where
 
 /-- The day's tail, and the one lookup it delegates. -/
 structure Env where
-  /-- The fold's output. The SHARED segment record, so each stage below takes its
+  /-- The fold's output. The shared segment record, so each stage below takes its
   own narrowing rather than this being narrowed once and lossily. -/
   segments : Array Verified.Geo.SegmentMerge.Seg
   /-- The Kalman track the episodes draw from. -/
@@ -70,41 +70,41 @@ structure Env where
   /-- The quality-filtered, un-snapped fixes — a different series from `points`,
   and what an episode falls back to when nothing else drew it. -/
   displayFixes : Array Verified.Geo.EpisodeGeometry.RawFix
-  /-- Raw fixes from THIS day's small hours. -/
+  /-- Raw fixes from this day's small hours. -/
   morningFixes : List StayFix
-  /-- Raw fixes from the PREVIOUS evening — the guesthouse case: today's sleep
+  /-- Raw fixes from the previous evening — the guesthouse case: today's sleep
   began where yesterday ended, and today's own track says nothing about it. -/
   prevEveningFixes : List StayFix
   /-- Mined places the dwell detector snaps a cluster to. -/
   stayPlaces : List StayKnownPlace
-  /-- The same places as the dwell CONTINUATION reads them — a different
+  /-- The same places as the dwell continuation reads them — a different
   projection (visit counts and dwell totals rather than a display name), so both
   are carried rather than one being derived from the other. -/
   dwellPlaces : Array Verified.Geo.DwellContinuation.DwellCandidate
   sleep : List RawSleepWindow
   /-- The day's end instant. `applyDwellContinuation` continues no further. -/
   dayEndTs : Int
-  /-- SHELL: re-resolve a stay centroid to a lodging name. `none` keeps the label
+  /-- Shell: re-resolve a stay centroid to a lodging name. `none` keeps the label
   the focus-place match gave it. -/
   sleepPlace : Float → Float → Option String := fun _ _ => none
-  /-- The day's start instant. Only the EMPTY-DAY arm reads it — a day with
+  /-- The day's start instant. Only the empty-day arm reads it — a day with
   observations takes its bounds from the observations. -/
   dayStartTs : Int := 0
   /-- The day's display zone, carried onto an inferred stay so it renders in
   local time like every other state. -/
   dayTz : Option String := none
-  /-- SHELL: the cross-day bracket, already RESOLVED TO A NAME.
+  /-- Shell: the cross-day bracket, already resolved to a name.
   `Verified.Geo.DayState.buildInferredStayState`'s doc has said since it was
   written that the shell does this resolution, and it does: the centroid comes
   from `presence_log` and is named through the OSM mirror, neither of which the
   fold can reach.
 
-  `none` means the day is not bracketed by the SAME place on both sides, which
+  `none` means the day is not bracketed by the same place on both sides, which
   is the honest "genuinely unknown" case, not a failure. -/
   bracketPlace : Option String := none
 
 /-- The placeholder a focus-place match emits when it knows a stay happened but
-not what is there. The ONLY label re-resolution is offered: a specific one (Home,
+not what is there. The only label re-resolution is offered: a specific one (Home,
 Work, a named hotel from a prior re-mine) is kept, because the mirror would
 otherwise replace "Home" with the residential street address. -/
 def GENERIC_STAY_LABEL : String := "Stay"
@@ -126,7 +126,7 @@ def stateSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.DayState.Seg :=
 /-- The drawn paths, `Option (Array PathPt)` on the shared segment record and
 `Array SPt` here — absent and empty mean the same thing to the renderer.
 
-The timestamp used to NARROW here: `PathPt.ts` is a `Float` because the
+The timestamp used to narrow here: `PathPt.ts` is a `Float` because the
 over-route trim and the walk corrector interpolate `ts` along a chord without
 rounding, while `SPt.ts` was an `Int`, so this conversion rounded. Both are
 `Float` now, so the vertex crosses the stage boundary untouched — which
@@ -166,17 +166,17 @@ def sleepCandidates (e : Env) : List Verified.Geo.DayState.Seg :=
     else { c with place := (e.sleepPlace c.centroidLat c.centroidLon).getD c.place }
   (e.segments.map stateSeg).toList ++ resolved.map stayCandidateSeg
 
-/-- How far a BRACKETED position may sit from a known place and still name it.
+/-- How far a bracketed position may sit from a known place and still name it.
 
-⚠ **LOOSER THAN THE 25 m A DWELL SNAP USES, AND THE AGREEMENT IS WHAT BUYS IT.**
+Looser than the 25 m a dwell snap uses, and the agreement is what buys it.
 A dwell earns its snap from many fixes concentrating on one centroid; a single
 position has no such support, so `snapClusterToPlace` rightly refuses it beyond
-the mined radius. Two INDEPENDENT positions — the last before the window and the
+the mined radius. Two independent positions — the last before the window and the
 first after it — agreeing on the same place is a different claim, and it is the
 agreement rather than either distance that carries it.
 
 100 m because that is already this pipeline's notion of "still the same place":
-`CLUSTER_RADIUS_M`. ⚠ Do NOT raise `DEFAULT_PLACE_RADIUS_M` or the mined 25 m to
+`CLUSTER_RADIUS_M`. ⚠ Do not raise `DEFAULT_PLACE_RADIUS_M` or the mined 25 m to
 achieve this — those govern every dwell snap, venue attribution and the dwell
 continuation, none of which asked. -/
 private def BRACKET_RADIUS_M : Float := 100
@@ -195,32 +195,32 @@ private def snapWithin (radiusM lat lon : Float)
     | none => some (n, d)
     | some (_, bd) => if decide (d < bd) then some (n, d) else acc) none).map (·.1)
 
-/-- The place a sleep window is BRACKETED by: the last known position before it
+/-- The place a sleep window is bracketed by: the last known position before it
 and the last inside it (else the first after it), when both name the same place.
 `fixes` are every position the day knows — the evening before, its own, the
 next morning — so a night that ends tomorrow is bracketed by tomorrow's fixes.
 
-⚠ **A FIX DURING THE SLEEP OUTRANKS ONE AFTER IT.** It is where he was while
+A fix during the sleep outranks one after it. It is where he was while
 asleep; the first fix after waking can already be down the road. 08-21: a fix 2 m
 from Home at 08:27 inside the window, the first after it 224 m off at 08:57 — the
 bracket fell silent and the ordinary rule served the night at Work.
 
-⚠ **THIS IS THE CASE A GAP BOUND CANNOT EXPRESS.** A phone that goes quiet at
+This is the case a gap bound cannot express. A phone that goes quiet at
 home and reports again from home next morning leaves no dwell inside the window
 and no candidate within six hours of it — but it is not unevidenced, it is
-CONSTRAINED. `inferredEmptyDay` already reasons this way for a fully-empty day:
+constrained. `inferredEmptyDay` already reasons this way for a fully-empty day:
 "bracketed by the same place on both sides ... constrained rather than
 unevidenced". A sleep window is the same shape at smaller scale.
 
-⚠ A real night: 7 m from Home before a day-long silence, 46 m from Home after
+A real night: 7 m from Home before a day-long silence, 46 m from Home after
 it, served as eight hours at Work 11.3 km away. Neither edge clears the 25 m
 dwell radius alone; together they are the strongest evidence the night has.
 
-⚠ **DISAGREEMENT MEANS SILENCE, NOT A GUESS.** If the two sides name different
+Disagreement means silence, not a guess. If the two sides name different
 places — he went somewhere — this yields `none` and the ordinary rule decides. -/
 def bracketPlaceForSleep (winStart winEnd : Int) (fixes : List Verified.Geo.DayState.StayFix)
     (places : List Verified.Geo.DayState.StayKnownPlace) : Option (String × (Float × Float)) :=
-  -- ⚠ A generic label is not a name. `sleepCandidates` re-resolves
+  -- A generic label is not a name. `sleepCandidates` re-resolves
   -- `GENERIC_STAY_LABEL` through `Env.sleepPlace` into a real lodging name, and
   -- this path does not, so admitting one would serve the placeholder where the
   -- ordinary rule serves the guest house's name. Excluding it leaves those
@@ -262,7 +262,7 @@ def distinctSleepWindows (raw : List RawSleepWindow) : List RawSleepWindow :=
 /-- `enrichSleepWindows`: the raw windows, each given the place its onset side
 points at; the decision it wraps is `derivePlaceForSleepAt`.
 
-⚠ The BRACKET is consulted first. Where both sides of the window agree it is
+The bracket is consulted first. Where both sides of the window agree it is
 strictly better evidence than the side-and-gap ranking, which cannot see across
 a silence at all; where they do not agree it yields `none` and the ordinary rule
 runs unchanged. -/
@@ -278,10 +278,10 @@ def enrichSleepWindows (raw : List RawSleepWindow)
 
 /-- The one state a fully-unobserved day gets, or nothing.
 
-⚠ A no-data day is NOT automatically an unknown day. Bracketed by the same place
+A no-data day is not automatically an unknown day. Bracketed by the same place
 on both sides — yesterday ended there, tomorrow is dominated by it — the day in
 between is constrained rather than unevidenced, and a multi-day stay is exactly
-the shape that produces no fixes at all. Confidence comes from how CONSTRAINED
+the shape that produces no fixes at all. Confidence comes from how constrained
 the day is, not from how much data it has.
 
 `inferred := true` is not decoration: it is what lets the renderer say "no data"
@@ -293,13 +293,13 @@ def inferredEmptyDay (e : Env) : Option DayState :=
 /-- A hole at least this long between two states at the same place is bridged. -/
 def BRIDGE_MIN_S : Int := 1800
 
-/-- Fill each hole of `BRIDGE_MIN_S` or more that has NO fix in it and lies
+/-- Fill each hole of `BRIDGE_MIN_S` or more that has no fix in it and lies
 between two stationary/sleeping states at the same named place with an
-INFERRED stay there: the phone was quiet and the person never left (05-11:
+inferred stay there: the phone was quiet and the person never left (05-11:
 asleep at Home to 07:56, the first fix at Home at 11:38, and nothing served in
 between). A hole with a fix in it is not silence — what it says is the
 segments' business — and a hole between two different places stays a hole.
-Nor is the DAY'S END a silence: a stay clipped at midnight and the next night's
+Nor is the day's end a silence: a stay clipped at midnight and the next night's
 sleep leave a hole that is only the boundary, and bridging it would put a small
 "inferred" row on almost every night. -/
 def bridgeSamePlaceHoles (states : Array DayState)
@@ -402,7 +402,7 @@ private def fx (t : Int) : Verified.Geo.EpisodeGeometry.Fix := ⟨t, 51.52, -0.1
 
 /-- The served timeline and its geometry.
 
-Returns both because they are one decision: the episodes are 1:1 with the FINAL
+Returns both because they are one decision: the episodes are 1:1 with the final
 states, so producing them from anything but the continued list would draw a day
 the timeline does not describe. -/
 def dayChain (e : Env) :
@@ -412,7 +412,7 @@ def dayChain (e : Env) :
       (e.prevEveningFixes ++ e.points.toList.map (fun p => { ts := p.ts, lat := p.lat, lon := p.lon })
         ++ e.morningFixes) e.stayPlaces)
   let states := (segmentsToDayStates (e.segments.map stateSeg).toList windows).toArray
-  -- ⚠ The empty-day arm, tested on `states` rather than on `e.segments`: a day
+  -- The empty-day arm, tested on `states` rather than on `e.segments`: a day
   -- with no segments can still have sleep windows, and that day is observed.
   -- It is asked after the states are built and before the dwell continuation,
   -- which has nothing to continue here anyway.
@@ -424,8 +424,8 @@ def dayChain (e : Env) :
   let continued := markUnseenArrivals (bridgeSamePlaceHoles
     (Verified.Geo.DwellContinuation.applyDwellContinuation
       states e.segments e.dwellPlaces e.dayEndTs) e.points e.dayEndTs) e.points
-  -- ⚠ CITY IS STAMPED LAST, over the FINAL states. The client it
-  -- replaces ran over the served list, so an INFERRED stay — created by the
+  -- City is stamped last, over the final states. The client it
+  -- replaces ran over the served list, so an inferred stay — created by the
   -- dwell continuation, after `segmentsToDayStates` has returned — got a header
   -- there and must get one here. Stamping it earlier silently drops exactly
   -- those rows.
@@ -437,7 +437,7 @@ def dayChain (e : Env) :
 
 /-! ## The empty-day arm
 
-⚠ These exist because NO GOLDEN DAY CAN REACH THIS. 0 of the 42 fixtures has
+These exist because no golden day can reach this. 0 of the 42 fixtures has
 zero fixes, so the corpus and the day gate both pass whether this arm works or
 not — the regression it fixes was live in production for a day and invisible to
 every gate. A `#guard` is the only thing here that can fail. -/
@@ -453,14 +453,14 @@ private def emptyEnv : Env :=
   #[{ startTs := 0, endTs := 86400, mode := "stationary", place := some "St Elsewhere",
       placeSource := some "inferred", tz := some "Europe/London", inferred := some true }]
 
--- ⚠ `inferred` must be `some true`, never `none`. Without it the renderer shows
--- an ASSERTED day as an observed one, which is the failure this arm must not
+-- `inferred` must be `some true`, never `none`. Without it the renderer shows
+-- an asserted day as an observed one, which is the failure this arm must not
 -- have: the day is a claim from cross-day constraint, and it has to say so.
 #guard ((dayChain { emptyEnv with bracketPlace := some "St Elsewhere" }).1[0]!).inferred == some true
 
 -- Not bracketed: the day stays genuinely unknown rather than being invented.
 #guard (dayChain { emptyEnv with bracketPlace := none }).1 == #[]
--- A bracketed night names the known place AND stands at its centre.
+-- A bracketed night names the known place and stands at its centre.
 #guard bracketPlaceForSleep 1000 2000
   [{ ts := 900, lat := 51.5001, lon := -0.1 }, { ts := 2100, lat := 51.5, lon := -0.1001 }]
   [{ centroidLat := 51.5, centroidLon := -0.1, displayName := some "Home" }]
@@ -482,7 +482,7 @@ private def emptyEnv : Env :=
 -- An empty day draws no episodes either way.
 #guard (dayChain { emptyEnv with bracketPlace := some "St Elsewhere" }).2 == #[]
 
--- ⚠ THE CONTROL. With a fix present the day is OBSERVED, so the arm must not
+-- The control. With a fix present the day is observed, so the arm must not
 -- fire even when a bracket is offered — otherwise this replaces a real day with
 -- an inferred one, which is far worse than the gap it closes.
 private def observedEnv : Env :=

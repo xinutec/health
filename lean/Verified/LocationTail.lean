@@ -6,20 +6,20 @@ Three endpoints feed the Map tab, and between them they hold four constants and
 two comparisons. None of it is hard; all of it is the kind of thing that is
 wrong by one character and looks right.
 
-## The tail is a TAIL
+## The tail is a tail
 
 `/location/tail` answers "every fix after the one you already have", so the
 classification pipeline's lag can be filled with raw points: the fixes with
 `ts > since`, the last `TAIL_MAX_POINTS` of them. Both halves are inverted
 easily:
 
-* `>` is STRICT. `>=` resends the point the caller named, which the map then
+* `>` is strict. `>=` resends the point the caller named, which the map then
   draws twice.
-* `slice(-2000)` takes the LAST 2000. `slice(0, 2000)` takes the first — the
-  OLDEST — which for a long tail means answering a request for recent movement
+* `slice(-2000)` takes the last 2000. `slice(0, 2000)` takes the first — the
+  oldest — which for a long tail means answering a request for recent movement
   with the stale head of the buffer and never reaching the present.
 
-⚠ The cap is silent: a caller asking with an old `since` gets 2000 points and no
+The cap is silent: a caller asking with an old `since` gets 2000 points and no
 indication that more were dropped, so a client cannot use this endpoint to catch
 up from arbitrarily far back.
 
@@ -45,13 +45,13 @@ def TAIL_TTL_MS : Int := 10000
 /-- The timestamps a tail request answers with, given the buffer's timestamps
 (ascending) and the caller's `since`.
 
-⚠ The REFERENCE implementation, not the serving one. A tail buffer is thousands
+The reference implementation, not the serving one. A tail buffer is thousands
 of points and a host call per request would ship all of them across the FFI, so
 the host filters inline and `tests/location_tail.rs` holds it against this over
 a corpus. If the two disagree, this one is right. -/
 def tailAfter (tss : List Int) (since : Int) : List Int :=
   let kept := tss.filter (fun t => t > since)
-  -- `slice(-n)`: the LAST n, and the whole list when it is shorter than n.
+  -- `slice(-n)`: the last n, and the whole list when it is shorter than n.
   let drop := kept.length - TAIL_MAX_POINTS.toNat
   kept.drop drop
 
@@ -62,7 +62,7 @@ def cacheFresh (cachedAtMs : Int) (nowMs : Int) (ttlMs : Int) : Bool :=
 
 /-! ## Guards -/
 
--- ⚠ STRICT. The point the caller already has is NOT resent.
+-- Strict. The point the caller already has is not resent.
 #guard tailAfter [1, 2, 3] 2 == [3]
 #guard tailAfter [1, 2, 3] 0 == [1, 2, 3]
 #guard tailAfter [1, 2, 3] 3 == []
@@ -70,7 +70,7 @@ def cacheFresh (cachedAtMs : Int) (nowMs : Int) (ttlMs : Int) : Bool :=
 -- `since=0` is what a client with nothing sends, and it must not mean "no filter
 -- and no cap" — the cap still applies.
 #guard (tailAfter (List.range 3000 |>.map (fun i => Int.ofNat i + 1)) 0).length == 2000
--- ⚠ The LAST 2000, so the newest. Taking the first would answer a live map with
+-- The last 2000, so the newest. Taking the first would answer a live map with
 -- the oldest points in the buffer.
 #guard (tailAfter (List.range 3000 |>.map (fun i => Int.ofNat i + 1)) 0).head? == some 1001
 #guard (tailAfter (List.range 3000 |>.map (fun i => Int.ofNat i + 1)) 0).getLast? == some 3000

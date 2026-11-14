@@ -5,28 +5,28 @@
 //! three come from PhoneTrack over Nextcloud, and all three share one error
 //! taxonomy that is a product decision rather than plumbing.
 //!
-//! # Not-linked is NOT an error
+//! # Not-linked is not an error
 //!
-//! ⚠ An account with no Nextcloud link answers `[]`/`null` with a **200**, not
+//! An account with no Nextcloud link answers `[]`/`null` with a 200, not
 //! a failure. The frontend surfaces the "link your Nextcloud" call to action
 //! from `/api/me`, and a 4xx here would instead fire the generic error banner
 //! over a state that is merely unconfigured.
 //!
-//! ⚠ Reauth-required is different and gets a **409** with a structured
+//! Reauth-required is different and gets a 409 with a structured
 //! `nextcloud_reauth_required` code, because the client interceptor watches for
 //! exactly that to raise the relink banner. Collapsing it into the not-linked
 //! case would leave a user with a revoked app password looking at an empty map
 //! and no way to learn why.
 //!
-//! Anything else is a **400**. Odd (a Nextcloud outage is not the caller's
+//! Anything else is a 400. Odd (a Nextcloud outage is not the caller's
 //! fault and 502 would describe it better), but the client keys off the
 //! status, so it stays.
 //!
-//! # The share window is checked against TODAY, not the request
+//! # The share window is checked against today, not the request
 //!
-//! ⚠ `/location/latest` and `/location/tail` answer about NOW. A share
+//! `/location/latest` and `/location/tail` answer about now. A share
 //! recipient whose window ended last week must not see a live marker, so both
-//! test TODAY against the window rather than any date in the request. There is
+//! test today against the window rather than any date in the request. There is
 //! no date parameter to check on the tail at all, so a host that skipped this
 //! would leak the owner's current position to every expired link.
 
@@ -47,12 +47,12 @@ use crate::{lean, location_cache, row_json};
 
 /// One fix as `/locations` serves it.
 ///
-/// ⚠ Built by hand rather than derived, because EVERY float has to go through
+/// Built by hand rather than derived, because every float has to go through
 /// `row_json::js_number_value`. A derived `Serialize` writes `120.0` where
 /// JavaScript writes `120`, which is a different response for the same fix —
 /// measured, 8,790 bytes across one day.
 ///
-/// ⚠ Key order is the wire order; `preserve_order` is what makes that hold.
+/// Key order is the wire order; `preserve_order` is what makes that hold.
 fn wire_point(p: &crate::nextcloud::phonetrack::RawTrackPoint) -> Value {
     json!({
         "ts": p.ts,
@@ -77,9 +77,9 @@ pub struct TailParams {
 
 /// The shared refusal shape. `None` for the not-linked body means the caller
 /// supplies it, since `/locations` answers `[]` and `/location/latest` `null`.
-/// ⚠ `not_linked` is GENERIC so callers can hand over a typed empty body rather
-/// than `json!([])`. A hand-built literal at the CALL SITE lives in the
-/// handler's own body, which is where DL-WIRE-UNTYPED-RESPONSE looks — so the
+/// `not_linked` is generic so callers can hand over a typed empty body rather
+/// than `json!([])`. A hand-built literal at the call site lives in the
+/// handler's own body, which is where dl-wire-untyped-response looks — so the
 /// helper being typed is not enough on its own.
 fn nc_error_response<T: Serialize>(e: &NcError, not_linked: T, message: &'static str) -> Response {
     match e {
@@ -122,16 +122,16 @@ async fn outside_window(session: &UserSession, date: &str) -> anyhow::Result<boo
 
 /// Open PhoneTrack for this user.
 async fn open(st: &AppState, user_id: &str) -> Result<PhoneTrack, NcError> {
-    // ⚠ An unset `NC_BASE_URL` falls back to the default; it does not mean
+    // An unset `NC_BASE_URL` falls back to the default; it does not mean
     // "not linked". `NC_BASE_URL` is empty on the serving pod, so the default
     // is what makes the live map work in production.
     //
     // Treating unset as not-linked here — which is what this first did — would
-    // have answered EVERY caller with an empty map and a 200, indistinguishable
+    // have answered every caller with an empty map and a 200, indistinguishable
     // from an account that genuinely has no Nextcloud. Nothing would have
     // failed; the map would just have been blank.
     //
-    // ⚠ The sync path's `None` is a different question and keeps its meaning:
+    // The sync path's `None` is a different question and keeps its meaning:
     // there, unset legitimately means "do not do PhoneTrack tz inference".
     // `DAY_NEXTCLOUD_BASE_URL` carries that same split.
     let base = st
@@ -142,7 +142,7 @@ async fn open(st: &AppState, user_id: &str) -> Result<PhoneTrack, NcError> {
     PhoneTrack::open(st.http.clone(), &st.pool, &base, user_id).await
 }
 
-/// The marker, or `null`. ⚠ Hand-built for the same reason as [`wire_point`]:
+/// The marker, or `null`. Hand-built for the same reason as [`wire_point`]:
 /// a derived `Serialize` writes `17.0` where JavaScript writes `17`.
 fn fix_json(fix: Option<&LatestFix>) -> Value {
     match fix {
@@ -156,9 +156,9 @@ fn fix_json(fix: Option<&LatestFix>) -> Value {
     }
 }
 
-/// One point of `/location/tail`. ⚠ Three keys only: `{lat, lon, ts}`.
+/// One point of `/location/tail`. Three keys only: `{lat, lon, ts}`.
 ///
-/// ⚠ `JsNumber`, NOT `f64`. This route's floats are coordinates, and a plain
+/// `JsNumber`, not `f64`. This route's floats are coordinates, and a plain
 /// `f64` field prints `120.0` where the encoder this replaced printed `120` —
 /// the divergence `row_json` exists to prevent. `js_number_wire.rs` pins that
 /// the two agree.
@@ -209,7 +209,7 @@ pub async fn locations(
 
     match fetched {
         Ok(f) => {
-            // ⚠ `failed_devices` is not surfaced to the caller, which gets a 200
+            // `failed_devices` is not surfaced to the caller, which gets a 200
             // either way. It is logged with a count, so a short day can be
             // explained after the fact rather than looking like a quiet day.
             if f.failed_devices > 0 {
@@ -236,7 +236,7 @@ pub async fn latest(
     Extension(session): Extension<UserSession>,
 ) -> Response {
     let today = today_utc();
-    // ⚠ TODAY, not a requested date. See the module note.
+    // Today, not a requested date. See the module note.
     match outside_window(&session, &today).await {
         Ok(true) => return Json(Value::Null).into_response(),
         Ok(false) => {}
@@ -258,7 +258,7 @@ pub async fn latest(
 
     let fetched = async {
         let pt = open(&st, &session.user_id).await?;
-        // ⚠ Yesterday AND today: a fix a minute after midnight would otherwise
+        // Yesterday and today: a fix a minute after midnight would otherwise
         // be the only point in the window and a quiet night would answer null.
         pt.fetch_range(&st.pool, &yesterday, &next).await
     }
@@ -298,7 +298,7 @@ pub async fn tail(
         Err(e) => return internal(&e),
     }
 
-    // ⚠ `since` absent is 0, and anything unparseable is NaN, against which
+    // `since` absent is 0, and anything unparseable is NaN, against which
     // every `p.ts > since` is false, so the answer is an empty tail rather than
     // the whole buffer. Mapping a bad value to 0 here would do the opposite and
     // dump 2000 points.

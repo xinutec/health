@@ -1,6 +1,6 @@
 //! Linking a Nextcloud account, and pointing PhoneTrack's map at today.
 //!
-//! # Login Flow v2 is a THREE-party handshake
+//! # Login Flow v2 is a three-party handshake
 //!
 //! Nextcloud's Login Flow v2 exists so a long-lived app password never passes
 //! through this server's hands as a user secret. `POST init` asks Nextcloud for
@@ -8,17 +8,17 @@
 //! own browser; meanwhile this server polls the endpoint until Nextcloud hands
 //! back the app password, which is stored and used for every later API call.
 //!
-//! ⚠ THE POLL RUNS IN THE BACKGROUND, so `init` returns immediately with a URL
+//! The poll runs in the background, so `init` returns immediately with a URL
 //! the user must open. `status` is how the SPA learns the outcome. That makes
-//! this the only genuinely STATEFUL pair of endpoints in the port: there is an
+//! this the only genuinely stateful pair of endpoints in the port: there is an
 //! in-flight flow per user that outlives the request that started it.
 //!
-//! ⚠ The state is PROCESS-LOCAL and deliberately not persisted. A flow is
+//! The state is process-local and deliberately not persisted. A flow is
 //! meaningless across a restart — the poll goroutine is gone, so a row saying
 //! "pending" would be a lie no one could clear. A restart mid-link means the
 //! user presses connect again, which is the correct recovery and needs no code.
 //!
-//! ⚠ A new `init` REPLACES any previous flow for that user. Two tabs racing
+//! A new `init` replaces any previous flow for that user. Two tabs racing
 //! would otherwise leave a poll running against a token nobody will read.
 
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ use crate::{lean, timezone};
 
 /// How often to ask Nextcloud whether the user has approved yet.
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
-/// How long to keep asking. ⚠ A bound, not a formality: without it a user who
+/// How long to keep asking. A bound, not a formality: without it a user who
 /// closes the tab leaves a task polling this server's upstream forever.
 const POLL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
@@ -68,9 +68,9 @@ impl PendingFlows {
         }
     }
 
-    /// Read the outcome, REMOVING it unless it is still pending.
+    /// Read the outcome, removing it unless it is still pending.
     ///
-    /// ⚠ Terminal states are read once. The SPA polls this, and leaving a
+    /// Terminal states are read once. The SPA polls this, and leaving a
     /// `failed` behind would make the next attempt appear to fail instantly.
     fn take(&self, user_id: &str) -> Option<FlowResult> {
         let mut f = self.flows.lock().ok()?;
@@ -146,7 +146,7 @@ pub async fn init(
     let login_url = initiation.login.clone();
     st.flows.set(&session.user_id, FlowResult::Pending);
 
-    // ⚠ Detached, and it must be: `init` answers with a URL the user has not
+    // Detached, and it must be: `init` answers with a URL the user has not
     // opened yet, so the poll necessarily outlives this request.
     let flows = st.flows.clone();
     let http = st.http.clone();
@@ -194,7 +194,7 @@ pub async fn init(
 /// Ask until Nextcloud says yes, the deadline passes, or it says something
 /// unrecoverable.
 ///
-/// ⚠ A 404 is the NORMAL not-yet answer from this endpoint, not an error.
+/// A 404 is the normal not-yet answer from this endpoint, not an error.
 async fn poll_until_approved(
     http: &reqwest::Client,
     init: &Initiation,
@@ -239,7 +239,7 @@ pub async fn status(
     Extension(session): Extension<UserSession>,
 ) -> Response {
     let body = match st.flows.take(&session.user_id) {
-        // ⚠ `idle` is not `failed`. No flow means none was started (or the
+        // `idle` is not `failed`. No flow means none was started (or the
         // outcome was already collected), and the SPA renders the connect
         // button rather than an error.
         None => json!({ "state": "idle" }),
@@ -259,7 +259,7 @@ pub struct TzParams {
 
 /// `POST /phonetrack/sync-filter` — point PhoneTrack's map at the current day.
 ///
-/// ⚠ "Current day" is not the calendar day. Before 06:00 local the window still
+/// "Current day" is not the calendar day. Before 06:00 local the window still
 /// starts yesterday, because a night out belongs to the evening it began —
 /// `Verified.PhoneTrackPrefs`.
 pub async fn sync_filter(
@@ -283,7 +283,7 @@ pub async fn sync_filter(
     match sync_filter_run(&st, &session.user_id, tz).await {
         Ok(datemin) => Json(SyncFilterResponse { ok: true, datemin }).into_response(),
         Err(e) => match e.downcast_ref::<NcError>() {
-            // ⚠ 412, not 409: "you never linked an account" is a precondition
+            // 412, not 409: "you never linked an account" is a precondition
             // the user can satisfy, and the SPA shows the connect prompt.
             Some(NcError::NotLinked) => (
                 StatusCode::PRECONDITION_FAILED,
@@ -315,7 +315,7 @@ pub async fn sync_filter(
 
 /// `POST /phonetrack/sync-filter`'s answer.
 ///
-/// ⚠ `datemin` is an `i64` epoch second, so it needs no special number
+/// `datemin` is an `i64` epoch second, so it needs no special number
 /// handling: integers are exact in any JSON encoder. A float column would not
 /// be; see `row_json::js_number_value` for the routes that carry them.
 #[derive(Serialize)]
@@ -339,7 +339,7 @@ async fn sync_filter_run(st: &AppState, user_id: &str, tz: &str) -> anyhow::Resu
         user_id,
     )
     .await?;
-    // ⚠ `applyfilters` must be the literal STRING "true". PhoneTrack's frontend
+    // ⚠ `applyfilters` must be the literal string "true". PhoneTrack's frontend
     // compares it with `!==  'true'`, so "1" or a JSON boolean silently turns
     // the filter off — verified against its source, not guessed.
     let values = json!({

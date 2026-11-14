@@ -16,7 +16,7 @@ pub(crate) struct MineSinks {
     pub(crate) places_out: Option<String>,
     /// Mine as the window stood on this instant rather than now.
     ///
-    /// ⚠ A measurement flag: answering a day this way re-clusters per day
+    /// A measurement flag: answering a day this way re-clusters per day
     /// served (one 730-day mine is ~273,000 points), far too slow to serve.
     pub(crate) as_of: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -68,7 +68,7 @@ pub(crate) async fn refresh_focus_places_one(
     use sqlx::Row as _;
 
     // ── 1. the point history ────────────────────────────────────────────────
-    // ⚠ Not `Config::nextcloud_base_url`: that is None in production, where
+    // Not `Config::nextcloud_base_url`: that is None in production, where
     // "no PhoneTrack source" is a real state for the sync, and this cron has
     // always fetched from the default host.
     let nc_base_url = backend::config::focus_nc_base_url();
@@ -81,7 +81,7 @@ pub(crate) async fn refresh_focus_places_one(
     .await
     .with_context(|| format!("opening PhoneTrack for {user_id}"))?;
 
-    // ⚠ The window's anchor is a parameter. Filtering mined events by time
+    // The window's anchor is a parameter. Filtering mined events by time
     // cuts their counts but not their labels, since each stay's subtype comes
     // from a cluster built over the whole window; only anchoring the window
     // asks what was knowable on a past day.
@@ -153,7 +153,7 @@ pub(crate) async fn refresh_focus_places_one(
     );
 
     // ── 3. the existing rows, for identity matching ─────────────────────────
-    // ⚠ Two sqlx traps, both seen only on real rows:
+    // Two sqlx traps, both seen only on real rows:
     //
     //   * `centroid_lat`/`centroid_lon` are DECIMAL(9,6), which sqlx cannot
     //     decode without `rust_decimal`, so they are cast to CHAR and parsed,
@@ -227,7 +227,7 @@ pub(crate) async fn refresh_focus_places_one(
     }
 
     // ── 5. the amenity vote, per cluster ────────────────────────────────────
-    // ⚠ Two phases, forced by the mirror. `MirrorSource` may only be touched
+    // Two phases, forced by the mirror. `MirrorSource` may only be touched
     // from a blocking thread (a query from a runtime worker aborts the
     // process), so every OSM lookup happens inside `with_mirror_answerer`'s
     // closure, which cannot await. So: resolve the timezones first (pure CPU),
@@ -257,7 +257,7 @@ pub(crate) async fn refresh_focus_places_one(
         let empty = Vec::new();
         let stays = c.get("stays").and_then(|v| v.as_array()).unwrap_or(&empty);
 
-        // ⚠ The residence gate. A cluster the user sleeps at is not mined:
+        // The residence gate. A cluster the user sleeps at is not mined:
         // `amenity_label` stays null and the runtime falls through to the
         // residential-address lookup. Without the gate, hotels and a clinic
         // the user slept at were labelled, writing where the user slept and
@@ -298,7 +298,7 @@ pub(crate) async fn refresh_focus_places_one(
                 .get(5)
                 .and_then(serde_json::Value::as_i64)
                 .context("stay durationSec")?;
-            // ⚠ A stay with no resolvable zone is skipped, not defaulted to
+            // A stay with no resolvable zone is skipped, not defaulted to
             // UTC: `localHour` and the opening-hours samples are venue-local,
             // and a wrong clock votes for the wrong venue.
             let Some(tz) = zones.zone(slat, slon) else {
@@ -331,7 +331,7 @@ pub(crate) async fn refresh_focus_places_one(
                 let mut ms: Vec<backend::lean::MineStay> = Vec::with_capacity(c.stays.len());
                 let mut missed = false;
                 for s in c.stays {
-                    // ⚠ `None` means the mirror could not answer, not "no
+                    // `None` means the mirror could not answer, not "no
                     // venues here", so the stay casts no vote rather than a
                     // vote for nothing.
                     let Some(shaped) = ans.nearby_landmarks(s.lat, s.lon)? else {
@@ -367,7 +367,7 @@ pub(crate) async fn refresh_focus_places_one(
         attributed_all.extend(m.attributed);
         labels.push((m.amenity_label, m.amenity_kind));
     }
-    // ⚠ One label per mined cluster, or the write below pairs a cluster with
+    // One label per mined cluster, or the write below pairs a cluster with
     // another cluster's venue.
     if labels.len() != mined.len() {
         anyhow::bail!(
@@ -393,7 +393,7 @@ pub(crate) async fn refresh_focus_places_one(
         return Ok(());
     }
 
-    // ⚠ A backfill writes the snapshot and nothing else. `--as-of` in the past
+    // A backfill writes the snapshot and nothing else. `--as-of` in the past
     // re-mines history for a day that never had a snapshot; everything else
     // here describes now (`venue_type_priors` is what every request reads,
     // `focus_places` is rewritten below), and a backfill would replace the
@@ -402,7 +402,7 @@ pub(crate) async fn refresh_focus_places_one(
         .as_of
         .is_some_and(|d| d.date_naive() < chrono::Utc::now().date_naive());
 
-    // ⚠ One transaction from here: the prior, its snapshot and the places it
+    // One transaction from here: the prior, its snapshot and the places it
     // was mined with land together. A half-applied refresh would leave a prior
     // with no snapshot of it, or rows deleted whose replacements were never
     // written, which the dashboard reads as places the user stopped going to.
@@ -428,7 +428,7 @@ pub(crate) async fn refresh_focus_places_one(
     // The same blob, frozen at the day this run's window ended, beside the row
     // above (which every reader expects), never instead of it.
     //
-    // ⚠ This is what keeps a past label stable: mining re-clusters from
+    // This is what keeps a past label stable: mining re-clusters from
     // scratch, so re-running it rewrites what past days were called. Only a
     // stored anchor keeps the answer.
     //
@@ -458,7 +458,7 @@ pub(crate) async fn refresh_focus_places_one(
     );
 
     if backfill {
-        // ⚠ Stops here because of the DELETE below: a backfill's clusters are
+        // Stops here because of the DELETE below: a backfill's clusters are
         // the past's, and applying them would replace the places the user goes
         // to now. The snapshot is all a backfill produces.
         eprintln!(
@@ -530,14 +530,14 @@ pub(crate) async fn refresh_focus_places_one(
         let display_name = names.get(&id);
         let (amenity_label, amenity_kind) = &labels[i];
 
-        // ⚠ A cluster the mirror could not answer for keeps its stored label
+        // A cluster the mirror could not answer for keeps its stored label
         // when this vote came out empty: no answer is not "no venue". A re-mine
         // during a mirror refile once stored 45 labels where a later run found
         // 59. A vote that answered empty still clears the label.
         let keep_label = amenity_label.is_none() && unanswered.get(i).copied().unwrap_or(false);
 
         if let Some(old_id) = assignments[i] {
-            // ⚠ The UPDATE preserves `id` and `first_seen_ts`: downstream
+            // The UPDATE preserves `id` and `first_seen_ts`: downstream
             // references hold the id, and a re-mine must not look like a new
             // place.
             sqlx::query(
@@ -616,11 +616,11 @@ pub(crate) async fn refresh_focus_places_one(
     Ok(())
 }
 
-/// ⚠ A constant, not a measured spread: four call sites read this column, one
+/// A constant, not a measured spread: four call sites read this column, one
 /// only notices values above 40 m, and every stored row carries 25.
 pub(crate) const FOCUS_RADIUS_M: i64 = 25;
 
-/// Fitbit-confirmed sleep hours at or above which a cluster is a RESIDENCE and
+/// Fitbit-confirmed sleep hours at or above which a cluster is a residence and
 /// is not mined for a venue name at all. See the gate-0 note at its use.
 pub(crate) const RESIDENCE_SLEEP_THRESHOLD_H: f64 = 5.0;
 /// Days per PhoneTrack request. Shared chunk bounds are why the fetch dedups.
@@ -640,7 +640,7 @@ pub(crate) const FOCUS_DEFAULT_LOOKBACK_DAYS: i64 = 180;
 pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
     // This pod sets DB_* and NC_* and nothing else. A config that demanded
     // more is what failed `refresh-presence-log` and `refresh-focus-places` in
-    // production, both times AFTER the job had done real work.
+    // production, both times after the job had done real work.
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
@@ -751,10 +751,10 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
         by_route.len()
     );
 
-    // ⚠ Refuse rather than report success on nothing. Zero routes is a real
+    // Refuse rather than report success on nothing. Zero routes is a real
     // answer (weeks without a train) but looks the same as every day failing;
     // this job once had all its days die on a read-only `/tmp`, pooled 0
-    // routes and exited SUCCEEDED. So the test is the failure count, never the
+    // routes and exited succeeded. So the test is the failure count, never the
     // route count.
     if days_failed > 0 && days_failed == days_attempted {
         pool.close().await;
@@ -764,7 +764,7 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
         );
     }
     // A majority failing is not fatal — the corridor is a union over many days —
-    // but it must be LOUD: a thin corridor snaps to a WORSE path, not to none.
+    // but it must be loud: a thin corridor snaps to a worse path, not to none.
     if days_failed * 2 > days_attempted {
         eprintln!(
             "⚠ refresh-rail-routes: {days_failed} of {days_attempted} days failed — the pooled \
@@ -838,7 +838,7 @@ pub(crate) const RELATION_TIMEOUT_MS: u64 = 120_000;
 /// One Overpass request through the shared client and its mirror fallback; the
 /// body's `elements`, or an error the caller turns into "leave it raw".
 ///
-/// ⚠ Asks for a slot first and retries a refusal once, as the tile mirror
+/// Asks for a slot first and retries a refusal once, as the tile mirror
 /// does. Unpaced, a night's lookups at a two-slot allowance came back 429 and
 /// 504 on most rides.
 async fn overpass_elements(
@@ -1015,7 +1015,7 @@ pub(crate) const RAIL_DEFAULT_WINDOW_DAYS: i64 = 21;
 ///
 /// An upsert: a DELETE+INSERT would drop the rows outside the window every run.
 ///
-/// ⚠ Rows are processed in query order and each day's segments in stored
+/// Rows are processed in query order and each day's segments in stored
 /// order. The rollup's tie-break keeps the place seen first, so re-ordering
 /// either changes which place a day is attributed to.
 pub(crate) async fn refresh_presence_log(
@@ -1124,7 +1124,7 @@ pub(crate) async fn refresh_presence_log(
 
 /// Refresh `rail_stops_cache` from OSM.
 ///
-/// Fetches only the DUE tiles (`due_tiles`) and replaces each one that answered;
+/// Fetches only the due tiles (`due_tiles`) and replaces each one that answered;
 /// every other tile keeps what it had. The run fails when most of the area has
 /// gone stale (`Verified.Geo.OsmMirrorRefresh`).
 // dev-lint: allow-sqlx the retirement is its own decision, taken before the mirrors answer
@@ -1140,7 +1140,7 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
         return Ok(());
     };
 
-    // ⚠ Before the fetch: a key the plan can no longer emit will never be
+    // Before the fetch: a key the plan can no longer emit will never be
     // refreshed, whatever the mirrors say tonight, so retiring it needs only
     // the plan. Its own transaction, because it is its own decision.
     if !dry_run {
@@ -1182,7 +1182,7 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
         .begin()
         .await
         .context("opening the merge transaction")?;
-    // A run is authoritative ONLY for the tiles that answered. Every other tile
+    // A run is authoritative only for the tiles that answered. Every other tile
     // keeps what it had, so the mirror cannot shrink because Overpass 502'd
     // somewhere.
     for key in &h.succeeded {
@@ -1225,7 +1225,7 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
         h.failures
     );
 
-    // Asked AFTER the write: what answered is stored either way, and this
+    // Asked after the write: what answered is stored either way, and this
     // decides only whether the run fails.
     let stale = stale_tiles(&pool, "rail", &plan).await?;
     pool.close().await;
@@ -1238,7 +1238,7 @@ pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
 
 /// Retire the rows no future run can reach: keys the plan can no longer emit.
 ///
-/// ⚠ The tile grid moves. The plan comes from mined focus places and
+/// The tile grid moves. The plan comes from mined focus places and
 /// `tile_key` is the south-west corner to four decimals, so a shifted bbox
 /// renames every tile, and the merge's per-tile `DELETE` names only current
 /// keys. Rows under old names, and `tile_key IS NULL` rows from before the
@@ -1345,7 +1345,7 @@ pub(crate) async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
         return Ok(());
     };
 
-    // ⚠ Before the fetch, as in the rail arm.
+    // Before the fetch, as in the rail arm.
     if !dry_run {
         retire_unplannable(&pool, &plan, "bus").await?;
     }
@@ -1364,7 +1364,7 @@ pub(crate) async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
         mirror_coverage_line(h.succeeded.len(), due.len())
     );
 
-    // ⚠ Same placement as the rail arm: before the write.
+    // Same placement as the rail arm: before the write.
     if dry_run {
         eprintln!(
             "DRY RUN — this run would replace {} of {} due tiles with {} route(s)",

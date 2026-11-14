@@ -399,7 +399,7 @@ theorem decode_none_iff (P : Problem) (hT : P.T ≠ 0) :
       rw [finalMax_eq P hT] at hscmax
       exact hscne (hscmax.trans h)
 
-/-- **The pilot's goal theorem**: any decoded result's path is the per-minute
+/-- The pilot's goal theorem: any decoded result's path is the per-minute
 rendering of a well-formed segmentation that achieves the oracle's best score. -/
 theorem decode_correct (P : Problem) {r : DecodeResult} (h : decode P = some r) :
     ∃ segs, wellFormed P segs = true

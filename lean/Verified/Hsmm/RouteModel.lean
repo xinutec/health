@@ -10,9 +10,9 @@ import Verified.Hsmm.ChainContext
 
 Composes the route-graph query primitives (`edgesNearIdx`, `pathExistsOnLine`,
 `pointToPolylineMeters`, `parseLineMemberships`-derived memberships, `haversine`)
-into the route-rail emission term — the FIRST factor whose route-graph facts
+into the route-rail emission term — the first factor whose route-graph facts
 (`linesPresent` / `linesUnderground` at each bookend fix, and per-line
-connectivity) are computed IN Lean rather than taken as caller-resolved booleans.
+connectivity) are computed in Lean rather than taken as caller-resolved booleans.
 
 The shell supplies parsed edges (id, geometry, line memberships, underground
 flag, and the `toFixed`-derived node ids that define adjacency, the
@@ -113,7 +113,7 @@ def toConnGraph (g : RouteGraphModel) : RouteConnectivity.Graph :=
     the same value for every state — every minute of one fix-less gap shares
     it — so the model build memoises on it. -/
 def railKey (o : ObsRow) : Bool × Option Int × Option Int :=
-  -- A bracketing fix is the minute aggregate AT its timestamp, so the
+  -- A bracketing fix is the minute aggregate at its timestamp, so the
   -- timestamp names it.
   (o.gps.isSome, o.prevGpsFix.map (·.ts), o.nextGpsFix.map (·.ts))
 
@@ -429,7 +429,7 @@ def chainMinuteTabledD (edgesByLine : Std.HashMap String (List LineEdge))
 
 -- `chainMinuteTabledD` against `chainMinuteTabled`: one line, one place, a fix
 -- read by three minutes at growing slop, a minute with no fix, and a table
--- built for ANOTHER fix (which must fall through, not be trusted).
+-- built for another fix (which must fall through, not be trusted).
 private def cmLine : List LineEdge :=
   [⟨[⟨51.50, -0.10⟩, ⟨51.51, -0.10⟩], 51.50, 51.51, -0.10, -0.10⟩]
 private def cmEdges : Std.HashMap String (List LineEdge) := ({} : Std.HashMap _ _).insert "Victoria Line" cmLine

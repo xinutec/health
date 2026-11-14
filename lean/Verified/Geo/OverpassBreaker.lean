@@ -7,7 +7,7 @@ calls queued; at a concurrency of 2 and 20 s each, that is four to eight minutes
 of waiting on calls that were never going to succeed. The breaker turns that
 into a fail-fast.
 
-## ⚠ THE CLOCK IS A PARAMETER, NOT A CALL
+## The clock is a parameter, not a call
 
 Every function here takes `now` and returns the new state, so the clock is a
 parameter rather than mutable module state, which is what lets the two "already
@@ -34,18 +34,18 @@ def initial : State := {}
 
 /-- Are we in fail-fast mode?
 
-⚠ STRICTLY BEFORE. At exactly `openUntilMs` the breaker is CLOSED — `Date.now() <
+Strictly before. At exactly `openUntilMs` the breaker is closed — `Date.now() <
 openUntilMs` — so the cooldown is a half-open interval and a fetch at the
 boundary is allowed through. -/
 def isOpen (s : State) (now : Nat) : Bool := now < s.openUntilMs
 
 /-- Record one failure: a timeout, dropped connection, 5xx or 429.
 
-⚠ WHILE OPEN, FAILURES ARE NOT COUNTED — the early return means a storm during
+While open, failures are not counted — the early return means a storm during
 the cooldown cannot extend it. The breaker reopens on schedule and the next
 failure starts a fresh tally.
 
-⚠ AND THE TALLY IS CLEARED WHEN IT TRIPS, not merely pruned, so the following
+And the tally is cleared when it trips, not merely pruned, so the following
 cooldown needs another full `FAILURE_THRESHOLD` to trip again. -/
 def recordFailure (s : State) (now : Nat) : State :=
   if isOpen s now then s
@@ -59,9 +59,9 @@ def recordFailure (s : State) (now : Nat) : State :=
     else
       { s with failures := kept }
 
-/-- Record one success. Clears the tally — but only while CLOSED.
+/-- Record one success. Clears the tally — but only while closed.
 
-⚠ A SUCCESS DOES NOT CLOSE AN OPEN BREAKER. The cooldown is the recovery window,
+A success does not close an open breaker. The cooldown is the recovery window,
 and reopening the path on the first lucky response is what invites the storm
 straight back. -/
 def recordSuccess (s : State) (now : Nat) : State :=
@@ -82,11 +82,11 @@ private def TRIPPED : State :=
 #guard isOpen TRIPPED (T0 + 20) == true
 #guard TRIPPED.openUntilMs == T0 + 20 + COOLDOWN_MS
 
--- ⚠ The cooldown is HALF-OPEN: closed again exactly at `openUntilMs`.
+-- The cooldown is half-open: closed again exactly at `openUntilMs`.
 #guard isOpen TRIPPED (T0 + 20 + COOLDOWN_MS - 1) == true
 #guard isOpen TRIPPED (T0 + 20 + COOLDOWN_MS) == false
 
--- ⚠ A SLOW TRICKLE NEVER TRIPS: three failures spread beyond the window prune
+-- A slow trickle never trips: three failures spread beyond the window prune
 -- each other, so the tally never reaches three. This is the property the whole
 -- `filter` exists for.
 private def TRICKLE : State :=
@@ -101,11 +101,11 @@ private def AFTER_SUCCESS : State :=
 #guard isOpen AFTER_SUCCESS (T0 + 30) == false
 #guard AFTER_SUCCESS.failures.size == 1
 
--- ⚠ A SUCCESS WHILE OPEN CHANGES NOTHING — the cooldown is the only recovery.
+-- A success while open changes nothing — the cooldown is the only recovery.
 #guard recordSuccess TRIPPED (T0 + 100) == TRIPPED
 #guard isOpen (recordSuccess TRIPPED (T0 + 100)) (T0 + 100) == true
 
--- ⚠ NOR DOES A FAILURE WHILE OPEN EXTEND THE COOLDOWN. Without the early return
+-- Nor does a failure while open extend the cooldown. Without the early return
 -- a sustained outage would hold the breaker open forever and it would never
 -- retry — the failure mode is invisible because it looks like "Overpass is
 -- still down".

@@ -17,7 +17,7 @@ rather than through `resolveStationChain`.
 `StationChain` treats any `HashMap` iteration as suspect, because iteration
 order is unspecified. This module is the exception and for
 a checkable reason: the only iteration is `stationNameServed`'s scan over the
-served set, and it returns as soon as any element matches. The RESULT is a
+served set, and it returns as soon as any element matches. The result is a
 `Bool`, so a permutation of the set can change which element matched but never
 whether one did. `Std.HashSet` is therefore faithful, not merely convenient.
 -/
@@ -66,7 +66,7 @@ structure RailStopRelation where
   stops : Array RailStop
   deriving Inhabited, Repr
 
-/-- Relations that ARE the line: the ref equals the line's base token, or the
+/-- Relations that are the line: the ref equals the line's base token, or the
     relation's own name has that base token, case-insensitively.
 
     Containment of the token in the ref or the name would match every Southern
@@ -109,7 +109,7 @@ def stationNameServed (served : Std.HashSet String) (stationName : String) : Boo
   else if norm.length < MIN_CONTAINMENT_CHARS then false
   else
     -- Order-independent: any match answers `true`. See the module docstring.
-    -- ⚠ NOT with a National Rail "London " prefix stripped:
+    -- Not with a National Rail "London " prefix stripped:
     -- "London King's Cross" vs the relation's "King's Cross St. Pancras" is a
     -- real miss, but stripping the prefix on either side (length-guarded) took
     -- the live scoreboard's stations from 15 to 7 — at the mainline complexes
@@ -128,7 +128,7 @@ def stopIndexOf (rel : RailStopRelation) (stationName : String) : Option Nat :=
     | some s => match s.name with | some n => one n | none => false
     | none => false
 
-/-- The stations `line` calls at BETWEEN two named ones, over its relations
+/-- The stations `line` calls at between two named ones, over its relations
     (either direction; the FEWEST hops wins, since a semi-fast variant is still
     the line). `none` when no relation of the line calls at both. The decoder's
     twin of `LineStoppingPattern.intermediateStopCount`, over this module's
@@ -158,7 +158,7 @@ private def rel (lineRef lineName : Option String) (stops : List String) : RailS
   ⟨lineRef, lineName, (stops.map (fun n => ({ name := some n } : RailStop))).toArray⟩
 
 -- Five stops is exactly MIN_SERVED_STOPS; four is one short. The floor is pinned
--- from BOTH sides, because `≥ 5` and `> 5` agree everywhere except this pair.
+-- from both sides, because `≥ 5` and `> 5` agree everywhere except this pair.
 private def FIVE : List String :=
   ["Aldgate", "Barbican", "Baker Street", "Euston Square", "Farringdon"]
 private def FOUR : List String := FIVE.take 4
@@ -178,7 +178,7 @@ private def members (s : Option (Std.HashSet String)) : Option (List String) :=
 #guard normalizeStationName "A1" == "a1"
 #guard normalizeStationName "—" == ""
 
--- A relation matches on EITHER ref or name, and the line's qualifier is stripped
+-- A relation matches on either ref or name, and the line's qualifier is stripped
 -- before comparison ("H&C Line" → "h&c").
 #guard members (servedStationSet #[rel (some "H&C") none FIVE] "H&C Line")
   == some ["aldgate", "bakerstreet", "barbican", "eustonsquare", "farringdon"]
@@ -195,7 +195,7 @@ private def members (s : Option (Std.HashSet String)) : Option (List String) :=
 -- The floor is on the UNION across relations, not per relation: 4 + 1 clears it.
 #guard members (servedStationSet #[rel (some "H&C") none FOUR, rel (some "H&C") none ["Great Portland Street"]] "H&C Line")
   == some ["aldgate", "bakerstreet", "barbican", "eustonsquare", "greatportlandstreet"]
--- A line whose base token strips to empty matches NOTHING — the `'%%'` guard.
+-- A line whose base token strips to empty matches nothing — the `'%%'` guard.
 #guard servedStationSet #[rel (some "H&C") none FIVE] "Line" |>.isNone
 
 private def probe : Std.HashSet String :=
@@ -204,20 +204,20 @@ private def probe : Std.HashSet String :=
 
 #guard stationNameServed probe "Aldgate" == true
 #guard stationNameServed probe "aldgate" == true
--- The suffix pattern the containment rule EXISTS for: 15 chars, clears the floor.
+-- The suffix pattern the containment rule exists for: 15 chars, clears the floor.
 #guard stationNameServed probe "London St Pancras" == true
--- The pattern it exists to REFUSE: "euston" is 6 chars, so a different station
+-- The pattern it exists to refuse: "euston" is 6 chars, so a different station
 -- cannot be absorbed into its neighbour by prefix.
 #guard stationNameServed probe "Euston" == false
 #guard stationNameServed probe "Euston Square" == true
--- REFUSED, and not for the obvious reason: "barbicanstation" is 15 chars and
--- clears the floor by itself, but the SET member "barbican" is 8. The guard is
+-- Refused, and not for the obvious reason: "barbicanstation" is 15 chars and
+-- clears the floor by itself, but the set member "barbican" is 8. The guard is
 -- `min` of the two, so a long candidate cannot reach a short member however
 -- cleanly it contains it. This is the case that pins `min` rather than `norm`.
 #guard stationNameServed probe "Barbican Station" == false
 #guard stationNameServed probe "Kings Cross" == false
 
--- The calls BETWEEN a pair, either direction, fewest hops.
+-- The calls between a pair, either direction, fewest hops.
 private def metFive : RailStopRelation := rel (some "Metropolitan") none FIVE
 #guard (intermediateCalls #[metFive] "Metropolitan Line" "Aldgate" "Euston Square").map
   (·.toList.map (·.name)) == some [some "Barbican", some "Baker Street"]

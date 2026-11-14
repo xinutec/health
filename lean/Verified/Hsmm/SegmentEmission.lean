@@ -16,19 +16,19 @@ beats nearer a vehicle's mean decodes as a ride.
 
 Here each is scored under a model of how it is generated:
 
-* **Heart rate.** The segment's mean is a draw around the mode's mean (spread
+* Heart rate. The segment's mean is a draw around the mode's mean (spread
   `hrTau`), the minutes scatter around the segment's mean (`sigmaW`), and
   neighbouring minutes are correlated (`rho`), which shrinks the minutes to
   `nEff = n·(1−ρ)/(1+ρ)` independent ones. The marginal likelihood of the
   segment's minutes has a closed form in their count, sum and sum of squares.
   Asleep minutes keep the per-minute term (`Emissions`).
-* **Fix presence** switches between regimes (indoors none, outdoors every
+* Fix presence switches between regimes (indoors none, outdoors every
   minute), so it is part of a chain per mode (`obsMinute`): a regime change
   costs one switch, not the segment. Without a chain for the mode, the
   segment's fix share is a draw from Beta(`fixA`, `fixB`) and its sequence
   scores the beta-binomial's `B(k+a, n−k+b) / B(a, b)` — which reads a stay
   that goes from dark to lit as two stays, and splits it.
-* **Net displacement** between the fixes bracketing the segment: a ride's net
+* Net displacement between the fixes bracketing the segment: a ride's net
   speed is lognormal, a stay's displacement in metres is lognormal, and every
   mode keeps a share `eps` spread evenly over net speeds up to `uMaxKmh` (a
   round trip, a bad fix), so the term is evidence and never a veto. It takes

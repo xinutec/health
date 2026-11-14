@@ -8,7 +8,7 @@ prior posterior — silenced once today's most-recent fix contradicts the prior
 place (>`CONTRADICTION_RADIUS_M`). This carries a multi-day no-data stay (e.g. a
 hospital) to the prior place with decaying confidence.
 
-⚠ No flag gates this: the Rust that builds the decode request calls
+No flag gates this: the Rust that builds the decode request calls
 `load_continuity` unconditionally, so the seed is sent on every decode.
 
 Pure factor; `haversine`/`exp`/`log` make the fired bonus ULP-close (`approx`),

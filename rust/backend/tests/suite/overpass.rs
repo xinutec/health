@@ -1,8 +1,8 @@
 //! The Overpass client's response handling.
 //!
-//! ⚠ THE CASE THAT MATTERS IS A MISSING `elements` KEY. Overpass omits it for a
+//! The case that matters is a missing `elements` key. Overpass omits it for a
 //! query that matched nothing, and reading that as an error would turn "this
-//! tile has no bus routes" into a tile FAILURE — which feeds the refusal that
+//! tile has no bus routes" into a tile failure — which feeds the refusal that
 //! decides whether the mirror may be rebuilt. A whole region could be declared
 //! broken because part of it is genuinely empty.
 
@@ -27,7 +27,7 @@ fn elements_are_returned_in_order() {
 
 #[test]
 fn a_non_array_elements_is_an_error_not_an_empty_mirror() {
-    // ⚠ Refuse rather than default. An unreadable response that decoded to "no
+    // Refuse rather than default. An unreadable response that decoded to "no
     // elements" would look exactly like an empty region and silently shrink the
     // cache — the same class of defect as the DECIMAL columns reading as 0.0.
     assert!(elements(r#"{"elements":{"id":1}}"#).is_err());
@@ -50,7 +50,7 @@ fn the_first_attempt_tries_every_mirror() {
 
 #[test]
 fn a_retry_skips_the_mirror_that_has_never_answered() {
-    // ⚠ NOT a preference — `kumi.systems` has produced zero successful tiles in
+    // Not a preference — `kumi.systems` has produced zero successful tiles in
     // every measurement taken of it: it connects, then never answers or returns
     // 500. What it reliably does is spend FALLBACK_TIMEOUT_MS. Paying
     // that a second time for a tile buys nothing, and the retry exists to be
@@ -66,7 +66,7 @@ fn a_retry_skips_the_mirror_that_has_never_answered() {
 
 use backend::overpass::Outcome;
 
-// ⚠ `Outcome::may_retry` IS THE PRODUCTION PREDICATE, called here rather than
+// `Outcome::may_retry` is the production predicate, called here rather than
 // restated. Written out again as a local `matches!`, these tests would pass
 // whatever the tile loop actually does — including the opposite of this.
 
@@ -84,7 +84,7 @@ fn a_throttled_tile_may_be_retried() {
 
 #[test]
 fn a_banned_tile_is_not_retried() {
-    // ⚠ The case that matters. During a ban the connection is refused at 46 ms:
+    // The case that matters. During a ban the connection is refused at 46 ms:
     // nothing answers, including `/api/status`. That makes `wait_for_slot`
     // return 0 instantly, so a retry would fire with nothing pacing it and
     // double the request rate into a server that has already stopped

@@ -8,8 +8,8 @@ place the person went, unnamed.
 
 ## One feature can be several landmarks
 
-⚠ Each of `amenity`, `tourism`, `leisure`, `shop`, `place` spawns its OWN entry,
-so a feature tagged both `amenity=cafe` and `tourism=attraction` appears TWICE.
+Each of `amenity`, `tourism`, `leisure`, `shop`, `place` spawns its own entry,
+so a feature tagged both `amenity=cafe` and `tourism=attraction` appears twice.
 That is deliberate: the picker scores them independently and resolves precedence
 itself. Collapsing them here would decide, silently, which of the two a person
 meant.
@@ -18,13 +18,13 @@ meant.
 
 A stay deep inside a hospital campus would otherwise be named after whatever
 tiny point POI sits nearest the noisy GPS centroid — a hairdresser, a pharmacy.
-So a large institution whose FOOTPRINT CONTAINS the stay outranks nearer points.
+So a large institution whose footprint contains the stay outranks nearer points.
 
-⚠ The point-only radius fallback is restricted to a HOSPITAL mapped as a POINT,
+The point-only radius fallback is restricted to a hospital mapped as a point,
 and the restriction is the whole design:
 
-* a long sedentary stay by a hospital node IS the hospital (04-29);
-* a university or college has campus eateries you visit AS DESTINATIONS: a
+* a long sedentary stay by a hospital node is the hospital (04-29);
+* a university or college has campus eateries you visit as destinations: a
   Greek restaurant next to LSHTM is the restaurant, not the university (05-14);
 * a polygon already carries the precise `encloses` signal, so the loose radius
   must not widen it.
@@ -61,15 +61,15 @@ def ENCLOSING_OPEN_SPACES : List (String × String) :=
 def LARGE_INSTITUTION_POINT_RADIUS_M : Float := 80
 
 /-- `tourism` subtypes that mark a point of interest rather than a place a
-person goes. ⚠ Dropped at the END, after shaping — an artwork inside a museum
+person goes. Dropped at the end, after shaping — an artwork inside a museum
 must not suppress the museum. -/
 def POI_MARKER_TOURISM : List String := ["artwork", "viewpoint", "picnic_site", "information"]
 
-/-- Tag keys that can name a venue, in PRIORITY ORDER. ⚠ The order is the
+/-- Tag keys that can name a venue, in priority order. The order is the
 picker's tie-break; reordering it renames places. -/
 def LANDMARK_TAG_KEYS : List String := ["amenity", "tourism", "leisure", "shop", "place"]
 
-/-- Tags whose NAMED features are places the venue tags above miss:
+/-- Tags whose named features are places the venue tags above miss:
 `(key, values, the type they read as)`. The mirror's fetch asks for this list
 (`venuetags`) and files the features as landmarks; without it they arrived, or
 were never fetched, and no stay could be named after them.
@@ -89,7 +89,7 @@ structure Feature where
   /-- `(key, value)` pairs, as stored. -/
   tags : List (String × String)
   distanceM : Float
-  /-- Does this feature's footprint CONTAIN the query point? -/
+  /-- Does this feature's footprint contain the query point? -/
   encloses : Bool
   /-- From the point table (a node) rather than the line/area table (a way).
       ⚠ The radius fallback applies to nodes ONLY. -/
@@ -113,8 +113,8 @@ private def tagOf (tags : List (String × String)) (k : String) : Option String 
 
 /-- Should this landmark outrank nearer point POIs?
 
-⚠ `amenity` only, `hospital` only, and the radius fallback for POINTS only; the
-one other institution is a railway station's BUILDING (`STATION_BUILDING`), by
+`amenity` only, `hospital` only, and the radius fallback for points only; the
+one other institution is a railway station's building (`STATION_BUILDING`), by
 outline alone. See the module note — each narrowing is a specific day that went
 wrong. -/
 def isEnclosingInstitution (type_ subtype : String) (distanceM : Float)
@@ -131,11 +131,11 @@ def filterLandmarks (ls : List Landmark) : List Landmark :=
 
 /-- Turn features into ranked candidates.
 
-⚠ An UNNAMED feature is skipped entirely. A landmark with no name cannot name a
+An unnamed feature is skipped entirely. A landmark with no name cannot name a
 place, and carrying it would let the picker choose "" over a real venue further
 away. -/
 def shapeLandmarks (points lines : List Feature) : List Landmark :=
-  -- ⚠ POINTS FIRST, then lines — the order feeds a STABLE sort below, so it is
+  -- ⚠ points first, then lines — the order feeds a stable sort below, so it is
   -- the tie-break between a node and a way at the same distance.
   let tagged := points.map (fun f => (f, true)) ++ lines.map (fun f => (f, false))
   let out := tagged.flatMap fun (f, isPoint) =>
@@ -150,7 +150,7 @@ def shapeLandmarks (points lines : List Feature) : List Landmark :=
            , enclosing := isEnclosingInstitution k sub f.distanceM f.encloses isPoint
            , openingHours := tagOf f.tags "opening_hours"
            , inside := ENCLOSING_OPEN_SPACES.contains (k, sub) && f.encloses && !isPoint }]
-      -- ⚠ A pedestrian way is a landmark with NO enclosing test and no opening
+      -- A pedestrian way is a landmark with no enclosing test and no opening
       -- hours: it names a street, not a venue.
       let ped :=
         if tagOf f.tags "highway" == some "pedestrian" then
@@ -168,7 +168,7 @@ def shapeLandmarks (points lines : List Feature) : List Landmark :=
                    , inside := ENCLOSING_OPEN_SPACES.contains (ty, v) && f.encloses && !isPoint }
             else none
       byTag ++ venue ++ ped
-  -- ⚠ STABLE, by distance only. Ties keep the order above, which is why points
+  -- Stable, by distance only. Ties keep the order above, which is why points
   -- come first.
   filterLandmarks (out.mergeSort (fun a b => a.distanceM ≤ b.distanceM))
 
@@ -183,7 +183,7 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
 #guard ((shapeLandmarks [feat "The Invented Arms" [("amenity", "restaurant")] 12] []).head!).subtype
        == "restaurant"
 
--- A named hotel BUILDING is the hotel, as `tourism=hotel` would say…
+-- A named hotel building is the hotel, as `tourism=hotel` would say…
 #guard (shapeLandmarks [] [feat "The Hotel" [("building", "hotel")] 20 (isPoint := false)]).map
     (fun l => (l.type_, l.subtype)) == [("tourism", "hotel")]
 -- …but a building that carries its own venue tag is that venue alone, and a
@@ -191,7 +191,7 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
 #guard (shapeLandmarks [] [feat "X" [("building", "hotel"), ("amenity", "bar")] 20 (isPoint := false)]).map
     (fun l => (l.type_, l.subtype)) == [("amenity", "bar")]
 #guard shapeLandmarks [] [feat "Flats" [("building", "apartments")] 20 (isPoint := false)] == []
--- Inside a park's or a beach's OUTLINE is inside it; its point, or outside the
+-- Inside a park's or a beach's outline is inside it; its point, or outside the
 -- outline, is not; and it is no enclosing institution, which outranks venues.
 #guard (shapeLandmarks [] [feat "P" [("leisure", "park")] 130 (encloses := true) (isPoint := false)]).map
     (fun l => (l.inside, l.enclosing)) == [(true, false)]
@@ -205,7 +205,7 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
     (fun l => (l.type_, l.subtype)) == [("natural", "beach")]
 #guard shapeLandmarks [] [feat "A Wood" [("natural", "wood")] 40 (isPoint := false)] == []
 
--- ⚠ TWO tags, TWO landmarks — the picker resolves precedence, not this.
+-- Two tags, two landmarks — the picker resolves precedence, not this.
 #guard (shapeLandmarks [feat "X" [("amenity", "cafe"), ("tourism", "attraction")] 10] []).length == 2
 
 -- An unnamed feature names nothing.
@@ -216,7 +216,7 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
 #guard ((shapeLandmarks [feat "Far" [("shop", "bakery")] 90, feat "Near" [("shop", "bakery")] 5] []).head!).name
        == "Near"
 
--- ⚠ A tourism MARKER is dropped; a real tourism venue is kept.
+-- A tourism marker is dropped; a real tourism venue is kept.
 #guard (shapeLandmarks [feat "Statue" [("tourism", "artwork")] 3] []).length == 0
 #guard (shapeLandmarks [feat "Museum" [("tourism", "museum")] 3] []).length == 1
 
@@ -227,22 +227,22 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
 -- A pedestrian way is a landmark, and never an institution.
 #guard ((shapeLandmarks [feat "Market Sq" [("highway", "pedestrian")] 6] []).head!).type_ == "highway"
 
--- ⚠ THE ENCLOSING RULE, case by case.
+-- The enclosing rule, case by case.
 -- A hospital whose footprint contains the stay: definitive.
 #guard isEnclosingInstitution "amenity" "hospital" 500 true false == true
--- A hospital mapped as a POINT, inside the campus radius.
+-- A hospital mapped as a point, inside the campus radius.
 #guard isEnclosingInstitution "amenity" "hospital" 50 false true == true
 -- …but not beyond it.
 #guard isEnclosingInstitution "amenity" "hospital" 100 false true == false
--- ⚠ A hospital mapped as a WAY does NOT get the radius fallback — a polygon
+-- A hospital mapped as a way does not get the radius fallback — a polygon
 -- already carries `encloses`, so the loose radius must not widen it.
 #guard isEnclosingInstitution "amenity" "hospital" 50 false false == false
--- ⚠ A university is not a large institution here: its campus eateries are
+-- A university is not a large institution here: its campus eateries are
 -- destinations in their own right (05-14).
 #guard isEnclosingInstitution "amenity" "university" 10 true false == false
 -- Only `amenity` at all…
 #guard isEnclosingInstitution "shop" "hospital" 10 true false == false
--- …and the station BUILDING: its outline encloses, nothing else about it does.
+-- …and the station building: its outline encloses, nothing else about it does.
 #guard isEnclosingInstitution "railway" "train_station" 500 true false == true
 #guard isEnclosingInstitution "railway" "train_station" 10 false false == false
 #guard isEnclosingInstitution "railway" "train_station" 10 true true == false

@@ -17,7 +17,7 @@ the per-hop predicates, like the rest of the pass layer:
   *kept* point.
 
 Theorems:
-- `holdSpeed_chain` — **the kinematic honesty invariant**: every
+- `holdSpeed_chain` — the kinematic honesty invariant: every
   consecutive pair of the output satisfies `ok`. The whole point of the
   pass (never draw an impossible sprint) holds by construction, for any
   instantiation of `ok`.
@@ -170,7 +170,7 @@ def holdSpeed (ok : π → π → Bool) (fixes : Nat → π) (n : Nat) : List π
   if n < 2 then (List.range n).map fixes
   else bestRun ok fixes n 0 []
 
-/-- **The kinematic honesty invariant**: every consecutive pair of the held
+/-- The kinematic honesty invariant: every consecutive pair of the held
 output satisfies the plausibility predicate, so the drawn leg never contains an
 implausible hop. -/
 theorem holdSpeed_chain (ok : π → π → Bool) (fixes : Nat → π) (n : Nat) :

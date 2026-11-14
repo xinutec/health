@@ -62,7 +62,7 @@ pub(crate) async fn inputs(user: &str, date: &str, display_tz: Option<&str>) -> 
 /// `backend check` proves the stages run; this prints what a diff can be
 /// taken of.
 ///
-/// ⚠ Diff the text, not through `jq`: jq parses both sides to doubles, so
+/// Diff the text, not through `jq`: jq parses both sides to doubles, so
 /// `25.0 == 25` and a rendering difference reads as clean.
 pub(crate) fn head(fixture: &str) -> Result<()> {
     let text = std::fs::read_to_string(fixture).with_context(|| format!("reading {fixture}"))?;
@@ -262,13 +262,13 @@ pub(crate) async fn velocity(
 /// `distanceM` moved. A defect looks different: a wrong box or bucket answers
 /// empty, and a coordinate read by the wrong path moves every distance.
 ///
-/// ⚠ Reports counts, never content: the answers carry street and venue names
+/// Reports counts, never content: the answers carry street and venue names
 /// where the user stood, and both health repos are public.
 pub(crate) async fn mirror_check(fixture: &str) -> Result<()> {
     /// The tables a row source can answer. `nearbyWays` spells no radius in its
     /// key; the answerer uses the default.
     ///
-    /// ⚠ `nearbyLandmarks` belongs here: without it this check reported full
+    /// `nearbyLandmarks` belongs here: without it this check reported full
     /// agreement while every stay's landmarks answered empty.
     const TABLES: [&str; 4] = [
         "nearbyWays",
@@ -446,7 +446,7 @@ pub(crate) async fn mirror_check(fixture: &str) -> Result<()> {
 /// `osmTrace`; production has neither, only an adapter.
 ///
 /// `day-live` folds with `NoAnswers`, which declines everything: the keys it
-/// reports are what a live answerer must supply. ⚠ Its timeline uses defaults
+/// reports are what a live answerer must supply. Its timeline uses defaults
 /// for every key listed, so it is not a day to judge.
 ///
 /// `day-mirror` walks with [`mirror_source::MirrorSource`]. What it still
@@ -706,7 +706,7 @@ pub(crate) async fn capture_day(
 /// different days without a restart, under Linux cgroup accounting: a Job,
 /// running the production image. The serving pod folds too rarely to show it.
 ///
-/// ⚠ It has to be this binary: a debug image would be a different artefact
+/// It has to be this binary: a debug image would be a different artefact
 /// for a memory question. Read-only, and still a production actor: it takes
 /// connections and read locks like any client.
 ///
@@ -714,9 +714,9 @@ pub(crate) async fn capture_day(
 /// current day would fall back on a light one. It does not.
 pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
     backend::lean::init().context("starting the Lean runtime")?;
-    // The fold needs the DATABASE and nothing else. The config once demanded
+    // The fold needs the database and nothing else. The config once demanded
     // a credential this never read, and the first Job died on it; a
-    // MEASUREMENT job must also never hold what could write a health stream,
+    // measurement job must also never hold what could write a health stream,
     // which is the posture every other batch verb refuses.
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
@@ -730,7 +730,7 @@ pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
     for (i, date) in dates.iter().enumerate() {
         let before = rss_mib();
         let t0 = std::time::Instant::now();
-        // ⚠ The same entry point as the HTTP route (slot, fold, heap handed
+        // The same entry point as the HTTP route (slot, fold, heap handed
         // back, the trim). A cheaper harness would switch off the walk
         // matcher, the term most likely to ratchet.
         let body = backend::routes::velocity::fold_day(&st, user, date, None, true).await?;
@@ -768,7 +768,7 @@ pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
     }
     pool.close().await;
     println!("high-water            {high:>5} MiB");
-    // ⚠ The container's number, not this process's: the Lean workers share the
+    // The container's number, not this process's: the Lean workers share the
     // cgroup and the OOM killer judges the sum. The deploy's smoke step reads
     // this line.
     match backend::fold::cgroup_memory() {
@@ -778,11 +778,11 @@ pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `recapture-walkable`: re-record ONLY a golden fixture's `walkableRoads` from
+/// `recapture-walkable`: re-record only a golden fixture's `walkableRoads` from
 /// the live mirror, in place. Every other answer and every input stays
 /// the frozen record; see [`backend::mirror_source::rerecord_walkable`].
 ///
-/// ⚠ Reads today's mirror, so it brings in every OSM edit to those ways since
+/// Reads today's mirror, so it brings in every OSM edit to those ways since
 /// the day was frozen. Adjudicate what moves before blessing; never bless a
 /// `wayName` move unread.
 pub(crate) async fn recapture_walkable(user: &str, fixture_path: &str) -> Result<()> {

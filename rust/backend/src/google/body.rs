@@ -4,17 +4,17 @@
 //!
 //! Every other fetcher in this crate is an upsert: run it twice and nothing
 //! changes. This one removes rows first, because the stale Fitbit values it is
-//! replacing are on the SAME primary key `(user_id, date)` only where Google
+//! replacing are on the same primary key `(user_id, date)` only where Google
 //! also has a weigh-in — and Fitbit's forward fill has a row for every day,
 //! while Google has one for the days somebody actually stood on the scale. An
 //! upsert alone would leave the flat line intact between real measurements.
 //!
 //! So the window `[replaceFrom, ∞)` is cleared and the real values inserted.
-//! Rows BEFORE that boundary are older Fitbit history that Google cannot
+//! Rows before that boundary are older Fitbit history that Google cannot
 //! replace, and they are left alone.
 //!
 //! ⚠ The boundary comes from `Verified.Weight.replaceFrom` and an empty fetch
-//! yields `None`, on which this writes NOTHING. A Google outage, a revoked
+//! yields `None`, on which this writes nothing. A Google outage, a revoked
 //! token and a scope change all return zero points; treating that as "replace
 //! from the beginning" would delete every weight row there is.
 
@@ -32,7 +32,7 @@ pub struct WeightSyncResult {
     pub fetched: usize,
     /// Distinct days after dedup — the rows that get written.
     pub days: usize,
-    /// Rows the delete removed. ⚠ Larger than `days` is NORMAL and is the
+    /// Rows the delete removed. Larger than `days` is normal and is the
     /// point: it counts the forward-filled Fitbit rows on days with no real
     /// measurement.
     pub deleted_stale: u64,
@@ -48,7 +48,7 @@ pub struct WeightSyncResult {
 /// `apply = false` reports what it would do and writes nothing — the shape the
 /// CLI uses to show a plan before committing to it.
 ///
-/// `body_fat` rides in the same transaction. ⚠ It has to: the weight delete
+/// `body_fat` rides in the same transaction. It has to: the weight delete
 /// clears whole rows, body-fat column included, so writing fat separately would
 /// leave every tick a window in which it is gone.
 pub async fn sync_google_weight(
@@ -80,7 +80,7 @@ pub async fn sync_google_weight(
         return Ok(out);
     }
 
-    // ⚠ One transaction. Between the delete and the inserts the window is
+    // One transaction. Between the delete and the inserts the window is
     // empty, and a failure there would leave the table with a hole where the
     // stale-but-plausible values were, worse than either endpoint, because a gap
     // in weight reads as "did not weigh" rather than as a failed sync.
@@ -127,7 +127,7 @@ pub async fn sync_google_weight(
 
 /// Grams to the kilograms the column holds.
 ///
-/// ⚠ `weight_kg` is `DECIMAL(5,2)`, so MariaDB rounds to two places on the way
+/// `weight_kg` is `DECIMAL(5,2)`, so MariaDB rounds to two places on the way
 /// in whatever this returns: 67 345 g stores as 67.35, not 67.345. The division
 /// is plain `f64`, so the column's rounding is the only rounding.
 fn kilograms(grams: i64) -> f64 {
@@ -144,7 +144,7 @@ pub async fn run_google_weight_sync(
 ) -> Result<WeightSyncResult> {
     let token = oauth::access_token(http, creds).await?;
     let weight = health::fetch_all_weight(http, &token).await?;
-    // ⚠ A failed body-fat fetch fails the whole tick, weight included: the
+    // A failed body-fat fetch fails the whole tick, weight included: the
     // weight delete would otherwise wipe the stored fat and put nothing back.
     let body_fat = health::fetch_all_body_fat(http, &token).await?;
     sync_google_weight(pool, user_id, &weight, &body_fat, apply).await

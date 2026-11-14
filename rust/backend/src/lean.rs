@@ -6,7 +6,7 @@
 //! so a caller never spells a wire shape. The process, the pool and the ask
 //! protocol are [`crate::lean_worker`]; this module is the vocabulary.
 //!
-//! What that buys is that the rules the running backend uses ARE the ones in
+//! What that buys is that the rules the running backend uses are the ones in
 //! Lean — not a Rust paraphrase of them that drifts.
 //!
 //! # `init` once, and a failure there is fatal
@@ -64,7 +64,7 @@ struct LeanError {
 pub struct Weigh {
     pub date: String,
     pub grams: i64,
-    /// RFC-3339, used ONLY to order two weigh-ins on the same civil date.
+    /// RFC-3339, used only to order two weigh-ins on the same civil date.
     pub ts: String,
 }
 
@@ -74,7 +74,7 @@ pub struct Weigh {
 pub struct WeighPlan {
     /// The earliest covered day, or `None` for an empty fetch.
     ///
-    /// ⚠ `None` MUST NOT be read as "replace everything". A Google outage, a
+    /// ⚠ `None` must not be read as "replace everything". A Google outage, a
     /// revoked token and a scope change all return zero points, and treating
     /// that as a boundary would delete every weight row there is.
     #[serde(rename = "replaceFrom")]
@@ -84,7 +84,7 @@ pub struct WeighPlan {
 
 /// See `Verified.Weight.dedupeByDate` / `replaceFrom`.
 ///
-/// Both answers come from ONE call because they must come from the SAME dedup:
+/// Both answers come from one call because they must come from the same dedup:
 /// a boundary computed from one pass and rows from another can disagree about
 /// which days are covered.
 pub fn dedupe_weigh_ins(weigh_ins: &[Weigh]) -> Result<WeighPlan> {
@@ -136,7 +136,7 @@ pub fn velocity_cache_fresh(cached_at_ms: i64, now_ms: i64, ttl_ms: i64) -> Resu
 
 /// `Verified.Share.dateInShareWindow` — may a share-viewer see this date?
 ///
-/// ⚠ ONLY for a session that HAS a window. A session with no share-viewer is not
+/// Only for a session that has a window. A session with no share-viewer is not
 /// a viewer with an empty window; asking here about one would turn a missing
 /// window into an admitted date.
 pub fn date_in_share_window(date: &str, from: &str, to: &str) -> Result<bool> {
@@ -154,7 +154,7 @@ struct BoolWire {
 /// `Verified.Session.splitSigned` — the `(value, signature)` framing of a signed
 /// cookie.
 ///
-/// ⚠ Splits on the LAST separator. The signature is base64url, which has no `.`,
+/// Splits on the last separator. The signature is base64url, which has no `.`,
 /// so a value containing dots round-trips whole; splitting on the first would
 /// verify a truncated value.
 pub fn split_signed(signed: &str) -> Result<Option<(String, String)>> {
@@ -171,7 +171,7 @@ pub fn split_signed(signed: &str) -> Result<Option<(String, String)>> {
     Ok(w.value.map(|p| (p.value, p.sig)))
 }
 
-/// `Verified.Session.sessionIsValid` — INCLUSIVE at the boundary: a row expiring
+/// `Verified.Session.sessionIsValid` — inclusive at the boundary: a row expiring
 /// exactly now is still valid.
 pub fn session_is_valid(expires_at_ms: i64, now_ms: i64) -> Result<bool> {
     let w: BoolWire = call_json(&serde_json::json!({
@@ -182,13 +182,13 @@ pub fn session_is_valid(expires_at_ms: i64, now_ms: i64) -> Result<bool> {
 
 /// `Verified.Session.mayProceed` — may this session do this?
 ///
-/// ⚠ ANSWERS ONE QUESTION ONLY: whether a SHARE VIEWER is allowed this method on
+/// Answers one question only: whether a share viewer is allowed this method on
 /// this path. An unauthenticated request is not a share viewer, so this returns
 /// `true` for one — and `true` here is not permission. The caller's own "is
 /// there a session" gate must run first.
 ///
 /// `hides_location`: the viewer's link has location turned off
-/// (`Verified.Session.mayProceedSharing`). `path` must be the ORIGINAL request
+/// (`Verified.Session.mayProceedSharing`). `path` must be the original request
 /// path, `/api` included.
 pub fn may_proceed(
     is_share_viewer: bool,
@@ -207,7 +207,7 @@ pub fn may_proceed(
 /// `Verified.Share.shareableDateRange`: the inclusive `[from, to]` a share with
 /// this `days_back` may show, ending at `today`.
 ///
-/// ⚠ `None` means SHARE DISABLED (`days_back ≤ 0`, or an unparseable `today`),
+/// `None` means share disabled (`days_back ≤ 0`, or an unparseable `today`),
 /// not "no window". Reading it as unrestricted inverts the rule.
 pub fn shareable_date_range(today: &str, days_back: i64) -> Result<Option<(String, String)>> {
     #[derive(Deserialize)]
@@ -250,7 +250,7 @@ pub fn validate_days(raw: Option<f64>) -> Result<Option<i64>> {
 
 /// `Verified.ApiWindow.earliestVisible` — the earliest date a request may see.
 ///
-/// ⚠ `share_from` is `None` for the OWNER. Passing an empty string instead
+/// `share_from` is `None` for the owner. Passing an empty string instead
 /// would compare against it and give the same answer by luck rather than by
 /// rule.
 pub fn earliest_visible(
@@ -364,7 +364,7 @@ pub fn osm_covered(
     Ok(c.covered)
 }
 
-/// The tags whose NAMED features are places (`Verified.Geo.Landmarks.VENUE_TAGS`):
+/// The tags whose named features are places (`Verified.Geo.Landmarks.VENUE_TAGS`):
 /// `(key, values)`, e.g. `("natural", ["beach"])`. The mirror's fetch asks once
 /// per run and hands the list to [`crate::osm_mirror::parse_element`] and
 /// [`crate::osm_mirror::overpass_query`]; the rule is Lean's.
@@ -423,7 +423,7 @@ pub fn unsnapped_train_routes(
 /// state straddling `now_ts`, drops one wholly beyond it, and marks a state
 /// starting at or after `observed_through` (the decode's horizon) inferred.
 ///
-/// ⚠ Apply per request, after the cache: the cached day is fixed while `now`
+/// Apply per request, after the cache: the cached day is fixed while `now`
 /// moves, so clipping before caching would freeze the horizon.
 ///
 /// `states` must be the `day` mode's own state objects: they round-trip
@@ -581,7 +581,7 @@ pub enum RowShape {
 
 /// `Verified.RowShape.shapeOf` for every column of a result set, in one call.
 ///
-/// ⚠ `None` means REFUSE, not "render null". An unmapped SQL type is one whose
+/// `None` means refuse, not "render null". An unmapped SQL type is one whose
 /// rendering nobody has checked against production, and the wrong guess is
 /// invisible: a well-formed response carrying the wrong JSON type.
 pub fn row_shapes(sql_types: &[&str]) -> Result<Vec<Option<RowShape>>> {
@@ -602,7 +602,7 @@ pub fn row_shapes(sql_types: &[&str]) -> Result<Vec<Option<RowShape>>> {
 
 /// `Verified.RowShape.formatDateIso` — a DATE, as production ships it.
 ///
-/// ⚠ NOT on the serving path. `crate::row_json` formats these inline, because a
+/// Not on the serving path. `crate::row_json` formats these inline, because a
 /// day of intraday heart rate is thousands of values and a host call each would
 /// be thousands of round trips. This exists so the test can hold that inline
 /// formatter against Lean over a corpus.
@@ -637,7 +637,7 @@ pub fn format_date_time_iso(
 
 /// `Verified.Civil.addDays date 1` — the exclusive end of a single day's window.
 ///
-/// ⚠ Civil-calendar arithmetic, not `+86400`. The two agree except across a DST
+/// Civil-calendar arithmetic, not `+86400`. The two agree except across a DST
 /// boundary, which is exactly where a day's rows would go missing or double.
 pub fn next_day(date: &str) -> Result<String> {
     #[derive(Deserialize)]
@@ -670,7 +670,7 @@ pub fn location_policy() -> Result<(i64, i64, i64)> {
     Ok((w.tail_max_points, w.latest_fix_ttl_ms, w.tail_ttl_ms))
 }
 
-/// `Verified.LocationTail.tailAfter` — the REFERENCE tail, for the drift test.
+/// `Verified.LocationTail.tailAfter` — the reference tail, for the drift test.
 pub fn tail_after_ref(tss: &[i64], since: i64) -> Result<Vec<i64>> {
     #[derive(Deserialize)]
     struct Wire {
@@ -692,7 +692,7 @@ pub fn prev_day(date: &str) -> Result<String> {
 
 /// `Verified.Connection.statusOf` — is a linked account working?
 ///
-/// ⚠ `stored` is `None` for NO ROW. Passing an empty string instead would take
+/// `stored` is `None` for no row. Passing an empty string instead would take
 /// the fall-through and report a connection that does not exist as `active`.
 pub fn connection_status(stored: Option<&str>) -> Result<(String, bool)> {
     #[derive(Deserialize)]
@@ -749,7 +749,7 @@ pub fn one_line(raw: &str, max: i64) -> Result<String> {
 
 /// `Verified.PhoneTrackPrefs.dateminDate` — which local day the map opens on.
 ///
-/// ⚠ `hour` and `(y, m, d)` must ALREADY be local. Lean has no zone database.
+/// `hour` and `(y, m, d)` must already be local. Lean has no zone database.
 pub fn phonetrack_datemin(y: i64, m: i64, d: i64, hour: i64) -> Result<String> {
     #[derive(Deserialize)]
     struct Wire {
@@ -763,7 +763,7 @@ pub fn phonetrack_datemin(y: i64, m: i64, d: i64, hour: i64) -> Result<String> {
 
 /// `Verified.Login.validateReturnTo` — the open-redirect guard.
 ///
-/// ⚠ Always answers a safe path, so callers redirect unconditionally. A host
+/// Always answers a safe path, so callers redirect unconditionally. A host
 /// that "optimised away" this call for an input that looks fine would be
 /// deciding the security question itself.
 pub fn validate_return_to(return_to: Option<&str>) -> Result<String> {
@@ -846,7 +846,7 @@ pub enum Callback {
 
 /// `Verified.Login.acceptPending` — what may this callback do?
 ///
-/// ⚠ `state` is `None` when Nextcloud DROPPED it, which is the normal case for
+/// `state` is `None` when Nextcloud dropped it, which is the normal case for
 /// a browser with no NC session. Sending an empty string is treated the same:
 /// retried once, never accepted.
 pub fn accept_pending(
@@ -899,7 +899,7 @@ pub struct RecoveryAsOf {
 
 /// A `Float` that crossed as its IEEE-754 bit pattern.
 ///
-/// ⚠ The pattern is a decimal STRING, not a number: it reaches 2^64, well past
+/// The pattern is a decimal string, not a number: it reaches 2^64, well past
 /// the 2^53 JSON integers are exact to, so a bare number would be re-rounded on
 /// the way through. See `ServeEntry`'s float-bit-transport note.
 fn f64_from_bits_str(s: &str) -> Result<f64> {
@@ -940,7 +940,7 @@ fn path_lat_lon(path: &serde_json::Value, mode: &str) -> Result<Vec<serde_json::
 
 /// `Verified.Recovery.recoveryAsOf` — three streams, judged as of `day`.
 ///
-/// ⚠ Answers numbers only. Composing a readiness score is the CALLER's job and
+/// Answers numbers only. Composing a readiness score is the caller's job and
 /// must stay there, or the two apps drift on what a bad day means.
 pub fn recovery_as_of(
     day: &str,
@@ -1021,7 +1021,7 @@ pub struct PlaceProjection {
 
 /// `placeLabel` / `isNamedPlace` / `categoryOfSubtype`, in one call.
 ///
-/// ⚠ `label` and `named` answer DIFFERENT questions. A bare "Stay" has a label
+/// `label` and `named` answer different questions. A bare "Stay" has a label
 /// so the row renders, and is not `named` so a picker can hide it — several
 /// Stays are indistinguishable to a person choosing between them.
 pub fn place_projection(
@@ -1075,7 +1075,7 @@ pub struct CurrentPlace {
 
 /// `Verified.Geo.CurrentPlace.pickCurrentPlace` — nearest within 100 m.
 ///
-/// ⚠ Coordinates cross as IEEE-754 bit patterns: the seventh decimal of a fix
+/// Coordinates cross as IEEE-754 bit patterns: the seventh decimal of a fix
 /// moves which place wins, and a JSON number would be re-rounded on the way.
 pub fn pick_current_place(
     lat: f64,
@@ -1152,7 +1152,7 @@ pub struct OwntracksConfig {
 
 /// `Verified.Owntracks.decideRemoteConfig` — how hard the phone should look.
 ///
-/// ⚠ Takes the WHOLE pruned history: the decision is about a trajectory, not a
+/// Takes the whole pruned history: the decision is about a trajectory, not a
 /// fix. Coordinates cross as IEEE-754 bit patterns because the straightness
 /// ratio divides two haversine distances, and a re-rounded coordinate can move
 /// it across the walking threshold.
@@ -1262,7 +1262,7 @@ pub fn presence_row(segments: &serde_json::Value) -> Result<Option<PresenceRow>>
 /// `Verified.Geo.LineStations.lineNamesMatching` — every mirror line name whose
 /// text contains this line's base token.
 ///
-/// ⚠ The caller feeds the result straight into an indexed `name IN (…)`. Doing
+/// The caller feeds the result straight into an indexed `name IN (…)`. Doing
 /// the same match in SQL as `LIKE '%base%'` cannot use the name index and scans
 /// every railway row; that is the whole reason this step is separate.
 pub fn line_names_matching(line: &str, all_names: &[String]) -> Result<Vec<String>> {
@@ -1281,11 +1281,11 @@ pub fn line_names_matching(line: &str, all_names: &[String]) -> Result<Vec<Strin
 /// `Verified.Geo.LineStations.filterStationsByLineProximity` — the stations a
 /// line's track passes within 300 m of.
 ///
-/// ⚠ Coordinates cross as IEEE-754 BIT PATTERNS in both directions. The rule
+/// Coordinates cross as IEEE-754 bit patterns in both directions. The rule
 /// compares a computed distance against a 300 m threshold, and a re-rounded
 /// coordinate moves which stations a line is held to serve.
 ///
-/// ⚠ ORDER IS PRESERVED and is part of the answer — downstream journey
+/// Order is preserved and is part of the answer — downstream journey
 /// resolution reads positional relationships out of this list.
 pub fn filter_stations_by_line_proximity(
     stations: &[serde_json::Value],
@@ -1317,7 +1317,7 @@ pub fn filter_stations_by_line_proximity(
 /// `Verified.Geo.Landmarks.shapeLandmarks`: the venues near a stay, which name
 /// it.
 ///
-/// ⚠ Scored rows arrive under `rows`, with `distanceM` as a bit pattern.
+/// Scored rows arrive under `rows`, with `distanceM` as a bit pattern.
 /// Reading either wrongly yields an empty list, which claims "no venues here"
 /// instead of declining.
 pub fn shape_landmarks(
@@ -1652,7 +1652,7 @@ pub fn mine_priors(attributed: &[AttributedStay]) -> Result<serde_json::Value> {
 
 /// The `focus` mode's answer, decoded.
 ///
-/// ⚠ `mined` stays `Value`. The caller reads a dozen optional fields off each
+/// `mined` stays `Value`. The caller reads a dozen optional fields off each
 /// cluster (`sleepFitbitH`, `sleepH`, the stay tuples); a struct here would be a
 /// second schema to hold in step with Lean's, for no checking the caller does
 /// not already do per field.
@@ -1661,7 +1661,7 @@ pub struct FocusPlaces {
     pub mined: Vec<serde_json::Value>,
     /// Cluster id -> display name.
     pub names: std::collections::HashMap<i64, String>,
-    /// One per mined cluster, IN ORDER: the existing row it continues, if any.
+    /// One per mined cluster, in order: the existing row it continues, if any.
     pub assignments: Vec<Option<i64>>,
     /// Existing rows this mining says are gone.
     pub deleted: Vec<i64>,
@@ -1881,7 +1881,7 @@ pub fn known_lines() -> Result<Vec<String>> {
 /// keys the transition matrix hard-zeroes. `lines` pairs a line with its
 /// stations as `[latBits, lonBits]`; the 400 m rule is Lean's.
 ///
-/// ⚠ An empty set is not neutral: it removes every hard zero, permitting
+/// An empty set is not neutral: it removes every hard zero, permitting
 /// impossible boardings while still producing a plausible timeline.
 pub fn place_near_line(
     places: &[(i64, f64, f64)],
@@ -1989,7 +1989,7 @@ impl ProximityQuery {
 }
 
 /// The minutes of a day that had a fix, and the distinct locations they reduce
-/// to. `minutes` is OPAQUE — hand it back to [`proximity_table`] untouched.
+/// to. `minutes` is opaque — hand it back to [`proximity_table`] untouched.
 #[derive(Debug, Clone)]
 pub struct ProximityPlan {
     pub minutes: serde_json::Value,
@@ -2063,7 +2063,7 @@ impl ProximityAnswer {
 /// `observation.proximity`, plus the number of fix-bearing minutes no answer
 /// covered.
 ///
-/// ⚠ THE TABLE IS OPAQUE HERE ON PURPOSE. It goes into the assemble request
+/// The table is opaque here on purpose. It goes into the assemble request
 /// unread; a `Vec<(i64, f64, f64)>` on this side would be a second decode of
 /// numbers that only Lean compares.
 pub fn proximity_table(

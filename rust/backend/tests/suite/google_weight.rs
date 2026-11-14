@@ -1,6 +1,6 @@
 //! The Google Health weight feed and its dedup.
 //!
-//! ⚠ ONE `#[test]`, for the reason `lean_ffi.rs` gives: `health_backend_init`
+//! One `#[test]`, for the reason `lean_ffi.rs` gives: `health_backend_init`
 //! starts a process-global runtime and cargo does not serialise tests within a
 //! binary. The page-parsing half needs no runtime, but splitting it across two
 //! files to gain nothing would just be a second place to look.
@@ -35,7 +35,7 @@ fn the_weight_feed_and_its_dedup() {
     let (points, next) = parse_page(page).unwrap();
     assert_eq!(points.len(), 2);
     assert_eq!(points[0], w("2026-08-01", 67300, "2026-08-01T07:12:00Z"));
-    // ⚠ THE QUOTED FORM. Google's JSON mapping for int64 quotes some values, and
+    // The quoted form. Google's JSON mapping for int64 quotes some values, and
     // a plain `i64` field silently fails to decode it — dropping the point as
     // malformed rather than erroring.
     assert_eq!(points[1].grams, 68150);
@@ -63,7 +63,7 @@ fn the_weight_feed_and_its_dedup() {
       ]}"#;
     assert!(parse_page(unusable).unwrap().0.is_empty());
 
-    // An empty page is empty, and an EMPTY token is the end rather than a token.
+    // An empty page is empty, and an empty token is the end rather than a token.
     let (empty, none) = parse_page(r#"{"dataPoints":[],"nextPageToken":""}"#).unwrap();
     assert!(empty.is_empty());
     assert_eq!(none, None, "an empty token must terminate the walk");
@@ -121,7 +121,7 @@ fn the_weight_feed_and_its_dedup() {
         assert_eq!(lean::dedupe_weigh_ins(&pair).unwrap().kept[0].grams, 222);
     }
 
-    // ⚠ THE GUARD THAT MATTERS MOST. An empty fetch names NO boundary, so the
+    // The guard that matters most. An empty fetch names no boundary, so the
     // caller deletes nothing. A Google outage, a revoked token and a scope
     // change all return zero points, and reading that as "replace from the
     // beginning of time" would empty the weight history.
@@ -158,7 +158,7 @@ fn the_body_fat_feed() {
         "a point with no percentage, and a weight point, are not body-fat readings"
     );
     assert!((body_fat_pct(&points[0]) - 18.3).abs() < 1e-9);
-    // ⚠ The weight parser must not pick up body fat either.
+    // The weight parser must not pick up body fat either.
     assert!(
         parse_page(page)
             .unwrap()

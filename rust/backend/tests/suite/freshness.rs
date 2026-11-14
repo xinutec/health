@@ -1,6 +1,6 @@
-//! The freshness check must FAIL, not only pass.
+//! The freshness check must fail, not only pass.
 //!
-//! ⚠ Every stream in prod is usually fresh, so the passing path is the only one
+//! Every stream in prod is usually fresh, so the passing path is the only one
 //! a live run exercises. A check nobody has seen fail is exactly what these
 //! tests exist for.
 
@@ -13,7 +13,7 @@ fn a_stream_within_its_bound_is_fine() {
     assert!(stale_reason("body", Some(10)).is_none());
 }
 
-/// ⚠ The bound is a MAXIMUM, so one day past it must fire. An off-by-one here
+/// The bound is a maximum, so one day past it must fire. An off-by-one here
 /// would let a stream sit a day stale forever without a word.
 #[test]
 fn one_day_past_the_bound_fires() {
@@ -22,7 +22,7 @@ fn one_day_past_the_bound_fires() {
     assert!(why.contains("4 days behind"), "{why}");
 }
 
-/// ⚠ AN EMPTY TABLE IS MAXIMALLY STALE, NOT SKIPPABLE. `MAX()` over no rows is
+/// An empty table is maximally stale, not skippable. `MAX()` over no rows is
 /// NULL; treating that as "no data to judge" would let a stream that never
 /// arrived at all pass.
 #[test]
@@ -31,7 +31,7 @@ fn an_empty_table_is_stale_not_skipped() {
     assert!(why.contains("EMPTY"), "{why}");
 }
 
-/// ⚠ A table with no bound is UNWATCHED, which is a failure and not a pass —
+/// A table with no bound is unwatched, which is a failure and not a pass —
 /// otherwise adding a stream to the query and forgetting the bound produces a
 /// green check over a stream nobody is looking at.
 #[test]
@@ -40,7 +40,7 @@ fn a_table_without_a_bound_is_a_failure() {
     assert!(why.contains("no freshness bound"), "{why}");
 }
 
-/// ⚠ `body` needs its OWN bound: it was 10 days behind and healthy when
+/// `body` needs its own bound: it was 10 days behind and healthy when
 /// measured, so the daily bound of 3 would have it screaming permanently. An
 /// alarm that cries wolf gets muted, which is worse than no alarm.
 #[test]
@@ -59,7 +59,7 @@ fn every_bound_records_why() {
     }
 }
 
-/// ⚠ A row can arrive without its data, and from the Google cutover
+/// A row can arrive without its data, and from the Google cutover
 /// `daily_activity` is the table where that becomes possible. Fitbit writes
 /// seven columns and Google writes five; if Google fails, Fitbit still creates
 /// the row, `MAX(date)` is today, and the table-level check passes over a day
@@ -79,8 +79,8 @@ mod a_migrated_column_is_watched_separately_from_its_table {
         );
     }
 
-    /// The point of the separate entry: the TABLE can be perfectly fresh while
-    /// the COLUMN is days behind, and only the second reading is a problem.
+    /// The point of the separate entry: the table can be perfectly fresh while
+    /// the column is days behind, and only the second reading is a problem.
     #[test]
     fn a_fresh_table_does_not_excuse_a_stale_column() {
         assert!(stale_reason("daily_activity", Some(0)).is_none());
@@ -89,7 +89,7 @@ mod a_migrated_column_is_watched_separately_from_its_table {
         assert!(why.contains("daily_activity.steps"), "{why}");
     }
 
-    /// ⚠ NULL means no row has EVER carried a step count, which is the shape of
+    /// NULL means no row has ever carried a step count, which is the shape of
     /// a cutover that switched Fitbit off and never switched Google on.
     #[test]
     fn never_populated_is_stale_not_skipped() {

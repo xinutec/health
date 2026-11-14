@@ -7,25 +7,25 @@ The two halves of the `stationsOnLine` ask, with the host's SQL between them:
 the line — a spatial judgement, so it is made here from the raw rows rather
 than in the database.
 
-## The mirror does not record membership, so this INFERS it
+## The mirror does not record membership, so this infers it
 
 OSM route relations name their member stops, but the local mirror ingests way
 geometry only. So membership is proximity-inferred: a station point within
 `MAX_DIST_M` of any way of the line counts as served. The error direction is
-OVER-inclusion — a station beside a passing-but-not-stopping line counts — which
+over-inclusion — a station beside a passing-but-not-stopping line counts — which
 is what makes the result safe as a veto and useless as an assertion.
 
 300 m is not a tolerance, it is a physical offset: a surface station's named node
-sits 20-80 m from the track, while a tube station's named node is at the STREET
+sits 20-80 m from the track, while a tube station's named node is at the street
 entrance and the tunnel runs 150-300 m horizontally beneath it. One bar covers
 both regimes.
 
-## The line's own metric — a FIFTH distance function in this repo
+## The line's own metric — a fifth distance function in this repo
 
 `pointToSegmentM` projects with an equirectangular approximation at the
-SEGMENT MIDPOINT and `111_320` m/deg, then `Math.hypot`. That is:
+segment midpoint and `111_320` m/deg, then `Math.hypot`. That is:
 
-* not `Verified.Geo.EpisodeGeometry.equirectMeters`, which uses the FIRST point's
+* not `Verified.Geo.EpisodeGeometry.equirectMeters`, which uses the first point's
   cosine and `sqrt`;
 * not `WalkableRoute.metersBetween`;
 * not `OsmSpatial`'s `lineDistDeg`, which works in degrees against MariaDB's
@@ -39,7 +39,7 @@ different, and the guards are what stop a well-meaning merge.)
 
 ## `lineBaseToken` strips a qualifier, and the regex has teeth
 
-`/\s+lines?\b.*$/i` on `String.replace` (non-global — FIRST match only), then
+`/\s+lines?\b.*$/i` on `String.replace` (non-global — first match only), then
 `trim`. "Victoria Line" → "Victoria"; "Circle and District Lines" → "Circle and
 District"; "Northern Line (Bank Branch)" → "Northern", because `.*$` eats the
 parenthetical too. A name with no whitespace-preceded "line" is returned whole,
@@ -68,7 +68,7 @@ namespace Verified.Geo.LineStations
 count as served. See the header on why one bar covers surface and tube. -/
 def MAX_DIST_M : Float := 300.0
 
-/-- The module's own metres-per-degree of latitude. NOT `OsmSpatial`'s 111_000
+/-- The module's own metres-per-degree of latitude. Not `OsmSpatial`'s 111_000
 nor the sphere's 111_194.68 — see the header's list of five. -/
 def M_PER_DEG_LAT : Float := 111_320.0
 
@@ -155,9 +155,9 @@ def lineBaseToken (lineName : String) : String :=
 The distinct mirror names containing `lineName`'s base token, case-insensitively
 — exactly the set a `name LIKE '%base%'` would have matched.
 
-A name stripping to the empty base matches NOTHING. That is deliberate and not a
+A name stripping to the empty base matches nothing. That is deliberate and not a
 degenerate case: `'%%'` would have matched every line in the mirror, so the
-indexed path stays conservative where the LIKE was permissive.
+indexed path stays conservative where the like was permissive.
 -/
 def lineNamesMatching (lineName : String) (allNames : Array String) : Array String :=
   let base := lineBaseToken lineName
@@ -171,7 +171,7 @@ def lineNamesMatching (lineName : String) (allNames : Array String) : Array Stri
 /-! ## Geometry -/
 
 /-- Distance in metres from a point to a segment, projected equirectangularly at
-the SEGMENT MIDPOINT. See the header: this metric is this module's own. -/
+the segment midpoint. See the header: this metric is this module's own. -/
 def pointToSegmentM (pLat pLon : Float) (a b : Float × Float) : Float :=
   let refLat := (a.1 + b.1) / 2.0
   let mPerLon := metersPerDegLon refLat
@@ -191,7 +191,7 @@ def pointToSegmentM (pLat pLon : Float) (a b : Float × Float) : Float :=
   Float.sqrt (distX * distX + distY * distY)
 
 /-- Minimum distance from a point to a polyline. A polyline of fewer than two
-vertices is INFINITELY far — it has no segment to be near, and returning 0 would
+vertices is infinitely far — it has no segment to be near, and returning 0 would
 make every degenerate way match every station. -/
 def pointToLineDistanceM (pLat pLon : Float) (coords : Array (Float × Float)) : Float :=
   if coords.size < 2 then (1.0 / 0.0)
@@ -223,7 +223,7 @@ private def parseWay (w : WayGeometry) : Option ParsedWay :=
 
 /--
 Keep the station candidates within `MAX_DIST_M` of any of the ways. Dedupes by
-NAME and preserves input order.
+name and preserves input order.
 
 `filterStationsByLineProximityParsed`: the geometry decision alone. Parsing the
 WKT is boundary work, not part of the rule.
@@ -235,7 +235,7 @@ a different result.
 The bbox pre-filter is a cheap reject before the per-segment math, and it is
 output-identical rather than approximate — the box is padded by `MAX_DIST_M`, so
 it is a conservative superset of the neighbourhood and the exact test behind it
-is unchanged. The longitude pad uses the SMALLEST cosine over all the data (the
+is unchanged. The longitude pad uses the smallest cosine over all the data (the
 most poleward latitude), which can only widen the box: a wider box costs extra
 exact tests, never a wrong reject.
 -/
@@ -284,7 +284,7 @@ def filterStationsByLineProximity
 #guard lineBaseToken "Line 1" == "Line 1"
 -- The word boundary: "Lineside" is not "line".
 #guard lineBaseToken "Wembley Lineside Path" == "Wembley Lineside Path"
--- FIRST match wins, and it takes everything after it.
+-- First match wins, and it takes everything after it.
 #guard lineBaseToken "A Line and B Line" == "A"
 -- An en dash is neither whitespace nor a word char here.
 #guard lineBaseToken "London–Aylesbury Line" == "London–Aylesbury"
@@ -296,11 +296,11 @@ private def mirrorNames : Array String :=
     "North London Line Connection", "Circle and District Lines", "Metropolitan Line"]
 
 #guard lineNamesMatching "Victoria Line" mirrorNames == #["Victoria Line", "Victoria Line Northbound"]
--- The directional variant expands to the SAME set — which is why candidates
+-- The directional variant expands to the same set — which is why candidates
 -- derived from a day's own way names cover the labels the pipeline asks about.
 #guard lineNamesMatching "Victoria Line Northbound" mirrorNames == lineNamesMatching "Victoria Line" mirrorNames
 #guard lineNamesMatching "North London line" mirrorNames == #["North London line", "North London Line Connection"]
--- Matching is case-insensitive on BOTH sides.
+-- Matching is case-insensitive on both sides.
 #guard lineNamesMatching "VICTORIA LINE" mirrorNames == #["Victoria Line", "Victoria Line Northbound"]
 #guard lineNamesMatching "Jubilee Line" mirrorNames == #[]
 #guard lineNamesMatching " Line" mirrorNames == #[]
@@ -332,10 +332,10 @@ private def stations : Array StationCandidate :=
 
 #guard (filterStationsByLineProximity stations #[nsWay]).map (·.name) == #["On It", "Just Inside"]
 -- Input order is preserved, not distance order: "On It" is nearer but the
--- answer would read the same either way, so the case that pins it is a REVERSED
+-- answer would read the same either way, so the case that pins it is a reversed
 -- input, where a distance sort would flip the pair.
 #guard (filterStationsByLineProximity stations.reverse #[nsWay]).map (·.name) == #["Just Inside", "On It"]
--- Dedupe is by NAME and keeps the FIRST occurrence, so a second node of the
+-- Dedupe is by name and keeps the first occurrence, so a second node of the
 -- same station — the shape `dedupeStationsByName` exists for — cannot double up.
 #guard (filterStationsByLineProximity
     (#[⟨"On It", 0.0, 0.0⟩, ⟨"On It", 0.002, 0.0⟩] : Array StationCandidate) #[nsWay]).size == 1

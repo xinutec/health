@@ -10,7 +10,7 @@ including one a future migration adds and an empty string, reads as a working
 connection. So the answer is only as good as the writer's discipline: a status
 nobody taught it about is reported to the user as fine.
 
-The one thing it does refuse is ABSENCE: no row is `not_linked`, which is what
+The one thing it does refuse is absence: no row is `not_linked`, which is what
 the frontend turns into its "connect your account" prompt.
 
 Pure and total. UNPROVEN; the `#guard`s pin its answers.
@@ -34,9 +34,9 @@ def Status.toString : Status → String
   | .needsReauth => "needs_reauth"
   | .notLinked => "not_linked"
 
-/-- Read a status from the stored column. `none` means NO ROW.
+/-- Read a status from the stored column. `none` means no row.
 
-⚠ `some ""`, `some "revoked"` and `some "anything"` are all `active`. See the
+`some ""`, `some "revoked"` and `some "anything"` are all `active`. See the
 module note: this is a fall-through, not a validation. -/
 def statusOf (stored : Option String) : Status :=
   match stored with
@@ -45,7 +45,7 @@ def statusOf (stored : Option String) : Status :=
 
 /-- The legacy boolean `/api/me` still sends alongside the typed status.
 
-⚠ `needs_reauth` counts as LINKED. The old SPA builds that read this flag show
+`needs_reauth` counts as linked. The old SPA builds that read this flag show
 "connected" for an account whose credential has been revoked; the typed
 `connections` object is what carries the distinction. Narrowing this to
 `active` would be more truthful and would change what those builds render. -/
@@ -56,7 +56,7 @@ def isLinked (s : Status) : Bool := s != Status.notLinked
 #guard statusOf none == Status.notLinked
 #guard statusOf (some "needs_reauth") == Status.needsReauth
 #guard statusOf (some "active") == Status.active
--- ⚠ Everything unrecognised is reported as a working connection.
+-- Everything unrecognised is reported as a working connection.
 #guard statusOf (some "") == Status.active
 #guard statusOf (some "revoked") == Status.active
 #guard statusOf (some "NEEDS_REAUTH") == Status.active
@@ -65,7 +65,7 @@ def isLinked (s : Status) : Bool := s != Status.notLinked
 #guard Status.toString (statusOf (some "needs_reauth")) == "needs_reauth"
 #guard Status.toString (statusOf (some "active")) == "active"
 
--- ⚠ A revoked credential still reads as "linked" to the legacy flag.
+-- A revoked credential still reads as "linked" to the legacy flag.
 #guard isLinked (statusOf none) == false
 #guard isLinked (statusOf (some "needs_reauth")) == true
 #guard isLinked (statusOf (some "active")) == true

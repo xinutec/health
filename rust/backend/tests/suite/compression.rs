@@ -1,19 +1,19 @@
 //! Responses are compressed when the client asks, and only then.
 //!
-//! ⚠ This exists because the feature was once not compiled in and nothing said
+//! This exists because the feature was once not compiled in and nothing said
 //! so: `/api/heartrate/intraday` for one half-finished day returned 2,556,228
 //! bytes with no encoding negotiated at all, because `tower-http` was built
 //! with only `fs` and `trace`. The rows are mostly one repeated zone, so they
 //! compress to a fraction; nothing here asserts a size.
 //!
-//! ⚠ The failure was SILENT IN EVERY DIRECTION. Every response was correct,
+//! The failure was silent in every direction. Every response was correct,
 //! every status was right, no test failed and no log said anything; the only
 //! symptom was bytes on a wire nobody was measuring. A missing Cargo feature
-//! cannot fail loudly, so the assertion has to be about the SERVED RESPONSE
+//! cannot fail loudly, so the assertion has to be about the served response
 //! rather than about the dependency — checking the feature list would pass on a
 //! router that never mounted the layer.
 //!
-//! ⚠ NO DATABASE, deliberately: the pool cannot answer, so this uses the SPA
+//! No database, deliberately: the pool cannot answer, so this uses the SPA
 //! fallback page, which is the largest body the real router will produce
 //! without a query. That keeps the test about the layer stack and not about
 //! data.
@@ -37,7 +37,7 @@ fn app() -> axum::Router {
         );
     let mut cfg = Config::for_test();
     cfg.session_secret = Some("a-secret-at-least-16-chars".into());
-    // The REAL router, so what is under test is the mounted stack.
+    // The real router, so what is under test is the mounted stack.
     backend::routes::router(AppState::new(pool, cfg, reqwest::Client::new()))
 }
 
@@ -79,7 +79,7 @@ async fn brotli_is_served_when_the_client_asks() {
     assert_eq!(encoding.as_deref(), Some("br"));
 }
 
-/// ⚠ THE HALF THAT MAKES THE CHANGE SAFE. Compression is content-negotiated, so
+/// The half that makes the change safe. Compression is content-negotiated, so
 /// a caller that sends no `Accept-Encoding` must still get an identity body —
 /// that is why mounting this layer cannot break an existing client, only fail
 /// to help one. Asserting it here means the claim in `routes/mod.rs` is checked

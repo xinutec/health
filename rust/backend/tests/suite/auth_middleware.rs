@@ -1,16 +1,16 @@
-//! The auth layer's REFUSALS.
+//! The auth layer's refusals.
 //!
 //! `session_rules.rs` covers what Lean decides. This covers what the HTTP layer
 //! does with those answers, and specifically the two failures that are dangerous
 //! because they look like ordinary ones:
 //!
-//!   * a database that cannot be read must be 500, NOT 401. "You are logged out"
+//!   * a database that cannot be read must be 500, not 401. "You are logged out"
 //!     is indistinguishable from a correct answer, so an outage would silently
 //!     sign everybody out and send them to a login page that also fails;
-//!   * an authorisation question that could not be EVALUATED must refuse. A
+//!   * an authorisation question that could not be evaluated must refuse. A
 //!     `mayProceed` that errored and was treated as a yes is an open door.
 //!
-//! ⚠ NO DATABASE HERE. The pool is built lazily against a port nothing listens
+//! No database here. The pool is built lazily against a port nothing listens
 //! on, which is precisely what makes the first case reachable in a unit test.
 
 use axum::body::Body;
@@ -24,14 +24,14 @@ use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use tower::ServiceExt;
 
 /// An `AppState` whose pool can never answer. Built lazily on purpose — sqlx
-/// opens no socket until a query runs, so construction succeeds and the FIRST
-/// QUERY is what fails, which is the shape a real outage has.
+/// opens no socket until a query runs, so construction succeeds and the first
+/// query is what fails, which is the shape a real outage has.
 fn state_with_a_dead_database(secret: Option<&str>) -> AppState {
     let pool = MySqlPoolOptions::new()
         .max_connections(1)
-        // ⚠ Without this the suite pays sqlx's 30-SECOND default acquire
+        // Without this the suite pays sqlx's 30-second default acquire
         // timeout on every test that reaches the pool. The question here is
-        // which STATUS an unreachable database produces, not how long the wait
+        // which status an unreachable database produces, not how long the wait
         // is, so the wait is cut to the shortest thing that still reaches the
         // failure path.
         .acquire_timeout(std::time::Duration::from_millis(200))
@@ -66,7 +66,7 @@ async fn a_database_that_cannot_be_read_is_500_and_not_401() {
     backend::lean::init().expect("the Lean runtime must start");
     let st = state_with_a_dead_database(Some("a-secret-at-least-16-chars"));
 
-    // ⚠ A validly signed cookie, and that is the whole setup. A bad signature is
+    // A validly signed cookie, and that is the whole setup. A bad signature is
     // refused by the HMAC before any query, so it would produce a 401 that says
     // nothing about the database. Only a cookie that verifies reaches the
     // `sessions` lookup, which is where the outage is.
@@ -126,7 +126,7 @@ async fn a_process_with_no_signing_key_refuses_rather_than_logging_everyone_out(
         )
         .await
         .unwrap();
-    // ⚠ NOT 401. A server with no signing key that answers "not logged in" to
+    // Not 401. A server with no signing key that answers "not logged in" to
     // every request looks like a working server that simply has no users.
     assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
@@ -214,19 +214,19 @@ async fn the_owner_is_unrestricted() {
     );
 }
 
-/// ⚠ A request with NO SESSION reaching this layer is a MOUNTING BUG, and is
+/// A request with no session reaching this layer is a mounting bug, and is
 /// refused as one.
 ///
-/// ⚠ "There is no session, so let 401 handle it" is right as reasoning and
+/// "There is no session, so let 401 handle it" is right as reasoning and
 /// still wrong as behaviour: letting an extension-less request through makes
 /// the layer order a silent correctness condition — mounted before
 /// `require_session`, a share viewer's POST arrives with no extension, reads as
-/// not-a-share-viewer, and is ALLOWED.
+/// not-a-share-viewer, and is allowed.
 ///
-/// ⚠ Measured, not assumed: flipping the two layers in `routes::mod` failed
-/// ZERO of the eleven tests that covered this area, because the test claiming to
+/// Measured, not assumed: flipping the two layers in `routes::mod` failed
+/// zero of the eleven tests that covered this area, because the test claiming to
 /// protect the order mirrored the stack instead of importing it. Failing closed
-/// is what makes the flip visible — it now breaks THIS test, loudly, on every
+/// is what makes the flip visible — it now breaks this test, loudly, on every
 /// request rather than on one class of them.
 #[tokio::test]
 async fn no_session_at_this_layer_is_a_mounting_bug_not_an_anonymous_user() {
@@ -240,7 +240,7 @@ async fn no_session_at_this_layer_is_a_mounting_bug_not_an_anonymous_user() {
 
 /// The rule behind `nest("/api", …)`, the way `routes::mod` mounts it.
 ///
-/// ⚠ A nested router sees its URI with the prefix stripped, so the middleware
+/// A nested router sees its URI with the prefix stripped, so the middleware
 /// must judge the original path. Judging the stripped one refuses every share
 /// viewer's `POST /api/telemetry`, and would let a link with location off read
 /// `/api/velocity`.

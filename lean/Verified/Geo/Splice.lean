@@ -308,7 +308,7 @@ def splice (cd : π → π → π → Nat) (same near : π → π → Bool)
   else (spliceLoop cd same near clampTs route m tol dropM coarse n 1
     (indexFrom same route m (coarse 0) 0) [coarse 0]).reverse
 
-/-- **Splice soundness**: every output vertex is a coarse vertex,
+/-- Splice soundness: every output vertex is a coarse vertex,
 or a route vertex — timestamp-clamped into its chord's window — whose
 deviation from its chord is at most `dropM`. In particular a window
 whose deviation exceeds `dropM` (a deliberate excision) contributes
@@ -334,7 +334,7 @@ theorem splice_sound (cd : π → π → π → Nat) (same near : π → π → 
     have hw0 : w = coarse 0 := by simpa using hw
     exact Or.inl ⟨0, by omega, hw0⟩
 
-/-- **The coarse line survives in order**: splicing only inserts — every
+/-- The coarse line survives in order: splicing only inserts — every
 decision layer downstream keeps consuming exactly the tuned coarse
 geometry, in its original order. -/
 theorem splice_coarse_sublist (cd : π → π → π → Nat) (same near : π → π → Bool)

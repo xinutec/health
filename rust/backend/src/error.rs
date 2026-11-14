@@ -4,7 +4,7 @@
 //! edit here is a client-visible API change even though nothing in this file
 //! mentions a client. They match the sibling repos'.
 //!
-//! ⚠ `Other` is the only variant whose text is NOT shown. Everything else names
+//! ⚠ `Other` is the only variant whose text is not shown. Everything else names
 //! something the caller can act on; an unexpected failure names nothing useful
 //! and its detail belongs in the log, not in a response body a browser renders.
 
@@ -50,10 +50,10 @@ impl From<sqlx::Error> for AppError {
     }
 }
 
-/// Every error answer's body, and the ONLY shape a caller sees on a failure.
+/// Every error answer's body, and the only shape a caller sees on a failure.
 ///
 /// A struct rather than a `json!` because a handler that hand-builds JSON has no
-/// wire type at all, and rustc checks nothing (DL-WIRE-UNTYPED-RESPONSE). One
+/// wire type at all, and rustc checks nothing (dl-wire-untyped-response). One
 /// type here covers every route that returns `AppError`, which is the reason to
 /// put it here rather than per handler.
 #[derive(Serialize)]

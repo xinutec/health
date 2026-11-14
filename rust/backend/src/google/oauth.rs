@@ -5,7 +5,7 @@
 //! The refresh token is obtained once through user consent and stored as a
 //! secret; this mints access tokens server-side with no phone in the loop.
 //!
-//! # ⚠ Google does NOT rotate the refresh token, and Fitbit did
+//! # ⚠ Google does not rotate the refresh token, and Fitbit did
 //!
 //! So this needs none of the machinery the Fitbit token store had — no per-user
 //! mutex, no cached expiry, no persistence. Two concurrent refreshes here are
@@ -27,9 +27,9 @@ pub struct GoogleCreds {
 impl GoogleCreds {
     /// Read the credentials, or `None` when Google is not configured.
     ///
-    /// ⚠ `None` rather than an error, and ALL THREE are required together. The
+    /// `None` rather than an error, and all three are required together. The
     /// weight sync is inert without them by design — the sync job runs on hosts
-    /// where Google is not set up — but a PARTIAL set is a misconfiguration
+    /// where Google is not set up — but a partial set is a misconfiguration
     /// rather than a choice, and returning `Some` with an empty secret would
     /// turn it into a 400 from Google that reads like a revoked grant.
     pub fn from_env() -> Option<Self> {
@@ -71,7 +71,7 @@ pub async fn access_token(http: &reqwest::Client, creds: &GoogleCreds) -> Result
     let parsed: TokenResponse =
         serde_json::from_str(&body).context("decoding the token response")?;
 
-    // ⚠ Both conditions. Google can answer 200 with no `access_token` on some
+    // Both conditions. Google can answer 200 with no `access_token` on some
     // error shapes, and taking the status alone would hand an empty bearer to
     // the next request, which fails as a 401 and reads like a revoked grant
     // rather than a malformed token response.

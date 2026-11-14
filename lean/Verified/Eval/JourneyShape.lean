@@ -2,15 +2,15 @@ import Verified.Eval.Journeys
 /-!
 # Journey reconstruction scoring
 
-The gate's referee for the DRAWN timeline: does the day read as the right
+The gate's referee for the drawn timeline: does the day read as the right
 sequence of trips? `Verified.Eval.Journeys.groundTruthJourneys` builds the
-narrative side; this builds the PIPELINE side from the drawn state legs and
+narrative side; this builds the pipeline side from the drawn state legs and
 compares the two.
 
 Together with `Verified.Eval.FloorGate` this is everything the journey floor
 (`tests/golden/journey-baseline.json`) needs.
 
-## ⚠ A MATCH IS SHAPE **AND** COVERAGE, and the second conjunct is the quiet one
+## ⚠ A match is shape and coverage, and the second conjunct is the quiet one
 
 Echoing the deduped mode shape is not enough. When a journey fragments (a
 dark-tube ride drawn as walk + stay + walk + short train) the first fragment
@@ -19,7 +19,7 @@ of the trip; in the corpus, a third of the unmatched journeys reconstruct their
 exact expected shape and fail on coverage instead. So `uncoveredS` and `slackS`
 come back beside the verdict rather than being recomputed by whoever reads it.
 
-## ⚠ THE END-CLIP IS ONE MINUTE, AND ONLY AT THE ENDS
+## The end-clip is one minute, and only at the ends
 
 A leg crossing the audited boundary, kept whole however little of it falls
 inside, can add an element to the shape: 06-24's walk out of the station puts
@@ -36,22 +36,22 @@ coverage slack: either would also swallow 04-29's 146 s walk, where the pipeline
 genuinely ends the train a quarter of the way into the audited span, a real
 disagreement that must keep failing.
 
-## The evidence, and the three rules the CORPUS cannot check
+## The evidence, and the three rules the corpus cannot check
 
 `rust/backend/tests/journey_corpus.rs` runs it over the real corpus.
 
-⚠ **THREE ARE SILENT ON THE CORPUS, and each is silent for a MEASURED reason
-rather than an assumed one** — a silent ablation is a question, not a pass
+Three are silent on the corpus, and each is silent for a measured reason
+rather than an assumed one — a silent ablation is a question, not a pass
 (see the `#guard`s, which catch all three):
 
-* **The one-second merge tolerance.** Of 411 consecutive state pairs, 221 abut
-  exactly and the rest leave 8 s or more. **A gap of exactly 1 occurs zero
-  times**, so `≤ last.endTs + 1` and `≤ last.endTs` cannot be told apart here.
-* **The pause split being strict.** Of 216 consecutive leg pairs, **none has a
-  gap within 24 s of the 300 s boundary** (the nearest is 324), so `>` and `≥`
+* The one-second merge tolerance. Of 411 consecutive state pairs, 221 abut
+  exactly and the rest leave 8 s or more. A gap of exactly 1 occurs zero
+  times, so `≤ last.endTs + 1` and `≤ last.endTs` cannot be told apart here.
+* The pause split being strict. Of 216 consecutive leg pairs, none has a
+  gap within 24 s of the 300 s boundary (the nearest is 324), so `>` and `≥`
   agree on every one.
-* **`bestOverlap`'s tie-break.** Of the 92 graded journeys, 89 are touched by
-  exactly one pipeline journey and 3 by two — **and no two ever tie**, so
+* `bestOverlap`'s tie-break. Of the 92 graded journeys, 89 are touched by
+  exactly one pipeline journey and 3 by two — and no two ever tie, so
   first-wins and last-wins agree.
 
 Not structurally unreachable, just absent from these 42 days: a fixture with a
@@ -63,7 +63,7 @@ namespace Verified.Eval.JourneyShape
 
 open Verified.Eval.Journeys
 
-/-! ## ⚠ THE PIPELINE'S MODE IS A STRING
+/-! ## The pipeline's mode is a string
 
 `Journeys.canonicalMode` and `isMovementMode` take a `Mode`, because the
 narrative side comes from a parser that already decided which of eight words a
@@ -96,12 +96,12 @@ The allowance is `max(COVERAGE_SLACK_FRAC * span, COVERAGE_SLACK_MIN_S)` with
 for the report. Both are exact in `Int`, and the reasoning is written down
 because a Float version would differ at the boundary.
 
-* **The TEST.** `u ≤ 0.2 * span` for integer `u` is `u ≤ ⌊0.2 * span⌋`. The
-  double `0.2` is slightly ABOVE one fifth, so `0.2 * n ≥ n / 5` always and
+* The test. `u ≤ 0.2 * span` for integer `u` is `u ≤ ⌊0.2 * span⌋`. The
+  double `0.2` is slightly above one fifth, so `0.2 * n ≥ n / 5` always and
   `⌊0.2 * n⌋ = n / 5` exactly. The fraction wins over the 240 s floor iff
   `span ≥ 1200`, and that boundary is safe in floats too: `0.2 * 1200` evaluates
   to `240.00000000000003`, above the floor rather than below it.
-* **The REPORT.** `Math.round` is not the floor. `Math.round(span / 5)` is
+* The report. `Math.round` is not the floor. `Math.round(span / 5)` is
   `(2 * span + 5) / 10` in integers for positive spans, which is where the two
   differ — a span of 1203 reports 241 and floors to 240. Reported and tested
   values are therefore computed separately, and the verdict uses the floor.
@@ -112,13 +112,13 @@ because a Float version would differ at the boundary.
 def COVERAGE_FRAC_FLOOR_S : Int := 1200
 def COVERAGE_SLACK_MIN_S : Int := 240
 
-/-- How much of a leg must fall INSIDE the audited span to count toward the
+/-- How much of a leg must fall inside the audited span to count toward the
 reconstructed shape.
 
 One minute, because that is the resolution this scorer works at: the minute
 expansion emits one entry per top-of-minute, so a leg contributing less is below
-what the comparison can see. Counting it reads structure out of rounding. ⚠ This
-is a floor on VISIBILITY, not a tolerance — see the module header. -/
+what the comparison can see. Counting it reads structure out of rounding. This
+is a floor on visibility, not a tolerance — see the module header. -/
 def SHAPE_MIN_LEG_OVERLAP_S : Int := 60
 
 /-- A drawn state as the referee sees it: its window and its mode, never its
@@ -173,7 +173,7 @@ def statesToJourneys (states : Array Drawn) : Array Journey := Id.run do
 
 /-- The trip's deduped mode shape.
 
-An INTERCHANGE WALK — a walk between two legs of the same vehicle kind — is
+An interchange walk — a walk between two legs of the same vehicle kind — is
 smoothed away first, then consecutive identical modes collapse (including the
 two vehicle legs the dropped walk now leaves adjacent). -/
 def modeShape (j : Journey) : Array String := Id.run do
@@ -195,7 +195,7 @@ def modeShape (j : Journey) : Array String := Id.run do
 
 /-- The pipeline journey with the most temporal overlap, or none.
 
-⚠ ONE journey, which is a real limitation of the comparison rather than of the
+One journey, which is a real limitation of the comparison rather than of the
 pipeline: if a trip was split in two, this grades the larger half and calls the
 other half uncovered. A caller reporting a coverage failure should say how many
 pipeline journeys touched the window. -/
@@ -221,12 +221,12 @@ structure Result where
   expectedShape : Array String
   /-- The reconstructed shape, or `none` when nothing overlapped. -/
   actualShape : Option (Array String)
-  /-- ⚠ Shape equality AND coverage. Both conjuncts — see the module header. -/
+  /-- Shape equality and coverage. Both conjuncts — see the module header. -/
   matched : Bool
   uncoveredS : Int
   slackS : Int
   /-- Where the best-overlapping journey actually starts and ends.
-  `uncoveredS` says a journey is SHORT and cannot say at WHICH END, and the two
+  `uncoveredS` says a journey is short and cannot say at which end, and the two
   readings need opposite fixes: a pipeline that under-reconstructs, or a
   narrative window including dwell the pipeline rightly excludes. -/
   matchStartTs : Option Int
@@ -240,7 +240,7 @@ def journeyShapeResults (gtJourneys pipelineJourneys : Array Journey) : Array Re
     let overlapOf (s e : Int) : Int := min gt.endTs e - max gt.startTs s
     let mtch := bestOverlap gt pipelineJourneys
     let expectedShape := modeShape gt
-    -- Compare structure over the AUDITED span only: the ground truth asserts
+    -- Compare structure over the audited span only: the ground truth asserts
     -- nothing outside its rows, so a pipeline leg entirely beyond the window
     -- must not fail the match.
     let clipped : Option (Array Leg) := mtch.map fun m => Id.run do
@@ -262,7 +262,7 @@ def journeyShapeResults (gtJourneys pipelineJourneys : Array Journey) : Array Re
       | some m => max 0 (min gt.endTs m.endTs - max gt.startTs m.startTs)
     let uncovered := gt.endTs - gt.startTs - overlap
     let spanS := gt.endTs - gt.startTs
-    -- ⚠ The floor decides the verdict, the rounded value only gets reported —
+    -- The floor decides the verdict, the rounded value only gets reported —
     -- see the note above the constants.
     let slackTest := if spanS ≥ COVERAGE_FRAC_FLOOR_S then spanS / 5 else COVERAGE_SLACK_MIN_S
     let slackReported :=
@@ -281,8 +281,8 @@ def journeyShapeResults (gtJourneys pipelineJourneys : Array Journey) : Array Re
 
 /-! ## Witnesses
 
-⚠ SYNTHETIC ONLY: times are small integers and modes are the eight mode
-words, so nothing here carries a real day. The SHAPES come from the corpus
+⚠ synthetic only: times are small integers and modes are the eight mode
+words, so nothing here carries a real day. The shapes come from the corpus
 incidents named in the module header.
 
 `rust/backend/tests/journey_corpus.rs` runs these over the real corpus; the
@@ -344,19 +344,19 @@ private def jr (s e : Int) (ls : List Leg) : Journey :=
 #guard modeShape (jr 0 100 [leg 0 50 "walking", leg 50 100 "walking"]) == #["walking"]
 #guard modeShape (jr 0 100 [leg 0 50 "walking", leg 50 100 "train"]) == #["walking", "train"]
 #guard modeShape (jr 0 0 []) == #[]
--- ⚠ THE INTERCHANGE WALK. A walk BETWEEN two legs of the SAME vehicle kind is
+-- The interchange walk. A walk between two legs of the same vehicle kind is
 -- smoothed away, and the two vehicle legs it separated then dedupe together.
 #guard modeShape (jr 0 300 [leg 0 100 "train", leg 100 200 "walking", leg 200 300 "train"])
     == #["train"]
 #guard modeShape (jr 0 300 [leg 0 100 "bus", leg 100 200 "walking", leg 200 300 "bus"])
     == #["bus"]
--- Only for the SAME vehicle: train → walk → bus is a real three-leg trip.
+-- Only for the same vehicle: train → walk → bus is a real three-leg trip.
 #guard modeShape (jr 0 300 [leg 0 100 "train", leg 100 200 "walking", leg 200 300 "bus"])
     == #["train", "walking", "bus"]
--- Only for a VEHICLE: a walk between two drives is not an interchange.
+-- Only for a vehicle: a walk between two drives is not an interchange.
 #guard modeShape (jr 0 300 [leg 0 100 "driving", leg 100 200 "walking", leg 200 300 "driving"])
     == #["driving", "walking", "driving"]
--- ⚠ AND NEVER AT AN END — the walk to and from the station is the trip.
+-- And never at an end — the walk to and from the station is the trip.
 #guard modeShape (jr 0 200 [leg 0 100 "walking", leg 100 200 "train"]) == #["walking", "train"]
 #guard modeShape (jr 0 400 [leg 0 100 "walking", leg 100 200 "train",
                             leg 200 300 "walking", leg 300 400 "train"])
@@ -369,9 +369,9 @@ private def jr (s e : Int) (ls : List Leg) : Journey :=
 #guard (bestOverlap (jr 0 100 []) #[jr 100 200 []]) == none
 #guard (bestOverlap (jr 0 100 []) #[jr 200 300 []]) == none
 #guard (bestOverlap (jr 0 100 []) #[jr 50 200 []]) == some (jr 50 200 [])
--- The LARGEST overlap wins…
+-- The largest overlap wins…
 #guard (bestOverlap (jr 0 100 []) #[jr 90 200 [], jr 20 200 []]) == some (jr 20 200 [])
--- …and a tie keeps the FIRST, because the comparison is strictly greater.
+-- …and a tie keeps the first, because the comparison is strictly greater.
 #guard (bestOverlap (jr 0 100 []) #[jr 0 50 [], jr 50 100 []]) == some (jr 0 50 [])
 
 /-! ### journeyShapeResults -/
@@ -392,7 +392,7 @@ private def walkTrainWalk : Journey :=
 #guard !(one walkTrainWalk []).matched
 #guard (one walkTrainWalk []).uncoveredS == 1800
 #guard (one walkTrainWalk []).matchStartTs == none
--- ⚠ Shape alone is not a match. This fragment has the identical shape and
+-- Shape alone is not a match. This fragment has the identical shape and
 -- covers a third of the trip, which shape-only scoring passes.
 private def fragment : Journey :=
   jr 0 600 [leg 0 100 "walking", leg 100 500 "train", leg 500 600 "walking"]
@@ -406,7 +406,7 @@ private def slightlyShort : Journey :=
   jr 0 1500 [leg 0 300 "walking", leg 300 1200 "train", leg 1200 1500 "walking"]
 #guard (one walkTrainWalk [slightlyShort]).uncoveredS == 300
 #guard (one walkTrainWalk [slightlyShort]).matched
--- ⚠ The end clip. A leg reaching under a minute into the span is trimmed at an
+-- The end clip. A leg reaching under a minute into the span is trimmed at an
 -- end, so 36 s of a walk adds no third element to the shape.
 private def spillingWalk : Journey :=
   jr 0 1830 [leg 0 300 "walking", leg 300 1500 "train", leg 1500 1770 "walking",
@@ -414,14 +414,14 @@ private def spillingWalk : Journey :=
 #guard (one (jr 0 1800 [leg 0 300 "walking", leg 300 1500 "train", leg 1500 1800 "walking"])
     [spillingWalk]).actualShape == some #["walking", "train", "walking"]
 #guard (one walkTrainWalk [spillingWalk]).matched
--- A leg reaching a FULL minute in is kept, and the shape then differs.
+-- A leg reaching a full minute in is kept, and the shape then differs.
 private def spillingLonger : Journey :=
   jr 0 1900 [leg 0 300 "walking", leg 300 1500 "train", leg 1500 1740 "walking",
              leg 1740 1900 "driving"]
 #guard (one walkTrainWalk [spillingLonger]).actualShape
     == some #["walking", "train", "walking", "driving"]
 #guard !(one walkTrainWalk [spillingLonger]).matched
--- ⚠ And only at the ends. A sub-minute interior leg is kept, because dropping
+-- And only at the ends. A sub-minute interior leg is kept, because dropping
 -- it would merge its neighbours through the dedupe, collapsing
 -- [walking,train,walking] into [walking].
 private def shortInterior : Journey :=
@@ -432,14 +432,14 @@ private def shortInterior : Journey :=
 #guard (one walkTrainWalk [spillingLonger]).clippedLegs.size == 4
 #guard ((one walkTrainWalk [spillingLonger]).clippedLegs[3]!).overlapS == 60
 #guard ((one walkTrainWalk [spillingLonger]).clippedLegs[3]!).durationS == 160
--- The ENDS of the best-overlapping journey, which `uncoveredS` cannot give.
+-- The ends of the best-overlapping journey, which `uncoveredS` cannot give.
 #guard (one walkTrainWalk [fragment]).matchStartTs == some 0
 #guard (one walkTrainWalk [fragment]).matchEndTs == some 600
 -- The floor allowance applies below 1200 s and the fraction above it.
 #guard (one (jr 0 600 []) []).slackS == 240
 #guard (one (jr 0 1200 []) []).slackS == 240
 #guard (one (jr 0 1205 []) []).slackS == 241
--- ⚠ Math.round, not a floor: a 1203 s span reports 241 while flooring to 240.
+-- Math.round, not a floor: a 1203 s span reports 241 while flooring to 240.
 #guard (one (jr 0 1203 []) []).slackS == 241
 -- Every ground-truth journey gets exactly one result, in order.
 #guard (journeyShapeResults #[jr 0 100 [], jr 200 300 []] #[]).size == 2

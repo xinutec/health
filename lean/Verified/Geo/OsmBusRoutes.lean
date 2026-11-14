@@ -13,12 +13,12 @@ The pure decision in the bus route cache is here too.
 They are near-identical crons over the same tiling, so the differences read as
 oversights until you check them. They are not:
 
-1. **Buses require `ref`; rail accepts `ref` OR `name`.** A bus route without a
+1. Buses require `ref`; rail accepts `ref` or `name`. A bus route without a
    rider-facing number ("38") cannot be named to a user. A tube relation
    frequently has no `ref` at all, so requiring one there would drop most of the
    Underground. See {@link Verified.Geo.OsmRailStops}.
 
-2. **Buses keep the FIRST tile's copy of a relation; rail keeps the LAST.** The
+2. Buses keep the first tile's copy of a relation; rail keeps the last. The
    bus loop is `if (!byRelation.has(id)) set(...)`, the rail loop is a bare
    `set(...)`. `node(r)` returns a relation's full stop list from any tile it
    touches, so both copies are complete and neither arm is wrong — but they are
@@ -56,17 +56,17 @@ structure BusRoute where
   deriving Repr, Inhabited, BEq
 
 /-- The Overpass QL the mirror runs for one tile. As with rail, `node(r)` returns
-each matched route's FULL stop list, so a route is mirrored end to end even when
+each matched route's full stop list, so a route is mirrored end to end even when
 only its middle crosses the cell.
 
-⚠ Coordinates arrive already rendered, for the reason given in
+Coordinates arrive already rendered, for the reason given in
 {@link Verified.Geo.OsmRailStops.buildRailStopsOverpassQuery}. -/
 def buildBusRouteOverpassQuery (minLat minLon maxLat maxLon : String) : String :=
   s!"[out:json][timeout:180];relation[route=bus]({minLat},{minLon},{maxLat},{maxLon});out body;node(r);out body;"
 
 /-- Keep the routes that can be both named and anchored.
 
-⚠ An empty `ref` is no ref: OSM does carry empty `ref` tags, and testing
+An empty `ref` is no ref: OSM does carry empty `ref` tags, and testing
 `isNone` alone would admit a route whose rider-facing number is the empty
 string. -/
 def extractBusRoutes (rels : Array RawRelation) (nodes : Array (Nat × ResolvedNode))
@@ -102,9 +102,9 @@ private def R (id : Nat) (route ref name : Option String) : RawRelation :=
 #guard (extractBusRoutes #[R 1 (some "bus") (some "38") none] NODES)[0]!.routeRef == "38"
 #guard (extractBusRoutes #[R 1 (some "bus") (some "38") none] NODES)[0]!.routeName == none
 
--- ⚠ BUSES REQUIRE `ref` — a name is not enough, unlike rail.
+-- Buses require `ref` — a name is not enough, unlike rail.
 #guard (extractBusRoutes #[R 1 (some "bus") none (some "Clapton Pond")] NODES).isEmpty
--- ⚠ AND AN EMPTY REF IS NO REF. `!routeRef` rejects `""`; `isNone` would not.
+-- And an empty ref is no ref. `!routeRef` rejects `""`; `isNone` would not.
 #guard (extractBusRoutes #[R 1 (some "bus") (some "") (some "Clapton Pond")] NODES).isEmpty
 
 -- Rail is not this cron's business.

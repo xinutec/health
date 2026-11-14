@@ -2,27 +2,27 @@
 # The one-way ceiling
 
 The count-shaped sibling of `FloorGate`. Where a floor records what the pipeline
-gets RIGHT and may only grow, a ceiling records standing DEFECTS as a per-day
+gets right and may only grow, a ceiling records standing defects as a per-day
 count and may only shrink: the physically-impossible legs of
 `Verified.Eval.Feasibility`, and the train legs labelled with a line that does
 not serve their stations. A day emitting more than its committed
 count is a regression; fewer is an improvement to re-bless.
 
-## ⚠ SILENCE IS NOT ZERO, and this is the module that keeps getting it wrong
+## ⚠ silence is not zero, and this is the module that keeps getting it wrong
 
-`current[date] ?? 0` cannot tell a day with NO defects from a day that never
+`current[date] ?? 0` cannot tell a day with no defects from a day that never
 ran, and against a non-zero ceiling the second reads as the first: the day drops
 out of the failures and into `improvedDays`, and the run then invites a re-bless
-on the strength of it. A change that breaks a fixture AND worsens that day would
-report as an IMPROVEMENT — the one direction a ratchet must never get wrong. So
+on the strength of it. A change that breaks a fixture and worsens that day would
+report as an improvement — the one direction a ratchet must never get wrong. So
 `measured` is a separate argument and a day outside it is named, never scored.
 
 `attempted` closes the other half. Without it the sweep is the union of the two
-baselines, and a day at ceiling ZERO appears in neither — so a day carrying no
-standing debt that quietly stops replaying is named nowhere. That is where a NEW
+baselines, and a day at ceiling zero appears in neither — so a day carrying no
+standing debt that quietly stops replaying is named nowhere. That is where a new
 defect hides best: it cannot regress a ceiling it is no longer measured against.
 
-## ⚠ BLESSING TAKES THE MINIMUM, NOT THE CURRENT COUNTS
+## Blessing takes the minimum, not the current counts
 
 A bless that wrote current counts wholesale would let a run that fixed four
 days and left one red silently raise that day's ceiling, and the standing
@@ -46,7 +46,7 @@ structure Result where
   regressed : Array Regression
   /-- Days below their ceiling — re-bless to ratchet it down. -/
   improvedDays : Nat
-  /-- Days the run could not measure, NAMED rather than scored. -/
+  /-- Days the run could not measure, named rather than scored. -/
   unmeasured : Array String
   deriving Inhabited
 
@@ -79,9 +79,9 @@ def gateCeiling (committed current : Ceiling) (measured attempted : Array String
 /-- Merge a fresh run into the committed ceiling, keeping the ratchet one-way:
 `min(committed, current)` per day.
 
-⚠ A day MISSING from the committed baseline has a ceiling of ZERO — that is how
+A day missing from the committed baseline has a ceiling of zero — that is how
 the gate reads it everywhere else, so a newly-offending day cannot be blessed in
-by omission either. `committed = none` is the distinct BOOTSTRAP case (no
+by omission either. `committed = none` is the distinct bootstrap case (no
 baseline file at all): nothing to ratchet against, so the current counts
 establish the first ceiling.
 
@@ -116,13 +116,13 @@ private def m (xs : List String) : Array String := xs.toArray
     == #[{ date := "d1", was := 1, now := 2 }]
 #guard (gateCeiling (c [("d1", 2)]) (c [("d1", 1)]) (m ["d1"]) (m [])).improvedDays == 1
 #guard (gateCeiling (c [("d1", 1)]) (c [("d1", 1)]) (m ["d1"]) (m [])).regressed == #[]
--- ⚠ SILENCE IS NOT ZERO. An unmeasured day is NAMED, not scored as fixed.
+-- Silence is not zero. An unmeasured day is named, not scored as fixed.
 #guard (gateCeiling (c [("d1", 2)]) (c []) (m []) (m [])).unmeasured == #["d1"]
 #guard (gateCeiling (c [("d1", 2)]) (c []) (m []) (m [])).improvedDays == 0
 #guard (gateCeiling (c [("d1", 2)]) (c []) (m []) (m [])).regressed == #[]
--- …and MEASURED-at-zero really is an improvement.
+-- …and measured-at-zero really is an improvement.
 #guard (gateCeiling (c [("d1", 2)]) (c []) (m ["d1"]) (m [])).improvedDays == 1
--- ⚠ `attempted` is what names a day at ceiling ZERO that stopped replaying.
+-- `attempted` is what names a day at ceiling zero that stopped replaying.
 -- Without it such a day is in no baseline and appears nowhere at all.
 #guard (gateCeiling (c []) (c []) (m []) (m ["d9"])).unmeasured == #["d9"]
 #guard (gateCeiling (c []) (c []) (m []) (m [])).unmeasured == #[]
@@ -130,17 +130,17 @@ private def m (xs : List String) : Array String := xs.toArray
 #guard (gateCeiling (c []) (c [("d1", 1)]) (m ["d1"]) (m [])).regressed
     == #[{ date := "d1", was := 0, now := 1 }]
 
--- The bless takes the MINIMUM: fixing one day cannot raise another's ceiling.
+-- The bless takes the minimum: fixing one day cannot raise another's ceiling.
 #guard ratchetDownCounts (some (c [("d1", 1), ("d2", 2)])) (c [("d1", 0), ("d2", 5)]) (m ["d1", "d2"])
     == c [("d2", 2)]
 -- Zero drops out entirely rather than being recorded.
 #guard ratchetDownCounts (some (c [("d1", 3)])) (c [("d1", 0)]) (m ["d1"]) == c []
--- ⚠ An unmeasured day keeps what it had — never ratcheted to zero on silence.
+-- An unmeasured day keeps what it had — never ratcheted to zero on silence.
 #guard ratchetDownCounts (some (c [("d1", 3)])) (c []) (m []) == c [("d1", 3)]
--- ⚠ A day missing from the committed baseline has a ceiling of ZERO, so a new
+-- A day missing from the committed baseline has a ceiling of zero, so a new
 -- offender cannot be blessed in by omission.
 #guard ratchetDownCounts (some (c [])) (c [("d1", 4)]) (m ["d1"]) == c []
--- BOOTSTRAP is the distinct case: no baseline at all, so the run establishes one.
+-- Bootstrap is the distinct case: no baseline at all, so the run establishes one.
 #guard ratchetDownCounts none (c [("d1", 4)]) (m ["d1"]) == c [("d1", 4)]
 #guard ratchetDownCounts none (c []) (m []) == c []
 -- Dates come back sorted.

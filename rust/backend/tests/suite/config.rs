@@ -1,4 +1,4 @@
-//! The config layer REFUSES rather than defaults.
+//! The config layer refuses rather than defaults.
 //!
 //! This is the whole value of the layer, and the failure it guards against is
 //! silent by construction. A config that turns a missing `DB_PASSWORD` into
@@ -6,9 +6,9 @@
 //! credential problem rather than a configuration one — inside a CronJob where
 //! nobody is watching the stderr.
 //!
-//! ⚠ ONE `#[test]` FUNCTION, DELIBERATELY, and it is not laziness.
+//! One `#[test]` function, deliberately, and it is not laziness.
 //! `std::env::set_var` mutates process-global state, and Rust runs a test
-//! binary's tests on MANY THREADS by default. Cargo gives each file under
+//! binary's tests on many threads by default. Cargo gives each file under
 //! `tests/` its own binary but does not serialise the tests inside one, so two
 //! `#[test]`s arranging different environments would race — and the resulting
 //! flake would look like a config bug rather than a test bug. Splitting these
@@ -92,8 +92,8 @@ fn the_config_layer_refuses_rather_than_defaults() {
     assert_eq!(c.db.port, 3306, "DB_PORT default");
     assert_eq!(c.db.database, "health", "DB_NAME default");
 
-    // ---- ⚠ THE POINT OF THE FILE -------------------------------------------
-    // Each required variable, when absent, is an error that NAMES it. Not a
+    // ---- the point of the file -------------------------------------------
+    // Each required variable, when absent, is an error that names it. Not a
     // default, and not a generic failure an operator has to guess at.
     for key in ["DB_USER", "DB_PASSWORD"] {
         unsafe { fresh() };
@@ -126,7 +126,7 @@ fn the_config_layer_refuses_rather_than_defaults() {
         "empty NC_BASE_URL reads as absent"
     );
 
-    // ---- ⚠ an unparseable port is an ERROR, not the default ----------------
+    // ---- an unparseable port is an error, not the default ----------------
     // `mirror.rs` falls back here and is right to — it is an optional read-only
     // mirror. This is the primary database: `DB_PORT=three` must not silently
     // connect to 3306 while the manifest claims otherwise.
@@ -146,10 +146,10 @@ fn the_config_layer_refuses_rather_than_defaults() {
         }
     }
 
-    // ---- ⚠ credentials cannot move the host --------------------------------
+    // ---- credentials cannot move the host --------------------------------
     // A generated password contains `@`, `/`, `?` or `#` often enough that this
     // is not hypothetical, and each of them terminates a URL component early.
-    // Unencoded, `p@ss` would compose a URL pointing at a DIFFERENT HOST — a
+    // Unencoded, `p@ss` would compose a URL pointing at a different host — a
     // connection somewhere else, not a parse error.
     unsafe { fresh() };
     unsafe {
@@ -177,13 +177,13 @@ fn the_config_layer_refuses_rather_than_defaults() {
 
     // ---- a DB-only command asks for the database alone ---------------------
     //
-    // ⚠ The batch CronJobs set DB_* and nothing else. `refresh-presence-log`
+    // The batch CronJobs set DB_* and nothing else. `refresh-presence-log`
     // once used the full config, which then required a credential it never
-    // read, and died in production on it — AFTER `decode-day` had spent twelve
+    // read, and died in production on it — after `decode-day` had spent twelve
     // minutes decoding seven days, because the config was read at the start of
     // the step rather than the start of the job.
     //
-    // A command should ask for what it USES. This pins that `DbConfig::from_env`
+    // A command should ask for what it uses. This pins that `DbConfig::from_env`
     // does, so the next DB-only subcommand cannot quietly reintroduce a
     // requirement.
     unsafe { clear_all() };
@@ -204,15 +204,15 @@ fn the_config_layer_refuses_rather_than_defaults() {
         "the full config requires only what a DB-only command does"
     );
 
-    // ---- the FOCUS cron's env is DB_* + NC_*, and that must be enough ------
+    // ---- the focus cron's env is DB_* + NC_*, and that must be enough ------
     //
-    // ⚠ THIS IS THE SECOND TIME. `refresh-presence-log` died on a credential
+    // This is the second time. `refresh-presence-log` died on a credential
     // it never read (above); `refresh-focus-places` did the same thing in
     // production, because it was written to call `Config::from_env` on the
     // reasoning that it "needs Nextcloud too". It does not: the NC credentials
-    // come from the DATABASE, and the only extra it wants is a base URL.
+    // come from the database, and the only extra it wants is a base URL.
     //
-    // The test above could not catch that — it pins the config LAYER, not which
+    // The test above could not catch that — it pins the config layer, not which
     // config a subcommand reaches for. This pins the focus cron's actual
     // requirement: its pod sets DB_* and NC_CLIENT_ID/NC_CLIENT_SECRET and no
     // NC_BASE_URL, and everything the command reads at startup must resolve
@@ -226,7 +226,7 @@ fn the_config_layer_refuses_rather_than_defaults() {
     }
     backend::config::DbConfig::from_env()
         .expect("the focus cron's env must satisfy the config it actually uses");
-    // ⚠ NC_BASE_URL is unset in production. The focus cron must still reach
+    // NC_BASE_URL is unset in production. The focus cron must still reach
     // the real Nextcloud, so it defaults rather than nullifying; a `None` here
     // would mean fetching nothing and reporting success.
     assert_eq!(
@@ -240,7 +240,7 @@ fn the_config_layer_refuses_rather_than_defaults() {
         "https://nc.example",
         "an explicit NC_BASE_URL still wins"
     );
-    // An EMPTY value is the same silence as absent — a k8s env var set from a
+    // An empty value is the same silence as absent — a k8s env var set from a
     // missing secret key arrives as "".
     unsafe { std::env::set_var("NC_BASE_URL", "") };
     assert_eq!(

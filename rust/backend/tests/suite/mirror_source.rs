@@ -1,4 +1,4 @@
-//! Is the mirror's pre-filter box a SUPERSET of what Lean scores?
+//! Is the mirror's pre-filter box a superset of what Lean scores?
 //!
 //! `MirrorSource` selects candidates with `MBRIntersects` against a box and
 //! hands every one of them to Lean, which does the distance, the ordering and
@@ -18,15 +18,15 @@
 //! That is a 0.18% margin resting on constants in different files, and the
 //! corpus sits inside it: shrinking the box by 1% drops rows, by 0.1% does not.
 //! `SUPERSET_MARGIN` exists because of that measurement. So this compares
-//! ANSWERS on the corpus's real geometry at the coordinates the days actually
+//! answers on the corpus's real geometry at the coordinates the days actually
 //! asked about, which is the same reason `rowset_prefilter.rs` exists.
 //!
-//! ⚠ With the margin in place this test no longer fires at a 1% shrink — it
+//! With the margin in place this test no longer fires at a 1% shrink — it
 //! takes about 5%. That is the margin working, not the test going blind; the
 //! ablation to re-run when changing the box is "scale the half-width down until
 //! answers change", and it should take roughly `SUPERSET_MARGIN` to do it.
 //!
-//! # ⚠ The reference arm is the FILTERED row set, not the unfiltered one
+//! # The reference arm is the filtered row set, not the unfiltered one
 //!
 //! `rowset_prefilter.rs` already proves `RowSetSource`'s own prefilter changes
 //! no answer, and the unfiltered arm ships 157,489 coordinate pairs per
@@ -50,13 +50,13 @@ use serde_json::{Value, json};
 /// spells no radius — the answerer uses the default — so it is named here.
 const TABLES: [&str; 3] = ["nearbyWays", "nearbyStations", "linesAtPoint"];
 
-/// `MBRIntersects(geom, box)` for a POINT: the point is inside, inclusively.
+/// `MBRIntersects(geom, box)` for a point: the point is inside, inclusively.
 fn point_in_box(b: [f64; 4], lat: f64, lon: f64) -> bool {
     lat >= b[0] && lat <= b[1] && lon >= b[2] && lon <= b[3]
 }
 
 /// `MBRIntersects(geom, box)` for a LINESTRING: the way's own minimum bounding
-/// rectangle overlaps the box. ⚠ NOT "every vertex is inside" — a way that
+/// rectangle overlaps the box. Not "every vertex is inside" — a way that
 /// crosses the box with both endpoints outside it intersects, and filtering on
 /// vertices would drop exactly the long road the query point sits on.
 fn line_meets_box(b: [f64; 4], coords: &[Value]) -> bool {
@@ -161,7 +161,7 @@ fn the_mirrors_candidate_box_holds_everything_lean_scores() {
                 ) else {
                     continue;
                 };
-                // ⚠ The radius comes from the KEY where the key spells one.
+                // The radius comes from the key where the key spells one.
                 // `nearbyStations` is recorded at 400 m on this corpus and the
                 // default is 200 — testing the default would test a box the day
                 // never asked for.
@@ -192,8 +192,8 @@ fn the_mirrors_candidate_box_holds_everything_lean_scores() {
                     .expect("answers")
                     .expect("answerable");
 
-                // ⚠ The message names the table and the day rather than the
-                // coordinate — but the assertion prints both ANSWERS, which
+                // The message names the table and the day rather than the
+                // coordinate — but the assertion prints both answers, which
                 // carry street names. That is unavoidable when the comparison
                 // is the answer, and it is why this test is gated on a corpus
                 // that only exists locally: both health repos are public.
@@ -207,7 +207,7 @@ fn the_mirrors_candidate_box_holds_everything_lean_scores() {
         }
     }
 
-    // ⚠ Every table must have been reached. A run that compared 30 `nearbyWays`
+    // Every table must have been reached. A run that compared 30 `nearbyWays`
     // and no points would say nothing about the metre-circle half of the claim,
     // which is the thinner of the two margins.
     for table in TABLES {
@@ -263,7 +263,7 @@ fn tags_come_back_as_string_pairs_and_a_non_string_value_is_dropped() {
         tags_pairs(Some(r#"{"railway":"station","name":"X"}"#)).unwrap(),
         json!([["railway", "station"], ["name", "X"]])
     );
-    // ⚠ Dropped, not stringified. Lean reads both halves with `getStr?`, so a
+    // Dropped, not stringified. Lean reads both halves with `getStr?`, so a
     // numeric tag would fail the whole request — and inventing `"7"` for it
     // would put a tag in the row that OSM did not write.
     assert_eq!(

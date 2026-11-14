@@ -7,8 +7,8 @@ import Verified.Rail.Graph
 `LazyInv` proves "settled = final" and `LazyPrev` proves the prev-chain stays
 inside *done* vertices — enough to make the reconstructed route
 *resume-stable*. Both deliberately omit the fact that turns a resume-stable
-`prev`-walk into a *valid path*: that every `prev` link is a **real graph
-edge**. This file supplies exactly that missing brick.
+`prev`-walk into a *valid path*: that every `prev` link is a real graph
+edge. This file supplies exactly that missing brick.
 
 > `EInv`: for every vertex `v` whose `prev` is a non-sentinel `u`, `v` is a
 > genuine out-neighbour of `u` — `(v, w) ∈ g.adj[u]` for some weight `w`.
@@ -166,7 +166,7 @@ theorem linit_einv {g : Graph} {src : Nat} : EInv g (linit g.n src) := by
 
 /-! ## The consequence the route reconstruction consumes -/
 
-/-- **Edge provenance along the whole search.** At any trajectory point of a
+/-- Edge provenance along the whole search. At any trajectory point of a
 per-source lazy search, a vertex `v` with a non-sentinel `prev` is a real
 out-neighbour of that `prev` — so every step of the reconstructed route
 (`qReconstruct` walks `(iter …).prev`) is a genuine edge of `g`. This is the
@@ -307,7 +307,7 @@ theorem pathCost_snoc_isSome {g : Graph} :
         | none => rw [hc] at hrec; simp at hrec
         | some c => simp
 
-/-- **The reconstructed route has a defined cost.** Under `EInv`, the reversed
+/-- The reconstructed route has a defined cost. Under `EInv`, the reversed
 `prev`-chain (`reconGo`'s output; `Match.lean` bridges `chainList` to it) is a
 path every step of which is a real edge, so its `pathCost` in the shared rail
 spec is `some`. This is the per-route lift of `EInv`: the matcher's route is a

@@ -11,8 +11,8 @@ fn init() {
     lean::init().expect("lean host");
 }
 
-/// ⚠ THE OPEN-REDIRECT GUARD. `/login?return_to=//evil.com` sends the browser
-/// off-site AFTER a successful login, when the user has every reason to trust
+/// ⚠ the open-redirect guard. `/login?return_to=//evil.com` sends the browser
+/// off-site after a successful login, when the user has every reason to trust
 /// what they are looking at.
 #[test]
 fn return_to_refuses_anything_that_leaves_the_site() {
@@ -20,7 +20,7 @@ fn return_to_refuses_anything_that_leaves_the_site() {
     let hostile = [
         // Protocol-relative: looks like a path, is not.
         "//evil.com",
-        // ⚠ Some browsers normalise `\` to `/`, so this BECOMES the case above
+        // Some browsers normalise `\` to `/`, so this becomes the case above
         // inside the browser and not inside a naive check.
         "/\\evil.com",
         "https://evil.com",
@@ -56,9 +56,9 @@ fn return_to_keeps_internal_paths() {
     }
 }
 
-/// ⚠ NEXTCLOUD DROPS `state` for a browser with no NC session. That callback is
+/// Nextcloud drops `state` for a browser with no NC session. That callback is
 /// never trusted (RFC 6749 §10.12): with `state` empty nothing ties its code to
-/// this browser, so anyone's code would sign it in. It is retried ONCE, and the
+/// this browser, so anyone's code would sign it in. It is retried once, and the
 /// retry finds Nextcloud signed in, so `state` comes back. Refusing it outright
 /// would strand a cookie-less browser, which is what stranded fleetwatch's
 /// WebView.
@@ -109,7 +109,7 @@ fn a_dropped_state_is_retried_once_never_trusted() {
         lean::accept_pending(2000, "the-nonce", true, Some("the-nonce"), 1000).expect("judge"),
         Accept
     );
-    // ⚠ Returned and WRONG is a refusal.
+    // Returned and wrong is a refusal.
     assert_eq!(
         lean::accept_pending(2000, "the-nonce", false, Some("other"), 1000).expect("judge"),
         Refuse
@@ -121,7 +121,7 @@ fn a_dropped_state_is_retried_once_never_trusted() {
     );
 }
 
-/// ⚠ `returnTo` is encoded LAST so a `|` inside a query string cannot shift the
+/// `returnTo` is encoded last so a `|` inside a query string cannot shift the
 /// fields. A format that put it in the middle would let a crafted `return_to`
 /// rewrite the expiry.
 #[test]

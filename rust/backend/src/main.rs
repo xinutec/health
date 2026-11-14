@@ -8,10 +8,10 @@
 //!            database. READ-ONLY, so it is safe to point at production.
 //!   sync   — the Google Health ingestion: weight, then every stream of the
 //!            roster, for the one user the Google account belongs to.
-//!   serve  — the HTTP server. THE server: `health-auth` runs this and nothing
+//!   serve  — the HTTP server. The server: `health-auth` runs this and nothing
 //!            else does.
 //!
-//! ⚠ `sync` logs every stream's outcome and FAILS SOFT per stream: one
+//! `sync` logs every stream's outcome and fails soft per stream: one
 //! unreachable endpoint must not stop the rest. So a run can exit 0 having
 //! written no rows, and `backend freshness` asks the outcome question
 //! instead, on its own schedule.
@@ -31,7 +31,7 @@ use cli::session::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // ⚠ First, and fatal if it fails: the rate-limit policy and the backfill
+    // First, and fatal if it fails: the rate-limit policy and the backfill
     // cursor arithmetic live in Lean, and a sync that cannot decide would spend
     // an unchecked budget and walk an unbounded cursor.
     lean::init().context("starting the Lean runtime")?;
@@ -40,12 +40,12 @@ async fn main() -> Result<()> {
     match backend::argv::parse().command {
         C::Check => check().await,
         C::Serve => serve().await,
-        // ⚠ An unrecognised flag is refused (clap), never ignored: this one
+        // An unrecognised flag is refused (clap), never ignored: this one
         // selects whether durable backfill state is written.
         C::Sync => sync().await,
-        // ⚠ The tz is the DISPLAY tz and it is a separate thing from `home_tz`:
+        // The tz is the display tz and it is a separate thing from `home_tz`:
         // it bounds the local day, and a fixture captured for a trip abroad
-        // carries the zone the day was LIVED in, not the one the profile stores.
+        // carries the zone the day was lived in, not the one the profile stores.
         C::Inputs(d) => inputs(&d.user, &d.date, d.display_tz.as_deref()).await,
         // Reads a golden fixture rather than the database on purpose: the head's
         // oracle is the frozen capture in the same file as its `inputs`.
@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
         // The date is positional: a numeric second argument is a day count,
         // anything else a date.
         //
-        // ⚠ `--dry-run` decodes and prints, writing nothing; the write
+        // `--dry-run` decodes and prints, writing nothing; the write
         // overwrites `(user_id, date)`, so a checking run would destroy the
         // row it checks against.
         C::DecodeDay {
@@ -329,7 +329,7 @@ async fn serve() -> Result<()> {
 /// Nothing in a unit test executes SQL, and compiling says nothing about bind
 /// order, credentials, or whether the schema is what the code thinks.
 ///
-/// ⚠ It prints counts, never values: the row and distinct-key counts prove
+/// It prints counts, never values: the row and distinct-key counts prove
 /// `sync_state` is reachable and decodes, without putting anyone's data on a
 /// terminal.
 async fn check() -> Result<()> {
@@ -380,7 +380,7 @@ async fn check() -> Result<()> {
 
     // The typed read path, through the same function scheduled work will use.
     // A key nobody stores, so the answer is a known `None` and this asserts the
-    // ABSENT case decodes rather than the present one — the case a wrong column
+    // absent case decodes rather than the present one — the case a wrong column
     // type would still pass.
     let missing = sync_state::get(&pool, "\u{0}no-such-user", "\u{0}no-such-key").await?;
     if missing.is_some() {
@@ -397,12 +397,12 @@ async fn check() -> Result<()> {
     let places = classification_inputs::known_places(&pool, &user).await?;
     let modes = classification_inputs::mode_biometrics(&pool, &user).await?;
     let rail = classification_inputs::rail_route_cache(&pool).await?;
-    // As of NOW, which is every event — and it exercises the `priorsAsOf` round
+    // As of now, which is every event — and it exercises the `priorsAsOf` round
     // trip rather than stepping around it, which is the point of this check.
     let priors =
         classification_inputs::venue_priors(&pool, &user, chrono::Utc::now().timestamp()).await?;
     let len = |v: &serde_json::Value| v.as_array().map_or(0, Vec::len);
-    // ⚠ Values, not just counts. `focus_places.centroid_lat` is DECIMAL, which
+    // Values, not just counts. `focus_places.centroid_lat` is DECIMAL, which
     // the driver hands back as a string; rows of 0.0 print the same count as
     // real ones.
     let zero_centroids = places.as_array().map_or(0, |a| {
@@ -421,7 +421,7 @@ async fn check() -> Result<()> {
             "present"
         },
     );
-    // ⚠ An empty read is not a working read: each of these is populated in
+    // An empty read is not a working read: each of these is populated in
     // production, so empty means the wrong column or user.
     if len(&places) == 0 || len(&modes) == 0 || len(&rail) == 0 {
         anyhow::bail!(
@@ -444,7 +444,7 @@ async fn check() -> Result<()> {
     // rows: `battery_level` is `TINYINT UNSIGNED` and `last_sync_time` a
     // `DATETIME` that sqlx will not hand back as text.
     //
-    // ⚠ Asserts levels are not all zero: a failed decode defaulted to 0 draws a
+    // Asserts levels are not all zero: a failed decode defaulted to 0 draws a
     // watch empty at every sync, a well-formed chart a row count passes.
     let home_tz = sync_state::home_tz(&pool, &user).await?;
     let latest: Option<(Option<chrono::NaiveDateTime>,)> =
@@ -479,7 +479,7 @@ async fn check() -> Result<()> {
         }
     }
 
-    // ⚠ The same hazard one column over: `hour_profile` is a comma-separated
+    // The same hazard one column over: `hour_profile` is a comma-separated
     // per-mille list, and read as JSON every profile decodes as absent. A
     // place has no profile before it is mined, so some nulls are right; all
     // nulls is a format error.
@@ -520,7 +520,7 @@ async fn check() -> Result<()> {
     let buses = classification_inputs::bus_route_cache(&pool).await?;
     let rail_stops = classification_inputs::rail_stops_cache(&pool).await?;
     let decode = classification_inputs::hsmm_decode(&pool, &user, &check_date).await?;
-    // ⚠ This resolves the zone as the loader does: `None` would print UTC-read
+    // This resolves the zone as the loader does: `None` would print UTC-read
     // windows and look healthy while production reads them an hour later.
     let home_tz = crate::sync_state::get(&pool, &user, "home_tz").await?;
     let sleeps =
@@ -547,7 +547,7 @@ async fn check() -> Result<()> {
         );
     }
 
-    // ⚠ Values again: a BIGINT that fails to decode reads as 0, and routes
+    // Values again: a BIGINT that fails to decode reads as 0, and routes
     // numbered zero print the same count as real ones.
     let zero_ids = |v: &serde_json::Value| {
         v.as_array().map_or(0, |a| {
@@ -564,7 +564,7 @@ async fn check() -> Result<()> {
         );
     }
 
-    // Sleep windows are the only loader here that COMPUTES rather than copies:
+    // Sleep windows are the only loader here that computes rather than copies:
     // `start_time` is a wall clock and the timestamp comes from a tz conversion.
     // A conversion that silently produced nothing reads as 0 (1970), and an
     // inverted window reads as a plausible-looking pair of numbers, so both are
@@ -608,7 +608,7 @@ async fn check() -> Result<()> {
         len(&bio["steps"]),
         if bracket.is_null() { "none" } else { "present" },
     );
-    // ⚠ HR cannot be empty on a decoded day: the decoder reads these streams.
+    // HR cannot be empty on a decoded day: the decoder reads these streams.
     // Sleep and steps can be (a watch off the wrist, a still day), so they are
     // reported, not enforced.
     if len(&bio["hr"]) == 0 {
@@ -617,7 +617,7 @@ async fn check() -> Result<()> {
              bounds or the ts_utc filter, not a missing watch"
         );
     }
-    // ⚠ A bpm of 0 is an undecoded DECIMAL, and `ROUND(AVG(bpm))` returns one.
+    // A bpm of 0 is an undecoded DECIMAL, and `ROUND(AVG(bpm))` returns one.
     let dead_bpm = bio["hr"]
         .as_array()
         .map_or(0, |a| a.iter().filter(|p| p["bpm"] == 0).count());
@@ -628,7 +628,7 @@ async fn check() -> Result<()> {
     // PhoneTrack: the only input that is not SQL and needs the network. Last,
     // so a Nextcloud outage cannot hide a database problem.
     //
-    // ⚠ Zero fixes is not a working fetch: a revoked app password, a wrong base
+    // Zero fixes is not a working fetch: a revoked app password, a wrong base
     // URL and a phone left at home all return an empty array. So this asserts
     // fixes on a day with a decode, which the decoder built from GPS.
     let base_url = cfg
@@ -659,7 +659,7 @@ async fn check() -> Result<()> {
              decoder ran on fixes for this day, so the loader is missing them"
         );
     }
-    // ⚠ A partial walk fails the check: unlike the loader, which prefers a
+    // A partial walk fails the check: unlike the loader, which prefers a
     // partial day to none, this exists to say the path works.
     if fetched.failed_devices > 0 {
         anyhow::bail!(

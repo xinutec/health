@@ -383,7 +383,7 @@ theorem done_lt {s : LState} {n v : Nat} (hsz : s.done.size = n)
     rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_none (by rw [hsz]; omega)] at h
     simp at h
 
-/-- **A settled step equals its cheapest edge.** Combining `WInv`'s lower bound
+/-- A settled step equals its cheapest edge. Combining `WInv`'s lower bound
 (the recorded edge `w ≥ edgeMinW`) with `UInv`'s upper bound at the min-realising
 edge pins `dist[v] = dist[prev[v]] + edgeMinW(prev[v], v)`. -/
 theorem done_dist_step {g : Graph} {maxR : Nat} {s : LState}
@@ -441,7 +441,7 @@ theorem pathCost_snoc_eq {g : Graph} :
           show some (wab + (crest + ew)) = some (c + ew)
           exact congrArg some (by omega)
 
-/-- **The route cost equals the target distance.** Under the settle bundle, the
+/-- The route cost equals the target distance. Under the settle bundle, the
 reversed `prev`-chain from a done vertex `v` (once it has enough fuel to reach
 the sentinel) has `pathCost` exactly `dist[v]`: each step contributes its
 cheapest edge (`done_dist_step`), the chain stays inside done vertices (`PInv`),
@@ -519,7 +519,7 @@ theorem chainList_pathCost_eq {g : Graph} {maxR src L : Nat} {s : LState}
 
 /-! ## The payoff at a search state -/
 
-/-- **Weight-optimality, value half.** At any trajectory point of a per-source
+/-- Weight-optimality, value half. At any trajectory point of a per-source
 lazy search, the reconstructed route (`chainList` over `prev`, reversed) from a
 done target `tgt` whose chain has completed has `pathCost` exactly `dist[tgt]` —
 the search's own answer for that vertex, expressed in the shared
@@ -616,7 +616,7 @@ theorem chainList_getLast?_src {g : Graph} {src L : Nat} {s : LState}
       rw [hbr, List.getLast?_cons_cons, ← hbr]
       exact ih (s.prev.getD v g.n) hdone_prev hcomp_rest
 
-/-- **The route's far endpoint is the source.** Specialised to a search
+/-- The route's far endpoint is the source. Specialised to a search
 trajectory: the reconstructed route (`chainList` reversed) from a done,
 chain-completed target has `head? = some src`. -/
 theorem iter_route_head?_src {g : Graph} {maxR src : Nat} (hwf : WFEdges g)

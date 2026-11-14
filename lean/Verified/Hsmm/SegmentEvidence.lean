@@ -25,7 +25,7 @@ structure Window where
 
 /-! ## Window resolution over the observation tensor
 
-A prefix sum of MEASURED cadence for the O(1) step total, and the bracketing
+A prefix sum of measured cadence for the O(1) step total, and the bracketing
 `prevGpsFix` / `nextGpsFix` with their slop (fix time outside the segment's own
 minutes). The only transcendental is `haversineMeters` (≤1 ULP); the slop and
 step arithmetic is exact. -/
@@ -33,7 +33,7 @@ step arithmetic is exact. -/
 open Verified.Hsmm.Observation (ObsRow Fix)
 open Verified.Hsmm.FloatScore (haversineMeters)
 
-/-- Prefix sums of MEASURED cadence: `pref[i] = Σ_{k<i} cadence(k)` (absent → 0),
+/-- Prefix sums of measured cadence: `pref[i] = Σ_{k<i} cadence(k)` (absent → 0),
     so a segment's step total is one subtraction. -/
 def stepPrefix (obs : Array ObsRow) : Array Float :=
   -- Starts at one entry and only grows, so the running total is always there.

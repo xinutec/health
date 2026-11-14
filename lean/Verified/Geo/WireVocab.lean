@@ -10,7 +10,7 @@ a day-state, and the kind of an episode's geometry. The frontend keys a
 through to a default style rather than failing, silently, in production. A
 test compares the frontend's unions against these.
 
-## ⚠ THIS FILE EXISTS BECAUSE THAT COMPARISON LOST ITS OTHER SIDE
+## This file exists because that comparison lost its other side
 
 `Verified.Geo.DayState.Mode` is `abbrev Mode := String`, and its members live as
 bare literals across many files; this is the one closed list.
@@ -23,20 +23,20 @@ structure are named as exactly that.
 
 namespace Verified.Geo.WireVocab
 
--- ⚠ FULLY QUALIFIED, NOT `open`. `Mode` is ambiguous — `Hsmm.Emissions`
+-- Fully qualified, not `open`. `Mode` is ambiguous — `Hsmm.Emissions`
 -- declares one too — and an `open` here would resolve to whichever the
 -- elaborator preferred rather than to the one the wire actually carries.
--- ⚠ `Mode` IS DECLARED IN `Emissions`, not in `StateSpace` — the latter only
+-- `Mode` is declared in `Emissions`, not in `StateSpace` — the latter only
 -- re-opens it, so `StateSpace.Mode` does not resolve.
 private abbrev SMode := Verified.Hsmm.Emissions.Mode
 private abbrev sName := Verified.Hsmm.StateSpace.modeName
 
 /-- Every constructor of the HSMM's generative `Mode`, listed once so the guards
-below share it. ⚠ A `Mode` gains a constructor and this list does not compile
+below share it. A `Mode` gains a constructor and this list does not compile
 until it is added — which is the whole reason the enumeration is written out
 rather than derived from a string set. -/
 private def ALL_GENERATIVE : List SMode :=
-  -- ⚠ SPELLED OUT, not `.stationary`. Dot-notation resolves against whichever
+  -- ⚠ spelled out, not `.stationary`. Dot-notation resolves against whichever
   -- `Mode` the elaborator picks, and there are two.
   [ Verified.Hsmm.Emissions.Mode.stationary
   , Verified.Hsmm.Emissions.Mode.walking
@@ -48,9 +48,9 @@ private def ALL_GENERATIVE : List SMode :=
 
 /-- Every `mode` a day-state can carry on the wire.
 
-⚠ ORDER IS NOT MEANINGFUL; membership is. The consumer builds a set.
+Order is not meaningful; membership is. The consumer builds a set.
 
-⚠ THREE SOURCES FEED THIS, and only two of them are closed:
+Three sources feed this, and only two of them are closed:
 
   * the HSMM's generative modes — `Verified.Hsmm.StateSpace.modeName`, a real
     inductive, guarded below to be a SUBSET of this list;
@@ -67,7 +67,7 @@ def DAY_STATE_MODES : List String :=
 
 /-- Every `kind` an episode's geometry can carry.
 
-⚠ `matched` and `smoothed` are produced by the walk matcher and the smoother,
+`matched` and `smoothed` are produced by the walk matcher and the smoother,
 which hand the string in from outside `EpisodeGeometry` — so unlike the other
 four they cannot be guarded against a literal in that module. -/
 def EPISODE_KINDS : List String :=
@@ -75,17 +75,17 @@ def EPISODE_KINDS : List String :=
 
 /-! ## Guards — what ties these lists to the code that emits the strings -/
 
--- ⚠ EVERY GENERATIVE MODE IS A DAY-STATE MODE. `Mode` is a real inductive, so
+-- Every generative mode is a day-state mode. `Mode` is a real inductive, so
 -- this is exhaustive by construction: adding a constructor there and forgetting
 -- it here fails at build time rather than in a browser.
 #guard ALL_GENERATIVE.all (fun m => DAY_STATE_MODES.contains (sName m))
 
--- ⚠ AND EVERY DRAWN-LINE MODE. `MOVING_MODES` is the list the renderer asks
+-- And every drawn-line mode. `MOVING_MODES` is the list the renderer asks
 -- "does this leg draw a track", so a member missing from the wire vocabulary
 -- would be a mode that draws and cannot be styled.
 #guard Verified.Geo.EpisodeGeometry.MOVING_MODES.all DAY_STATE_MODES.contains
 
--- ⚠ THE TWO THAT NOTHING DERIVES. Stated as guards so the claim in the
+-- The two that nothing derives. Stated as guards so the claim in the
 -- docstring is checked rather than asserted: these really are absent from both
 -- closed sources, and if either ever gains them this guard fails and the
 -- docstring above is what needs correcting.
@@ -95,7 +95,7 @@ def EPISODE_KINDS : List String :=
 -- The four kinds `EpisodeGeometry` itself emits as literals.
 #guard ["snapped", "raw", "anchor", "tentative"].all EPISODE_KINDS.contains
 
--- ⚠ NO DUPLICATES. A repeated member reads as a longer vocabulary and would
+-- No duplicates. A repeated member reads as a longer vocabulary and would
 -- make a set comparison against the frontend pass on a list that is wrong.
 #guard DAY_STATE_MODES.eraseDups.length == DAY_STATE_MODES.length
 #guard EPISODE_KINDS.eraseDups.length == EPISODE_KINDS.length

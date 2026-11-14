@@ -5,12 +5,12 @@
 //!   1. the `session` cookie — the owner on their own dashboard;
 //!   2. `X-Share-Token` — a forwarded link, read-only, windowed.
 //!
-//! ⚠ THE COOKIE WINS, and the order is not arbitrary. If a session already
+//! The cookie wins, and the order is not arbitrary. If a session already
 //! authenticated the request, the owner is using their own dashboard and share
 //! auth is irrelevant — checking the header first would let the owner's own
 //! browser downgrade itself to read-only by holding a stale header.
 //!
-//! # ⚠ This layer AUTHENTICATES. It does not authorise
+//! # ⚠ This layer authenticates. It does not authorise
 //!
 //! [`resolve`] answers "who is this", including "nobody". Refusing a request is
 //! two further steps, and they are separate because they fail differently:
@@ -39,8 +39,8 @@ pub const SHARE_HEADER: &str = "x-share-token";
 /// Who is asking, and the session cookie to send back when its session was
 /// just renewed, or `None`.
 ///
-/// ⚠ A FAILED LOOKUP IS `None`, NOT AN ERROR — a bad cookie and an unknown token
-/// are ordinary traffic, not faults. A DATABASE failure IS an error and
+/// A failed lookup is `None`, not an error — a bad cookie and an unknown token
+/// are ordinary traffic, not faults. A database failure is an error and
 /// propagates: "the sessions table is unreachable" must not read as "you are
 /// logged out", because that answer is indistinguishable from a correct one and
 /// would silently sign everybody out during an outage.
@@ -70,7 +70,7 @@ pub async fn resolve(
         return Ok(Some((s, renewed.then(|| cookie.value().to_string()))));
     }
 
-    // ⚠ Only reached when the cookie did NOT authenticate. See the module note.
+    // Only reached when the cookie did not authenticate. See the module note.
     let Some(token) = headers.get(SHARE_HEADER).and_then(|v| v.to_str().ok()) else {
         return Ok(None);
     };
@@ -94,7 +94,7 @@ pub async fn require_session(
     next: Next,
 ) -> Response {
     let now_ms = chrono::Utc::now().timestamp_millis();
-    // ⚠ The share window is anchored on the owner's civil date, resolved in
+    // The share window is anchored on the owner's civil date, resolved in
     // UTC here because the recipient's zone is not known at this point (the
     // `tz` query parameter belongs to the route, not to authentication), so a
     // link near midnight can differ by a day from what the viewer sees.
@@ -102,7 +102,7 @@ pub async fn require_session(
 
     match resolve(&st, &jar, req.headers(), now_ms, &today).await {
         Err(e) => {
-            // ⚠ 500, NOT 401. A database that cannot be read is not a failed
+            // 500, not 401. A database that cannot be read is not a failed
             // login, and reporting it as one sends the user to a login page
             // that will also fail.
             tracing::error!(error = %format!("{e:#}"), "resolving the session failed");
@@ -139,24 +139,24 @@ pub async fn require_session(
 
 /// 403 when a share viewer tries anything `Verified.Session.mayProceed` refuses.
 ///
-/// ⚠ MOUNT AFTER [`require_session`], and this now FAILS CLOSED if you do not.
+/// ⚠ mount after [`require_session`], and this now fails closed if you do not.
 ///
 /// It used to pass an extension-less request through, on the reasoning that
 /// "there is no session" is 401's job. That reasoning is sound and the
 /// behaviour was still wrong, because it made the mounting order a silent
-/// correctness condition: run this BEFORE `require_session` and a share
+/// correctness condition: run this before `require_session` and a share
 /// viewer's POST arrives with no extension yet, reads as not-a-share-viewer, is
-/// ALLOWED, and then `require_session` attaches the session and runs the route.
+/// allowed, and then `require_session` attaches the session and runs the route.
 /// A read-only link could write, and nothing anywhere would say so.
 ///
-/// ⚠ That is not hypothetical: flipping the two layers in `routes::mod` once
+/// That is not hypothetical: flipping the two layers in `routes::mod` once
 /// failed zero of the eleven tests that covered this, because the test that
 /// claimed to protect the order mirrored the stack rather than importing it,
 /// and so only ever tested its own copy.
 ///
 /// Refusing here costs nothing in correct operation: mounted properly,
 /// `require_session` has already answered 401 and this never sees a request
-/// without a session. Mounted wrongly, EVERY request 500s immediately instead
+/// without a session. Mounted wrongly, every request 500s immediately instead
 /// of one class of request being quietly over-permitted.
 pub async fn require_may_proceed(req: Request, next: Next) -> Response {
     let Some(session) = req.extensions().get::<UserSession>() else {
@@ -172,7 +172,7 @@ pub async fn require_may_proceed(req: Request, next: Next) -> Response {
     };
     let is_share_viewer = session.share_viewer.is_some();
     let method = req.method().as_str().to_string();
-    // ⚠ The ORIGINAL path. Behind `nest("/api", …)` the request's own URI has
+    // The original path. Behind `nest("/api", …)` the request's own URI has
     // the prefix stripped, so `/api/telemetry` arrived here as `/telemetry` and
     // matched no rule written against full paths.
     let path = req
@@ -182,7 +182,7 @@ pub async fn require_may_proceed(req: Request, next: Next) -> Response {
         .to_string();
 
     match crate::lean::may_proceed(is_share_viewer, session.hides_location, &method, &path) {
-        // ⚠ An error REFUSES. This asks Lean whether the request is allowed, so
+        // An error refuses. This asks Lean whether the request is allowed, so
         // a question that could not be answered must not be treated as a yes.
         Err(e) => {
             tracing::error!(error = %format!("{e:#}"), "mayProceed could not be evaluated");

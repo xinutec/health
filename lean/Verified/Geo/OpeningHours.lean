@@ -3,9 +3,9 @@
 
 OSM venue POIs carry an `opening_hours` tag that the venue-plausibility scorer
 turns into weighted evidence — never a veto, because OSM hours go stale. The
-grammar is a deliberate SUBSET: day ranges/lists, multiple time ranges,
+grammar is a deliberate subset: day ranges/lists, multiple time ranges,
 past-midnight wrap, `off`/`closed`, `24/7`, trailing `PH off`. Everything else
-parses to `none`, which downstream means **no evidence**, NOT "closed". That
+parses to `none`, which downstream means no evidence, not "closed". That
 asymmetry is the contract: a wrong "closed" verdict would poison the scorer,
 so every unsupported shape must fail closed to silence rather than to a guess.
 
@@ -21,7 +21,7 @@ but are load-bearing (the `#guard`s pin both):
   holiday rule is skipped, so no rule is ever recorded and the value is
   rejected as empty.
 
-The tz boundary stays SHELL: `openFractionDuring` resolves each sampled minute
+The tz boundary stays shell: `openFractionDuring` resolves each sampled minute
 to a (weekday, minute-of-day) pair through `Intl`, which is exactly the kind of
 tz work that does not belong in Lean. {@link openFractionOver} takes those
 already-resolved samples, so the arithmetic is here and the calendar is not.
@@ -254,7 +254,7 @@ def isOpenAt (spec : WeekSpec) (dayIdx minuteOfDay : Nat) : Bool :=
 
 /--
 Fraction of a stay during which the venue is open, over minute samples the
-SHELL resolved to `(dayIdx, minuteOfDay)` in the venue's tz — that resolution
+shell resolved to `(dayIdx, minuteOfDay)` in the venue's tz — that resolution
 is `Intl` work and stays outside Lean.
 
 The caller samples every 60 s across `[startUnix, endUnix)`, or the single
@@ -311,10 +311,10 @@ private def R (a b : Nat) : TimeRange := ⟨a, b⟩
 -- A later rule overrides an earlier one for the days it mentions.
 #guard P "Su 12:00-16:00; Mo-Sa 09:00-20:00"
        == some [[R 540 1200], [R 540 1200], [R 540 1200], [R 540 1200], [R 540 1200], [R 540 1200], [R 720 960]]
--- `off` AFTER a day spec closes those days (contrast the bare `"off"` below).
+-- `off` after a day spec closes those days (contrast the bare `"off"` below).
 #guard P "Mo-Fr off; Sa 10:00-12:00" == some [[], [], [], [], [], [R 600 720], []]
 
-/-! ### Outside the subset ⇒ `none` (no evidence, NOT closed) -/
+/-! ### Outside the subset ⇒ `none` (no evidence, not closed) -/
 
 #guard (P "").isNone
 #guard (P "   ").isNone
@@ -329,7 +329,7 @@ private def R (a b : Nat) : TimeRange := ⟨a, b⟩
 #guard (P "Mo-Fr").isNone
 #guard (P "Mo-Zz 09:00-17:00").isNone
 #guard (P "24/7 open").isNone
--- The two load-bearing quirks: a BARE `off`/`closed` is rejected, because the
+-- The two load-bearing quirks: a bare `off`/`closed` is rejected, because the
 -- day-spec pattern eats `"of"`/`"cl"` and neither is a day name.
 #guard (P "off").isNone
 #guard (P "closed").isNone
@@ -345,7 +345,7 @@ private def spec95 : WeekSpec := (P "Mo-Fr 09:00-17:00").getD []
 #guard isOpenAt spec95 0 1020 == false  -- close is exclusive
 #guard isOpenAt spec95 5 600 == false   -- Saturday
 
--- Past-midnight overflow is credited to the FOLLOWING day.
+-- Past-midnight overflow is credited to the following day.
 private def specLate : WeekSpec := (P "Tu-Su 20:00-02:00").getD []
 #guard isOpenAt specLate 1 1200 == true   -- Tue 20:00
 #guard isOpenAt specLate 1 60 == false    -- Tue 01:00 — Monday is closed

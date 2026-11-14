@@ -48,8 +48,8 @@ fn every_recorded_geocode_round_trips_through_the_ported_shape() {
         days += 1;
         for (key, recorded) in section {
             answers += 1;
-            // ⚠ The KEY is a coordinate and this repo is public. A
-            // failure names the day and the key's ZOOM, never its position.
+            // ⚠ The key is a coordinate and this repo is public. A
+            // failure names the day and the key's zoom, never its position.
             let zoom = key.rsplit('|').next().unwrap_or("?");
             match serde_json::from_value::<Geocode>(recorded.clone()) {
                 Ok(parsed) => {
@@ -69,7 +69,7 @@ fn every_recorded_geocode_round_trips_through_the_ported_shape() {
         broken.len(),
         broken.join("\n  ")
     );
-    // ⚠ A test that parses nothing passes. The corpus is present by the check
+    // A test that parses nothing passes. The corpus is present by the check
     // above, so zero answers means the section moved, not that all is well.
     assert!(
         answers > 0,
@@ -78,7 +78,7 @@ fn every_recorded_geocode_round_trips_through_the_ported_shape() {
     eprintln!("{answers} recorded geocode(s) across {days} day(s) round-trip");
 }
 
-/// A source that declines everything spatial but HAS one geocode to hand — the
+/// A source that declines everything spatial but has one geocode to hand — the
 /// shape `MirrorSource` takes once it can reach `osm_cache`.
 struct OneGeocode(serde_json::Value);
 
@@ -153,7 +153,7 @@ fn sample() -> Value {
     })
 }
 
-/// ⚠ The claim the wiring rests on. A geocode that reaches the fold from a live
+/// The claim the wiring rests on. A geocode that reaches the fold from a live
 /// cache and one that reaches it from a recorded fixture section must be the
 /// same bytes; otherwise a day graded on the corpus and the same day served
 /// would differ for a reason no gate can see.
@@ -195,7 +195,7 @@ fn a_live_geocode_and_a_recorded_one_are_the_same_row() {
     );
 }
 
-/// ⚠ THE DEFAULT MUST DECLINE. Every corpus replay answers `reverseGeocode`
+/// The default must decline. Every corpus replay answers `reverseGeocode`
 /// from its own fixture; a source that started guessing would grade a day
 /// against answers its fixture does not carry.
 #[test]

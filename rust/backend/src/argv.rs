@@ -1,13 +1,13 @@
 //! `backend`'s command line, declared once with clap.
 //!
-//! The list of subcommands, their arguments and their one-line descriptions ARE
+//! The list of subcommands, their arguments and their one-line descriptions are
 //! this enum: `backend --help` renders it, so the listing cannot drift from the
 //! dispatch the way the hand-kept table did (19 of 29 before it was tested).
 //!
 //! It lives in the library, not beside `main`, so the suite can parse the exact
 //! argv production runs (`tests/suite/usage.rs`).
 //!
-//! ⚠ A PARSE ERROR EXITS 64, not clap's 2: 64 (`EX_USAGE`) is what every
+//! A parse error exits 64, not clap's 2: 64 (`EX_USAGE`) is what every
 //! subcommand exited with before, and a cron reading exit codes should not see
 //! the meaning change under it. See [`parse`].
 
@@ -36,7 +36,7 @@ pub struct UserDay {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// read the config and prove it against the real database; READ-ONLY
+    /// read the config and prove it against the real database; read-only
     Check,
     /// the HTTP server — health-auth runs this
     Serve,
@@ -63,7 +63,7 @@ pub enum Command {
         /// YYYY-MM-DD
         #[arg(conflicts_with = "averages")]
         since: Option<String>,
-        /// two window means, split at BOUNDARY
+        /// two window means, split at boundary
         #[arg(long, num_args = 2, value_names = ["FROM", "BOUNDARY"])]
         averages: Option<Vec<String>>,
     },
@@ -73,7 +73,7 @@ pub enum Command {
     ZonesCensus,
     /// every venue-prior snapshot and the current blob, as the serving path resolves them
     VenuePriorSnapshots { user: String, out_dir: String },
-    /// field NAMES and leaf types from Google Health; never values
+    /// field names and leaf types from Google Health; never values
     GoogleProbe,
     /// compare stored rows against a date
     RowsCheck {
@@ -81,7 +81,7 @@ pub enum Command {
         since: String,
         date: String,
     },
-    /// the OwnTracks proxy's decisions, the durable copy of its log line; READ-ONLY
+    /// the OwnTracks proxy's decisions, the durable copy of its log line; read-only
     OwntracksLog {
         user: String,
         #[arg(default_value_t = 200)]
@@ -111,7 +111,7 @@ pub enum Command {
         out: String,
         display_tz: Option<String>,
     },
-    /// re-record ONLY a golden fixture's walkableRoads from the live mirror, in place
+    /// re-record only a golden fixture's walkableRoads from the live mirror, in place
     RecaptureWalkable { user: String, fixture: String },
     /// answer from the live mirror only the lookups a golden fixture cannot, in place
     RecaptureAsks { user: String, fixture: String },
@@ -175,7 +175,7 @@ pub enum Command {
         #[arg(long, default_value_t = 200)]
         limit: i64,
     },
-    /// fold several days in ONE process — the arena's high-water
+    /// fold several days in one process — the arena's high-water
     VelocityMany {
         user: String,
         #[arg(required = true)]

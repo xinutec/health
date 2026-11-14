@@ -3,9 +3,9 @@ import Verified.FloatConst
 /-!
 # HMM GPS outlier filter
 
-A robust-statistics pass run on the fix stream BEFORE the observation tensor:
+A robust-statistics pass run on the fix stream before the observation tensor:
 for each fix, take the median position over a ±30-min window and drop the fix if
-it lies more than `MAX_DEVIATION_M` from that cluster centre — UNLESS the fix is
+it lies more than `MAX_DEVIATION_M` from that cluster centre — unless the fix is
 reachable from the last kept one at a speed a vehicle attains (`V_MAX_KMH`).
 
 The median alone is right about an isolated teleport (a stale buffer, a cell
@@ -21,7 +21,7 @@ thousands of km/h from the fix before it, a ride implies tens.
 Composes directly into `buildObservationTensor` (same `GpsPoint`, same
 `median`). The only transcendental is `cos` in the equirectangular distance,
 and it feeds only a deviation compared against a 2 km threshold and a speed
-against 250 km/h — so the KEPT-SET (a discrete decision, nothing sits at the
+against 250 km/h — so the kept-set (a discrete decision, nothing sits at the
 knife-edge) is exact even though the intermediate distance is ≤1-ULP-close.
 UNPROVEN; pinned by the `#guard`s.
 -/
@@ -71,7 +71,7 @@ def farFromCluster (points : List GpsPoint) (p : GpsPoint) : Bool :=
     let medLon := median (cluster.map GpsPoint.lon)
     decide (approxDistanceMeters p.lat p.lon medLat medLon > MAX_DEVIATION_M)
 
-/-- Drop the fixes that are far from their cluster median AND unreachable at
+/-- Drop the fixes that are far from their cluster median and unreachable at
     `V_MAX_KMH` from the fix before them — the last kept fix, or the raw one
     before it while nothing has been kept yet; the first fix has no reference
     and is judged by the median alone. Preserves all other fixes in input

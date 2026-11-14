@@ -1,6 +1,6 @@
 //! Whether an account reads as linked.
 //!
-//! ⚠ Production could not test this. Both connections are `active` on the real
+//! Production could not test this. Both connections are `active` on the real
 //! account, so the parity run in `backend rows-check` exercises exactly one of
 //! the three branches. The other two — and the fall-through that makes them
 //! interesting — are only covered here.
@@ -11,8 +11,8 @@ fn init() {
     lean::init().expect("lean host");
 }
 
-/// ⚠ ABSENCE is the only thing that reads as `not_linked`. Everything else,
-/// including a status nobody has taught this about, reads as a WORKING
+/// Absence is the only thing that reads as `not_linked`. Everything else,
+/// including a status nobody has taught this about, reads as a working
 /// connection — so a future migration adding `revoked` would report a dead
 /// credential to the user as fine until someone changes `Verified.Connection`.
 #[test]
@@ -35,7 +35,7 @@ fn unknown_statuses_fall_through_to_active() {
     }
 }
 
-/// ⚠ A revoked credential is still `linked: true` to the legacy boolean, so an
+/// A revoked credential is still `linked: true` to the legacy boolean, so an
 /// older SPA build shows "connected" for an account that cannot fetch anything.
 /// The typed `connections` object is what carries the distinction; narrowing
 /// the boolean would be more truthful and would change what those builds show.

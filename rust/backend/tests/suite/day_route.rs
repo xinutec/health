@@ -1,6 +1,6 @@
 //! `/day`'s gate: what it answers before reading anything.
 //!
-//! ⚠ NO DATABASE, as in `velocity_route.rs`: a share recipient asking for a date
+//! No database, as in `velocity_route.rs`: a share recipient asking for a date
 //! outside their window gets the empty day without a query, a date inside it
 //! reaches the (dead) database, a malformed date is a 400, and a request with no
 //! session never reaches the handler.
@@ -90,7 +90,7 @@ async fn a_share_viewer_outside_the_window_gets_an_empty_day_without_a_query() {
 #[tokio::test]
 async fn a_date_inside_the_window_reaches_the_database() {
     backend::lean::init().expect("the Lean runtime must start");
-    // ⚠ Not the empty day: the only way to show the boundary dates were
+    // Not the empty day: the only way to show the boundary dates were
     // admitted is that the read then failed on the database it reached.
     for date in ["2026-08-11", "2026-08-17"] {
         let (status, _) = get(app_as(viewer()), &format!("/api/day?date={date}")).await;

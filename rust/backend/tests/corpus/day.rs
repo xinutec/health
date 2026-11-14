@@ -4,17 +4,17 @@
 //!   fixture.inputs → head::capture → build_day_request → fold → states
 //! ```
 //!
-//! ⚠ `build_day_request` and `RowSetAnswerer` read a `FOLD_CAPTURE` shape that
+//! `build_day_request` and `RowSetAnswerer` read a `FOLD_CAPTURE` shape that
 //! nothing in this repo could produce until `head::capture` did. That is what closes
 //! the chain: a day replays from the fixture alone, with no external producer.
 //!
 //! The oracle is `expected.statesOut` — this pipeline's own last blessed
 //! output.
 //!
-//! # ⚠ WHERE THIS GRADER BEGINS, AND THEREFORE WHAT IT DOES NOT COVER
+//! # WHERE THIS GRADER BEGINS, AND THEREFORE WHAT IT DOES NOT COVER
 //!
-//! It starts at `fixture.inputs`. **Nothing that PRODUCES an input is exercised
-//! here** — `classification_inputs::load` and every DB query, cache load,
+//! It starts at `fixture.inputs`. Nothing that produces an input is exercised
+//! here — `classification_inputs::load` and every DB query, cache load,
 //! PhoneTrack window and biometrics join inside it are upstream of the fixture
 //! and are not reached by this file or any other in the corpus.
 //!
@@ -25,26 +25,26 @@
 //! is the most dangerous place for this, because it moves the answer while
 //! every assertion here still holds.
 //!
-//! # ⚠ WHAT THE ORACLE IS, AND WHAT IT THEREFORE CANNOT TELL YOU
+//! # What the oracle is, and what it therefore cannot tell you
 //!
-//! `statesOut` is the last BLESSED output of this arm. It catches a REGRESSION
+//! `statesOut` is the last blessed output of this arm. It catches a regression
 //! and it cannot catch "it was always wrong" — only the ground-truth narratives
-//! grade correctness. When this goes red the ANSWER MOVED; whether it moved for
+//! grade correctness. When this goes red the answer moved; whether it moved for
 //! the better is a question this file does not answer.
 //!
-//! `DAY_BLESS=1` re-blesses — it OVERWRITES each fixture's `statesOut` with the
+//! `DAY_BLESS=1` re-blesses — it overwrites each fixture's `statesOut` with the
 //! current replay and prints what it touched. Bless deliberately, on a clean
 //! tree, and read the inner golden repo's diff before committing it.
 //!
-//! ⚠ Blessing is per-FIXTURE here, not to a shared floor file, so it is the one
+//! Blessing is per-fixture here, not to a shared floor file, so it is the one
 //! bless in the corpus that is safe to run sharded: each shard rewrites only
-//! its own days and they cannot race. It is still only COMPLETE if both shards
+//! its own days and they cannot race. It is still only complete if both shards
 //! run.
 //!
 //! # Why this grader is local-only
 //!
 //! `tests/golden/days` is gitignored: the fixtures carry real coordinates,
-//! place names and biometrics. The runner ANNOUNCES A SKIP rather than passing
+//! place names and biometrics. The runner announces a skip rather than passing
 //! quietly.
 
 use std::collections::BTreeMap;
@@ -54,9 +54,9 @@ use serde_json::{Map, Value, json};
 use super::Replay;
 
 /// Days whose timeline diverges from the blessed oracle — each with its
-/// divergence ADJUDICATED, not merely observed.
+/// divergence adjudicated, not merely observed.
 ///
-/// ⚠ THIS LIST MAY ONLY SHRINK. Listing a day keeps the other 41 checkable
+/// ⚠ this list may only shrink. Listing a day keeps the other 41 checkable
 /// instead of one red day hiding them all; re-capturing a day to make a miss
 /// go away is forbidden.
 ///
@@ -83,23 +83,23 @@ const UNANSWERED_KINDS: [&str; 6] = [
     "linesAtPoint",
 ];
 
-/// Keys the offline answerer cannot supply, BY DAY, beyond the blank-zone
+/// Keys the offline answerer cannot supply, by day, beyond the blank-zone
 /// `bestPlace` asked before `tzAt` resolves.
 ///
 /// Each means the fold reached a lookup the recorded trace has no answer for,
 /// so the row set is not that lookup's source. The miss is the finding, so this
 /// is a ceiling that must fall, not a budget.
 ///
-/// What it holds is the two tables declined ON PURPOSE: `reverseGeocode` is a
-/// Nominatim call whose keys are coordinates the pipeline DERIVES, and
+/// What it holds is the two tables declined on purpose: `reverseGeocode` is a
+/// Nominatim call whose keys are coordinates the pipeline derives, and
 /// `transitStops` is injected rather than computed from rows. Neither falls
 /// without porting something.
 ///
-/// ⚠ **PER DAY, NOT A TOTAL, AND THAT IS WHAT MAKES IT SHARDABLE**.
+/// Per day, not a total, and that is what makes it shardable.
 /// A shard cannot check a corpus-wide total (asserting `≤ 16` on each half
 /// passes at 32), so the bound is per day; it also says which day grew.
 ///
-/// ⚠ A change that moves stays or walks derives `reverseGeocode` keys the
+/// A change that moves stays or walks derives `reverseGeocode` keys the
 /// capture never asked (a moved boundary, a carved-out stop, a stay named at
 /// its own fixes rather than the stored centroid), so such a change and this
 /// table move together, in one commit that says which days moved. Blessing it
@@ -164,7 +164,7 @@ fn ceiling_for(date: &str) -> usize {
         .map_or(0, |(_, n)| *n)
 }
 
-/// `null` and absent are the SAME state here, and comparing without this would
+/// `null` and absent are the same state here, and comparing without this would
 /// report every state as differing.
 ///
 /// The seam is an absent field against Lean's `null`: an older fixture drops an
@@ -186,9 +186,9 @@ fn drop_nulls(v: &Value) -> Value {
 
 pub struct Day {
     golden: &'static str,
-    /// ⚠ INJECTION MAKES THE RUN REPORT-ONLY, for the reason the truth referee
+    /// Injection makes the run report-only, for the reason the truth referee
     /// gives: the oracle was blessed from an arm nobody re-blessed under these
-    /// priors, so a mismatch is the MEASUREMENT, not a regression. What it
+    /// priors, so a mismatch is the measurement, not a regression. What it
     /// answers is the half the truth floor structurally cannot — the footprint
     /// on stays no narrative row grades.
     report_only: bool,
@@ -223,10 +223,10 @@ impl Day {
         self.graded += 1;
         let fx = &rep.fx;
 
-        // ⚠ EVERY ORACLE HERE CATCHES A REGRESSION AND NONE CATCHES "it was
+        // Every oracle here catches a regression and none catches "it was
         // always wrong". The ground-truth narratives are the only thing in the
-        // corpus that grades CORRECTNESS rather than change — when this
-        // gate goes red it means the ANSWER MOVED, which is not the same as the
+        // corpus that grades correctness rather than change — when this
+        // gate goes red it means the answer moved, which is not the same as the
         // answer getting worse.
         let Some(want) = fx.pointer("/expected/statesOut").cloned() else {
             self.failures.push(format!(
@@ -238,7 +238,7 @@ impl Day {
         };
         self.asks = self.asks.max(rep.asks.len());
 
-        // ⚠ The only accepted residue. The fold asks `bestPlace` once before
+        // The only accepted residue. The fold asks `bestPlace` once before
         // `tzAt` has resolved the stay's zone and again after; the blank-zone
         // spelling is a question asked too early, not a stay with no zone, and
         // the answerer declines it rather than pick one (04-29: 8 spans, each
@@ -321,7 +321,7 @@ impl Day {
             (false, false) => self
                 .failures
                 .push(format!("{name}: {}", first_state_difference(&got, &want))),
-            // ⚠ A day that AGREES while listed as divergent is not a pass. It
+            // A day that agrees while listed as divergent is not a pass. It
             // means the divergence is gone and the list is now a lie, and a
             // stale entry here would hide the next real one.
             (true, true) => self.failures.push(format!(

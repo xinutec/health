@@ -1,14 +1,14 @@
 //! `clipfuture` through the linked Lean host.
 //!
 //! `Verified.Geo.DayState.clipFuture` decides what to drop and what to
-//! truncate. What this covers is the WIRE around it, which has a failure the
+//! truncate. What this covers is the wire around it, which has a failure the
 //! decision cannot have: the mode parses the day mode's own state objects and
 //! re-emits them, so a field `parseDayState` does not read is a field the
 //! clipped day silently loses. The unclipped day keeps it, so the two disagree
 //! about a state that was never clipped at all.
 //!
-//! That is why the encoder is SHARED (`Day.stateJson`) rather than restated, and
-//! why the first test below round-trips a REAL day's states rather than a
+//! That is why the encoder is shared (`Day.stateJson`) rather than restated, and
+//! why the first test below round-trips a real day's states rather than a
 //! hand-written object with the fields I happened to think of.
 
 use std::path::Path;
@@ -73,7 +73,7 @@ fn a_settled_day_round_trips_through_the_clip_unchanged() {
     );
 }
 
-/// One state in the day mode's own shape. Every optional field carries a VALUE,
+/// One state in the day mode's own shape. Every optional field carries a value,
 /// so a parser that drops one is visible; the null cases are the next test.
 fn state(start: i64, end: i64, inferred: Option<bool>) -> Value {
     json!({
@@ -111,7 +111,7 @@ fn a_state_past_now_is_truncated_or_dropped_observed_or_not() {
     assert_eq!(got[0]["place"], json!("somewhere"));
     assert_eq!(got[0]["minutesAsleep"], json!(42));
 
-    // ⚠ OBSERVED states are clipped too. The decoder fills a stay to the day's
+    // Observed states are clipped too. The decoder fills a stay to the day's
     // end, so today's last stay ends after `now` with no minute measured there.
     let got = lean::clip_future(&[state(500, 3_000, None)], now, None).unwrap();
     assert_eq!(got.len(), 1);
@@ -127,7 +127,7 @@ fn a_state_past_now_is_truncated_or_dropped_observed_or_not() {
 #[test]
 fn absent_optional_fields_survive_as_null_rather_than_vanishing() {
     lean::init().expect("the Lean runtime must start");
-    // ⚠ Lean's encoder emits every key, `null` for absent. A caller diffing a
+    // Lean's encoder emits every key, `null` for absent. A caller diffing a
     // clipped day against an unclipped one sees the same spelling on both
     // sides, because both come from `Day.stateJson`.
     let bare = json!({

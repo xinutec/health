@@ -9,7 +9,7 @@
 
 use backend::nominatim::{Geocode, narrow, query_type, round_coord};
 
-/// ⚠ The whole point of this module's key. The stored rows round a half toward
+/// The whole point of this module's key. The stored rows round a half toward
 /// +∞; `f64::round` takes it away from zero. Every longitude in this record is
 /// negative, so the two rules disagree on exactly the data in hand, and
 /// `f64::round` would miss every stored row at this coordinate.
@@ -58,7 +58,7 @@ fn a_reply_narrows_to_the_wire_shape() {
     assert_eq!(g.address["city"], "London");
 }
 
-/// ⚠ A reply WITHOUT a `display_name` is Nominatim saying nothing is there.
+/// A reply without a `display_name` is Nominatim saying nothing is there.
 /// That is an answer and gets cached; it is not a failure, and conflating the
 /// two would re-ask a settled question on every fold.
 #[test]
@@ -85,9 +85,9 @@ fn a_geocode_encodes_in_the_fixtures_own_field_names() {
     assert_eq!(v["category"], "highway");
 }
 
-/// ⚠ THE SEAM BETWEEN THE QUEUE AND THE CACHE. A miss is recorded under
+/// The seam between the queue and the cache. A miss is recorded under
 /// `queue_key`, and the drain parses that key back into coordinates and hands
-/// them to `cache_put`, which rounds AGAIN. If rounding were not idempotent the
+/// them to `cache_put`, which rounds again. If rounding were not idempotent the
 /// answer would land under a key the fold never forms — a fetch paid for and an
 /// entry that stays missing, with nothing to see.
 #[test]
@@ -112,7 +112,7 @@ fn a_queued_key_parses_back_to_the_same_cache_key() {
     }
 }
 
-/// Two fixes metres apart must queue ONE fetch. The service allows one request
+/// Two fixes metres apart must queue one fetch. The service allows one request
 /// per second, so a queue keyed on raw coordinates would spend a night on one
 /// stay.
 #[test]

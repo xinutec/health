@@ -1,13 +1,13 @@
 //! `selectAll()` rows, rendered as the client reads them.
 //!
 //! Twelve `/api` endpoints are one line of logic each — select every column of a
-//! table, hand the rows to `c.json`. The logic ports in a minute; the SHAPE is
+//! table, hand the rows to `c.json`. The logic ports in a minute; the shape is
 //! the work. That response is whatever columns the table has, mapped to JS by
 //! the MariaDB driver and then to text by `JSON.stringify`, and the frontend
 //! reads types out of it. Get one column's rendering wrong and the failure is
 //! invisible here and loud three layers away.
 //!
-//! ⚠ The declared column types are not the contract: a column declared a number
+//! The declared column types are not the contract: a column declared a number
 //! may hold DECIMAL, which arrives as a string. The mapping this module
 //! implements was measured against production, and the rule itself lives in
 //! `Verified.RowShape`, not here.
@@ -15,24 +15,24 @@
 //! # What surprises
 //!
 //! * A `DATE` ships as `"2026-08-22T00:00:00.000Z"`, a full timestamp.
-//! * `DECIMAL` and `BIGINT` are JSON STRINGS, the first for exactness and the
+//! * `DECIMAL` and `BIGINT` are JSON strings, the first for exactness and the
 //!   second because a Fitbit sleep log id does not survive an f64.
-//! * `TINYINT(1)` is `0`/`1`. ⚠ sqlx NAMES that type `"BOOLEAN"`, so decoding
+//! * `TINYINT(1)` is `0`/`1`. ⚠ sqlx names that type `"BOOLEAN"`, so decoding
 //!   what the name suggests would put `true` on the wire.
-//! * ⚠ EVERY `DATETIME` GETS A `Z`, EARNED OR NOT — and this module cannot tell
-//!   which. It dispatches on SQL TYPE, and separating a UTC instant from a
-//!   Fitbit wall clock needs a per-COLUMN classification that does not exist.
+//! * ⚠ every `DATETIME` GETS A `Z`, earned or not — and this module cannot tell
+//!   which. It dispatches on SQL type, and separating a UTC instant from a
+//!   Fitbit wall clock needs a per-column classification that does not exist.
 //!   The `TIMESTAMP` columns (`updated_at`, `synced_at`, …) and every `_utc`
-//!   sibling ARE UTC, so for those the suffix is honest.
+//!   sibling are UTC, so for those the suffix is honest.
 //!
-//!   ⚠ FIXED AT THE ROUTE, NOT HERE. No `/api` read hands this module a
+//!   Fixed at the route, not here. No `/api` read hands this module a
 //!   wall clock any more: `sleep`, `sleep/stages` and `heartrate/intraday` name
 //!   their columns and serve `COALESCE(<col>_utc, CONVERT_TZ(<col>, tz, 'UTC'))`
 //!   plus `tz`, so the instant is repaired where the meaning is known and the
 //!   clock the watch showed is derived on the client from the zone. The other
 //!   nine reads are over tables with no wall-clock DATETIME at all.
 //!
-//!   So the hazard here is LATENT, not live: a new `SELECT *` over `sleep`,
+//!   So the hazard here is latent, not live: a new `SELECT *` over `sleep`,
 //!   `sleep_stages`, `heart_rate_intraday` or `steps_intraday` would put a
 //!   false `Z` back on the wire without changing a line of this file.
 //!   `steps_intraday` has no endpoint and never did.
@@ -56,7 +56,7 @@ use crate::lean::{self, RowShape};
 /// One column: what to call it, how to render it, and whether its integer is
 /// signed.
 ///
-/// ⚠ Signedness comes from the TYPE NAME rather than from trying a decode and
+/// Signedness comes from the type name rather than from trying a decode and
 /// falling back. A fallback would turn a genuine decode failure into a second
 /// attempt that might succeed for the wrong reason.
 struct ColumnPlan {
@@ -73,7 +73,7 @@ pub struct RowEncoder {
 impl RowEncoder {
     /// Resolve the plan from a row's column metadata.
     ///
-    /// ⚠ Fails, rather than skipping the column, when Lean maps a SQL type to
+    /// Fails, rather than skipping the column, when Lean maps a SQL type to
     /// nothing. An unmapped type is one whose rendering nobody has checked
     /// against production; rendering it as `null` would answer with a
     /// well-formed response that quietly dropped a field.
@@ -101,7 +101,7 @@ impl RowEncoder {
 
     /// Render one row.
     ///
-    /// ⚠ Every decode propagates. There is no `unwrap_or_default` here on
+    /// Every decode propagates. There is no `unwrap_or_default` here on
     /// purpose: a column that failed to decode would otherwise reach the
     /// frontend as `0` or `""`, which reads as real data rather than as loss.
     pub fn encode(&self, row: &MySqlRow) -> Result<Value> {
@@ -131,7 +131,7 @@ fn encode_value(row: &MySqlRow, i: usize, col: &ColumnPlan) -> Result<Value> {
                 Value::from(row.try_get::<i64, _>(i)?)
             }
         }
-        // ⚠ A string on the wire: Fitbit sleep log ids are 64-bit, beyond what a
+        // A string on the wire: Fitbit sleep log ids are 64-bit, beyond what a
         // JavaScript number holds exactly.
         RowShape::BigintStr => {
             if col.unsigned {
@@ -141,7 +141,7 @@ fn encode_value(row: &MySqlRow, i: usize, col: &ColumnPlan) -> Result<Value> {
             }
         }
         RowShape::Str => Value::from(row.try_get::<String, _>(i)?),
-        // ⚠ `try_get_unchecked` DELIBERATELY. sqlx's `compatible()` for strings
+        // `try_get_unchecked` deliberately. sqlx's `compatible()` for strings
         // excludes DECIMAL, but the binary protocol sends one as a
         // length-prefixed ASCII string, so these bytes are the server's exact
         // text — scale and trailing zeros included. Going via a float would
@@ -151,16 +151,16 @@ fn encode_value(row: &MySqlRow, i: usize, col: &ColumnPlan) -> Result<Value> {
             let d: NaiveDate = row.try_get(i)?;
             Value::from(format_date_iso(d))
         }
-        // ⚠ `try_get_unchecked` DELIBERATELY, and this one was found by running
+        // `try_get_unchecked` deliberately, and this one was found by running
         // against production rather than by reading anything. sqlx's
-        // `compatible()` accepts `NaiveDateTime` for DATETIME and REFUSES it for
+        // `compatible()` accepts `NaiveDateTime` for DATETIME and refuses it for
         // TIMESTAMP, so `daily_activity.synced_at` failed to render at all —
         // while the two types share one binary encoding on the wire.
         //
         // Decoding both as naive is also what the JS driver effectively does: it
         // builds a `Date` from the server's wall-clock fields for either type.
         // Asking for a `DateTime<Utc>` instead would render the same text while
-        // ASSERTING the value is UTC, which is only true while the connection's
+        // asserting the value is UTC, which is only true while the connection's
         // session timezone says so.
         RowShape::DateTimeIso => {
             let t: NaiveDateTime = row.try_get_unchecked(i)?;
@@ -179,7 +179,7 @@ pub fn format_date_iso(d: NaiveDate) -> String {
 
 /// `YYYY-MM-DDTHH:MM:SS.mmmZ` — mirrors `Verified.RowShape.formatDateTimeIso`.
 ///
-/// ⚠ Sub-second is TRUNCATED to milliseconds, not rounded: a JS `Date` cannot
+/// Sub-second is truncated to milliseconds, not rounded: a JS `Date` cannot
 /// hold more, so a `DATETIME(6)` loses its microseconds here exactly as it does
 /// there. `nanosecond()` can also exceed 1e9 on a leap second, and that is
 /// clamped rather than allowed to print a fourth digit.
@@ -220,7 +220,7 @@ pub fn rows_to_json(rows: &[MySqlRow]) -> Result<Vec<Value>> {
 
 /// An `f64` that serializes the way `JSON.stringify` renders a JS number.
 ///
-/// ⚠ Use this in every response struct that carries a float. A plain `f64`
+/// Use this in every response struct that carries a float. A plain `f64`
 /// field prints `120.0` and `-0.0` where the client's contract is `120` and
 /// `0` (see [`js_number_value`]).
 ///
@@ -231,7 +231,7 @@ pub struct JsNumber(pub f64);
 
 impl serde::Serialize for JsNumber {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        // Delegating to the Value keeps ONE definition of the rules. An
+        // Delegating to the Value keeps one definition of the rules. An
         // independent impl here would be a second copy to drift from.
         js_number_value(self.0).serialize(s)
     }
@@ -239,7 +239,7 @@ impl serde::Serialize for JsNumber {
 
 /// One `f64`, rendered as `JSON.stringify` renders a JS number.
 ///
-/// ⚠ JavaScript has NO integer/float distinction. `JSON.stringify(120)` is
+/// JavaScript has no integer/float distinction. `JSON.stringify(120)` is
 /// `120`, while `serde_json` prints `120.0` for the same `f64` — a different
 /// response for identical data. That is not hypothetical: the first
 /// `/locations` parity run against production differed by 8,790 bytes across
@@ -249,11 +249,11 @@ impl serde::Serialize for JsNumber {
 ///
 ///   * an integral value prints with no decimal point (`120`, `-1`, `0`)
 ///   * `-0` prints as `0`
-///   * a non-integral value prints its SHORTEST round-tripping form, which is
+///   * a non-integral value prints its shortest round-tripping form, which is
 ///     also what `ryu` (and therefore `serde_json`) produces
 ///   * `NaN` and the infinities print as `null` — JSON has no way to say them
 ///
-/// ⚠ What is verified is a range. Integral values beyond 2^53 are handed to
+/// What is verified is a range. Integral values beyond 2^53 are handed to
 /// `serde_json`, whose exponent formatting is not known to match JavaScript's
 /// (which switches to `1e+21` at that threshold and prints full digits below
 /// it). No value this API carries comes near that (latitude, longitude,
@@ -262,7 +262,7 @@ impl serde::Serialize for JsNumber {
 /// assume this covers them.
 pub fn js_number_value(v: f64) -> Value {
     if !v.is_finite() {
-        // ⚠ `JSON.stringify(NaN)` is `null`, not `NaN` — which is not valid
+        // `JSON.stringify(NaN)` is `null`, not `NaN` — which is not valid
         // JSON — and not an error either.
         return Value::Null;
     }
@@ -284,24 +284,24 @@ pub fn js_number_opt(v: Option<f64>) -> Value {
 
 /// The decoded segments in the field order node writes them in.
 ///
-/// ⚠ `Lean.Json.mkObj` sorts its keys. The order `assembleSegmentsResult`
+/// `Lean.Json.mkObj` sorts its keys. The order `assembleSegmentsResult`
 /// spells (`startTs, endTs, mode, placeId, lineName, boardStation,
 /// alightStation`) does not survive; what comes back is alphabetical.
 ///
-/// ⚠ `decoded_days.segments_json` IS TEXT, and the only real check on this port
+/// `decoded_days.segments_json` is TEXT, and the only real check on this port
 /// is a diff against node's row. Left alone, every row would differ on key order
 /// for every day, and the diff could not tell "the decode changed" from "the
 /// keys moved". `jq` cannot rescue it either: it parses numbers to doubles
 /// (`25.0 == 25`) and cannot see an absent key against an explicit null — and
 /// both distinctions are live on this row.
 ///
-/// ⚠ ORDER IS A FORMAT CONCERN AND NOTHING ELSE IS DECIDED HERE. `stops_json` is
-/// rebuilt shell-side for exactly this reason. What the fields ARE stays
+/// Order is a format concern and nothing else is decided here. `stops_json` is
+/// rebuilt shell-side for exactly this reason. What the fields are stays
 /// in Lean; an unknown key would be a Lean change this has not been told about,
 /// so it is carried through rather than dropped.
 pub fn render_segments(segments: &Value) -> Result<Value> {
-    // ⚠ ABSENT AND NULL ARE BOTH REAL AND THEY ARE DIFFERENT. `boardStation` is
-    // ABSENT on a segment the chain never reached and NULL on a resolved side it
+    // Absent and NULL are both real and they are different. `boardStation` is
+    // absent on a segment the chain never reached and NULL on a resolved side it
     // could not separate — "wrong is worse than missing". Inserting a null for
     // the absent case would erase the distinction node's rows carry.
     const ORDER: [&str; 7] = [

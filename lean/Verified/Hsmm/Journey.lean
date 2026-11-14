@@ -12,8 +12,8 @@ and one forward sweep from `s0` yields it for every end before `s0 + maxJ`.
 duration cell reads; `legsOf` re-runs one window with back-pointers for the
 decoded journey's legs. Unproved as code; its specification is `bestEnd`.
 
-A leg is a BASE state of the outer model (a walk, a line) or, for S2, a line
-WITH ITS BOARD STATION: `train L from σ`. Such a leg shares its base's
+A leg is a base state of the outer model (a walk, a line) or, for S2, a line
+with its board station: `train L from σ`. Such a leg shares its base's
 emissions, entry and transitions, may begin only at a minute the fixes put
 within reach of σ (`reachStarts`), and prices its length by the along-line
 path from σ to the station the fixes put the ride's end at (`expectedMin`),

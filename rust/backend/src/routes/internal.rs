@@ -3,18 +3,18 @@
 //! Not part of `/api`: no session, no cookie. The caller passes the target
 //! `?user=` and proves itself with a shared secret in `X-Service-Token`.
 //!
-//! ⚠ AN EMPTY TOKEN LIST REJECTS EVERYTHING, and that is the default. This
+//! ⚠ an empty token list rejects everything, and that is the default. This
 //! surface hands out another person's mined places and their recovery history,
 //! so "no secret configured" must mean off rather than open.
 //!
-//! # What this deliberately does NOT answer
+//! # What this deliberately does not answer
 //!
-//! ⚠ There is no readiness score here and there must not be. health does not
+//! There is no readiness score here and there must not be. health does not
 //! know what readiness means; coach composes it from these raw numbers. If both
 //! scored it they would drift on what a bad day is, and the athlete would be
 //! told two different things by two apps reading the same nights.
 //!
-//! # Why a PAST morning is anyone's business
+//! # Why a past morning is anyone's business
 //!
 //! Coach's prediction-error ledger judges each logged session against what it
 //! asked that day, and it asks for less when the athlete was under-recovered.
@@ -104,7 +104,7 @@ struct Place {
     last_seen_ts: Option<i64>,
 }
 
-/// ⚠ DECIMAL centroids and BIGINT dwell columns are coerced HERE, at the
+/// DECIMAL centroids and BIGINT dwell columns are coerced here, at the
 /// boundary, exactly once. `avgDwellSec` divides a BIGINT by a count, and doing
 /// that in SQL would round it to an integer before anyone saw the remainder.
 async fn load_places(st: &AppState, user_id: &str) -> anyhow::Result<Vec<Place>> {
@@ -124,8 +124,8 @@ async fn load_places(st: &AppState, user_id: &str) -> anyhow::Result<Vec<Place>>
         let total_dwell: i64 = r.try_get("total_dwell_sec")?;
         let visits: i64 = r.try_get("visit_count")?;
         out.push(Place {
-            // ⚠ UNSIGNED is a DISTINCT sqlx type — an unsigned column decoded
-            // as i64 is REJECTED by `Type::compatible` at runtime, not coerced.
+            // UNSIGNED is a distinct sqlx type — an unsigned column decoded
+            // as i64 is rejected by `Type::compatible` at runtime, not coerced.
             // The try-then-fallback this replaced would have worked and hidden
             // the fact that the first attempt always failed.
             id: r.try_get::<u64, _>("id")? as i64,
@@ -134,14 +134,14 @@ async fn load_places(st: &AppState, user_id: &str) -> anyhow::Result<Vec<Place>>
             amenity_kind: r.try_get("amenity_kind")?,
             lat: lat_s.parse()?,
             lon: lon_s.parse()?,
-            // ⚠ Zero visits is 0, not a division by zero.
+            // Zero visits is 0, not a division by zero.
             avg_dwell_sec: if visits > 0 {
                 total_dwell as f64 / visits as f64
             } else {
                 0.0
             },
             unique_days: r.try_get("unique_days")?,
-            // ⚠ Also UNSIGNED, and nullable — both halves matter.
+            // Also UNSIGNED, and nullable — both halves matter.
             last_seen_ts: r
                 .try_get::<Option<u64>, _>("last_seen_ts")?
                 .map(|v| v as i64),
@@ -182,7 +182,7 @@ async fn places_run(st: &AppState, user: &str) -> anyhow::Result<Vec<Value>> {
             "label": proj.label,
             "displayName": p.display_name,
             "amenityLabel": p.amenity_label,
-            // ⚠ `named` is not "has a label". A bare Stay has a label and is
+            // `named` is not "has a label". A bare Stay has a label and is
             // not named, because several Stays are indistinguishable in a
             // picker.
             "named": proj.named,
@@ -214,7 +214,7 @@ pub async fn place_current(
     match place_current_run(&st, &user).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => match e.downcast_ref::<NcError>() {
-            // ⚠ Not-linked is `null` with a 200: coach asks about users who may
+            // Not-linked is `null` with a 200: coach asks about users who may
             // never have connected Nextcloud, and that is not an error.
             Some(NcError::NotLinked) => Json(Value::Null).into_response(),
             Some(NcError::ReauthRequired) => (
@@ -245,7 +245,7 @@ async fn place_current_run(st: &AppState, user: &str) -> anyhow::Result<Value> {
         .unwrap_or_else(|| crate::classification_inputs::DAY_NEXTCLOUD_BASE_URL.to_string());
     let pt = crate::nextcloud::phonetrack::PhoneTrack::open(st.http.clone(), &st.pool, &base, user)
         .await?;
-    // ⚠ Yesterday too, so a fix just after midnight is not the only point in
+    // Yesterday too, so a fix just after midnight is not the only point in
     // the window — the same reason `/location/latest` widens it.
     let fetched = pt.fetch_range(&st.pool, &yesterday, &next).await?;
     let Some(last) = fetched.points.last() else {
@@ -306,7 +306,7 @@ async fn load_recovery(
     .bind(since)
     .fetch_all(&st.pool)
     .await?;
-    // ⚠ MAIN SLEEP ONLY. A nap counted as the night would drag the baseline
+    // Main sleep only. A nap counted as the night would drag the baseline
     // down and read as a bad night's sleep.
     let sleep_rows = sqlx::query(
         "SELECT date, minutes_asleep AS v FROM sleep \
@@ -335,7 +335,7 @@ async fn load_recovery(
     let mut sleep = Vec::with_capacity(sleep_rows.len());
     for r in &sleep_rows {
         let v: Option<i64> = r.try_get("v")?;
-        // ⚠ HOURS, not minutes — the field coach reads is `sleepHours`.
+        // Hours, not minutes — the field coach reads is `sleepHours`.
         sleep.push((date_of(r)?, v.map(|x| x as f64 / 60.0)));
     }
     Ok((hrv, rhr, sleep))
@@ -348,7 +348,7 @@ fn stat_json(s: Option<lean::Stat>) -> Value {
             "latest": row_json::js_number_value(s.latest),
             "mean": row_json::js_number_value(s.mean),
             "sd": row_json::js_number_value(s.sd),
-            // ⚠ `n` is how a caller knows whether to trust a z-score at all.
+            // `n` is how a caller knows whether to trust a z-score at all.
             // With one reading it is 0 and the mean is that reading.
             "n": s.n,
         }),
@@ -410,7 +410,7 @@ pub async fn recovery_history(
     let (Some(from), Some(to)) = (p.from.as_deref(), p.to.as_deref()) else {
         return bad_request("from and to required (YYYY-MM-DD)");
     };
-    // ⚠ REFUSED, not truncated. Answering a decade-wide request with 400 days
+    // Refused, not truncated. Answering a decade-wide request with 400 days
     // would look complete to a caller who asked for more.
     match lean::recovery_span_ok(from, to) {
         Ok(false) => return bad_request("range is backwards, malformed, or wider than 400 days"),
@@ -429,7 +429,7 @@ async fn recovery_history_run(
     from: &str,
     to: &str,
 ) -> anyhow::Result<Vec<Value>> {
-    // ⚠ Reaches a baseline further back than the RANGE does: every day in it
+    // Reaches a baseline further back than the range does: every day in it
     // needs a full 28 days behind it, or the earliest days would be judged
     // against a baseline that thins out towards the start.
     let floor = lean::earliest_visible(from, 28, None)?

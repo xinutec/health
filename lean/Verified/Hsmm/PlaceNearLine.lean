@@ -4,11 +4,11 @@ import Verified.Geo.OsmSpatial
 # Is this place within walking distance of that line?
 
 The decoder's hard constraint on place→line transitions. `buildTransitionMatrix`
-HARD-ZEROES a transition from focus place P to train line L when P is not near a
+hard-zeroes a transition from focus place P to train line L when P is not near a
 station on L — you cannot board the Central Line from a flat two miles from any
 Central Line station, and without this the trellis is free to say you did.
 
-## ⚠ AN ABSENT `placeNearLine` IS NOT A SOFTER CONSTRAINT — IT IS A DIFFERENT ONE
+## ⚠ an absent `placeNearLine` is not a softer constraint — it is a different one
 
 `parseAssemble` reads it as optional, and an absent one is the empty set, which
 reads to the transition matrix as "no place is near any line". That removes
@@ -27,7 +27,7 @@ open Verified.Geo.OsmSpatial (haversineAt LEAN_EARTH_R)
 
 /-- Walking distance to a station, in metres.
 
-⚠ 400 m, and NOT the 300 m of {@link Verified.Geo.LineStations.MAX_DIST_M}.
+400 m, and not the 300 m of {@link Verified.Geo.LineStations.MAX_DIST_M}.
 The two measure different things: that one asks whether a station sits on a
 line's track, this one asks whether a person would walk from their flat to the
 station. A shared constant would make one of the two wrong. -/
@@ -46,21 +46,21 @@ structure Station where
   lon : Float
   deriving Repr, Inhabited, BEq
 
-/-- ⚠ Haversine, at `LEAN_EARTH_R` (6 371 000 m). The equirectangular
+/-- Haversine, at `LEAN_EARTH_R` (6 371 000 m). The equirectangular
 approximation `Verified.Geo.LineStations` uses is fine for its purpose and is
 not this one:
 at 400 m the two disagree by little, but "little" is all it takes to move a
-place across a threshold that HARD-ZEROES a transition. -/
+place across a threshold that hard-zeroes a transition. -/
 def distM (p : Place) (s : Station) : Float :=
   haversineAt LEAN_EARTH_R p.lat p.lon s.lat s.lon
 
-/-- Is this place within walking distance of ANY station on the line? -/
+/-- Is this place within walking distance of any station on the line? -/
 def nearAnyStation (p : Place) (stations : Array Station) : Bool :=
   stations.any (fun s => distM p s ≤ WALK_DIST_M)
 
 /-- The `"{placeId}|{lineName}"` keys for one line.
 
-⚠ A line with no stations contributes nothing. It reads the same as a line
+A line with no stations contributes nothing. It reads the same as a line
 every place is far from, and it must: an OSM gap is not evidence that nobody
 lives near the Piccadilly Line. -/
 def pairsForLine (places : Array Place) (line : String) (stations : Array Station)
@@ -71,7 +71,7 @@ def pairsForLine (places : Array Place) (line : String) (stations : Array Statio
 /-- Every place/line pair within walking distance, over all the lines the shell
 resolved stations for.
 
-⚠ Lines outer, places inner, so the emitted order is stable. The consumer builds
+Lines outer, places inner, so the emitted order is stable. The consumer builds
 a set from it, so order cannot change a decode; a diff reads far more easily
 when it is stable. -/
 def buildPlaceNearLine (places : Array Place) (lines : Array (String × Array Station))
@@ -88,10 +88,10 @@ private def S (lat lon : Float) : Station := ⟨lat, lon⟩
 -- itself measures, so they pin the formula rather than a conversion.
 #guard (distM (P 1 51.5 (-0.1)) (S 51.5 (-0.1))) == 0.0
 
--- ⚠ THE BOUNDARY IS PINNED FROM BOTH SIDES, roughly a metre apart. A rule
+-- The boundary is pinned from both sides, roughly a metre apart. A rule
 -- tested only from the far side passes with the comparison reversed.
 --
--- ⚠ The `≤` versus `<` of `WALK_DIST_M` itself is not pinned, and claiming it
+-- The `≤` versus `<` of `WALK_DIST_M` itself is not pinned, and claiming it
 -- were would be false precision: no pair of coordinates lands a haversine on
 -- exactly 400.0, so the two comparisons are indistinguishable by any guard.
 #guard (distM (P 1 51.5 0) (S 51.50359 0) - 399.189787).abs < 1e-5   -- inside
@@ -99,19 +99,19 @@ private def S (lat lon : Float) : Station := ⟨lat, lon⟩
 #guard nearAnyStation (P 1 51.5 0) #[S 51.50359 0]
 #guard !nearAnyStation (P 1 51.5 0) #[S 51.50360 0]
 
--- ANY station is enough: the first far one must not decide the answer.
+-- Any station is enough: the first far one must not decide the answer.
 #guard nearAnyStation (P 1 51.5 0) #[S 52.9 0, S 51.5 0]
 #guard !nearAnyStation (P 1 51.5 0) #[S 52.9 0, S 50.1 0]
 
--- ⚠ NO STATIONS IS NO PAIRS, not "near nothing" and not an error.
+-- No stations is no pairs, not "near nothing" and not an error.
 #guard (pairsForLine #[P 1 51.5 0] "Central Line" #[]).isEmpty
 #guard (pairsForLine #[] "Central Line" #[S 51.5 0]).isEmpty
 
 -- The key is `id|line`, and the id renders as a bare integer.
 #guard pairsForLine #[P 42 51.5 0] "Central Line" #[S 51.5 0] == #["42|Central Line"]
 
--- ⚠ A PLACE APPEARS ONCE PER LINE IT IS NEAR, and lines it is far from leave no
--- key at all — the absence IS the hard zero.
+-- A place appears once per line it is near, and lines it is far from leave no
+-- key at all — the absence is the hard zero.
 #guard buildPlaceNearLine #[P 1 51.5 0, P 2 52.9 0]
         #[("Central Line", #[S 51.5 0]), ("Circle Line", #[S 52.9 0])]
       == #["1|Central Line", "2|Circle Line"]

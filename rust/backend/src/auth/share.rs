@@ -1,11 +1,11 @@
 //! Auth by share token — the read-only path a forwarded link takes.
 //!
-//! A recipient sends `X-Share-Token`. If it matches a row, the request runs AS
-//! THE OWNER with a date window attached, and everything downstream sees an
+//! A recipient sends `X-Share-Token`. If it matches a row, the request runs as
+//! the owner with a date window attached, and everything downstream sees an
 //! ordinary session. What stops it being a full login is
 //! `Verified.Session.mayProceed`, which refuses any non-GET.
 //!
-//! # ⚠ Every failure here means NO SESSION, never a session with no window
+//! # ⚠ Every failure here means no session, never a session with no window
 //!
 //! An absent token, an unknown token, a revoked one, a `days_back` of zero: all
 //! of them leave the request unauthenticated, and the caller's own "is there a
@@ -39,7 +39,7 @@ pub async fn by_token(pool: &MySqlPool, token: &str) -> Result<Option<ShareRow>>
     let Some(row) = row else {
         return Ok(None);
     };
-    // ⚠ Errors rather than defaulting. A `days_back` that silently became 0
+    // Errors rather than defaulting. A `days_back` that silently became 0
     // would read as "share disabled" and lock the recipient out of a working
     // link; one that became 7 would invent a window nobody granted.
     Ok(Some(ShareRow {
@@ -54,7 +54,7 @@ pub async fn by_token(pool: &MySqlPool, token: &str) -> Result<Option<ShareRow>>
 /// Note that a link was used. Best-effort by design: a failed bookkeeping write
 /// must not fail the read it accompanies.
 ///
-/// ⚠ Returns the error rather than swallowing it, so the caller decides to
+/// Returns the error rather than swallowing it, so the caller decides to
 /// ignore it. A function that swallows its own failure cannot be tested for
 /// having tried.
 pub async fn touch_last_accessed(pool: &MySqlPool, token: &str) -> Result<()> {
@@ -78,7 +78,7 @@ pub async fn touch_last_accessed(pool: &MySqlPool, token: &str) -> Result<()> {
 /// the viewer's zone — the same argument `Verified.VelocityCache` needs and for
 /// the same reason: Lean has no zone database.
 ///
-/// ⚠ The display name is the owner's user id. The frontend prefixes "Shared
+/// The display name is the owner's user id. The frontend prefixes "Shared
 /// with you"; the backend does not pretend the recipient is someone else.
 pub async fn resolve(pool: &MySqlPool, token: &str, today: &str) -> Result<Option<UserSession>> {
     let Some(row) = by_token(pool, token).await? else {

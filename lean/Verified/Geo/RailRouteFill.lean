@@ -4,33 +4,33 @@ import Verified.Fix
 
 A train leg is drawn on rails only when its `<board> → <alight>[ · <line>]` label
 has a row in `rail_route_cache`. The nightly job computes those from history, so
-a key first ridden TODAY draws raw until tomorrow. `unsnappedTrainRoutes` is the
+a key first ridden today draws raw until tomorrow. `unsnappedTrainRoutes` is the
 scan that closes the gap from the serving path: it names the legs a background
 worker should fill, and nothing else.
 
-Only the SCAN is here. Computing the geometry is `computeRailRoute`, which is
+Only the scan is here. Computing the geometry is `computeRailRoute`, which is
 two OSM corridor queries and a snapper — shell work, and it stays shell.
 
 ## The clauses, each of which fails silently if it is wrong
 
-* **`refinedMode ?? mode`** — the refined mode decides, in BOTH directions. A leg
+* `refinedMode ?? mode` — the refined mode decides, in both directions. A leg
   refined away from train is not a candidate; one refined into train is.
-* **no label, no candidate** — the label IS the cache key.
-* **already snapped, no candidate** — it is on rails already, and re-filling
+* no label, no candidate — the label is the cache key.
+* already snapped, no candidate — it is on rails already, and re-filling
   would recompute a row the nightly job owns with better evidence.
-* **the fix window is INCLUSIVE at both ends.**
-* **legs sharing a key POOL their fixes.** The same route ridden twice in a day
+* the fix window is inclusive at both ends.
+* legs sharing a key pool their fixes. The same route ridden twice in a day
   is one route.
 
-⚠ **The retained window is the first leg's, not the union.** A second leg
+The retained window is the first leg's, not the union. A second leg
 contributes its fixes and discards its own `[startTs, endTs]`, deliberately:
 the window is what the snapper reads as the leg to lay on the corridor, and a
 union spanning two separate rides would name a journey nobody took.
 
-⚠ **Order is the order the day was walked**, not sorted by key or by time. The
+Order is the order the day was walked, not sorted by key or by time. The
 queue is drained in this order, so a change here reorders the fills.
 
-⚠ **A leg with NO fixes in its window is still a candidate.** The label is the
+A leg with no fixes in its window is still a candidate. The label is the
 cache key, and thin or absent corridor evidence is `computeRailRoute`'s problem —
 it refuses rather than guessing. Dropping such a leg here would silently
 withdraw the one thing that could still route it from the line fallback.
@@ -48,7 +48,7 @@ structure FillSegment where
   startTs : Int
   endTs : Int
   wayName : Option String := none
-  /-- Whether the leg already carries a snapped path. The PATH itself is not
+  /-- Whether the leg already carries a snapped path. The path itself is not
   needed — only whether there is one — so it does not cross the wire. -/
   hasSnappedPath : Bool := false
   deriving Repr, Inhabited
@@ -126,7 +126,7 @@ private def shape (cs : List Candidate) : List (String × Int × Int × Nat) :=
 #guard shape (unsnappedTrainRoutes [seg (some "A → B · L") 100 200] PTS)
   == [("A → B · L", 100, 200, 3)]
 #guard shape (unsnappedTrainRoutes [seg (some "A → B") 100 200 "walk"] PTS) == []
--- ⚠ The REFINED mode decides, in both directions.
+-- The refined mode decides, in both directions.
 #guard shape (unsnappedTrainRoutes [seg (some "A → B") 100 200 "train" (some "car")] PTS) == []
 #guard shape (unsnappedTrainRoutes [seg (some "A → B") 100 200 "car" (some "train")] PTS)
   == [("A → B", 100, 200, 3)]
@@ -134,10 +134,10 @@ private def shape (cs : List Candidate) : List (String × Int × Int × Nat) :=
 #guard shape (unsnappedTrainRoutes [seg none 100 200] PTS) == []
 -- Already drawn on rails.
 #guard shape (unsnappedTrainRoutes [seg (some "A → B") 100 200 "train" none true] PTS) == []
--- ⚠ Inclusive at both ends: ts 100 and ts 200 are both inside [100, 200].
+-- Inclusive at both ends: ts 100 and ts 200 are both inside [100, 200].
 #guard shape (unsnappedTrainRoutes [seg (some "A → B") 100 200] PTS)
   == [("A → B", 100, 200, 3)]
--- ⚠ Two legs, one key: fixes POOL (3 + 2 = 5) and the FIRST window is kept.
+-- Two legs, one key: fixes pool (3 + 2 = 5) and the first window is kept.
 #guard shape (unsnappedTrainRoutes
   [seg (some "A → B") 100 200, seg (some "A → B") 300 400] PTS)
   == [("A → B", 100, 200, 5)]
@@ -145,7 +145,7 @@ private def shape (cs : List Candidate) : List (String × Int × Int × Nat) :=
 #guard shape (unsnappedTrainRoutes
   [seg (some "B → C") 300 400, seg (some "A → B") 100 200] PTS)
   == [("B → C", 300, 400, 2), ("A → B", 100, 200, 3)]
--- ⚠ A window with no fixes is still a candidate — the line fallback may route it.
+-- A window with no fixes is still a candidate — the line fallback may route it.
 #guard shape (unsnappedTrainRoutes [seg (some "A → B") 900 950] PTS)
   == [("A → B", 900, 950, 0)]
 #guard shape (unsnappedTrainRoutes [] PTS) == []

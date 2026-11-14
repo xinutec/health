@@ -5,12 +5,12 @@ import Verified.Civil
 `/internal/recovery` answers another service — coach — with three daily streams
 and, for each, the freshest value plus the baseline it should be judged against.
 
-⚠ DELIBERATELY UNOPINIONATED. There is no readiness score here and there must
+Deliberately unopinionated. There is no readiness score here and there must
 not be: health does not know what readiness means, and coach owns that judgment.
 If both apps scored it they would drift on what a bad day is, and the athlete
 would be told two different things.
 
-## Why a PAST morning is anyone's business
+## Why a past morning is anyone's business
 
 Coach's prediction-error ledger judges each logged session against what it asked
 that day, and it asks for less when the athlete was under-recovered. Without
@@ -21,12 +21,12 @@ is why `recoveryAsOf` takes the day rather than assuming today.
 
 ## The empty-baseline case is not zero
 
-⚠ With one reading and nothing behind it, the baseline mean is THE READING
-ITSELF and `n` is 0 — not a mean of zero. A zero mean would make the first
+With one reading and nothing behind it, the baseline mean is the reading
+itself and `n` is 0 — not a mean of zero. A zero mean would make the first
 reading look enormously above baseline; this way any z-score the caller computes
 is 0, which is the honest "no information yet". `n` is what tells them so.
 
-⚠ The variance divides by `n`, not `n - 1`: this is the population of days
+The variance divides by `n`, not `n - 1`: this is the population of days
 observed, not a sample drawn from a larger one.
 
 Pure and total. UNPROVEN.
@@ -38,11 +38,11 @@ def BASELINE_DAYS : Int := 28
 
 /-- Widest range `/recovery/history` will answer in one call.
 
-⚠ A refusal, not a truncation. Answering a 10-year request with 400 days would
+A refusal, not a truncation. Answering a 10-year request with 400 days would
 look like a complete answer to a caller who asked for more. -/
 def MAX_SPAN_DAYS : Int := 400
 
-/-- One day's reading. `none` is a no-wear night, which is DROPPED rather than
+/-- One day's reading. `none` is a no-wear night, which is dropped rather than
 treated as zero — a missing night is not a night of no sleep. -/
 structure Daily where
   date : String
@@ -60,7 +60,7 @@ structure Stat where
 private def sortByDate (xs : List (String × Float)) : List (String × Float) :=
   xs.mergeSort (fun a b => a.1 ≤ b.1)
 
-/-- The latest reading and the mean/sd of the days BEFORE it.
+/-- The latest reading and the mean/sd of the days before it.
 
 `none` when the series has no readings at all. -/
 def latestAndBaseline (series : List Daily) : Option Stat :=
@@ -71,7 +71,7 @@ def latestAndBaseline (series : List Daily) : Option Stat :=
   | some (_, latest) =>
     let base := (clean.dropLast).map (·.2)
     if base.isEmpty then
-      -- ⚠ mean = latest, n = 0. See the module note.
+      -- mean = latest, n = 0. See the module note.
       some { latest, mean := latest, sd := 0.0, n := 0 }
     else
       let n := base.length
@@ -81,7 +81,7 @@ def latestAndBaseline (series : List Daily) : Option Stat :=
 
 /-- The readings on or before `day`, no older than the baseline window.
 
-⚠ Both ends matter. Without the upper bound a query about a past morning would
+Both ends matter. Without the upper bound a query about a past morning would
 see the future; without the lower bound the baseline would creep wider the
 longer the account has existed, and an old reading would quietly still count. -/
 def withinBaseline (series : List Daily) (day : String) : List Daily :=
@@ -111,13 +111,13 @@ private def gap (date : String) : Daily := { date, value := none }
 #guard (latestAndBaseline []).isNone
 #guard (latestAndBaseline [gap "2026-08-01"]).isNone
 
--- ⚠ ONE reading: the baseline is itself, and n says there is no information.
+-- One reading: the baseline is itself, and n says there is no information.
 #guard (latestAndBaseline [d "2026-08-01" 50.0]).map (·.latest) == some 50.0
 #guard (latestAndBaseline [d "2026-08-01" 50.0]).map (·.mean) == some 50.0
 #guard (latestAndBaseline [d "2026-08-01" 50.0]).map (·.sd) == some 0.0
 #guard (latestAndBaseline [d "2026-08-01" 50.0]).map (·.n) == some 0
 
--- The latest is by DATE, not by position in the list.
+-- The latest is by date, not by position in the list.
 #guard (latestAndBaseline [d "2026-08-03" 30.0, d "2026-08-01" 10.0, d "2026-08-02" 20.0]).map (·.latest)
        == some 30.0
 #guard (latestAndBaseline [d "2026-08-03" 30.0, d "2026-08-01" 10.0, d "2026-08-02" 20.0]).map (·.mean)
@@ -137,12 +137,12 @@ private def gap (date : String) : Daily := { date, value := none }
 #guard (withinBaseline [d "2026-08-22" 1.0] "2026-08-22").length == 1
 #guard (withinBaseline [d "2026-07-25" 1.0] "2026-08-22").length == 1
 #guard (withinBaseline [d "2026-07-24" 1.0] "2026-08-22").length == 0
--- ⚠ The FUTURE is excluded: a question about a past morning must not see it.
+-- The future is excluded: a question about a past morning must not see it.
 #guard (withinBaseline [d "2026-08-23" 1.0] "2026-08-22").length == 0
 
 #guard spanIsAnswerable "2026-08-01" "2026-08-22" == true
 #guard spanIsAnswerable "2026-08-22" "2026-08-22" == true
--- ⚠ Backwards is refused, not silently swapped.
+-- Backwards is refused, not silently swapped.
 #guard spanIsAnswerable "2026-08-22" "2026-08-01" == false
 #guard spanIsAnswerable "2025-01-01" "2026-08-22" == false
 #guard spanIsAnswerable "not-a-date" "2026-08-22" == false

@@ -3,7 +3,7 @@ import Verified.FloatConst
 # Local OSM mirror coverage
 
 The gate in front of every OSM lookup. `covered` means the local mirror has
-already been filled for this area and a spatial query over it is an ANSWER;
+already been filled for this area and a spatial query over it is an answer;
 `needsFetch` means nobody has fetched here, and the same query would return
 nothing while looking exactly like an area with no roads in it.
 
@@ -13,14 +13,14 @@ and the first is a claim.
 
 Five rules, each small and each easy to get silently wrong:
 
-* the search CIRCLE is approximated by its bounding box, conservatively — at the
+* the search circle is approximated by its bounding box, conservatively — at the
   corners the box is larger than the circle, which only over-demands coverage;
-* ONE row must contain the whole box. Two rows that jointly cover it do not
+* one row must contain the whole box. Two rows that jointly cover it do not
   count: there is no union logic, and adding some would change the answer;
-* boxes are INCLUSIVE at both ends;
-* a row older than `COVERAGE_FRESH_DAYS` is dropped BEFORE the containment
+* boxes are inclusive at both ends;
+* a row older than `COVERAGE_FRESH_DAYS` is dropped before the containment
   check, so a stale row cannot suppress a refresh;
-* a row with no `fetchedAt` is FRESH, not stale — legacy data from before
+* a row with no `fetchedAt` is fresh, not stale — legacy data from before
   tracking. Treating it as stale would re-fetch the whole mirror.
 
 `hasLocalData` short-circuits all of it, staleness included. That is a
@@ -41,7 +41,7 @@ reaches a box edge and never a coordinate. UNPROVEN; pinned by the `#guard`s.
 
 namespace Verified.Geo.OsmCoverage
 
-/-- One degree of latitude, in metres, everywhere. Deliberately NOT the
+/-- One degree of latitude, in metres, everywhere. Deliberately not the
 `111_320` the Kalman filter uses: this module's own constant is `111_000`, and
 sharing one would change which queries count as covered. -/
 def METERS_PER_DEG_LAT : Float := 111000
@@ -67,7 +67,7 @@ structure CoverageRow where
   fetchedAt : Option Int := none
   deriving Repr, Inhabited
 
-/-- Is the search circle around `(lat, lon)` fully inside SOME single row? -/
+/-- Is the search circle around `(lat, lon)` fully inside some single row? -/
 def isPointCovered (lat lon radiusM : Float) (coverage : List CoverageRow) : Bool :=
   let dLat := radiusM / METERS_PER_DEG_LAT
   let dLon := radiusM / metersPerDegLon lat
@@ -80,8 +80,8 @@ def isPointCovered (lat lon radiusM : Float) (coverage : List CoverageRow) : Boo
 
 /-- `true` = covered, `false` = needs a fetch.
 
-⚠ The staleness filter runs BEFORE containment, not after. A stale row that
-happens to contain the box must NOT report covered, or the area never refreshes.
+The staleness filter runs before containment, not after. A stale row that
+happens to contain the box must not report covered, or the area never refreshes.
 -/
 def decideCoverage
     (lat lon radiusM : Float) (coverage : List CoverageRow)
@@ -118,7 +118,7 @@ private def west : CoverageRow :=
 private def east : CoverageRow :=
   { minLat := 51.0, maxLat := 52.0, minLon := -0.1, maxLon := 1.0, fetchedAt := some (NOW - day) }
 
--- `hasLocalData` short-circuits an EMPTY coverage list, and a STALE row.
+-- `hasLocalData` short-circuits an empty coverage list, and a stale row.
 #guard decideCoverage 51.5 (-0.1) 500 [] NOW true == true
 #guard decideCoverage 51.5 (-0.1) 500 [staleRow] NOW true == true
 -- No rows at all.
@@ -129,7 +129,7 @@ private def east : CoverageRow :=
 #guard decideCoverage 51.5 (-0.1) 500 [legacy] NOW == true
 -- A radius that pokes outside the row.
 #guard decideCoverage 51.5 (-0.1) 500000 [big] NOW == false
--- ⚠ Two rows that JOINTLY cover the box, neither alone. There is no union.
+-- Two rows that jointly cover the box, neither alone. There is no union.
 #guard decideCoverage 51.5 (-0.1) 500 [west, east] NOW == false
 -- A row exactly equal to the search bbox: inclusive at both ends.
 #guard decideCoverage 51.5 (-0.1) 500 [exactRow] NOW == true

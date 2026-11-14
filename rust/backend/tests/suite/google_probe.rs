@@ -1,4 +1,4 @@
-//! The probe's only pure part: does it report SHAPE and never a value?
+//! The probe's only pure part: does it report shape and never a value?
 
 use backend::google::probe::shape_of;
 
@@ -35,14 +35,14 @@ fn array_reports_its_elements_shape() {
     );
 }
 
-/// ⚠ **THE TYPE IS THE POINT, AND A QUOTED NUMBER MUST SAY `string`.**
+/// The type is the point, and a quoted number must say `string`.
 ///
 /// A path alone cannot tell `62` from `"62"`, and `as_f64()` drops the second
 /// exactly like an absent field — which is how 1258 real
 /// `dailyRestingHeartRate.beatsPerMinute` points reported as `google 0 days`,
 /// i.e. as "Google does not carry resting heart rate".
 ///
-/// ⚠ The two fields here differ in type inside ONE object, which is the shape
+/// The two fields here differ in type inside one object, which is the shape
 /// the live API actually returns: `date.year` is a number while
 /// `beatsPerMinute` beside it is a string. A per-stream assumption cannot
 /// express that.
@@ -60,7 +60,7 @@ fn a_quoted_number_reports_as_a_string_not_a_number() {
     );
 }
 
-/// ⚠ Naming the type must NOT start naming the value — the readout still goes
+/// Naming the type must not start naming the value — the readout still goes
 /// to a pod log.
 #[test]
 fn the_type_annotation_leaks_no_reading() {
@@ -70,7 +70,7 @@ fn the_type_annotation_leaks_no_reading() {
     assert!(!joined.contains("resting"), "a value leaked: {joined}");
 }
 
-/// ⚠ An empty array must be DISTINGUISHABLE from an absent field. "the type
+/// An empty array must be distinguishable from an absent field. "the type
 /// exists but carried nothing" and "the type does not have this field" are
 /// different answers to the migration question, and a readout that renders both
 /// as silence cannot be acted on.
@@ -80,7 +80,7 @@ fn an_empty_array_is_not_silence() {
     assert_eq!(shape_of(&v), vec!["stages[] (empty)".to_string()]);
 }
 
-/// A date is found by SHAPE, wherever the type happens to nest it — each type
+/// A date is found by shape, wherever the type happens to nest it — each type
 /// uses its own key, so a path table would be a list of guesses.
 #[test]
 fn finds_a_date_under_any_key() {
@@ -91,7 +91,7 @@ fn finds_a_date_under_any_key() {
     assert_eq!(date_of(&v), Some("2022-04-08".to_string()));
 }
 
-/// ⚠ Zero-padded. `2022-4-8` sorts before `2022-12-01` as a string and would
+/// Zero-padded. `Y-4-8` sorts after `Y-12-01` as a string and would
 /// misreport which end of the series is the oldest.
 #[test]
 fn a_date_is_zero_padded() {

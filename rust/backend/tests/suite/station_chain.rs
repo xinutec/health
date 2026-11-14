@@ -8,13 +8,13 @@
 //! what the resolver decides, including the case where it decides to say
 //! nothing.
 //!
-//! # The geography is INVENTED, and small on purpose
+//! # The geography is invented, and small on purpose
 //!
 //! One straight line, two or three halts on it. A synthetic corridor makes each
 //! refusal below unambiguous — on a real graph, "no resolution" could always be
 //! the fixture failing to build rather than the rule firing.
 //!
-//! ⚠ ONE `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
+//! One `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
 //! starts a runtime and several tests racing on it would flake.
 
 use serde_json::{Value, json};
@@ -83,14 +83,14 @@ fn resolve(req: &Value) -> Vec<Value> {
 fn the_chain_resolves_a_ride_and_refuses_what_it_cannot_tell_apart() {
     backend::lean::init().expect("the Lean runtime must start");
 
-    // ── 1. A ride between two halts resolves BOTH ends ──────────────────────
+    // ── 1. A ride between two halts resolves both ends ──────────────────────
     let got = resolve(&request(two_halts(), vec![train_leg()], all_obs()));
     assert_eq!(got.len(), 1, "one leg in, one resolution out: {got:?}");
     assert_eq!(got[0][0], 0, "the resolution carries its segment index");
     assert_eq!(got[0][1], "Alpha Halt", "board");
     assert_eq!(got[0][2], "Beta Halt", "alight");
 
-    // ── 2. TWO PLAUSIBLE ALIGHTS AND IT REFUSES TO GUESS ────────────────────
+    // ── 2. Two plausible alights and it refuses to guess ────────────────────
     // A third halt ~65 m from the far end. The margin between the two alight
     // candidates no longer clears, so the alight comes back NULL while the
     // board — still unambiguous — resolves. This is the whole point of the
@@ -111,7 +111,7 @@ fn the_chain_resolves_a_ride_and_refuses_what_it_cannot_tell_apart() {
     );
 
     // ── 3. The four ways a segment is not a ride at all ─────────────────────
-    // Each differs from the resolving baseline in ONE field.
+    // Each differs from the resolving baseline in one field.
     for (why, seg) in [
         (
             "a walk is not a ride",
@@ -128,7 +128,7 @@ fn the_chain_resolves_a_ride_and_refuses_what_it_cannot_tell_apart() {
             json!({ "mode": "train",
             "startTs": START, "endTs": START + 11 * 60 }),
         ),
-        // ⚠ The endpoints are looked up BY TIMESTAMP in the observation rows
+        // The endpoints are looked up by TIMESTAMP in the observation rows
         // (`startTs`, and `endTs - 60`). A leg whose ends fall between rows has
         // no pair and is skipped — silently, which is why it is pinned here.
         (

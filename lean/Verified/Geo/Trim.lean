@@ -239,7 +239,7 @@ theorem trimRebuild_sublist (nearLe : π → π → Bool) (path : Nat → π)
   termination_by i _ _ _ _ _ => n - i
   decreasing_by all_goals omega
 
-/-- **Trim is drop-only**: the output is a subsequence of the path. -/
+/-- Trim is drop-only: the output is a subsequence of the path. -/
 theorem trim_sublist (P : TrimP) (pd : π → π → Nat)
     (projD : π → π → π → Nat) (arcPos : π → π → π → Int → Int → Int)
     (nearLe : π → π → Bool) (fx : Nat → π) (nf : Nat) (path : Nat → π)

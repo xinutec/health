@@ -5,22 +5,22 @@ import Verified.Hsmm.FloatScore
 Which of the user's mined long-term clusters (`focus_places`) a stationary
 segment belongs to. `pickBestPlace` combines, in log-space:
 
-* **distance** — a Gaussian at the place's stored centroid. σ is the place's
-  empirical radius, floored by a tolerance the place has EARNED: the floor
+* distance — a Gaussian at the place's stored centroid. σ is the place's
+  empirical radius, floored by a tolerance the place has earned: the floor
   slides continuously from 40 m (seen on one day) toward 100 m (thoroughly
   established) as visit-days accumulate. No hard "established" step.
-* **visit frequency** — `log(uniqueDays + 1)`; log-linear, so a place visited
+* visit frequency — `log(uniqueDays + 1)`; log-linear, so a place visited
   500 times beats one visited 5 times by ~4.6, which ~3σ of distance evidence
   can still outweigh.
-* **time of day** — the stay's hour profile scored against the place's mined
+* time of day — the stay's hour profile scored against the place's mined
   one, re-centred so a uniform (or un-mined `none`) profile scores exactly 0.
   This separates co-located candidates a distance term cannot.
-* **magnetic anchoring** — inside a place's magnet radius AND with positive
+* magnetic anchoring — inside a place's magnet radius and with positive
   biometric coherence, a boost proportional to its magnet strength.
 
-Then two hard gates the priors cannot argue past: a **3σ centroid veto** (a
+Then two hard gates the priors cannot argue past: a 3σ centroid veto (a
 stay outside the cluster is not that cluster, however strong the priors — the
-Pizza-Union-as-Work bug), and an **absolute far-reach cap** that stops a
+Pizza-Union-as-Work bug), and an absolute far-reach cap that stops a
 place seen on a single day from claiming a stop 118 m away (the Wembley
 "Selekt Chicken" bug). The veto relaxes under magnet × coherence, but only
 within the magnet radius and never past 2× the base 3σ.
@@ -109,7 +109,7 @@ def hourProfileMatch (placeProfile : Option (List Float)) (stayProfile : List Fl
 /-- Magnet strength: bounded so Home does not drown out everything else. -/
 def magnetStrength (c : PlaceCandidate) : Float := Float.log (1 + c.uniqueDays)
 
-/-- Magnet radius: CONSTANT at 30 + 2·40 = 110 m. Reach answers "could GPS
+/-- Magnet radius: constant at 30 + 2·40 = 110 m. Reach answers "could GPS
     noise have put this stay here?", a property of the sensor, not of the
     place — so it does not scale with visit history.
 
@@ -145,7 +145,7 @@ def scorePlaceForSegment (c : PlaceCandidate) (segLat segLon : Float)
 Pick the `focus_place` with the highest posterior, or `none` when the best is
 below the floor (typically: everything is too far away).
 
-The distance veto runs BEFORE the argmax, so a closer in-cluster candidate
+The distance veto runs before the argmax, so a closer in-cluster candidate
 still wins when a far one would otherwise have topped the list.
 -/
 def pickBestPlace (candidates : List PlaceCandidate) (segLat segLon : Float)
@@ -157,7 +157,7 @@ def pickBestPlace (candidates : List PlaceCandidate) (segLat segLon : Float)
   for c in candidates do
     let s := scorePlaceForSegment c segLat segLon stayHourProfile biometricCoherence
     let dist := haversineMeters c.centroidLat c.centroidLon segLat segLon
-    -- Veto relaxation under magnet × coherence. The candidate must ALSO sit
+    -- Veto relaxation under magnet × coherence. The candidate must also sit
     -- within its own magnet radius: outside it the magnet contributes nothing
     -- anyway, so relaxing there would let a heavily-visited place steal a stay
     -- hundreds of metres away.
@@ -288,7 +288,7 @@ boost. -/
 private def nearSparse : PlaceCandidate := C 1 (north 24) LON 25 4 (some DAYTIME)
 private def farEstablished : PlaceCandidate := C 2 (north 205) LON 25 31 (some DAYTIME)
 
--- THE FIX, stated as an invariance: the far place is outside its magnet, so
+-- The fix, stated as an invariance: the far place is outside its magnet, so
 -- biometric coherence cannot move its score by any amount.
 #guard approx (scorePlaceForSegment farEstablished LAT LON DAYTIME (some 0)) 1.9924056837212474
 #guard approx (scorePlaceForSegment farEstablished LAT LON DAYTIME (some 1)) 1.9924056837212474
@@ -317,7 +317,7 @@ private def farEstablished : PlaceCandidate := C 2 (north 205) LON 25 31 (some D
 #guard approx (scorePlaceForSegment (C 4 LAT LON 25 30 (some UNIFORM)) LAT LON DAYTIME) 3.4339872044851472
 -- A stay profile of all zeros contributes nothing rather than dividing by it.
 #guard approx (scorePlaceForSegment work LAT LON ((List.range 24).map (fun _ => 0))) 4.7957905455967413
--- Magnet boost needs positive coherence AND being inside the radius (230 m here).
+-- Magnet boost needs positive coherence and being inside the radius (230 m here).
 #guard approx (scorePlaceForSegment work LAT LON DAYTIME (some 1)) 10.345882694906759
 #guard approx (scorePlaceForSegment work (north 100) LON DAYTIME (some 1)) 9.8470015465360934
 #guard approx (scorePlaceForSegment work (north 400) LON DAYTIME (some 1)) (-2.4320062245890641)
@@ -346,7 +346,7 @@ private def pickId (r : Option (PlaceCandidate × Float)) : Option Int := r.map 
 #guard pickId (pickBestPlace [C 6 LAT LON 25 2 (some EVENING)] (north 100) LON EVENING) == some 6
 -- A far established place must not steal a stay from a near one.
 #guard pickId (pickBestPlace [work, C 9 (north 400) LON 25 1 (some EVENING)] (north 400) LON EVENING) == some 9
--- Veto relaxation requires being INSIDE the magnet radius (230 m), so a
+-- Veto relaxation requires being inside the magnet radius (230 m), so a
 -- 320 m stay is vetoed even at maximal coherence.
 #guard (pickBestPlace [work] (north 320) LON DAYTIME (some 0)).isNone
 #guard (pickBestPlace [work] (north 320) LON DAYTIME (some 1)).isNone

@@ -1,7 +1,7 @@
 //! The mirrors' decisions, through the Lean FFI: which region, which tiles,
 //! whether to write, and the breaker.
 //!
-//! ⚠ NONE OF THESE ARE ARITHMETIC CHECKS. Each pins a decision that changes what
+//! None of these are arithmetic checks. Each pins a decision that changes what
 //! the cron does to production data — which city gets mirrored, and whether a
 //! bad run is allowed to replace a good cache.
 
@@ -19,7 +19,7 @@ const AMS: (f64, f64) = (52.3676, 4.9041);
 #[test]
 fn the_home_metro_wins_over_a_travel_cluster() {
     setup();
-    // Amsterdam is FIRST in the list and still loses: the home region is the
+    // Amsterdam is first in the list and still loses: the home region is the
     // largest, not the earliest. A user with one trip abroad must not have
     // their mirror pointed at the trip.
     let plan = lean::mirror_region(&[AMS, LDN, LDN2, LDN3], 80.0, 0.05, 1500.0)
@@ -47,7 +47,7 @@ fn no_places_is_nothing_to_mirror_not_an_error() {
 #[test]
 fn a_tiny_region_still_produces_at_least_one_tile() {
     setup();
-    // ⚠ A single focus place gives a degenerate box before the margin is added.
+    // A single focus place gives a degenerate box before the margin is added.
     // Zero tiles would mean the cron fetches nothing and reports success.
     let plan = lean::mirror_region(&[LDN], 80.0, 0.05, 1500.0)
         .unwrap()
@@ -71,7 +71,7 @@ fn tiles_cover_the_bbox_corner_to_corner() {
     assert!(near(last.max_lon, plan.bbox.max_lon));
 }
 
-/// ⚠ THE TILE KEY IS A ROW'S OWNER. Every bus row carries it, and a partial run
+/// The tile key is a row's owner. Every bus row carries it, and a partial run
 /// replaces only the keys that answered — so a change of precision here orphans
 /// every row already in the table.
 #[test]
@@ -85,24 +85,24 @@ fn the_tile_key_is_four_decimal_places_of_the_south_west_corner() {
     assert_eq!(tile_key(&t), "51.5235,-0.1235");
 }
 
-/// ⚠ A MOVED BBOX RENAMES EVERY TILE, and that is how a cache goes stale for
+/// A moved BBOX renames every tile, and that is how a cache goes stale for
 /// ever rather than for a night.
 ///
 /// The plan is derived from mined focus places, so the bbox is not a constant:
 /// it shifts when the places do. `tile_key` is the south-west corner, so a
-/// shifted origin produces a lattice with NO key in common with the old one —
-/// and the merge's per-tile `DELETE` only ever names keys from the CURRENT
+/// shifted origin produces a lattice with no key in common with the old one —
+/// and the merge's per-tile `DELETE` only ever names keys from the current
 /// plan. Rows under the old names are then unreachable by every future run.
 ///
-/// ⚠ Not hypothetical: nearly a third of production's `bus_route_cache` sat
+/// Not hypothetical: nearly a third of production's `bus_route_cache` sat
 /// under names no plan could emit, some from before the column existed and the
 /// rest under a band from a retired grid. The reader takes the table
 /// unfiltered, so all of them reached the bus matcher.
 ///
-/// ⚠ THE NUMBERS BELOW ARE SYNTHETIC, and must stay that way. The real grid is
+/// ⚠ the numbers below are synthetic, and must stay that way. The real grid is
 /// derived from mined focus places, so its corners describe where he actually
 /// goes — and this repository is public. The property under test needs A
-/// lattice and AN off-lattice key, never his.
+/// lattice and an off-lattice key, never his.
 #[test]
 fn shifting_the_bbox_renames_every_tile() {
     // A whole degree apart would be absurd; the real case is a shift of a few
@@ -129,7 +129,7 @@ fn shifting_the_bbox_renames_every_tile() {
         "the retired key must not be reachable from the live lattice: {planned:?}"
     );
 
-    // ⚠ AND THE NEAR MISS IS THE POINT. The longitudes differ by 0.0001 — one
+    // And the near miss is the point. The longitudes differ by 0.0001 — one
     // unit in the last place the key keeps — so the two names look identical at
     // a glance and share nothing as strings.
     assert_eq!(tile_key(&retired), "51.5876,-0.2001");
@@ -164,8 +164,8 @@ fn a_query_names_the_tile_and_the_right_route_types() {
         bus,
         "[out:json][timeout:180];relation[route=bus](51.5,-0.2,51.6,-0.1);out body;node(r);out body;"
     );
-    // ⚠ `node(r)` is what makes small tiles safe: a relation touching the tile
-    // comes back with its FULL stop list, so tiling finds routes rather than
+    // `node(r)` is what makes small tiles safe: a relation touching the tile
+    // comes back with its full stop list, so tiling finds routes rather than
     // clipping them.
     assert!(rail.contains("node(r)") && bus.contains("node(r)"));
 }
@@ -181,7 +181,7 @@ fn the_breaker_trips_on_a_burst_and_not_on_a_trickle() {
     }
     assert!(st.open, "three failures inside the window trip it");
 
-    // ⚠ A success while OPEN must not close it — the cooldown is the recovery
+    // A success while open must not close it — the cooldown is the recovery
     // window, and reopening on the first lucky response invites the storm back.
     let after = lean::breaker_step(&st, "success", t0 + 100).unwrap();
     assert!(after.open);

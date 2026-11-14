@@ -12,13 +12,13 @@ import Verified.Geo.Trim
 The corpus-probed representation (`lean/experiments/quant-probe.mjs`,
 173 walking legs / 31 golden days — see the proposal doc):
 
-- coordinates as **1e-7° integers** (OSM-native, ~11 mm; one unit of
+- coordinates as 1e-7° integers (OSM-native, ~11 mm; one unit of
   latitude is exactly 11 132 µm, so the degree→metre factor is an
   integer multiply with no division);
-- distances in **µm** via `isqrt` (Newton floor square root, mirroring
+- distances in µm via `isqrt` (Newton floor square root, mirroring
   the twin's BigInt loop) of the exact squared sum;
-- equirectangular projection with a **Q20 fixed-point degree-6 minimax
-  cos** evaluated by integer Horner — no float transcendental anywhere;
+- equirectangular projection with a Q20 fixed-point degree-6 minimax
+  cos evaluated by integer Horner — no float transcendental anywhere;
 - the foot of the chord projection rounded half-away-from-zero
   (`roundDiv`), the clamp exact.
 
@@ -148,7 +148,7 @@ theorem mul_le_sq_of_add_eq {a b r : Nat} (h : a + b = 2 * r) : a * b ≤ r * r 
     have h3 : b * d = d * b := Nat.mul_comm b d
     omega
 
-/-- **The descent never overshoots.** A Newton step from any positive `x` stays
+/-- The descent never overshoots. A Newton step from any positive `x` stays
 at or above every `r` with `r² ≤ n` — in particular above the root itself. This
 is the loop invariant: it is what stops the iterate from sliding past `⌊√n⌋` and
 converging to something smaller. -/
@@ -162,7 +162,7 @@ theorem le_newtonStep {n x r : Nat} (hx : 0 < x) (hr : r * r ≤ n) :
     have := (Nat.le_div_iff_mul_le hx).mpr hk
     omega
 
-/-- **The descent makes progress.** Strictly above the root, a Newton step
+/-- The descent makes progress. Strictly above the root, a Newton step
 strictly decreases — so the loop cannot stall before reaching it. -/
 theorem newtonStep_lt {n x : Nat} (h : n < x * x) : (x + n / x) / 2 < x := by
   have : n / x < x := Nat.div_lt_of_lt_mul h
@@ -187,7 +187,7 @@ theorem isqrtGo_spec (n x : Nat) (hn : 0 < n) (hx : 0 < x)
     · exact Nat.not_le.mp fun hle => absurd (hge (x + 1) hle) (by omega)
 termination_by x
 
-/-- **`isqrt n = ⌊√n⌋.`** The seed `2^⌈bits(n)/2⌉` is above the root — that is
+/-- `isqrt n = ⌊√n⌋.` The seed `2^⌈bits(n)/2⌉` is above the root — that is
 the `n ≤ s·s` step, and it is the whole content of the optimisation — so the
 descent's precondition holds and the loop lands on the floor square root. -/
 theorem isqrt_isSqrt (n : Nat) : IsSqrt n (isqrt n) := by
@@ -238,10 +238,10 @@ theorem isqrt_le {k n : Nat} (h : n < (k + 1) * (k + 1)) : isqrt n ≤ k :=
 theorem isqrt_le_isqrt {m n : Nat} (h : m ≤ n) : isqrt m ≤ isqrt n :=
   le_isqrt (Nat.le_trans (isqrt_isSqrt m).1 h)
 
-/-- `isqrt`, compiled: the hardware square root as a GUESS, checked against the
+/-- `isqrt`, compiled: the hardware square root as a guess, checked against the
 bracket `IsSqrt` in exact `Nat` arithmetic, and `isqrt`'s own descent when the
 guess misses (a sum past 2^53 rounds in the `Float`, or a float `sqrt` is off by
-one). The bracket pins the value (`IsSqrt.unique`), so this IS `isqrt` — the
+one). The bracket pins the value (`IsSqrt.unique`), so this is `isqrt` — the
 float is never trusted, only tried. Newton from the power-of-two seed cost ~4
 big divisions and a `log2` per call, and `qDist` is called several times per
 graph edge. -/
@@ -390,7 +390,7 @@ def cosQSpec (la : Int) : Int :=
   let s2 : Int := (s1 * (x2 : Int)).fdiv 1048576 + -524287
   (s2 * (x2 : Int)).fdiv 1048576 + 1048576
 
-/-- **`cosQ` computes the reference Horner.** The fast branch replaces three
+/-- `cosQ` computes the reference Horner. The fast branch replaces three
 signed `fdiv`s by `Nat` divisions with the signs moved into the term's shape;
 this discharges that rewrite, including the two `Nat` subtractions, which
 truncate at zero rather than going negative and so would silently return a
@@ -447,7 +447,7 @@ theorem cosQ_eq (la : Int) : cosQ la = cosQSpec la := by
 
 The corridor needs a `cosQ` lower bound valid over a whole latitude band. The
 obvious route — evaluate `cosQ` at the band's extreme |latitude| and rely on
-`cosQ` falling with |latitude| — is **not sound**: `cosQ` is a floor-rounded
+`cosQ` falling with |latitude| — is not sound: `cosQ` is a floor-rounded
 minimax polynomial and ticks back up by up to 2 Q20 units
 (`scripts/probe-cosq-monotonicity.py`). Those dips are not noise. `cosQ` is
 `2^20 − ⌈s2(t)·t/2^20⌉` with `t` the squared argument, and each step of the
@@ -480,7 +480,7 @@ theorem cosMul_le_cosMul {m e : Int} (h : m.natAbs ≤ e.natAbs) : cosMul m ≤ 
   rw [cosMul_eq, cosMul_eq]
   exact Nat.div_le_div_right (Nat.mul_le_mul h (Nat.le_refl _))
 
-/-- **`cosQLowerBound e` really is below `cosQ` everywhere in the band.** The
+/-- `cosQLowerBound e` really is below `cosQ` everywhere in the band. The
 whole proof is: the squared argument is monotone in |latitude|, and `s2` never
 exceeds `524287`. `cosQ`'s own shape is never appealed to. -/
 theorem cosQLowerBound_le {m e : Int} (hm : m.natAbs ≤ e.natAbs)
@@ -530,7 +530,7 @@ def qDist (a b : QPt) : Nat :=
 
 theorem qDistC_eq (a b : QPt) : qDistC a b (cosQ ((a.la + b.la).tdiv 2)) = qDist a b := rfl
 
-/-- **Per-axis under-estimates compose into a distance under-estimate.** `qDist`
+/-- Per-axis under-estimates compose into a distance under-estimate. `qDist`
 is `isqrt` of the sum of two squared axis components, so anything that
 under-estimates each component separately bounds the distance from below —
 without ever taking a square root. This is what lets a matcher reject a

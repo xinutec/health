@@ -18,7 +18,7 @@ at King's Cross, across a tube ride). `reenrichSplitWalks` sends those
 remainders back through this function, so the fold needs it.
 
 It reads `mode`, `avgSpeed` and `maxSpeed`, so a remainder's kinematics must be
-recomputed BEFORE it is re-enriched — otherwise the cascade is handed the ride's
+recomputed before it is re-enriched — otherwise the cascade is handed the ride's
 speeds and duly reaches the ride's conclusion about a walk. `walkRemainder` does
 that, upstream in the same pass list.
 
@@ -46,7 +46,7 @@ open Verified.Geo.RefineMode (sampleIdxs dedupNearestWays refineModeLegacyCascad
 
 The five city-like fields are what `extractCity` walks; the rest are what the
 venue namers read (`Verified.Geo.BestPlace`). One record rather than two
-projections, because the two consumers read the SAME response and a second
+projections, because the two consumers read the same response and a second
 record would drift against it — the fix series get projected per consumer
 because they are pure input, but this one has a canonical shape upstream and
 keeping that shape is what makes the wire encoding auditable.
@@ -79,7 +79,7 @@ of them as "London". -/
 def METROPOLITAN_AREAS : List String :=
   ["Greater London", "Greater Manchester", "Île-de-France"]
 
-/-- Cities that ARE a subdivision of a metro and should display as the metro. 31
+/-- Cities that are a subdivision of a metro and should display as the metro. 31
 of London's boroughs return `Greater London` from Nominatim directly; these two
 are historic cities in their own right and need saying. -/
 def SUBDIVISION_TO_METRO : List (String × String) :=
@@ -103,7 +103,7 @@ def extractCity : Option Address → Option String
         | some (_, metro) => some metro
         | none => some raw
 
-/-- The city two reverse-geocoded points AGREE on, else none. A walk inside one
+/-- The city two reverse-geocoded points agree on, else none. A walk inside one
 city earns a city header; a drive between two cities stays untagged and reads as
 a transit between groups. -/
 def commonCity (a b : Option Address) : Option String :=
@@ -118,7 +118,7 @@ def commonCity (a b : Option Address) : Option String :=
 reflects the whole route rather than wherever the centroid happens to land. -/
 def N_SAMPLES : Nat := 5
 
-/-- Zoom for the endpoint reverse geocodes. City needs AREA-level truth, so this
+/-- Zoom for the endpoint reverse geocodes. City needs area-level truth, so this
 is 16 rather than the building-level 18 the venue namers use. -/
 def CITY_ZOOM : Int := 16
 
@@ -165,7 +165,7 @@ private def trainPick : Verified.Geo.RefineMode.ModeRefinement :=
   #[#[rw "Circle Line"], #[rw "Circle Line"], #[rw "Circle Line"], #[], #[]] == some "Circle Line"
 #guard railNameSupported { trainPick with mode := "driving" } #[#[], #[], #[]] == some "Circle Line"
 
-/-- Enrich one moving segment from its OWN geometry.
+/-- Enrich one moving segment from its own geometry.
 
 `none` when the leg has no points; the caller leaves such a leg alone.
 
@@ -187,8 +187,8 @@ def enrichMovingSegment
     (segPoints[i]?).map fun p => waysLookup p.lat p.lon
   let aggregated := dedupNearestWays wayResults
   -- `computeRoadNearestFraction` reads only distance/type/subtype, so the ways
-  -- narrow to its record. Per SAMPLE, not per deduped way: the fraction counts
-  -- how many sample POINTS had a road nearer than any rail.
+  -- narrow to its record. Per sample, not per deduped way: the fraction counts
+  -- how many sample points had a road nearer than any rail.
   let roadCorridorFraction := Verified.Geo.Velocity.computeRoadNearestFraction
     (wayResults.toList.map fun ways => ways.toList.map fun w =>
       ({ distanceM := w.distanceM, type := w.type, subtype := w.subtype } :
@@ -280,7 +280,7 @@ private def arnhem : Option Address := some (addr N (some "Arnhem") N N N)
 #guard commonCity london none == N
 #guard commonCity none none == N
 
--- `Math.round` is round-half-toward-+∞, which is NOT symmetric about zero: the
+-- `Math.round` is round-half-toward-+∞, which is not symmetric about zero: the
 -- .0005 case rounds up on both signs, so a southern-hemisphere or western
 -- coordinate lands on a different cell edge than its mirror.
 #guard cityGrid 51.5024999 == 51.502

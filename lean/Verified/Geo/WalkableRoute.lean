@@ -7,17 +7,17 @@ import Verified.FloatConst
 
 The case-2 primitive of the building-escape corrector: when a drawn walk's chord
 cuts through a building block and no vertex sits inside the block to push
-(sparse fixes), the honest line goes AROUND the block along the streets. This
+(sparse fixes), the honest line goes around the block along the streets. This
 answers exactly that — the shortest walkable path between two GPS-anchored
 points.
 
-Deliberately NOT the Viterbi matcher. Routing between two KNOWN endpoints is
+Deliberately not the Viterbi matcher. Routing between two known endpoints is
 stable; it is global matching over a whole noisy fix cloud that invents wrong
 routes. The graph is used only for what it is good for: connectivity around an
 obstacle between two trusted points.
 
-Both endpoints snap onto the nearest way EDGE — a virtual node spliced into the
-edge, not the nearest graph NODE — so a mid-street start does not first detour
+Both endpoints snap onto the nearest way edge — a virtual node spliced into the
+edge, not the nearest graph node — so a mid-street start does not first detour
 to a distant junction.
 
 ## Fusion
@@ -25,8 +25,8 @@ to a distant junction.
 `buildWalkGraph` fuses way coordinates into graph nodes by `nodeKey`, a
 `toFixed(7)` string (`Verified.JsNum`), so this module takes the raw way list
 and needs nothing pre-computed. The distinction the fusion demands is live in
-the code: node COORDINATES are the first way coordinate that mapped to them and
-edge lengths use those, while `snapToEdge` projects onto each way's own RAW
+the code: node coordinates are the first way coordinate that mapped to them and
+edge lengths use those, while `snapToEdge` projects onto each way's own raw
 coordinates — mixing the two would move every projection by up to ~1 cm.
 
 Every `none` returned here is an honest "there is no street path", and the
@@ -140,7 +140,7 @@ def buildWalkGraph (ways : Ways) : WalkGraph := Id.run do
             have hnb := hn.2.1
             have haa := hn.2.2.1
             have hab := hn.2.2.2
-            -- The FUSED node coordinates, not the way's raw ones.
+            -- The fused node coordinates, not the way's raw ones.
             let d := metersBetween nodes[a] nodes[b]
             if d ≥ MIN_EDGE_M then
               -- Dedupe: ways can overlap on a shared stretch.
@@ -197,7 +197,7 @@ def snapToEdge (p : Pt) (ways : Ways) (graph : WalkGraph) : Option Snap := Id.ru
 /-! ## Binary min-heap
 
 Reproduced element-for-element rather than replaced with a sorted structure:
-Dijkstra relaxes on STRICT improvement, so among equal-cost routes the winner
+Dijkstra relaxes on strict improvement, so among equal-cost routes the winner
 is decided by which node the heap pops first. A different heap would pick a
 different — equally short but visibly different — path. -/
 
@@ -295,7 +295,7 @@ def routeOnWalkableIn (graph : WalkGraph) (a b : Pt) (ways : Ways) (opts : Route
     return if metersBetween from_.point to.point > opts.maxRouteM then none
            else some #[from_.point, to.point]
 
-  -- Dijkstra from BOTH splice nodes of `from`, seeded with the along-edge
+  -- Dijkstra from both splice nodes of `from`, seeded with the along-edge
   -- distances, until both splice nodes of `to` are settled (or the bound trips).
   let n := graph.nodes.size
   let mut dist : Array Float := Array.replicate n posInf
@@ -320,12 +320,12 @@ def routeOnWalkableIn (graph : WalkGraph) (a b : Pt) (ways : Ways) (opts : Route
       -- Nested rather than `continue`d — see the heap's note.
       if !(settled[id]'hid.1) then
       settled := settled.set id true hid.1
-      -- Frontier past the bound: STOP searching, but keep what is already
+      -- Frontier past the bound: stop searching, but keep what is already
       -- settled. Answering `none` here reported "no walkable path exists" for a
       -- destination whose route was already known and admissible — the far
       -- splice node of a long destination edge can sit hundreds of metres out,
       -- so the search must overshoot the bound to settle it. `maxRouteM` bounds
-      -- the ROUTE, and that bound is enforced on the total below.
+      -- the route, and that bound is enforced on the total below.
       --
       -- Safe to read `dist` for unsettled nodes after this break: Dijkstra
       -- settles in increasing key order, so anything still unsettled when a key
@@ -464,7 +464,7 @@ private def ptsApprox (a : Array Pt) (b : List Pt) : Bool :=
 
 -- No network at all.
 #guard (routeOnWalkable n0 n2 #[]).isNone
--- Both endpoints on ONE edge: straight along it, no search.
+-- Both endpoints on one edge: straight along it, no search.
 #guard match routeOnWalkable ⟨LAT0, LON0 + D * 0.25⟩ ⟨LAT0, LON0 + D * 0.75⟩ blockWays with
   | some r => ptsApprox r [⟨LAT0, LON0 + D * 0.25⟩, ⟨LAT0, LON0 + D * 0.75⟩]
   | none => false
@@ -472,7 +472,7 @@ private def ptsApprox (a : Array Pt) (b : List Pt) : Bool :=
 #guard match routeOnWalkable ⟨LAT0, LON0 + D * 0.5⟩ ⟨LAT0 + D * 0.5, LON0⟩ blockWays with
   | some r => ptsApprox r [⟨LAT0, LON0 + D * 0.5⟩, n0, ⟨LAT0 + D * 0.5, LON0⟩]
   | none => false
--- Diagonally opposite corners. The two ways round are NOT equal-cost: the north
+-- Diagonally opposite corners. The two ways round are not equal-cost: the north
 -- edge is ~1 mm shorter than the south because `cos(lat)` differs, so the
 -- west-then-north route wins deterministically.
 #guard match routeOnWalkable n0 n3 blockWays with
@@ -489,10 +489,10 @@ private def ptsApprox (a : Array Pt) (b : List Pt) : Bool :=
 #guard (routeOnWalkable ⟨LAT0, LON0 + D * 0.5⟩ ⟨LAT0 + D * 0.5, LON0⟩
   blockWays { maxRouteM := 50 }).isNone
 
-/-! ### The bound is on the ROUTE, not on the search
+/-! ### The bound is on the route, not on the search
 
 One straight street with a junction at 2D (~125 m) and a far end at 8D (~499 m).
-The destination sits just past the junction, on the LONG second edge, so its far
+The destination sits just past the junction, on the long second edge, so its far
 splice node is ~374 m out — Dijkstra has to overshoot the bound to settle it,
 even though the route itself is ~128 m and admissible. -/
 
@@ -504,7 +504,7 @@ private def justPast : Pt := ⟨LAT0, LON0 + 2.05 * D⟩
 #guard match routeOnWalkable n0 justPast longWays { maxRouteM := 130 } with
   | some r => ptsApprox r [n0, e2, justPast]
   | none => false
--- ...while a route that is ITSELF over the bound is still refused.
+-- ...while a route that is itself over the bound is still refused.
 #guard (routeOnWalkable n0 justPast longWays { maxRouteM := 120 }).isNone
 -- The same-edge shortcut obeys the bound too: ~94 m along one edge, no search.
 #guard (routeOnWalkable n0 ⟨LAT0, LON0 + 1.5 * D⟩ longWays { maxRouteM := 120 }).isSome

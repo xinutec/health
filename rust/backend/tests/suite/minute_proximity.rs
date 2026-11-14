@@ -1,10 +1,10 @@
 //! Per-minute rail/road proximity across the FFI.
 //!
-//! ⚠ THE POINT OF THIS FILE IS THE SEAM, not the arithmetic. `railRoadDistFromWays`,
+//! The point of this file is the seam, not the arithmetic. `railRoadDistFromWays`,
 //! the median, the ~11 m key and the join all have `#guard`s in
 //! `Verified/Hsmm/RailRoadProximity.lean` and are not re-checked here. What only a
 //! round trip can check is that the two modes agree with each other and with
-//! `assemblesegments` about the ENCODING and the FIELD ORDER — and that is exactly
+//! `assemblesegments` about the encoding and the field order — and that is exactly
 //! the class of defect that shipped a decode-day which could never decode a day.
 
 use backend::fold_payload::bits;
@@ -21,7 +21,7 @@ fn way(kind: &str, subtype: &str, d: f64) -> serde_json::Value {
     serde_json::json!({ "type": kind, "subtype": subtype, "name": null, "distanceM": bits(d) })
 }
 
-/// ⚠ ONE QUERY PER ~11 m, NOT ONE PER FIX. This is the whole cost argument: a
+/// One query per ~11 m, not one per fix. This is the whole cost argument: a
 /// stationary day is hundreds of minutes at one place, and without the collapse
 /// each of them would be its own five-query OSM fan-out.
 #[test]
@@ -39,7 +39,7 @@ fn a_stationary_hour_costs_one_osm_query() {
     assert_eq!(plan.queries.len(), 1, "but they share one location");
 }
 
-/// ⚠ A FIX OUTSIDE THE LOCAL DAY IS DROPPED, NOT CLAMPED. Clamped, yesterday's
+/// A fix outside the local day is dropped, not clamped. Clamped, yesterday's
 /// 23:59 fix becomes this day's minute 0 and gives the day a starting location it
 /// never had.
 #[test]
@@ -50,7 +50,7 @@ fn fixes_outside_the_day_produce_no_minutes() {
     assert!(plan.queries.is_empty());
 }
 
-/// ⚠ THE ROW IS `[ts, road, rail]` AND THE STRUCT NAMES RAIL FIRST. Swapping them
+/// The row is `[ts, road, rail]` and the struct names rail first. Swapping them
 /// compiles, decodes, and puts every fix on a road — which is precisely the
 /// evidence the decoder uses to refuse a tube line. Nothing but an exact
 /// assertion catches it.
@@ -75,7 +75,7 @@ fn the_table_is_ts_then_road_then_rail() {
     );
 }
 
-/// ⚠ A DECLINED QUERY IS COUNTED, NOT INVENTED. `nearby_ways` answering `None`
+/// A declined query is counted, not invented. `nearby_ways` answering `None`
 /// means the mirror could not vouch for the coordinate; sending it back as an
 /// empty way list would tell the decoder there is no railway within 300 m, which
 /// is evidence against rail rather than the absence of evidence.
@@ -95,7 +95,7 @@ fn a_declined_query_leaves_no_row_and_is_counted() {
     assert_eq!(unanswered, 1);
 }
 
-/// An answered query with nothing in range is NOT a decline: no row either way,
+/// An answered query with nothing in range is not a decline: no row either way,
 /// but `unanswered` is what tells the two apart in a log line.
 #[test]
 fn an_empty_neighbourhood_is_answered() {
@@ -107,7 +107,7 @@ fn an_empty_neighbourhood_is_answered() {
     assert_eq!(unanswered, 0, "asked and answered, just empty");
 }
 
-/// ⚠ The two modes and the decoder must agree about the encoding.
+/// The two modes and the decoder must agree about the encoding.
 /// `proximitytable` writes bit patterns, so a distance is the computed one
 /// rather than the one a JSON decimal survived; `assemblesegments` must read
 /// them. This is the only test that runs the real table into the real decoder.
@@ -124,7 +124,7 @@ fn the_table_feeds_assemblesegments_unread() {
         .map(|q| ProximityAnswer::new(q, vec![way("railway", "subway", 1e-7)]))
         .collect();
     let (table, _) = lean::proximity_table(&plan.minutes, &answers).unwrap();
-    // ⚠ 1e-7 is the reason for the bit patterns: it is exactly the value that a
+    // 1e-7 is the reason for the bit patterns: it is exactly the value that a
     // decimal round trip is not obliged to preserve.
     assert!(
         table.to_string().contains(&bits(1e-7)),
@@ -150,7 +150,7 @@ fn the_table_feeds_assemblesegments_unread() {
     assert!(!segs.as_array().unwrap().is_empty());
 }
 
-/// ⚠ `gpsoutliers` is reached only through the decode path. The Lean guards
+/// `gpsoutliers` is reached only through the decode path. The Lean guards
 /// cover the filter; this covers that the wire round trip reaches it at all, and
 /// that a fix survives it bit-exact rather than through a decimal rendering.
 #[test]
@@ -180,13 +180,13 @@ fn the_outlier_filter_is_reachable_and_exact() {
         vec![0, 60, 120, 240, 300, 360],
         "the teleport at 180 must be the only fix dropped"
     );
-    // ⚠ THE LAST DIGIT MATTERS. The filter is a passthrough for what it keeps,
+    // The last digit matters. The filter is a passthrough for what it keeps,
     // so a coordinate that changed here would be a transport defect and would
     // shift every downstream median by an invisible amount.
     assert_eq!(kept[4].lat, 51.500_100_000_000_01);
 }
 
-/// ⚠ AN EMPTY DAY IS AN EMPTY ANSWER, NOT A FAILURE. A day with no fixes still
+/// An empty day is an empty answer, not a failure. A day with no fixes still
 /// has to decode; if this threw, every gap in the phone's history would become a
 /// failed cron run.
 #[test]

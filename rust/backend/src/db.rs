@@ -5,8 +5,8 @@
 //! # Eager, and `await`ed
 //!
 //! The backend is async from `main` down, so this connects eagerly and
-//! `await`s, which means a bad credential or an unreachable host fails AT
-//! STARTUP with a clear error, rather than at the first query in whatever
+//! `await`s, which means a bad credential or an unreachable host fails at
+//! startup with a clear error, rather than at the first query in whatever
 //! CronJob invocation happens to run next.
 
 use anyhow::{Context, Result};
@@ -20,7 +20,7 @@ const MAX_CONNECTIONS: u32 = 8;
 pub async fn connect(database_url: &str) -> Result<MySqlPool> {
     let pool = MySqlPoolOptions::new()
         .max_connections(MAX_CONNECTIONS)
-        // ⚠ Pin every session to UTC, the same as `life`'s pool does.
+        // Pin every session to UTC, the same as `life`'s pool does.
         //
         // Columns written by the DB clock (`NOW()`, `DEFAULT CURRENT_TIMESTAMP`)
         // come back as naive local-to-the-session values. Without this the code
@@ -41,7 +41,7 @@ pub async fn connect(database_url: &str) -> Result<MySqlPool> {
         })
         .connect(database_url)
         .await
-        // ⚠ The URL carries the password, so it must NOT go in the error. sqlx's
+        // ⚠ The URL carries the password, so it must not go in the error. sqlx's
         // own connect errors do not include it; this context line must not
         // reintroduce it, because a CronJob's stderr is not a secret store.
         .context("connecting to MariaDB")?;

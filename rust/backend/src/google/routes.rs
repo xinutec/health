@@ -6,16 +6,16 @@
 //! session's `exerciseMetadata.hasGps` says which sessions have one, and
 //! `exercise_sessions.has_gps` is where that is kept.
 //!
-//! ⚠ THE DOCUMENT IS KEPT WHOLE (`tcx`). A trackpoint carries time, position,
+//! The document is kept whole (`tcx`). A trackpoint carries time, position,
 //! altitude, distance and heart rate; the two counts beside it are for a census,
 //! not a replacement. A reader that wants points parses the column.
 //!
-//! ⚠ A ROUTE IS PART OF ITS SESSION, not a stream of its own: the roster
+//! A route is part of its session, not a stream of its own: the roster
 //! (`source::STREAMS`) lists `exercise_sessions`, and the freshness census does
 //! not watch this table — the last GPS workout may be months old on a healthy
 //! account, which is not a stale stream.
 //!
-//! ⚠ A REFUSAL IS STORED (`http_status`, `tcx` NULL) so the daily sync asks each
+//! A refusal is stored (`http_status`, `tcx` NULL) so the daily sync asks each
 //! session once. The alternative re-asks every 4xx forever at one request per
 //! session per day — not a lot, but an invisible loop against a quota.
 
@@ -120,7 +120,7 @@ pub struct Synced {
 
 /// Fetch and store the route of every GPS session that has none.
 ///
-/// ⚠ ONE ROW PER SESSION, written once. A session's route does not change after
+/// One row per session, written once. A session's route does not change after
 /// the fact the way its summary can; an edit to the session replaces its
 /// `exercise_sessions` row (same point id) and leaves the route alone.
 ///

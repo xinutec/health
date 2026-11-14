@@ -44,26 +44,26 @@ def isEntranceCode (name : String) : Bool :=
 def isEntranceLike (s : NearbyStation) : Bool :=
   s.subtype == "subway_entrance" || isEntranceCode s.name
 
-/-- How usable a node is as the NAME of a station, best (0) first.
+/-- How usable a node is as the name of a station, best (0) first.
 
-* **3 — an entrance.** A gate locates the station but is not it.
-* **2 — a platform position.** A `stop_position` is a point on the track inside
-  the station, and it carries the OPERATOR's name for that platform rather than
+* 3 — an entrance. A gate locates the station but is not it.
+* 2 — a platform position. A `stop_position` is a point on the track inside
+  the station, and it carries the operator's name for that platform rather than
   the place's: at St Pancras the Metropolitan platform is tagged
   `"London St Pancras"` while the station node is `"King's Cross St Pancras"`.
   It sits nearer the boarding fix than the station node does, so on distance
   alone it wins, and the ride gets named after a mainline terminus the rider
   never entered.
-* **1 — a real station of the WRONG subtype**, when the caller expressed a
+* 1 — a real station of the wrong subtype, when the caller expressed a
   preference. Only the Underground caller does, with `"subway"`: a shared site
   offers a mainline node and a tube node, and a tube ride should be named after
   the tube one even when the mainline node is nearer.
-* **0 — a real station**, of the preferred subtype when there is one.
+* 0 — a real station, of the preferred subtype when there is one.
 
 Tier dominates distance entirely — that is the whole point. A station node
 200 m away outranks its own platform at 50 m.
 
-The `prefer` split applies only WITHIN the real-station tier: the platform test
+The `prefer` split applies only within the real-station tier: the platform test
 returns before it, so a `stop_position` of the preferred subtype is still 2. -/
 def stationTier (s : NearbyStation) (prefer : Option String := none) : Nat :=
   if isEntranceLike s then 3
@@ -97,7 +97,7 @@ def rankStations (stations : Array NearbyStation) (prefer : Option String := non
 
 /-- The best node to name a station by, or `none` when the site offers nothing.
 
-Tiering DEMOTES rather than discards, so a site of nothing but entrances still
+Tiering demotes rather than discards, so a site of nothing but entrances still
 answers with the nearest entrance — losing the evidence entirely would be worse
 than naming it imprecisely. -/
 def pickBestStation (stations : Array NearbyStation) (prefer : Option String := none) :
@@ -112,13 +112,13 @@ private def st (name : String) (distanceM : Float) (subtype : String := "station
 #guard (pickBestStation #[st "Far" 300, st "Near" 50]).map (·.name) == some "Near"
 -- An entrance is skipped for a real station however much further away…
 #guard (pickBestStation #[st "Entrance" 5 "subway_entrance", st "Real" 400]).map (·.name) == some "Real"
--- …and so is an entrance CODE name: a bare capital, optionally one digit.
+-- …and so is an entrance code name: a bare capital, optionally one digit.
 #guard (pickBestStation #[st "A" 5, st "Real" 400]).map (·.name) == some "Real"
 #guard (pickBestStation #[st "B2" 5, st "Real" 400]).map (·.name) == some "Real"
 -- Two digits, or lowercase, is a real name.
 #guard (pickBestStation #[st "B22" 5, st "Real" 400]).map (·.name) == some "B22"
 #guard (pickBestStation #[st "a" 5, st "Real" 400]).map (·.name) == some "a"
--- With ONLY entrances the nearest entrance comes back — it still locates the
+-- With only entrances the nearest entrance comes back — it still locates the
 -- station, so returning nothing would lose the evidence.
 #guard (pickBestStation #[st "Entrance" 400 "subway_entrance", st "A" 50]).map (·.name) == some "A"
 -- Equal distances keep input order.
@@ -134,7 +134,7 @@ private def st (name : String) (distanceM : Float) (subtype : String := "station
 -- …and beats an entrance, so the three tiers are strictly ordered.
 #guard (pickBestStation #[st "Gate C" 10 "subway_entrance",
                           st "Platform" 300 "stop_position"]).map (·.name) == some "Platform"
--- With ONLY platforms the nearest platform still answers — tiering demotes, it
+-- With only platforms the nearest platform still answers — tiering demotes, it
 -- never discards.
 #guard (pickBestStation #[st "Far platform" 300 "stop_position",
                           st "Near platform" 50 "stop_position"]).map (·.name) == some "Near platform"

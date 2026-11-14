@@ -9,7 +9,7 @@
 //! The geography is invented — no tracked test carries a real place: two ways
 //! running north from the origin that do not share a node.
 //!
-//! ⚠ ONE `#[test]`: `lean::init()` starts a runtime, and tests racing on it
+//! One `#[test]`: `lean::init()` starts a runtime, and tests racing on it
 //! flake (see `rail_snap.rs`).
 
 use backend::fold_payload::bits;

@@ -302,7 +302,7 @@ theorem simplifyIdx_endpoints (cd : π → π → π → Nat) (pts : Nat → π)
   · rw [if_neg h2]
     exact ⟨List.mem_cons_self .., List.mem_cons_of_mem _ (List.mem_append_right _ (by simp))⟩
 
-/-- **The Douglas-Peucker guarantee**, the matcher's load-bearing bound, as a
+/-- The Douglas-Peucker guarantee, the matcher's load-bearing bound, as a
 theorem: every vertex `simplifyPath` drops lies within `tol` of the retained
 chord spanning it (and strictly between that chord's endpoint indices). This is
 the exact fact `spliceRouteDetail`'s comment-proof cites to separate

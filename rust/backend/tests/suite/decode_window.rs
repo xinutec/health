@@ -1,6 +1,6 @@
 //! The decode cron's date window.
 //!
-//! ⚠ The window is the whole point of this file: `d = 1 ..= days`, not `0..n`,
+//! The window is the whole point of this file: `d = 1 ..= days`, not `0..n`,
 //! which would decode today and drop the oldest day of the window. The failure
 //! is not loud: at the cron's 06:00 today is a six-hour stub, and `save_decode`
 //! stamps it with the current `CLASSIFIER_VERSION`, so it does not read as stale
@@ -35,7 +35,7 @@ fn seven_days_ends_yesterday_and_excludes_today() {
     );
 }
 
-/// The count is the count — `0..n` silently returned n days ending TODAY, which
+/// The count is the count — `0..n` silently returned n days ending today, which
 /// is the same length and a different set.
 #[test]
 fn length_matches_the_requested_days() {
@@ -55,7 +55,7 @@ fn ordered_most_recent_first() {
     assert_eq!(w, sorted);
 }
 
-/// ⚠ The date list is derived from UTC, NOT from the user's home_tz — the tz is
+/// The date list is derived from UTC, not from the user's home_tz — the tz is
 /// used for the day's bounds, not for choosing which dates to decode.
 #[test]
 fn dates_come_from_utc_not_the_local_day() {

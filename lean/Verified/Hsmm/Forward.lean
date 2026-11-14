@@ -332,7 +332,7 @@ def forwardBest (P : Problem) : Score :=
   if P.T == 0 then Score.zero
   else Score.listMax ((List.range P.S).map fun s => bestEnd P s P.T)
 
-/-- **The Viterbi principle for this model**: the forward DP over exact last
+/-- The Viterbi principle for this model: the forward DP over exact last
 states computes the oracle's best score. -/
 theorem forwardBest_eq_oracleBest (P : Problem) : forwardBest P = oracleBest P := by
   unfold forwardBest

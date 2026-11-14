@@ -54,7 +54,7 @@ fn a_labelled_unsnapped_train_leg_is_a_candidate_and_the_window_is_inclusive() {
         &points(),
     )
     .expect("railfill answers");
-    // ts 100 and ts 200 are BOTH inside [100, 200] — three fixes, not one.
+    // ts 100 and ts 200 are both inside [100, 200] — three fixes, not one.
     assert_eq!(shape(&got), [("A → B · L".to_string(), 100, 200, 3)]);
 }
 
@@ -82,7 +82,7 @@ fn the_refined_mode_decides_in_both_directions() {
 #[test]
 fn an_unlabelled_or_already_snapped_leg_is_skipped() {
     lean::init().expect("the Lean runtime must start");
-    // No label: the label IS the cache key, so there is nothing to fill.
+    // No label: the label is the cache key, so there is nothing to fill.
     let unlabelled =
         lean::unsnapped_train_routes(&[seg("train", None, 100, 200, None, false)], &points())
             .unwrap();
@@ -109,7 +109,7 @@ fn legs_sharing_a_key_pool_their_fixes_and_keep_the_first_window() {
         &points(),
     )
     .unwrap();
-    // ⚠ 3 + 2 = 5 fixes, and the window is the FIRST leg's — NOT the union.
+    // 3 + 2 = 5 fixes, and the window is the first leg's — not the union.
     // A union spanning two separate rides would name a journey nobody took.
     assert_eq!(shape(&got), [("A → B".to_string(), 100, 200, 5)]);
 }
@@ -125,7 +125,7 @@ fn the_order_out_is_the_order_the_day_was_walked() {
         &points(),
     )
     .unwrap();
-    // ⚠ Not sorted by key or by time. The queue drains in this order.
+    // Not sorted by key or by time. The queue drains in this order.
     assert_eq!(
         shape(&got),
         [
@@ -143,7 +143,7 @@ fn a_leg_with_no_fixes_in_its_window_is_still_a_candidate() {
         &points(),
     )
     .unwrap();
-    // Thin or absent corridor evidence is the FILL's problem — it refuses
+    // Thin or absent corridor evidence is the fill's problem — it refuses
     // rather than guessing. Dropping the leg here would withdraw the one thing
     // that could still route it from the line fallback.
     assert_eq!(shape(&got), [("A → B".to_string(), 900, 950, 0)]);

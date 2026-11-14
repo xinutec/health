@@ -1,16 +1,16 @@
 //! The sync job's entry: weight, then every stream of the roster, for the one
 //! user the Google account belongs to (`GH_USER_ID`).
 //!
-//! Every stream FAILS SOFT: one unreachable endpoint is logged and the rest
+//! Every stream fails soft: one unreachable endpoint is logged and the rest
 //! run. There is no cursor and no rate budget — each writer reads its own
 //! high-water mark.
 use sqlx::MySqlPool;
 
 /// Run the whole ingestion once.
 ///
-/// ⚠ INERT without `GH_CLIENT_ID` / `GH_CLIENT_SECRET` / `GH_REFRESH_TOKEN`
+/// Inert without `GH_CLIENT_ID` / `GH_CLIENT_SECRET` / `GH_REFRESH_TOKEN`
 /// and `GH_USER_ID`, and that silence is deliberate — the sync runs on hosts
-/// where Google is not set up. It is logged at DEBUG rather than WARN so it
+/// where Google is not set up. It is logged at debug rather than warn so it
 /// does not cry wolf, which does mean a credential that goes missing looks
 /// like a host that never had one.
 pub async fn run(pool: &MySqlPool, http: &reqwest::Client) {

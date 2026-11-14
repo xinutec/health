@@ -13,12 +13,12 @@ stations along the line the user's past journeys actually traced rather than the
 geometrically shortest one. The whole module is pure geometry and graph search,
 including the vertex fusion:
 
-* **Fusion is in Lean.** `buildRailGraph` keys a vertex by its coordinates at 7
+* Fusion is in Lean. `buildRailGraph` keys a vertex by its coordinates at 7
   decimals, so the builder takes raw ways and fuses them itself, and the shell
   only reads the rows. {@link Verified.JsNum.coordKey7} is the key — a graph
   builder needs only to know when two coordinates agree, and that comparison is
   exact even where the string rendering is not.
-* **Reuse.** `parseRailWayName` is `Verified.Geo.Worldline`'s (splitting on the
+* Reuse. `parseRailWayName` is `Verified.Geo.Worldline`'s (splitting on the
   first separator with the tail rejoined) and `metersBetween` is
   `Verified.Geo.WalkableRoute`'s.
 
@@ -117,7 +117,7 @@ def edgeWeight (a b : Pt) (cloud : FixCloud) : Float :=
 
 /-! ## Stations -/
 
-/-- A railway POINT (station / halt / stop / entrance) from the mirror. -/
+/-- A railway point (station / halt / stop / entrance) from the mirror. -/
 structure OsmStation where
   name : Option String
   subtype : Option String
@@ -276,7 +276,7 @@ def buildRailGraph (lines : Array RailWay) (cloud : FixCloud) (bridgeM : Float :
       | none =>
         id := vertices.size
         idByKey := idByKey.insert key id
-        -- The vertex keeps the FIRST coordinate that mapped to it, while edge
+        -- The vertex keeps the first coordinate that mapped to it, while edge
         -- weights below use each way's own raw coordinates.
         vertices := vertices.push c
         adj := adj.push #[]
@@ -499,10 +499,10 @@ def snapTrainSegment (seg : TrainSegment) (lines : Array RailWay) (stations : Ar
     | _, _ => return none
 
 /--
-Snap a confident train leg onto its KNOWN line, routing between the two named
-stations over ONLY that line's ways, with NO historic fix cloud: when the label
-carries a line name the LINE itself is the disambiguator, so the geometric
-shortest path within that line's ways IS the ridden route. The restriction is
+Snap a confident train leg onto its known line, routing between the two named
+stations over only that line's ways, with no historic fix cloud: when the label
+carries a line name the line itself is the disambiguator, so the geometric
+shortest path within that line's ways is the ridden route. The restriction is
 done here, with {@link wayOnLine} — nothing is asked of the caller beyond the
 full way list.
 -/
@@ -528,7 +528,7 @@ def snapTrainSegmentOnLine (seg : TrainSegment) (lines : Array RailWay)
 
 A long mainline ride has no connected track in the local mirror: the mirror is
 fetched around the fixes, and a TGV's fixes are kilometres apart. OSM records
-the service itself as a route relation whose member ways ARE the ridden track,
+the service itself as a route relation whose member ways are the ridden track,
 so the path is searched over those ways alone. They are not one ordered line —
 a relation lists both branches and some one-direction pieces, and consecutive
 ways can meet without sharing a node — so near-touching ways are bridged, wider
@@ -599,9 +599,9 @@ private def mlon : Float := 1 / (111320.0 * Float.cos (lat0 * pi / 180))
 private def P (n e : Float) : Pt := ⟨lat0 + n * mlat, lon0 + e * mlon⟩
 
 -- Two parallel lines 300 m apart, joined by connectors at e=500 and e=1000;
--- SPUR continues MAIN east from 10 m past its end (gap-bridged, not shared).
--- TRAM carries MAIN's endpoints but is not a train subtype, so it contributes
--- no vertices at all.
+-- `waySpur` continues `wayMain` east from 10 m past its end (gap-bridged, not
+-- shared). `wayTram` carries `wayMain`'s endpoints but is not a train subtype,
+-- so it contributes no vertices at all.
 private def wayMain : RailWay :=
   ⟨some "Metropolitan Line", some "rail", #[P 0 0, P 0 250, P 0 500, P 0 750, P 0 1000]⟩
 private def wayNorth : RailWay :=
@@ -699,7 +699,7 @@ private def gAll : RailGraph := buildRailGraph allLines cMain
 #guard adjOk gAll 7 #[(6, 5642.5232257983280), (9, 921.42857142580635)]
 #guard adjOk gAll 8 #[(2, 150.00000000028564), (6, 921.42857142580635)]
 #guard adjOk gAll 9 #[(4, 150.00000000028564), (7, 921.42857142580635)]
--- The gap-bridge edge (10 m, no shared node) — appended AFTER the way edges.
+-- The gap-bridge edge (10 m, no shared node) — appended after the way edges.
 #guard adjOk gAll 10 #[(11, 189.99999999999955), (4, 10.000000000000785)]
 #guard adjOk gAll 11 #[(10, 189.99999999999955)]
 
@@ -796,7 +796,7 @@ private def snapMain := snapTrainSegment segAB allLines stations (cloudAlong 0 2
 #guard (pathLon snapMain).size == 5
 #guard approx (pathLon snapMain)[4]! (-0.11556330146882557)
 
-/-- The cloud, not the geometry, picks the route: fixes along the NORTH line
+/-- The cloud, not the geometry, picks the route: fixes along the north line
     make the 1600 m detour cheaper than the 1000 m direct run. -/
 private def snapNorth := snapTrainSegment segAB allLines stations (cloudAlong 300 21)
 #guard pathTs snapNorth == #[1000, 1047, 1094, 1122, 1150, 1244, 1272, 1300]

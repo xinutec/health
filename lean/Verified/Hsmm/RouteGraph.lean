@@ -210,7 +210,7 @@ private def jsIntegerLayer? (s : String) : Option Float :=
   if digits.isEmpty || !digits.all Char.isDigit then none
   else some (if neg then -(Float.ofNat digits.toNat!) else Float.ofNat digits.toNat!)
 
-/-- Whether an OSM way runs below the surface. A SOFT UNION of the four
+/-- Whether an OSM way runs below the surface. A soft UNION of the four
 conventions OSM uses to mean it, plus the subtype: any `tunnel` value other than
 `"no"`, a negative `layer`, `covered=yes`, `subway=yes`, or `subtype=subway`.
 
@@ -255,7 +255,7 @@ private def undergroundOf (tunnel layer covered subway subtype : Option String) 
 #guard undergroundOf none (some "not-a-number") none none none == false
 #guard undergroundOf none none (some "yes") none none == true
 -- `covered` and `subway` test equality with "yes", unlike `tunnel`'s "≠ no" —
--- so a THIRD value separates the two rules, and only these two guards do.
+-- so a third value separates the two rules, and only these two guards do.
 #guard undergroundOf none none (some "no") none none == false
 #guard undergroundOf none none (some "roof") none none == false
 #guard undergroundOf none none none (some "yes") none == true
@@ -273,7 +273,7 @@ private def track : List LatLon := [⟨51.52, -0.13⟩, ⟨51.53, -0.13⟩, ⟨5
 
 /-! ## Assembling the wire graph from raw OSM rows
 
-⚠ This is `buildRouteGraph` narrowed to what crosses to `parseAssemble`:
+This is `buildRouteGraph` narrowed to what crosses to `parseAssemble`:
 `{id, geometry, lineMemberships, underground, startNode, endNode}` per edge and
 `{id, lat, lon, stationName, edgeIds}` per node. A cell index, per-edge
 `lengthM` and endpoint copies are rebuilt by `buildRouteGraphModel`, so shipping
@@ -300,18 +300,18 @@ structure RawStop where
   tags : List (String × String)
   deriving Inhabited
 
-/-- ⚠ FIVE DECIMAL PLACES, and the identity of a node is this string. `toFixed(5)`
+/-- ⚠ five DECIMAL places, and the identity of a node is this string. `toFixed(5)`
 is ~1.1 m of latitude: two way endpoints that meet at a junction agree to 5 dp
 and fuse into one node; a sixth place would split junctions that are the same
 place, and a fourth would fuse ones that are not. -/
 def nodeKey (lat lon : Float) : String :=
-  -- ⚠ `toFixed` is `Option` because JS `toFixed` is undefined past 1e21. A
+  -- `toFixed` is `Option` because JS `toFixed` is undefined past 1e21. A
   -- coordinate can never reach that, and a silent "" here would fuse every such
   -- node into one, so the fallback is the raw value rather than empty.
   let f := fun (x : Float) => (Verified.JsNum.toFixed x 5).getD (toString x)
   s!"{f lat},{f lon}"
 
-/-- A POI within this distance of a way endpoint IS that station. Tube station
+/-- A POI within this distance of a way endpoint is that station. Tube station
 POIs sit at the street entrance, 50-150 m from the platform-aligned endpoint of
 the underground way — the hall, escalators and gates are that far above the
 platform. 150 m is the upper end at which every London Tube POI attaches; the
@@ -353,10 +353,10 @@ structure WireNode where
 /--
 Build the edge and node arrays `parseAssemble` consumes.
 
-⚠ A way with fewer than two vertices is dropped: it has no endpoints to key on,
+A way with fewer than two vertices is dropped: it has no endpoints to key on,
 so it could not join the graph regardless.
 
-⚠ Node order follows FIRST APPEARANCE of each key across the ways, because the
+Node order follows first appearance of each key across the ways, because the
 receiver reads `nodes` as an ordered array (`StationChain` documents four things
 downstream that depend on it). A map iteration or a sort would reorder it while
 looking like a tidy-up.
@@ -435,16 +435,16 @@ private def twoWays : List RawWay :=
   [ W "way:1" [(51.50000, -0.10000), (51.51000, -0.09000)] (some "Jubilee Line")
   , W "way:2" [(51.51000, -0.09000), (51.52000, -0.08000)] (some "Jubilee Line") ]
 
--- Two ways meeting at one point share ONE node, so the graph is connected.
+-- Two ways meeting at one point share one node, so the graph is connected.
 #guard (buildWireGraph twoWays []).2.size == 3
 #guard (buildWireGraph twoWays []).1.size == 2
--- ⚠ The shared endpoint carries BOTH edge ids. A node that listed one would
+-- The shared endpoint carries both edge ids. A node that listed one would
 -- disconnect the graph while still looking like a node.
 #guard ((buildWireGraph twoWays []).2.find? (fun n => n.edgeIds.length == 2)).isSome
 -- Node identity is the 5-dp key, so the junction fuses rather than duplicating.
 #guard nodeKey 51.5 (-0.1) == "51.50000,-0.10000"
 #guard nodeKey 51.500001 (-0.1) == nodeKey 51.5 (-0.1)
--- ⚠ A sixth place would NOT fuse them; this is the boundary the identity rests on.
+-- A sixth place would not fuse them; this is the boundary the identity rests on.
 #guard nodeKey 51.50001 (-0.1) != nodeKey 51.5 (-0.1)
 -- Line memberships come from the name, in Lean, not from the caller.
 #guard ((buildWireGraph twoWays []).1[0]!).lineMemberships == ["Jubilee Line"]
@@ -459,7 +459,7 @@ private def twoWays : List RawWay :=
     [{ lat := 51.60000, lon := -0.10000, name := some "Far"
      , tags := [("railway", "station")] }]).2.find?
       (fun n => n.stationName.isSome)).isNone
--- ⚠ A POI that is not a stop never names a node, however close it sits.
+-- A POI that is not a stop never names a node, however close it sits.
 #guard ((buildWireGraph twoWays
     [{ lat := 51.50000, lon := -0.10000, name := some "A Cafe"
      , tags := [("amenity", "cafe")] }]).2.find?

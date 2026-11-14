@@ -1,23 +1,23 @@
 /-!
 # Walk-geometry ratchet
 
-The gate asks one question: **did any drawn walk get WORSE than its blessed
-floor?** The floor is `tests/golden/walk-baseline.json` — gitignored, beside the
+The gate asks one question: did any drawn walk get worse than its blessed
+floor? The floor is `tests/golden/walk-baseline.json` — gitignored, beside the
 fixtures it describes, because it carries real walk timestamps.
 
 ## Why this is a ratchet and not a comparison
 
 `score-walk-match`'s own A/B exit (matcher vs smoother) carries standing
 failures, so it can never be a deploy gate as-is: it is red on a healthy
-tree. The ratchet inverts that — a standing defect is RECORDED in the floor and
+tree. The ratchet inverts that — a standing defect is recorded in the floor and
 can only shrink. Improvements are surfaced for re-bless rather than failing.
 
-## ⚠ THIS IS GROUP B: THE ORACLE IS A FILE, SO PORTING LOSES NOTHING
+## This is group B: the oracle is a file, so porting loses nothing
 
 The oracle is `walk-baseline.json`, a frozen file, so the code under it can
 change and the question stays intact.
 
-The metric PRODUCER (the referee that measures a drawn line) is not here; this
+The metric producer (the referee that measures a drawn line) is not here; this
 module is only the verdict, which is pure and total. The producer is Rust glue
 over the fixture replay, per the standing Lean-logic/Rust-IO split.
 
@@ -28,7 +28,7 @@ the metric comparisons are `Float` subtractions against literal epsilons, the
 same subtractions the baseline was blessed with, so a value on an epsilon
 boundary stays on it. No transcendental function is reached.
 
-⚠ Ordering matches JS in the two places it is observable: `mergeSort` is stable
+Ordering matches JS in the two places it is observable: `mergeSort` is stable
 and left-biased on `≤`, as `Array.prototype.sort` has been since ES2019, and the
 date sort is lexicographic — identical to JS's UTF-16 comparison over ISO dates,
 which are ASCII.
@@ -38,7 +38,7 @@ namespace Verified.Eval.WalkGate
 
 /-! ## Thresholds
 
-Each is the tolerance for ONE metric, and none is a budget: they exist because
+Each is the tolerance for one metric, and none is a budget: they exist because
 a metric moves slightly under an irrelevant upstream change, not because that
 much regression is acceptable. -/
 
@@ -52,10 +52,10 @@ def BUDGET_EPS_M : Float := 30
 /-- The same slack the reconstruction grants before its step factor acts — the
 gate must not flag what the model deliberately tolerates.
 
-⚠ Mirrors `MapSmoothProfile.stepSlackRatio` in `Verified.Geo.WalkSmooth`
+Mirrors `MapSmoothProfile.stepSlackRatio` in `Verified.Geo.WalkSmooth`
 (1.4). It is restated rather than imported because this module is the referee
 and must not silently follow the subject it judges: if the reconstruction
-loosens its slack, the gate should go RED and be re-blessed deliberately, not
+loosens its slack, the gate should go red and be re-blessed deliberately, not
 widen its own tolerance in the same commit. -/
 def BUDGET_SLACK_RATIO : Float := 1.4
 
@@ -76,14 +76,14 @@ def START_TS_TOLERANCE_S : Nat := 120
 
 /-- Referee metrics recorded per walk.
 
-`none` means HONESTLY UNMEASURED (no building data in the fixture, no
+`none` means honestly unmeasured (no building data in the fixture, no
 named-street truth over the leg) — never zero. The distinction is the whole
 reason these are `Option`: a lost measurement must not read as a perfect score.
 -/
 structure WalkEntry where
   /-- Episode start (unix seconds) — the walk's identity within its day. -/
   startTs : Int
-  /-- Off-walkable p90 of the drawn line (m). RECORDED BUT NOT GATED: the
+  /-- Off-walkable p90 of the drawn line (m). Recorded but not gated: the
   metric is snapper-biased — a phantom that hugs mapped ways scores well, and a
   reconstruction that rightly dissolves it scores worse. Kept as a display
   column and for history. -/
@@ -100,39 +100,39 @@ structure WalkEntry where
   lenM : Float
   /-- Pedometer displacement budget (steps × stride, m); `none` = no step data. -/
   budgetM : Option Float
-  /-- **A DIAGNOSTIC COLUMN, NOT AN AXIS.** The matcher's identity
+  /-- A diagnostic column, not an axis. The matcher's identity
   report for this leg: named ways and their metres, longest first.
 
-  ⚠ **It is not in `Metric` and must not be.** Every other field here is scored
+  It is not in `Metric` and must not be. Every other field here is scored
   against a blessed floor; this one is carried so `WALK_GATE_DUMP` can print
   where the route ran beside the numbers. Gating it would bless a route shape
   nobody has adjudicated, and route-dominant naming breaks more truth rows than
   it fixes.
 
-  ⚠ Defaulted, because the blessed floor file predates it — `parseEntry` reads
+  Defaulted, because the blessed floor file predates it — `parseEntry` reads
   a baseline that has no such column, and an absent one means "not recorded",
   exactly as it does for the `Option` axes above. -/
   wayUm : Array (String × Nat) := #[]
-  /-- **COVERAGE — DIAGNOSTIC COLUMNS, NOT AXES.** Length of the raw GPS
+  /-- Coverage — diagnostic columns, not axes. Length of the raw GPS
   track, the farthest a raw fix falls from the drawn line, and the gaps between
   the two tracks' ends.
 
-  ⚠ **Not in `Metric`, and not yet a bar anywhere.** They exist so the question
+  Not in `Metric`, and not yet a bar anywhere. They exist so the question
   *does the matched line still get from where the fixes started to where they
   ended?* can be asked of the corpus at all; four candidate discriminators
   found no band separating a disputed walk from blessed ones. Place a bar only
   from a distribution over the blessed set, never from the one walk that
   prompted it.
 
-  ⚠ Defaulted for `wayUm`'s reason: the blessed floor predates them, and an
+  Defaulted for `wayUm`'s reason: the blessed floor predates them, and an
   absent column means "not recorded". -/
   rawLenM : Float := 0
   coverMaxM : Float := 0
   headGapM : Float := 0
   tailGapM : Float := 0
-  /-- p90 of the fixes' distance to the drawn line, and the SHARE of fixes more
-  than 30 m from it. ⚠ Both, because measured over this corpus `coverMaxM` is
-  useless on its own: its p95 is 932.8 m and its max 3026.9 m, so ONE GPS spike
+  /-- p90 of the fixes' distance to the drawn line, and the share of fixes more
+  than 30 m from it. Both, because measured over this corpus `coverMaxM` is
+  useless on its own: its p95 is 932.8 m and its max 3026.9 m, so one GPS spike
   scores like an abandoned half. See `Eval.WalkMetrics.fixCoverage`. -/
   cover90M : Float := 0
   uncoveredFrac : Float := 0
@@ -281,7 +281,7 @@ def gateWalks (baseline current : WalkBaseline)
           let delta : Delta := ⟨date, b.startTs, metric, bb, nn⟩
           if worse > eps then out := { out with regressed := out.regressed.push delta }
           else if worse < -eps then out := { out with improved := out.improved.push delta }
-      -- Speed gates only the CEILING CROSSING. A standing offender is already
+      -- Speed gates only the ceiling crossing. A standing offender is already
       -- recorded in the baseline and can only be fixed, not re-flagged.
       let wasOk := b.speedKmh ≤ WALK_SPEED_CEIL_KMH
       let isOk := c.speedKmh ≤ WALK_SPEED_CEIL_KMH
@@ -296,12 +296,12 @@ def passes (r : GateResult) : Bool := r.regressed.isEmpty
 
 /-! ## Witnesses
 
-Every `#guard` below was ABLATED — the thing it guards was broken and the guard
+Every `#guard` below was ablated — the thing it guards was broken and the guard
 was watched to fail, then restored. A guard that has never failed is a guess
 about what the code does.
 
 The fixtures are synthetic: this is the referee's arithmetic, and it has no
-opinion about real coordinates. The metric PRODUCER is where real days are
+opinion about real coordinates. The metric producer is where real days are
 needed, and that is Rust glue over the gitignored fixtures. -/
 
 section Witnesses
@@ -329,7 +329,7 @@ private def day (ws : Array WalkEntry) : WalkBaseline := #[("2026-05-15", ws)]
   let r := gateWalks (day #[{mk 100 with stallM := 10}]) (day #[{mk 100 with stallM := 30}])
   r.regressed.size == 1 && r.regressed[0]!.metric == .stall
 
--- ⚠ The epsilon is EXCLUSIVE: a move of exactly `STALL_EPS_M` does not fire.
+-- The epsilon is exclusive: a move of exactly `STALL_EPS_M` does not fire.
 -- 10 → 25 is 15.0 exactly in binary floating point, so this pins the boundary
 -- rather than approaching it.
 #guard
@@ -337,12 +337,12 @@ private def day (ws : Array WalkEntry) : WalkBaseline := #[("2026-05-15", ws)]
   r.regressed.isEmpty && r.improved.isEmpty
 
 -- The same axis falling past its epsilon is an improvement, not a pass. The
--- ratchet only tightens when a human blesses it, so this has to be REPORTED.
+-- ratchet only tightens when a human blesses it, so this has to be reported.
 #guard
   let r := gateWalks (day #[{mk 100 with stallM := 30}]) (day #[{mk 100 with stallM := 10}])
   r.regressed.isEmpty && r.improved.size == 1 && r.improved[0]!.metric == .stall
 
--- Route-correctness is the one axis where FALLING is the regression — a
+-- Route-correctness is the one axis where falling is the regression — a
 -- smaller fraction of the line on the confirmed street.
 #guard
   let r := gateWalks (day #[{mk 100 with routeCorr := some 0.9}])
@@ -364,7 +364,7 @@ private def day (ws : Array WalkEntry) : WalkBaseline := #[("2026-05-15", ws)]
 
 /-! ### The step budget
 
-`excess` is not the raw length: it is what the line draws BEYOND what the
+`excess` is not the raw length: it is what the line draws beyond what the
 pedometer allows, and it is clamped at zero so a walk comfortably inside its
 budget cannot bank credit against a later regression. -/
 
@@ -375,7 +375,7 @@ budget cannot bank credit against a later regression. -/
                      (day #[{mk 100 with lenM := 200, budgetM := some 100}])
   r.regressed.size == 1 && r.regressed[0]!.metric == .budget
 
--- ⚠ The clamp is load-bearing. Both walks are INSIDE their budget — 50 m and
+-- The clamp is load-bearing. Both walks are inside their budget — 50 m and
 -- 100 m against a 140 m allowance — so without `max 0` the excesses would be −90
 -- and −40, a 50 m "regression" on a walk that never exceeded its steps at all.
 #guard
@@ -395,7 +395,7 @@ budget cannot bank credit against a later regression. -/
   let r := gateWalks (day #[{mk 100 with speedKmh := 15}]) (day #[{mk 100 with speedKmh := 5}])
   r.improved.size == 1 && r.improved[0]!.metric == .speed
 
--- ⚠ A STANDING offender does not fire, however much worse it gets: 15 → 20
+-- A standing offender does not fire, however much worse it gets: 15 → 20
 -- km/h is both sides above the ceiling. The baseline already records it, and
 -- re-flagging it every run is how a gate becomes noise that gets skipped.
 #guard
@@ -404,7 +404,7 @@ budget cannot bank credit against a later regression. -/
 
 /-! ### `none` is unmeasured, never zero -/
 
--- A metric measured NOW but not in the floor cannot regress — there is
+-- A metric measured now but not in the floor cannot regress — there is
 -- nothing to compare against, and treating `none` as 0 would make every newly
 -- measured axis a regression on the run that introduced it.
 #guard
@@ -412,7 +412,7 @@ budget cannot bank credit against a later regression. -/
                      (day #[{mk 100 with offPathM := some 500}])
   r.regressed.isEmpty && r.unmeasured.isEmpty
 
--- A metric that WAS measured and is not any more is surfaced loudly and does
+-- A metric that was measured and is not any more is surfaced loudly and does
 -- not fail. The floor is intact; the referee stopped answering.
 #guard
   let r := gateWalks (day #[{mk 100 with offPathM := some 10}])
@@ -421,7 +421,7 @@ budget cannot bank credit against a later regression. -/
 
 /-! ### Pairing -/
 
--- A walk whose start slid within tolerance is the SAME walk and keeps its
+-- A walk whose start slid within tolerance is the same walk and keeps its
 -- floor. 100 s < 120 s.
 #guard
   let r := gateWalks (day #[{mk 1000 with stallM := 10}]) (day #[{mk 1100 with stallM := 30}])
@@ -434,14 +434,14 @@ budget cannot bank credit against a later regression. -/
   let r := gateWalks (day #[mk 1000]) (day #[mk 1200])
   r.regressed.isEmpty && r.unmatched.size == 1 && r.added.size == 1
 
--- ⚠ Pairing is ONE-TO-ONE. Two baseline walks are both within tolerance of a
+-- Pairing is one-to-one. Two baseline walks are both within tolerance of a
 -- single current walk; only the nearest may claim it, and the other is orphaned
 -- rather than scored twice against the same line.
 #guard
   let r := gateWalks (day #[mk 1000, mk 1010]) (day #[mk 1008])
   r.unmatched.size == 1 && r.unmatched[0]!.startTs == 1000 && r.added.isEmpty
 
--- A delta is reported at the BASELINE's `startTs`, not the current one — the
+-- A delta is reported at the baseline's `startTs`, not the current one — the
 -- floor's identity is what a re-bless has to find.
 #guard
   let r := gateWalks (day #[{mk 1000 with stallM := 10}]) (day #[{mk 1100 with stallM := 30}])
@@ -449,7 +449,7 @@ budget cannot bank credit against a later regression. -/
 
 /-! ### Scope -/
 
--- ⚠ Only dates present in `current` are compared. A single-day invocation
+-- Only dates present in `current` are compared. A single-day invocation
 -- must not read every other day's floor as vanished — which would report 41 false
 -- `unmatched` walks and bury the one real finding.
 #guard
@@ -458,14 +458,14 @@ budget cannot bank credit against a later regression. -/
   (gateWalks base cur).unmatched.isEmpty
 
 -- `onlyDates` makes that scope explicit, and widening it to a date the run
--- did not produce DOES report the floor as unmatched.
+-- did not produce does report the floor as unmatched.
 #guard
   let base : WalkBaseline := #[("2026-05-15", #[mk 100]), ("2026-05-18", #[mk 200])]
   let cur : WalkBaseline := #[("2026-05-15", #[mk 100])]
   (gateWalks base cur (some #["2026-05-15", "2026-05-18"])).unmatched.size == 1
 
 -- The gate's exit condition is `regressed` alone: a run with improvements and
--- orphans still PASSES, because every one of those needs a human to bless it and
+-- orphans still passes, because every one of those needs a human to bless it and
 -- none of them is a defect.
 #guard
   let r := gateWalks (day #[{mk 1000 with stallM := 30}, mk 5000])

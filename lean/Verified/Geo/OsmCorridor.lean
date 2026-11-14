@@ -10,14 +10,14 @@ motivation is cost, not output: the mirror's spatial query is super-linear in
 the query box, so a long drive's centroid disc is a pathological scan while the
 drive itself is a thin line.
 
-Two arms, and WHICH ARM A LEG TAKES IS THE OBSERVABLE THING — the read trace a
+Two arms, and which arm a leg takes is the observable thing — the read trace a
 fixture replay must reproduce:
 
-* **short leg** (every fix within `SINGLE_DISC_MAX_DIST_M` of the centroid) —
-  ONE read, at the centroid, with a `Math.round`ed radius. Sampling a short leg
+* short leg (every fix within `SINGLE_DISC_MAX_DIST_M` of the centroid) —
+  one read, at the centroid, with a `Math.round`ed radius. Sampling a short leg
   would only multiply round-trips.
-* **long leg** — a corridor: `resamplePolyline` the track at `stepM` spacing and
-  read a `radiusM` disc at each sample, unioning by `osmId`, FIRST WINS.
+* long leg — a corridor: `resamplePolyline` the track at `stepM` spacing and
+  read a `radiusM` disc at each sample, unioning by `osmId`, first wins.
 
 ## Termination of the resampler is derived, not budgeted
 
@@ -32,7 +32,7 @@ step choice, not a net thrown over unanalysed control flow.
 Reaching zero with the loop condition still true would mean the float walk
 outran its real-arithmetic bound. That cannot be ruled out by this argument
 (the walk accumulates `nextAt` by repeated addition, so it drifts from
-`step × j`), and the guards pin the sample COUNT on a track long enough to take
+`step × j`), and the guards pin the sample count on a track long enough to take
 many steps, which is where such a drift would first show.
 
 Exactness: `metersBetween` is `WalkableRoute`'s, `sqrt` of the sum of squares,
@@ -90,7 +90,7 @@ open Verified.JsNum (jsRound)
 
 /-! ## Resampling -/
 
-/-- The walk across ONE track segment: emit a sample every `step` of arc length
+/-- The walk across one track segment: emit a sample every `step` of arc length
 while `nextAt` is still inside `[acc, acc + segLen]`, and hand back where the
 walk got to. `budget` is the derived bound argued in the module header. -/
 private def sampleRun (a b : Pt) (segLen acc step : Float) :
@@ -160,15 +160,15 @@ the results. `query` is `osm.drivableRoads` (roads) or `osm.walkableRoads`
 The `Float` radius: the single-disc arm rounds its own radius to a whole metre,
 the corridor arm passes `radiusM` through untouched.
 
-⚠ **`query` MAY DECLINE**, and a corridor of declines is not an empty corridor.
+⚠ `query` may decline, and a corridor of declines is not an empty corridor.
 `none` here means every read the corridor made went unanswered — the
 mirror has never covered this ground — where `some #[]` means it was asked and
 there is nothing there.
 
-A PARTLY answered corridor returns what it found. The union is already a
+A partly answered corridor returns what it found. The union is already a
 best-effort over many independent discs, and one sample falling off the edge of
 a coverage box should not throw away the roads the other samples did find; the
-declined disc is recorded by the HOST at the read, so the gap is fetched without
+declined disc is recorded by the host at the read, so the gap is fetched without
 the drawing having to lose anything meanwhile.
 -/
 def corridorWays (query : Float → Float → Float → Option (Array Way))
@@ -207,7 +207,7 @@ def corridorWays (query : Float → Float → Float → Option (Array Way))
 Every number below is a recorded answer on the same fixture, at full double
 precision.
 
-The `metersBetween` wobble is MEASURED, not assumed: across every distance
+The `metersBetween` wobble is measured, not assumed: across every distance
 this file's fixtures compute, `Math.hypot` and `sqrt(dx² + dy²)` agreed on
 145 of 206 calls, worst disagreement 5.684341886080802e-14 m. The
 sample positions are therefore pinned exactly, not approximately — but the
@@ -255,7 +255,7 @@ private def R5_TRACK : Array Pt := #[p 51.5 (-0.14), p 51.503593244699964 (-0.14
 #guard (resamplePolyline R5_TRACK 300.0).size == 4
 #guard approxPts (resamplePolyline R5_TRACK 300.0) #[p 51.5 (-0.14), p 51.50269493352497 (-0.14), p 51.50538986704995 (-0.14), p 51.50718648939993 (-0.14)]
 
--- R6: the last vertex is NOT pushed when a sample already landed within 1 m
+-- R6: the last vertex is not pushed when a sample already landed within 1 m
 private def R6_TRACK : Array Pt := #[p 51.5 (-0.14), p 51.50538986704995 (-0.14)]
 #guard (resamplePolyline R6_TRACK 300.0).size == 3
 #guard approxPts (resamplePolyline R6_TRACK 300.0) #[p 51.5 (-0.14), p 51.50269493352497 (-0.14), p 51.50538986704995 (-0.14)]
@@ -275,17 +275,17 @@ private def R9_TRACK : Array Pt := #[p 51.5 (-0.14), p 51.501796622349985 (-0.14
 #guard (resamplePolyline R9_TRACK 100.0 2).size == 2
 #guard approxPts (resamplePolyline R9_TRACK 100.0 2) #[p 51.5 (-0.14), p 51.50898311174991 (-0.14)]
 
--- R10: the far end sits 0.5 m past the last sample — under the 1 m bar, NOT pushed
+-- R10: the far end sits 0.5 m past the last sample — under the 1 m bar, not pushed
 private def R10_TRACK : Array Pt := #[p 51.5 (-0.14), p 51.50539435860582 (-0.14)]
 #guard (resamplePolyline R10_TRACK 300.0 48).size == 3
 #guard approxPts (resamplePolyline R10_TRACK 300.0 48) #[p 51.5 (-0.14), p 51.50269493352497 (-0.14), p 51.50538986704995 (-0.14)]
 
--- R11: …and 1.5 m past it, over the bar, so it IS pushed
+-- R11: …and 1.5 m past it, over the bar, so it is pushed
 private def R11_TRACK : Array Pt := #[p 51.5 (-0.14), p 51.505403341717575 (-0.14)]
 #guard (resamplePolyline R11_TRACK 300.0 48).size == 4
 #guard approxPts (resamplePolyline R11_TRACK 300.0 48) #[p 51.5 (-0.14), p 51.50269493352497 (-0.14), p 51.50538986704995 (-0.14), p 51.505403341717575 (-0.14)]
 
--- R12: nextAt lands EXACTLY on the segment end (see the unpinned note below)
+-- R12: nextAt lands exactly on the segment end (see the unpinned note below)
 private def R12_TRACK : Array Pt := #[p 51.5 (-0.14), p 51.50538986704995 (-0.14)]
 #guard (resamplePolyline R12_TRACK 600.0000000003515 48).size == 2
 #guard approxPts (resamplePolyline R12_TRACK 600.0000000003515 48) #[p 51.5 (-0.14), p 51.50538986704995 (-0.14)]
@@ -378,8 +378,8 @@ private def ROADS : Array RoadsEntry := #[
       { osmId := 3, name := some "Parallel Road", subtype := some "residential", coords := #[p 51.5 (-0.13920633007295433), p 51.501796622349985 (-0.13920633007295433), p 51.503593244699964 (-0.13920633007295433), p 51.50538986704995 (-0.13920633007295433), p 51.50718648939993 (-0.13920633007295433), p 51.50898311174991 (-0.13920633007295433)] }] }
 ]
 
-/-- ⚠ ANSWERS `some #[]` ON AN UNKNOWN KEY, not `none`. These guards pin the
-corridor ARITHMETIC — which discs are read, and how their ways union — against a
+/-- Answers `some #[]` on an unknown key, not `none`. These guards pin the
+corridor arithmetic — which discs are read, and how their ways union — against a
 mirror that covers the whole track. Declining here would test the decline path
 instead, and the discriminating stub is what makes the read trace meaningful. -/
 private def stubRoads (la lo rad : Float) : Option (Array Way) :=
@@ -394,7 +394,7 @@ private def C1_RUN := (corridorWays stubRoads C1_TRACK 700.0 50.0).run #[]
 #guard C1_RUN.1.map (·.map (·.osmId)) == some #[]
 #guard C1_RUN.1.map (·.map (·.name)) == some #[]
 
--- C2: a short leg: ONE centroid disc, radius Math.round(maxDist + 150)
+-- C2: a short leg: one centroid disc, radius Math.round(maxDist + 150)
 private def C2_TRACK : Array Pt := #[p 51.5 (-0.14), p 51.500179662235 (-0.1382683565228094), p 51.500538986704996 (-0.13624810579942034), p 51.50125763564499 (-0.1349493731915274), p 51.502335609054974 (-0.1343000068875809), p 51.503593244699964 (-0.1342278550760313)]
 private def C2_RUN := (corridorWays stubRoads C2_TRACK 700.0 50.0).run #[]
 #guard approxReads C2_RUN.2 #[r 51.501317523056656 (-0.1363322829128949) 443.0]
@@ -422,7 +422,7 @@ private def C5_RUN := (corridorWays stubRoads C5_TRACK 700.0 50.0).run #[]
 #guard C5_RUN.1.map (·.map (·.osmId)) == some #[1, 2, 3]
 #guard C5_RUN.1.map (·.map (·.name)) == some #[some "Main Street", some "Bent Lane", some "Parallel Road"]
 
--- C6: the single-disc arm does NOT dedupe — it returns the query verbatim
+-- C6: the single-disc arm does not dedupe — it returns the query verbatim
 private def C6_TRACK : Array Pt := #[p 51.51257635644988 (-0.1407215181154961), p 51.51257635644988 (-0.14), p 51.51257635644988 (-0.13927848188450392)]
 private def C6_RUN := (corridorWays stubRoads C6_TRACK 700.0 50.0).run #[]
 #guard approxReads C6_RUN.2 #[r 51.51257635644988 (-0.14) 200.0]
@@ -430,12 +430,12 @@ private def C6_RUN := (corridorWays stubRoads C6_TRACK 700.0 50.0).run #[]
 #guard C6_RUN.1.map (·.map (·.name)) == some #[some "Main Street", some "Cross Street", some "Cross Street (dup record)"]
 
 -- C7: the same track over ground the mirror has never covered. Every read
--- declines, so the corridor declines — which is NOT C1's `some #[]`: that one
+-- declines, so the corridor declines — which is not C1's `some #[]`: that one
 -- asked nothing, this one asked six times and learned nothing.
 private def noRoads (_ _ _ : Float) : Option (Array Way) := none
 private def C7_RUN := (corridorWays noRoads C3_TRACK 700.0 50.0).run #[]
 #guard C7_RUN.1 == none
--- ⚠ The reads still HAPPEN and are still traced. A declined disc is exactly the
+-- The reads still happen and are still traced. A declined disc is exactly the
 -- one a host records for fetching, so losing it from the trace would lose the
 -- only evidence that this ground was ever wanted.
 #guard C7_RUN.2.size == 6
@@ -459,7 +459,7 @@ private def U_B : Array Way := #[
 #guard (unionById U_A U_B).map (·.name) == #[some "Main Street", some "Cross Street", some "Parallel Road"]
 #guard (unionById #[] U_B).map (·.osmId) == #[4, 3]
 
-/-! ### `Math.round` — halves go UP, towards +∞ -/
+/-! ### `Math.round` — halves go up, towards +∞ -/
 
 #guard jsRound 0.0 == 0.0
 #guard jsRound 0.5 == 1.0

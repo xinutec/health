@@ -1,20 +1,20 @@
 //! `rankvenues` — read the venue ranking's own terms instead of modelling them.
 //!
-//! ⚠ This test is the mode's caller, deliberately: a serve mode nothing
+//! This test is the mode's caller, deliberately: a serve mode nothing
 //! exercises does not land. A hand-computed `shapeScore` once disagreed with
 //! what the fold served, and a model that disagrees with the artefact is worth
 //! nothing, so the mode stays reachable for the next such question.
 //!
-//! ⚠ `rankvenues` is registered in BOTH dispatch surfaces — `dispatch`
+//! `rankvenues` is registered in both dispatch surfaces — `dispatch`
 //! (`serve`) and `cliMain` (argv). Registering only the
 //! first is how the first run of this probe failed: argv fell through to the
 //! HSMM model parser, which asks for property `T`, and the error named a field
 //! this mode has never heard of.
 //!
-//! Floats cross as PLAIN NUMBERS here, not `fBits`. This is read by a human and
+//! Floats cross as plain numbers here, not `fBits`. This is read by a human and
 //! by the literals below, not a Lean-to-Lean parity hop.
 //!
-//! # ⚠ THIS PROBE DOES NOT YET REPRODUCE THE FOLD. Do not settle a naming
+//! # ⚠ this probe does not yet reproduce the fold. Do not settle a naming
 //! # question with it.
 //!
 //! Fed the fold's own landmark bucket, the captured stay window and the same
@@ -27,11 +27,11 @@
 //!     prod                              foodilic         Honest Burgers
 //!
 //! So an input this probe does not model still differs from what `StayEnrich`
-//! passes. Candidates: the coordinate step 5a names at (the MINED CLUSTER
-//! centroid `wp.cand.centroidLat/Lon`, NOT the stay's), `preferResidential` as
+//! passes. Candidates: the coordinate step 5a names at (the mined cluster
+//! centroid `wp.cand.centroidLat/Lon`, not the stay's), `preferResidential` as
 //! `isResidential || venueless` computes it, or `samples`.
 //!
-//! What IS trustworthy for that question is the fold itself:
+//! What is trustworthy for that question is the fold itself:
 //!
 //!     cargo run --release --example dump_day_request -- <day> > req.json
 //!     # rewrite req.env.venuePriors, then
@@ -84,7 +84,7 @@ fn the_ranking_reports_the_term_that_decided_it() {
         "no stay means no hours evidence"
     );
 
-    // The parts must SUM to the total, or the breakdown is decoration rather
+    // The parts must sum to the total, or the breakdown is decoration rather
     // than the thing that decided the order.
     for c in ranked {
         let total = c["total"].as_f64().expect("a total");
@@ -99,7 +99,7 @@ fn the_ranking_reports_the_term_that_decided_it() {
         );
     }
 
-    // ⚠ The gap the probe measured, pinned so it cannot rot: at these two
+    // The gap the probe measured, pinned so it cannot rot: at these two
     // distances the whole geometric advantage is ~0.67 nats, while the shape
     // term's own clamps span 9.4. A venue prior can therefore outvote a 3x
     // distance difference, which is a fact about the clamps.
@@ -112,9 +112,9 @@ fn the_ranking_reports_the_term_that_decided_it() {
     );
 }
 
-/// The `bestplace` mode — the WHOLE chain, not just the ranking.
+/// The `bestplace` mode — the whole chain, not just the ranking.
 ///
-/// ⚠ A mode with no caller is the debt the reachability check exists to find,
+/// A mode with no caller is the debt the reachability check exists to find,
 /// so `bestplace` gets one here. What it pins is the chain's two decisive
 /// gates, which the ranking alone cannot show: an enclosing landmark
 /// short-circuits everything, and without one the label comes from the ranked
