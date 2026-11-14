@@ -1,33 +1,21 @@
 /-!
 # `opening_hours` subset parser
 
-OSM venue POIs carry an `opening_hours` tag that the venue-plausibility scorer
-turns into weighted evidence — never a veto, because OSM hours go stale. The
-grammar is a deliberate subset: day ranges/lists, multiple time ranges,
-past-midnight wrap, `off`/`closed`, `24/7`, trailing `PH off`. Everything else
-parses to `none`, which downstream means no evidence, not "closed". That
-asymmetry is the contract: a wrong "closed" verdict would poison the scorer,
-so every unsupported shape must fail closed to silence rather than to a guess.
+OSM `opening_hours` becomes weighted evidence for venue plausibility, never a
+veto, since OSM hours go stale. The subset: day ranges and lists, several time
+ranges, past-midnight wrap, `off`/`closed`, `24/7`, trailing `PH off`. Anything
+else is `none`, no evidence, never "closed".
 
-Lean has no regex, so the three patterns are hand-rolled here, and their
-behaviour on malformed input is fixed, including two quirks that look like bugs
-but are load-bearing (the `#guard`s pin both):
+Two quirks the `#guard`s pin:
 
-* A bare `"off"` parses to `none`, because the leading-day-spec pattern
-  `[A-Za-z]{2}` happily consumes `"of"` as a day token, leaving `"f"`; `"of"`
-  is not a day name, so the whole value is rejected. Same for `"closed"`
-  (`"cl"`). Only `off`/`closed` *after* a day spec (`"We off"`) closes a day.
-* `"PH off"` parses to `none`, not to an all-week-closed spec: a pure
-  holiday rule is skipped, so no rule is ever recorded and the value is
-  rejected as empty.
+* A bare `"off"` is `none`: the day-spec pattern takes `"of"` as a day token
+  and rejects it. Likewise `"closed"`. `off` after a day spec (`"We off"`)
+  closes the day.
+* `"PH off"` is `none`: a holiday-only rule records nothing.
 
-The tz boundary stays shell: `openFractionDuring` resolves each sampled minute
-to a (weekday, minute-of-day) pair through `Intl`, which is exactly the kind of
-tz work that does not belong in Lean. {@link openFractionOver} takes those
-already-resolved samples, so the arithmetic is here and the calendar is not.
-
-Everything in this module is exact (string/`Nat` work); the only `Float` is the
-open-fraction division. UNPROVEN; pinned by the `#guard`s.
+Rust resolves sampled minutes to `(weekday, minute-of-day)` with tzdata;
+{@link openFractionOver} does the arithmetic. Exact except the final division.
+UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.OpeningHours
@@ -49,8 +37,7 @@ private def MINUTES_PER_DAY : Nat := 24 * 60
 
 /-! ## Character helpers
 
-JS `\s` and `String.trim` cover more than ASCII space; the tags this runs on
-are ASCII, and the whitespace actually present is space/tab/newline. -/
+Whitespace is space, tab, newline and CR: the tags are ASCII. -/
 
 private def isWs (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
 private def isAlpha (c : Char) : Bool := (c ≥ 'a' && c ≤ 'z') || (c ≥ 'A' && c ≤ 'Z')
@@ -79,10 +66,9 @@ private def dayIndex (a b : Char) : Option Nat :=
 
 /-! ## `parseDaySpec`
 
-Split on `,`, each token matched against `^([a-z]{2})(?:-([a-z]{2}))?$`.
-`PH`/`SH` tokens are dropped (holidays are unknowable here). `none` on any
-unrecognised token; `some []` when the spec consisted only of holiday tokens,
-which the caller skips. -/
+Split on `,`, each token matching `^([a-z]{2})(?:-([a-z]{2}))?$`. `PH`/`SH` are
+dropped. `none` on an unknown token; `some []` for holidays only, which the
+caller skips. -/
 
 /-- Append preserving insertion order and dropping duplicates. -/
 private def addDay (ds : List Nat) (d : Nat) : List Nat :=
@@ -167,14 +153,10 @@ private def parseTimeSpec (spec : List Char) : Option (List TimeRange) := Id.run
 
 /-! ## `parseOpeningHours` -/
 
-/-- Split a rule into its optional leading day spec and the remainder,
-    reproducing `^([A-Za-z]{2}(?:\s*[-,]\s*[A-Za-z]{2})*)?\s*(.*)$`.
-
-    The day-spec group is greedy, and since the trailing `(.*)` matches
-    anything there is never any backtracking — so a plain forward scan that
-    keeps the longest run of `XX` tokens joined by `-`/`,` is exact. This is
-    the function responsible for the `"off"` quirk: `"of"` is two letters, so
-    it becomes the day spec. -/
+/-- Split a rule into its optional leading day spec and the rest, as
+    `^([A-Za-z]{2}(?:\s*[-,]\s*[A-Za-z]{2})*)?\s*(.*)$`. Greedy with no
+    backtracking, so a forward scan for the longest run of `XX` tokens is
+    exact. This is where `"of"` becomes a day spec. -/
 private def splitLeadingDaySpec (r : List Char) : Option (List Char) × List Char :=
   match r with
   | a :: b :: rest =>
@@ -253,13 +235,9 @@ def isOpenAt (spec : WeekSpec) (dayIdx minuteOfDay : Nat) : Bool :=
       && decide (minuteOfDay + MINUTES_PER_DAY < r.endMin))
 
 /--
-Fraction of a stay during which the venue is open, over minute samples the
-shell resolved to `(dayIdx, minuteOfDay)` in the venue's tz — that resolution
-is `Intl` work and stays outside Lean.
-
-The caller samples every 60 s across `[startUnix, endUnix)`, or the single
-instant at `startUnix` for a zero-length window, so `samples` is never empty in
-practice; an empty list divides 0/0.
+Fraction of a stay during which the venue is open, over `(dayIdx, minuteOfDay)`
+samples in the venue's tz: every 60 s across the window, or its start alone for
+a zero-length one, so never empty (empty would divide 0/0).
 -/
 def openFractionOver (spec : WeekSpec) (samples : List (Nat × Nat)) : Float :=
   let open_ := samples.foldl (fun acc (d, m) => if isOpenAt spec d m then acc + 1 else acc) 0

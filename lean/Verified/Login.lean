@@ -1,42 +1,18 @@
 /-!
 # Signing in
 
-Two rules that guard the sign-in redirect. Both are small, both are security
-boundaries, and both fail in ways a user would not notice.
+Two security rules that would fail unnoticed.
 
-## `return_to` is an open-redirect guard
+`/login?return_to=…` lands a reconnect back where it was, and is a phishing
+lever: `//evil.com` is protocol-relative, and `/\evil.com` becomes that in
+browsers that normalise backslashes. ⚠ Both are rejected; anything rejected
+becomes `/`, so callers redirect unconditionally.
 
-`/login?return_to=…` exists so a reconnect banner can land the user back where
-they were. It is also the classic phishing lever: a link like
-`/login?return_to=//evil.com` sends the browser off-site after a successful
-login, when the user has every reason to trust what they are looking at.
-
-⚠ The accepted shape is deliberately narrow, and the two rejections that matter
-are not obvious:
-
-* `//evil.com` is protocol-relative. It looks like a path and is not.
-* `/\evil.com` — some browsers normalise a backslash to a slash, so this
-  becomes the previous case inside the browser and not inside a naive check.
-
-Anything rejected becomes `/`, so callers can redirect to the result
-unconditionally rather than carrying a branch that might be forgotten.
-
-## The pending login rides in a cookie, not in `state`
-
-Nextcloud drops the `state` parameter when the browser has no NC session: it
-bounces to its own login flow and comes back with `state=` empty. A server that
-looks a pending login up by `state` therefore cannot sign in a cookie-less
-browser at all — found in the sibling fleetwatch service, whose Android WebView
-lost its NC cookie and could never sign in again.
-
-So `state` is still sent and still checked when returned, and the cookie is what
-binds the callback to the browser that started it.
-
-Residual risk, accepted deliberately rather than overlooked: when NC returns
-an empty `state`, the cookie is the only binding, so a login-CSRF is possible
-for someone who can both reach this VPN-only host and land a callback in the
-victim's browser inside the ten-minute window. The alternative is a login that
-cannot be performed.
+The pending login rides in a cookie, not `state`: Nextcloud returns `state=`
+empty when the browser had no NC session, so a lookup by `state` could never
+sign in a cookie-less browser. `state` is still checked when returned. When it
+is empty the cookie is the only binding, an accepted login-CSRF risk on a
+VPN-only host within a ten-minute window.
 
 Pure and total. UNPROVEN.
 -/
@@ -48,11 +24,8 @@ def PENDING_TTL_MS : Int := 10 * 60 * 1000
 private def isSafePathChar (c : Char) : Bool :=
   c.isAlphanum || "_-.~+/?=&%".toList.contains c
 
-/-- Validate a client-supplied post-login redirect. Anything not clearly an
-internal path becomes `/`.
-
-⚠ Rejects `//host` and `/\host` explicitly — see the module note on why those
-two are the cases that matter. -/
+/-- Validate a client-supplied post-login redirect; anything not clearly an
+internal path, `//host` and `/\host` included, becomes `/`. -/
 def validateReturnTo (raw : Option String) : String :=
   match raw with
   | none => "/"
@@ -68,14 +41,9 @@ def validateReturnTo (raw : Option String) : String :=
         else if cs.all isSafePathChar then s else "/"
       | _ => "/"
 
-/-- `<expiry ms>|<nonce>|<retried 0/1>|<returnTo>`.
-
-`retried` says this login was already sent back to Nextcloud once for a missing
-`state`; a second miss is refused.
-
-`returnTo` is last so a `|` inside a query string cannot shift the fields. A
-format putting it in the middle would let a crafted `return_to` rewrite the
-expiry. -/
+/-- `<expiry ms>|<nonce>|<retried 0/1>|<returnTo>`. `retried`: already sent
+back to Nextcloud once for a missing `state`. `returnTo` is last, so a `|` in
+it cannot rewrite the expiry. -/
 def encodePending (expiresAt : Int) (nonce : String) (retried : Bool) (returnTo : Option String) : String :=
   let rt := match returnTo with | none => "" | some r => r
   toString expiresAt ++ "|" ++ nonce ++ "|" ++ (if retried then "1" else "0") ++ "|" ++ rt
@@ -118,15 +86,10 @@ def Callback.name : Callback → String
   | .retry => "retry"
   | .refuse => "refuse"
 
-/-- What may this callback do?
-
-`state` is what Nextcloud returned: `none` or empty when it was lost through
-the login flow. Present means it must match. Lost is never accepted
-(RFC 6749 §10.12): nothing then ties the URL's code to this browser, so anyone's
-code would sign it in. It is retried once — the retry finds Nextcloud signed
-in, so `state` comes back — and a second miss is refused.
-
-Expiry is strict — an entry exactly at its deadline is expired. -/
+/-- What may this callback do? A present `state` must match. A lost one (`none`
+or empty) is never accepted (RFC 6749 §10.12): it is retried once, when
+Nextcloud is signed in and returns it, and a second miss is refused. Expiry is
+strict: an entry exactly at its deadline is expired. -/
 def acceptPending (expiresAt : Int) (nonce : String) (retried : Bool) (state : Option String)
     (now : Int) : Callback :=
   if expiresAt < now then .refuse

@@ -1,35 +1,14 @@
-//! Share-link management.
+//! Share-link management: one row per user, handing an unauthenticated
+//! recipient read access to the last N days. These handlers are the only way
+//! to widen or close that. The layer order they depend on is in `routes::mod`.
 //!
-//! One row per user. A share link hands an unauthenticated recipient read
-//! access to the last N days, so these four handlers are the only place a user
-//! can widen or close that.
+//! `daysBack` is clamped here (400 → 365) where `?days=400` on a read is an
+//! error; clients rely on both (`Verified.Share.clampShareDaysBack`,
+//! `Verified.ApiWindow.validateDays`). A non-number is refused: POST then
+//! defaults to 7, PATCH answers 400.
 //!
-//! ⚠ these are the first write routes in this router, which makes the layer
-//! order in `routes::mod` load-bearing rather than theoretical. `require_session`
-//! must run before `require_may_proceed`, because the latter reads the session
-//! out of the request extensions to decide whether a share viewer may write.
-//! Run the wrong way round, a recipient's POST is judged before their session
-//! exists, looks anonymous, is therefore not a share viewer, and is allowed —
-//! a read-only link that can rotate its owner's token.
-//!
-//! # `daysBack` clamps here and rejects on a read
-//!
-//! `?days=400` on `/activity` is an error; `daysBack: 400` here is silently
-//! narrowed to 365. Same API, same domain, opposite behaviour, both kept
-//! because clients rely on them. See `Verified.Share.clampShareDaysBack` against
-//! `Verified.ApiWindow.validateDays`.
-//!
-//! A non-number is a third case, distinct from out-of-range: it is not
-//! clamped, it is refused, and then POST and patch disagree about what to do
-//! with the refusal. POST falls back to 7; patch answers 400. A host that
-//! collapsed them would either reject a bodyless create or quietly retune a
-//! live link to a week.
-//!
-//! # Rotation is DELETE + INSERT, in one transaction
-//!
-//! The old token's row is gone, so a leaked link stops working immediately
-//! rather than expiring. The transaction is what stops a concurrent read seeing
-//! the gap in between and concluding the share was revoked.
+//! Rotation is DELETE + INSERT in one transaction, so a leaked link dies at
+//! once and no concurrent read sees the share as revoked.
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -45,10 +24,8 @@ use crate::error::ErrorBody;
 use crate::state::AppState;
 use crate::{lean, row_json};
 
-/// The default window when a create request says nothing usable.
-///
-/// Seven days, and it is not `SHARE_DAYS_MIN`. A create with no body opens a
-/// week of history, so a mistaken POST is not harmless.
+/// The default window when a create request says nothing usable: a week, not
+/// `SHARE_DAYS_MIN`, so a mistaken POST is not harmless.
 const DEFAULT_DAYS_BACK: i64 = 7;
 
 #[derive(serde::Deserialize)]
@@ -60,11 +37,8 @@ pub struct Body {
     share_location: Option<bool>,
 }
 
-/// `daysBack` from a JSON body, as `clampShareDaysBack` sees it.
-///
-/// A numeric string is not a number: `{"daysBack": "7"}` is refused, not
-/// parsed. That is the opposite of the query-parameter path, where everything
-/// arrives as a string and is coerced.
+/// `daysBack` from a JSON body, as `clampShareDaysBack` sees it. A numeric
+/// string is refused, unlike the query-parameter path, which coerces.
 fn days_back_of(body: Option<&Body>) -> Option<i64> {
     let v = body?.days_back.as_ref()?;
     // `Math.floor`, so toward negative infinity — and then clamped, which is
@@ -201,11 +175,8 @@ pub async fn post(
     }
 }
 
-/// DELETE + INSERT in one transaction.
-///
-/// The transaction is not ceremony. Without it a concurrent read lands
-/// between the two statements, finds no row, and tells the user their share is
-/// revoked — which is exactly the moment they are looking at the settings page.
+/// DELETE + INSERT in one transaction, or a concurrent read between them would
+/// report the share revoked.
 async fn rotate(
     st: &AppState,
     user_id: &str,
@@ -244,10 +215,8 @@ pub async fn patch(
     let share_location = body.as_ref().and_then(|b| b.share_location);
     let asks_days = body.as_ref().is_some_and(|b| b.days_back.is_some());
     let requested = days_back_of(body.as_ref());
-    // Rejects where POST defaults. A patch is aimed at a live link, and
-    // quietly retuning it to seven days because the body was malformed would
-    // change what a recipient can see without anyone asking for it. A body
-    // that only sets `shareLocation` leaves the window as it is.
+    // Rejects where POST defaults: a malformed patch must not retune a live
+    // link. A body setting only `shareLocation` keeps the window.
     let days_back = match lean::clamp_share_days_back(requested) {
         Err(e) => return oops(&e),
         Ok(None) if !asks_days && share_location.is_some() => None,

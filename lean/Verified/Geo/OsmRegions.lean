@@ -1,30 +1,13 @@
 /-!
 # Where to mirror: regions, the home metro, and its tiles
 
-The two Overpass mirrors (`refresh-rail-stops`, `refresh-bus-routes`) both begin
-by answering the same question, *which patch of the planet is this user's life
-in?*, and both answer it the same way: cluster the recent focus places into
-metropolitan regions, take the largest, bound it, and cut that box into tiles
-small enough that one Overpass call stays light.
+The Overpass mirrors (`refresh-rail-stops`, `refresh-bus-routes`) cluster recent
+focus places into metropolitan regions, take the largest, bound it and tile it.
+One box around places on several continents would tile oceans.
 
-## Why the region step exists at all
-
-A user who has lived in London and visited Amsterdam and San Francisco has focus
-places on three continents-worth of separation. One bbox around all of them is a
-box containing an ocean, and tiling that is tens of thousands of Overpass calls
-for water. Clustering first means each metro can be bounded independently, and
-the mirrors then take only the one the user actually lives in.
-
-## ⚠ The union-find's order is observable, not an implementation detail
-
-`clusterIntoRegions` returns groups in the order each component's root is first
-reached while walking the points in index order, and members within a group in
-index order. The mirrors pick the largest region with a `reduce` that keeps the
-first on a tie, so two regions of equal size resolve by this ordering — a
-different-but-valid union-find would mirror a different city.
-
-So the union is fixed exactly: `parent[find i] = find j` for `i < j`,
-path-halving in `find`, and no union by rank.
+⚠ The union-find's order is observable: the largest region is picked keeping
+the first on a tie, so a different valid union-find would mirror another city.
+The union is fixed: `parent[find i] = find j` for `i < j`, path halving, no rank.
 -/
 
 namespace Verified.Geo.OsmRegions
@@ -54,11 +37,8 @@ def PI : Float := 3.141592653589793
 
 private def toRad (d : Float) : Float := d * PI / 180.0
 
-/-- Expand a bbox by `marginM` metres.
-
-The longitude margin is latitude-corrected and the correction uses the mean
-latitude of the box, not either edge. A flat degree pad would narrow the box the
-further from the equator it sits — the same trap as the corridor padding. -/
+/-- Expand a bbox by `marginM` metres, the longitude margin corrected at the
+box's mean latitude: a flat degree pad narrows with latitude. -/
 def expandBbox (b : Bbox) (marginM : Float) : Bbox :=
   let dLat := marginM / M_PER_DEG
   let dLon := marginM / (M_PER_DEG * Float.cos (toRad ((b.minLat + b.maxLat) / 2.0)))
@@ -92,15 +72,8 @@ def haversineKm (a b : Pt) : Float :=
     + Float.cos (toRad a.lat) * Float.cos (toRad b.lat) * sq (Float.sin (dLon / 2.0))
   EARTH_R_KM * 2.0 * Float.atan2 (Float.sqrt h) (Float.sqrt (1.0 - h))
 
-/-- `find` with path halving, over a mutable parent array.
-
-Returns the root and the updated array: the halving is a write, and dropping it
-would turn an O(n²) pass into something quadratic per lookup on a long chain.
-
-Total by fuel: a forest's longest chain has fewer links than the array has
-entries and halving only shortens chains, so the budget of `parent.size` steps
-is never spent on a forest. It is there so the function needs no invariant
-about the array to be accepted. -/
+/-- `find` with path halving, returning the root and the updated array (the
+halving is a write). Total by fuel: `parent.size` steps exceed any forest chain. -/
 private def findRoot (parent : Array Nat) (i : Nat) : Nat × Array Nat :=
   go parent i parent.size
 where
@@ -117,13 +90,9 @@ where
           | none => (p, par)
           | some gp => go (par.set! r gp) gp fuel
 
-/-- Group points into metropolitan regions: a connected component under
-"within `maxGapKm` of each other". O(n²), which is nothing for the few hundred
-focus places a user has.
-
-Returns index groups, not points — typed to `pts`. The mirrors carry payloads
-alongside the coordinates and re-associate by index; returning points would force
-every caller to match on floats. -/
+/-- Group points into metropolitan regions, components under "within
+`maxGapKm`". O(n²), fine for a few hundred places. Returns indices into `pts`,
+so callers re-associate payloads without matching floats. -/
 def clusterIntoRegionIndices (pts : Array Pt) (maxGapKm : Float) : Array (Array (Fin pts.size)) := Id.run do
   let mut parent : Array Nat := Array.ofFn (n := pts.size) (fun i => i.val)
   for hi : i in [0:pts.size] do
@@ -153,11 +122,8 @@ def largestRegion {α : Type} (groups : Array (Array α)) : Option (Array α) :=
     | none => some g
     | some a => if g.size > a.size then some g else some a) none
 
-/-- The whole opening move of both mirrors: recent focus places in, the home
-metro's bbox out. `none` when there are no places to bound.
-
-The cutoff is the shell's job. This takes the places that already survived it,
-because "recent" is a clock read and the clock is IO. -/
+/-- Recent focus places in, the home metro's bbox out; `none` with no places.
+The recency cutoff reads the clock, so the caller applies it. -/
 def homeRegionBbox (pts : Array Pt) (maxGapKm : Float) (marginM : Float := 1500.0)
     : Option Bbox := do
   let groups := clusterIntoRegionIndices pts maxGapKm
@@ -187,9 +153,8 @@ def tileBbox (b : Bbox) (maxCellDeg : Float) : Array Bbox := Id.run do
 
 /-! ## Guards
 
-These pin the two things that are order, not arithmetic — which region comes
-back first, and which one `largestRegion` keeps on a tie. Both are observable:
-they decide which city gets mirrored.
+These pin the order: which region comes first, and which `largestRegion` keeps
+on a tie. Both decide which city is mirrored.
 -/
 
 private def near (a b : Float) : Bool := decide (Float.abs (a - b) < 1e-9)
@@ -241,11 +206,9 @@ private def SMALL : Bbox := { minLat := 51.5, maxLat := 51.52, minLon := -0.1, m
 #guard near (tileBbox SMALL 0.05)[0]!.minLat SMALL.minLat
 #guard near (tileBbox SMALL 0.05)[0]!.maxLon SMALL.maxLon
 
--- 0.1 degrees at 0.05-degree cells is 3x2, not 2x2. `51.6 - 51.5` is
--- 0.09999999999999432 in a double but `-0.1 - -0.2` is 0.10000000000000003, so
--- the latitude span divides to 2.0000000000000284 and `ceil` takes it to three:
--- the mirror issues 50% more latitude tiles than the geometry calls for. A guard
--- of `== 4` would look right and be wrong about production.
+-- 0.1 degrees at 0.05-degree cells is 3x2, not 2x2: in doubles the latitude
+-- span divides to 2.0000000000000284 and `ceil` makes three. A guard of `== 4`
+-- would look right and be wrong about production.
 private def BIG : Bbox := { minLat := 51.5, maxLat := 51.6, minLon := -0.2, maxLon := -0.1 }
 private def TILES : Array Bbox := tileBbox BIG 0.05
 #guard TILES.size == 6

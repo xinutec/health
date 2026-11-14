@@ -1,40 +1,17 @@
-//! The per-pod cache in front of `/velocity`.
+//! The per-pod cache in front of `/velocity`. A day takes 5–10 s to compute
+//! and is deterministic for `(user, date, tz, walkMatch)`; the user revisits
+//! days within a session.
 //!
-//! Computing a day is a Nextcloud fetch, a Kalman pass, segmentation, OSM
-//! enrichment and biometric joins — 5–10 s on a data-rich day — and
-//! deterministic for a given `(user, date, tz, walkMatch)`. The user revisits
-//! the same day several times in a session, so repeat views read from here.
+//! Reuse window and size are `Verified.VelocityCache` ([`Policy`]); this file
+//! holds the map, eviction order and single-flight.
 //!
-//! # Nothing here decides anything
+//! Entries are serialised bytes, not `Value` trees (several times larger), and
+//! every read and seat sweeps stale ones, or expired days stay pinned until
+//! their key is read again.
 //!
-//! How long an entry may be reused, and how many to keep, are
-//! `Verified.VelocityCache`. This is the map, the eviction order and the
-//! single-flight — which request shares a computation with which is
-//! concurrency, not policy. [`Policy`] is what the caller carries across from
-//! Lean; it is never computed in this file.
-//!
-//! # Held as bytes, and swept
-//!
-//! An entry is the day serialised, not the parsed tree. A day is ~5 MB of JSON
-//! and several times that as a `Value` (one allocation per number, string and
-//! object); thirty-two such trees pinned the serving pod at its 512 MiB limit
-//! while the entries were long past their five-minute window, because nothing
-//! dropped an entry until its key was read again or the bound was hit. Every
-//! read and every seat sweeps the stale ones out, so what is held is what was
-//! viewed inside the window, and the parse on a hit is milliseconds against the
-//! seconds it saves.
-//!
-//! # Per-pod, cleared by restart
-//!
-//! No schema-version tag and no invalidation hook: a deploy restarts the pod
-//! and that is the invalidation. The cost is a cold cache after each deploy.
-//!
-//! There is no invalidation and no generation counter, because nothing
-//! changes an answer under a running pod: a deploy restarts it. Anything that
-//! later changes the pipeline's answer under a running pod has to bring both;
-//! this paragraph is the note that says so. The drain beside the pod
-//! (`fetch_drain`) changes the data under a running pod, not the pipeline; the
-//! five-minute window is what absorbs that.
+//! Per-pod, no invalidation: nothing changes an answer under a running pod, and
+//! a deploy restarts it. Anything that would must add invalidation. Data the
+//! `fetch_drain` adds meanwhile is absorbed by the five-minute window.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -64,10 +41,8 @@ struct Entry {
 /// The cache. One per process; `AppState` holds it behind an `Arc`.
 #[derive(Default)]
 pub struct VelocityCache {
-    /// Insertion-ordered, oldest first, because the eviction rule is "drop the
-    /// oldest" and a `HashMap` has no oldest. A `Vec` rather than an ordered-map
-    /// crate: the bound is 32, so a linear scan is free and the order is visible
-    /// in the type instead of being a property of a dependency.
+    /// Insertion-ordered, oldest first, for "drop the oldest". A `Vec`: the
+    /// bound is 32, so a linear scan is free.
     entries: Mutex<Vec<Entry>>,
     /// One lock per in-flight key. See [`VelocityCache::get_or_compute`].
     locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -78,12 +53,9 @@ impl VelocityCache {
         Self::default()
     }
 
-    /// Drop every entry past its own window.
-    ///
-    /// Freshness is Lean's — including the rule that an entry stamped in the
-    /// future is stale. Plain `now - cached_at < ttl` reads a far-future entry
-    /// as eternally fresh, which is the one staleness failure that never expires
-    /// by itself.
+    /// Drop every entry past its own window. Freshness is Lean's, including that
+    /// a future-stamped entry is stale; `now - cached_at < ttl` would keep it
+    /// forever.
     fn sweep(entries: &mut Vec<Entry>, now_ms: i64) -> Result<()> {
         let mut i = 0;
         while i < entries.len() {
@@ -138,18 +110,9 @@ impl VelocityCache {
 
     /// Read `key`, or compute it and seat the result.
     ///
-    /// # Single-flight
-    ///
-    /// Two concurrent requests for the same key must not both run the compute:
-    /// opening the dashboard in two tabs would otherwise fire two parallel OSM
-    /// enrichment runs over the same rows.
-    ///
-    /// This takes a per-key lock instead, and the waiter re-reads the cache
-    /// after acquiring it. Same guarantee about parallelism; the difference is
-    /// on failure, where a waiter recomputes rather than inheriting the first
-    /// caller's error. That is the better answer for a transient fault and a
-    /// worse one for a persistent it — bounded by the number of waiters, which
-    /// is the number of tabs.
+    /// Single-flight by a per-key lock: a waiter re-reads the cache after
+    /// acquiring it, so two tabs do not compute one day twice. A waiter
+    /// recomputes rather than inheriting an error, bounded by the waiters.
     pub async fn get_or_compute<F, Fut>(
         &self,
         key: &str,
@@ -202,10 +165,8 @@ impl VelocityCache {
         };
 
         drop(guard);
-        // Retire the slot only when nobody else holds it: the map's reference
-        // plus ours is two, and a waiter that cloned under this same lock would
-        // make it three. Checked while holding the map lock, so a joiner cannot
-        // arrive between the count and the removal.
+        // Retire the slot only when nobody else holds it (count two: the map and
+        // us), checked under the map lock so no joiner arrives in between.
         {
             let mut locks = self.locks.lock().expect("velocity lock map mutex");
             if Arc::strong_count(&lock) == 2 {

@@ -1,10 +1,5 @@
-//! Shared application state.
-//!
-//! Deliberately thin, and it should stay that way. The velocity cache lives
-//! here, and it is process-local on purpose: a deploy restarts the pod and that
-//! is the invalidation, which is why there is no version tag and no clear hook.
-//! `crate::velocity_cache` says what would have to come back if anything ever
-//! changed an answer without a restart.
+//! Shared application state, kept thin. The velocity cache is process-local:
+//! a deploy restart is its invalidation (see `crate::velocity_cache`).
 
 use std::sync::Arc;
 
@@ -28,20 +23,14 @@ pub struct AppState {
     /// answer would key on it and defeat the point.
     pub tail_points:
         Arc<crate::location_cache::LocationCache<Vec<crate::location_cache::TailPoint>>>,
-    /// In-flight Nextcloud Login Flow v2 handshakes, one per user.
-    ///
-    /// Process-local and deliberately not persisted: a flow is meaningless
-    /// across a restart, since the task polling for it is gone. A stored
-    /// "pending" would be a lie nobody could clear.
+    /// In-flight Nextcloud Login Flow v2 handshakes, one per user. Not
+    /// persisted: the polling task dies with the process.
     pub flows: Arc<crate::routes::nextcloud_connect::PendingFlows>,
     /// Per-device Owntracks proxy state: recent fixes, last pushed profile,
     /// manual-hold deadline.
     pub owntracks: Arc<crate::routes::owntracks::ProxyState>,
-    /// When this process started, for `/health?detail=1`'s uptime.
-    ///
-    /// Process uptime, not pod age. They differ after a container restart
-    /// inside the same pod, and the one that explains "why did my session
-    /// vanish" is this one.
+    /// When this process started, for `/health?detail=1`: process uptime, not
+    /// pod age, which explains a vanished session after a container restart.
     pub started: std::time::Instant,
     /// One client, reused: every outbound call is bounded, so a hung Nextcloud
     /// cannot tie up the pod, and the connection pool survives across requests.
