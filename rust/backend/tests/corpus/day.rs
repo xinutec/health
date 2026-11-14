@@ -1,51 +1,19 @@
-//! A whole day with no database, against the last blessed timeline.
+//! A whole day with no database, against the last blessed timeline:
 //!
 //! ```text
 //!   fixture.inputs → head::capture → build_day_request → fold → states
 //! ```
 //!
-//! `build_day_request` and `RowSetAnswerer` read a `FOLD_CAPTURE` shape that
-//! nothing in this repo could produce until `head::capture` did. That is what closes
-//! the chain: a day replays from the fixture alone, with no external producer.
+//! It starts at `fixture.inputs`, so nothing that produces an input
+//! (`classification_inputs::load`, every query and join in it) runs here or
+//! anywhere in the corpus: a loader change can be green while moving the answer.
 //!
-//! The oracle is `expected.statesOut` — this pipeline's own last blessed
-//! output.
-//!
-//! # WHERE THIS GRADER BEGINS, AND THEREFORE WHAT IT DOES NOT COVER
-//!
-//! It starts at `fixture.inputs`. Nothing that produces an input is exercised
-//! here — `classification_inputs::load` and every DB query, cache load,
-//! PhoneTrack window and biometrics join inside it are upstream of the fixture
-//! and are not reached by this file or any other in the corpus.
-//!
-//! That boundary is invisible from the pass line: a change to
-//! `classification_inputs::load` can be reported green by hundreds of tests
-//! that never executed it. A change to what the fold is fed must land on the
-//! replay path above, or be covered by something else that is named; a loader
-//! is the most dangerous place for this, because it moves the answer while
-//! every assertion here still holds.
-//!
-//! # What the oracle is, and what it therefore cannot tell you
-//!
-//! `statesOut` is the last blessed output of this arm. It catches a regression
-//! and it cannot catch "it was always wrong" — only the ground-truth narratives
-//! grade correctness. When this goes red the answer moved; whether it moved for
-//! the better is a question this file does not answer.
-//!
-//! `DAY_BLESS=1` re-blesses — it overwrites each fixture's `statesOut` with the
-//! current replay and prints what it touched. Bless deliberately, on a clean
-//! tree, and read the inner golden repo's diff before committing it.
-//!
-//! Blessing is per-fixture here, not to a shared floor file, so it is the one
-//! bless in the corpus that is safe to run sharded: each shard rewrites only
-//! its own days and they cannot race. It is still only complete if both shards
-//! run.
-//!
-//! # Why this grader is local-only
-//!
-//! `tests/golden/days` is gitignored: the fixtures carry real coordinates,
-//! place names and biometrics. The runner announces a skip rather than passing
-//! quietly.
+//! The oracle, `expected.statesOut`, is this pipeline's last blessed output: it
+//! catches a regression, not "always wrong" (the narratives grade correctness).
+//! `DAY_BLESS=1` rewrites it per fixture, so it is safe sharded but complete only
+//! with both shards; bless on a clean tree and read the golden repo's diff.
+//! Local-only: `tests/golden/days` is gitignored, and the runner announces a
+//! skip.
 
 use std::collections::BTreeMap;
 
@@ -53,27 +21,17 @@ use serde_json::{Map, Value, json};
 
 use super::Replay;
 
-/// Days whose timeline diverges from the blessed oracle — each with its
-/// divergence adjudicated, not merely observed.
+/// Days whose timeline diverges from the blessed oracle, each adjudicated.
 ///
-/// ⚠ this list may only shrink. Listing a day keeps the other 41 checkable
+/// ⚠ This list may only shrink. Listing a day keeps the other days checkable
 /// instead of one red day hiding them all; re-capturing a day to make a miss
 /// go away is forbidden.
-///
-/// Empty: the list stays for the next genuinely divergent day.
 const KNOWN_DIVERGENT: [&str; 0] = [];
 
-/// The tables an unanswered key may belong to. Anything else is a new gap.
-///
-/// `nearbyWays` counts for the days that leave the mirror's ground: the
-/// Eurostar crosses Kent, the Channel and France, where the mirror holds no ways
-/// and declines the ask, at capture and on the pod alike, so the blessed
-/// timeline was built from the same absence. It counts against the per-day
-/// ceiling like the others; every other day's ceiling is unchanged, so a
-/// `nearbyWays` miss anywhere else still fails.
-///
-/// `nearbyStations` and `linesAtPoint` count for the same reason: Paris to San
-/// Sebastián, where the mirror holds no stations or lines either.
+/// The tables an unanswered key may belong to; anything else is a new gap.
+/// `nearbyWays`, `nearbyStations` and `linesAtPoint` count for days that leave
+/// the mirror's ground (the Eurostar, Paris to San Sebastián), which declines at
+/// capture and on the pod alike; every other day's ceiling still holds.
 const UNANSWERED_KINDS: [&str; 6] = [
     "reverseGeocode",
     "nearbyLandmarks",
@@ -83,29 +41,13 @@ const UNANSWERED_KINDS: [&str; 6] = [
     "linesAtPoint",
 ];
 
-/// Keys the offline answerer cannot supply, by day, beyond the blank-zone
-/// `bestPlace` asked before `tzAt` resolves.
-///
-/// Each means the fold reached a lookup the recorded trace has no answer for,
-/// so the row set is not that lookup's source. The miss is the finding, so this
-/// is a ceiling that must fall, not a budget.
-///
-/// What it holds is the two tables declined on purpose: `reverseGeocode` is a
-/// Nominatim call whose keys are coordinates the pipeline derives, and
-/// `transitStops` is injected rather than computed from rows. Neither falls
-/// without porting something.
-///
-/// Per day, not a total, and that is what makes it shardable.
-/// A shard cannot check a corpus-wide total (asserting `≤ 16` on each half
-/// passes at 32), so the bound is per day; it also says which day grew.
-///
-/// A change that moves stays or walks derives `reverseGeocode` keys the
-/// capture never asked (a moved boundary, a carved-out stop, a stay named at
-/// its own fixes rather than the stored centroid), so such a change and this
-/// table move together, in one commit that says which days moved. Blessing it
-/// while the gate runs another arm turns day_corpus red in its own
-/// configuration. The holes close when a day is re-captured; the fold is right
-/// to ask. `DAY_UNANSWERED_OUT=<path>` prints the table this run measured.
+/// Keys the offline answerer cannot supply, per day, beyond the blank-zone
+/// `bestPlace` asked before `tzAt` resolves: a ceiling that must fall, not a
+/// budget. It holds the two tables declined on purpose, `reverseGeocode` (a
+/// Nominatim call on derived coordinates) and `transitStops` (injected). Per day,
+/// so a shard can check it and it says which day grew. A change moving stays
+/// or walks derives new `reverseGeocode` keys and moves this table in the same
+/// commit; `DAY_UNANSWERED_OUT=<path>` prints what a run measured.
 const UNANSWERED_BY_DAY: [(&str, usize); 44] = [
     ("2026-04-29", 8),
     ("2026-04-30", 6),
@@ -164,13 +106,9 @@ fn ceiling_for(date: &str) -> usize {
         .map_or(0, |(_, n)| *n)
 }
 
-/// `null` and absent are the same state here, and comparing without this would
-/// report every state as differing.
-///
-/// The seam is an absent field against Lean's `null`: an older fixture drops an
-/// absent field, and Lean writes `null`. Dropping nulls on both sides equates
-/// exactly those two and nothing else: a field the fold nulls and the fixture
-/// fills still differs, because one side then has a key the other does not.
+/// `null` and absent are the same state here: older fixtures drop absent
+/// fields where Lean writes `null`. Dropping nulls on both sides equates exactly
+/// those; a field one side fills still differs.
 fn drop_nulls(v: &Value) -> Value {
     match v {
         Value::Object(o) => Value::Object(
@@ -186,11 +124,9 @@ fn drop_nulls(v: &Value) -> Value {
 
 pub struct Day {
     golden: &'static str,
-    /// Injection makes the run report-only, for the reason the truth referee
-    /// gives: the oracle was blessed from an arm nobody re-blessed under these
-    /// priors, so a mismatch is the measurement, not a regression. What it
-    /// answers is the half the truth floor structurally cannot — the footprint
-    /// on stays no narrative row grades.
+    /// Injection makes the run report-only: the oracle was not blessed under
+    /// these priors, so a mismatch is the measurement. It covers the stays no
+    /// narrative row grades.
     report_only: bool,
     places: BTreeMap<String, Vec<Value>>,
     measured: BTreeMap<String, usize>,
@@ -223,11 +159,8 @@ impl Day {
         self.graded += 1;
         let fx = &rep.fx;
 
-        // Every oracle here catches a regression and none catches "it was
-        // always wrong". The ground-truth narratives are the only thing in the
-        // corpus that grades correctness rather than change — when this
-        // gate goes red it means the answer moved, which is not the same as the
-        // answer getting worse.
+        // Every oracle here catches a regression, none "always wrong": red means
+        // the answer moved, not that it got worse.
         let Some(want) = fx.pointer("/expected/statesOut").cloned() else {
             self.failures.push(format!(
                 "{name}: no `expected.statesOut` to replay against. A fixture \
@@ -238,23 +171,16 @@ impl Day {
         };
         self.asks = self.asks.max(rep.asks.len());
 
-        // The only accepted residue. The fold asks `bestPlace` once before
-        // `tzAt` has resolved the stay's zone and again after; the blank-zone
-        // spelling is a question asked too early, not a stay with no zone, and
-        // the answerer declines it rather than pick one (04-29: 8 spans, each
-        // asked twice). Anything else unanswered means the timeline below was
-        // built from a default for a question the day really asked, and
-        // matching `statesOut` anyway would be luck rather than agreement.
+        // The only accepted residue: the blank-zone `bestPlace` asked before
+        // `tzAt` resolves, declined. Anything else unanswered means the timeline
+        // came from a default, and matching `statesOut` would be luck.
         let mut n = 0usize;
         for m in &rep.declined() {
             if m.what == "bestPlace" && m.key.ends_with('|') {
                 continue;
             }
-            // The three matcher reads are asks too, and a trace that lacks one
-            // key declines it, which the walk gate counts and bounds
-            // (`missed * 4 < asked`). Here it is not a default the timeline was
-            // built from: the leg draws raw, which is what the blessed timeline
-            // was built from as well.
+            // The three matcher reads are asks too; a missing one draws the leg
+            // raw, as the blessed timeline did, and the walk gate bounds them.
             if backend::fold::OSM_READS.contains(&m.what.as_str()) {
                 continue;
             }
@@ -421,9 +347,6 @@ fn metres(p: (f64, f64), q: (f64, f64)) -> f64 {
 }
 
 /// The first state that differs, and which of its fields.
-///
-/// Printing the timelines whole buries the one state that moved; printing only
-/// the index does not say which field.
 fn first_state_difference(got: &Value, want: &Value) -> String {
     let empty = Vec::new();
     let g = got.as_array().unwrap_or(&empty);

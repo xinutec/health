@@ -1,34 +1,19 @@
-//! The base OSM mirror's write half — the Overpass fetch that fills
-//! `osm_lines`, `osm_points` and `osm_coverage`.
+//! The OSM mirror's write half: the Overpass fetch filling `osm_lines`,
+//! `osm_points` and `osm_coverage` ([`crate::mirror_source`] reads).
 //!
-//! The write half of the OSM mirror; the read half is
-//! [`crate::mirror_source`]. Without it the mirror would be a frozen snapshot,
-//! and ground never fetched would stay blank for good.
-//!
-//! # Recovered, not reinvented
-//!
-//! The tag filters, the bucket precedence and the WKT shapes below match the
-//! rows already in the mirror, and a query of a different shape would write
-//! rows that disagree with their neighbours: a mirror half-filled by two
-//! different definitions of `highway` is worse than one half-empty.
-//!
-//! # A fetch is out of band, which lifts the box limit
-//!
-//! Fetching inside a velocity request in a 512 MiB pod pinned buildings to a
-//! 500 m half-width: a 10 km box of London footprints is a volume bomb on the
-//! serving path. This runs in the drain beside the pod
-//! ([`crate::fetch_drain`]), with no request waiting on it and its own memory,
-//! so the box is sized to the question instead: see [`half_width_for`].
+//! The tag filters, bucket precedence and WKT shapes match the rows already in
+//! the mirror: a mirror half-filled by two definitions of `highway` is worse
+//! than one half-empty. It runs in the drain beside the pod
+//! ([`crate::fetch_drain`]), with no request waiting and its own memory, so the
+//! box is sized to the question ([`half_width_for`]).
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value};
 use sqlx::MySqlPool;
 
-/// One degree of latitude, in metres.
-///
-/// The mirror's constant, not the Kalman filter's `111_320`. Both exist and
-/// they are not interchangeable: this one decides which queries count as
-/// covered, and `Verified.Geo.OsmCoverage.METERS_PER_DEG_LAT` is its authority.
+/// One degree of latitude (m): the mirror's constant, not the Kalman filter's
+/// `111_320`. It decides coverage; `Verified.Geo.OsmCoverage.METERS_PER_DEG_LAT`
+/// is its authority.
 const METERS_PER_DEG_LAT: f64 = 111_000.0;
 
 fn meters_per_deg_lon(lat: f64) -> f64 {
@@ -48,38 +33,22 @@ pub struct Bbox {
 /// neighbourhood rather than a few hundred metres of travel.
 pub const DEFAULT_HALF_WIDTH_M: f64 = 5000.0;
 
-/// The old in-request building half-width, kept as the floor rather than the cap.
-///
-/// Buildings are dense enough that a 10 km box is millions of footprints, so a
-/// building fetch still starts small — but see [`half_width_for`] for why it no
-/// longer stops there.
+/// The smallest building half-width: footprints are dense (a 10 km box is
+/// millions), so a building fetch starts small; see [`half_width_for`].
 pub const BUILDING_HALF_WIDTH_M: f64 = 500.0;
 
-/// The largest box any one question may provoke, per bucket.
-///
-/// A question larger than this is refused, not silently under-fetched.
-/// [`crate::lean::osm_covered`] asks whether the search disc lies inside some
-/// single box — boxes do not union — so a fetch smaller than the question leaves
-/// that question uncovered, and it is asked again on the next fold, forever. A
-/// visible refusal with a reason is the honest end of that.
-///
-/// The numbers are measured, not chosen: over the golden days of 2026-09 the
-/// walk disc (`walkableRoads` and `buildingsNear`, which share it) had p50
-/// 369 m, p95 940 m and max 1832 m, and no other lookup exceeded 800 m.
+/// The largest box any one question may provoke, per bucket. A larger question
+/// is refused, not under-fetched: coverage is "the disc lies inside one box", so
+/// a short fetch leaves the question uncovered and re-asked forever. The walk
+/// disc measured up to 1832 m (p95 940 m); nothing else exceeded 800 m.
 pub const MAX_HALF_WIDTH_M: f64 = 20_000.0;
 pub const MAX_BUILDING_HALF_WIDTH_M: f64 = 2_500.0;
 
 /// How wide a box to fetch for a question of this radius in this bucket.
 ///
-/// The box grows with the radius. A fixed half-width could never satisfy a
-/// question whose radius exceeded it, and a drain that re-queues the same key on
-/// every pass is an unbounded loop against a two-slot public endpoint.
-///
-/// `MARGIN` is what keeps the answer stable against the difference between this
-/// module's degree conversion and the one the coverage gate applies: the gate
-/// converts the radius with `min(METERS_PER_DEG_LAT, metersPerDegLon)`, which is
-/// the larger half-width of the two, so a box sized exactly to the radius can
-/// come back a hair short.
+/// ⚠ The box grows with the radius. A fixed half-width could never satisfy a
+/// larger question, and the drain would re-queue it forever against a two-slot
+/// public endpoint. `MARGIN` absorbs the coverage gate's own degree conversion.
 pub fn half_width_for(bucket: &str, radius_m: f64) -> Result<f64> {
     const MARGIN: f64 = 1.10;
     let (floor_m, cap_m) = if bucket == "building" {
@@ -112,12 +81,8 @@ pub fn fetch_bbox_around(lat: f64, lon: f64, half_width_m: f64) -> Bbox {
     }
 }
 
-/// The tag filters that land in each bucket.
-///
-/// One fetch brings both shapes. `railway` asks for stations (nodes) and rail
-/// lines (ways) in the same query, because the bucket is the OSM tag namespace
-/// rather than a geometry kind — which is also why a caller cannot know in
-/// advance whether a bucket writes to `osm_points`, `osm_lines` or both.
+/// The tag filters per bucket. A bucket is an OSM tag namespace, not a geometry
+/// kind, so one fetch can write both tables (`railway`: stations and lines).
 fn filters_for(feature_type: &str) -> Option<&'static [&'static str]> {
     Some(match feature_type {
         "railway" => &[
@@ -156,15 +121,9 @@ pub const BUCKETS: [&str; 7] = [
     "aeroway",
 ];
 
-/// The Overpass query body for one bucket over a box.
-///
-/// Overpass writes a bbox `(south, west, north, east)`, which is
-/// `(minLat, minLon, maxLat, maxLon)` — not the `(lon, lat)` order WKT uses
-/// three functions away in this same file.
-///
-/// `venue_tags` is [`crate::lean::venue_tags`]: the landmark fetch also asks for
-/// the named features with those tags, which [`parse_element`] files as
-/// landmarks.
+/// The Overpass query body for one bucket over a box. Overpass's bbox is
+/// `(south, west, north, east)`, the opposite of WKT's `(lon, lat)`. The landmark
+/// fetch also asks for named features with [`crate::lean::venue_tags`].
 pub fn overpass_query(
     feature_type: &str,
     bbox: &Bbox,
@@ -198,13 +157,9 @@ pub fn overpass_query(
     ))
 }
 
-/// Tag precedence for the bucket a fetched element lands in.
-///
-/// Order is the rule, not a list. A way tagged both `highway` and `railway`
-/// buckets under the first match, and railway wins because the rail signal is
-/// rarer and more informative. A plain building falls through to `building`
-/// only because every venue tag above it missed — a building that is also a shop
-/// was already kept as a landmark.
+/// Tag precedence for the bucket a fetched element lands in: the first match
+/// wins, so a way tagged `highway` and `railway` is rail (the rarer signal), and a
+/// plain building is `building` only after every venue tag missed.
 const FEATURE_TYPE_RULES: [(&str, &str); 7] = [
     ("aeroway", "aeroway"),
     ("railway", "railway"),
@@ -221,11 +176,8 @@ const FEATURE_TYPE_RULES: [(&str, &str); 7] = [
 const FEATURE_TYPE_RULES_TAIL: [(&str, &str); 2] =
     [("leisure", "landmark"), ("building", "building")];
 
-/// Highway-tagged nodes that are furniture rather than road.
-///
-/// Their own bucket, so a road-way lookup never mixes with them: a vehicle
-/// dwelling repeatedly at bus stops is a bus, and dwelling at signals is any
-/// road vehicle, which is the evidence the bus discriminator reads.
+/// Highway-tagged nodes that are furniture rather than road, in their own
+/// bucket: dwelling at bus stops is a bus, at signals any road vehicle.
 const TRANSIT_STOP_HIGHWAY_SUBTYPES: [&str; 2] = ["bus_stop", "traffic_signals"];
 
 /// One parsed OSM element, ready for `osm_points` or `osm_lines`.
@@ -249,17 +201,11 @@ impl Feature {
     }
 }
 
-/// Translate one Overpass element, or `None` when it carries no tag we bucket
-/// or no usable geometry.
-///
-/// A relation is dropped. `out tags geom` returns them for some filters and
-/// neither geometry table can hold one, so a mirror written here matches the
-/// rows already in it.
+/// Translate one Overpass element, or `None` without a bucketed tag or usable
+/// geometry. Relations are dropped (neither table holds one). A named feature
+/// with a [`crate::lean::venue_tags`] tag and no venue tag is a landmark (a
+/// hotel mapped as the building alone, a beach).
 #[must_use]
-///
-/// `venue_tags` is [`crate::lean::venue_tags`]: a named feature with one of
-/// those tags and no venue tag of its own is a landmark (a hotel mapped as the
-/// building alone, a beach).
 pub fn parse_element(el: &Value, venue_tags: &[(String, Vec<String>)]) -> Option<Feature> {
     let kind = el.get("type")?.as_str()?;
     let id = el.get("id")?.as_i64()?;
@@ -336,18 +282,9 @@ pub fn parse_element(el: &Value, venue_tags: &[(String, Vec<String>)]) -> Option
 /// How many rows go into one INSERT.
 const UPSERT_BATCH: usize = 500;
 
-/// Bulk-upsert features into one geometry table. Returns rows written.
-///
-/// `feature_type` follows the parse on a duplicate key. `parse_element` files
-/// an element from its tags alone, whichever bucket's query returned it, so a
-/// re-fetch that files a row differently is a rule that changed (or OSM that
-/// did), and the row must move with it: halls fetched as buildings before
-/// `building=train_station` joined the venue tags would otherwise stay
-/// buildings, invisible to every landmark reader.
-///
-/// Written out twice, points and lines, for `DL-SQLX-SCHEMA-TRUTH`'s reason:
-/// SQL that reaches the driver through a variable cannot be checked against the
-/// schema, and a table name is not something to parameterise.
+/// Bulk-upsert features into one geometry table, returning rows written. On a
+/// duplicate key `feature_type` follows the parse, so a re-fetch under a changed
+/// rule moves the row. Written out per table for `DL-SQLX-SCHEMA-TRUTH`.
 pub async fn upsert_features(pool: &MySqlPool, features: &[Feature]) -> Result<u64> {
     let mut written = 0;
     for chunk in features.chunks(UPSERT_BATCH) {
@@ -421,12 +358,9 @@ async fn upsert_lines(pool: &MySqlPool, features: &[&Feature]) -> Result<u64> {
     Ok(out.rows_affected())
 }
 
-/// Record that a box has been fetched for a bucket, under `vocab` when the
-/// bucket's boxes are keyed by one ([`vocab_for`]).
-///
-/// Written last, after the rows are in. A coverage row is a promise that the
-/// area can be answered from the mirror; writing it before the features would
-/// make a crash mid-insert look like a fetched area with no roads in it.
+/// Record that a box was fetched for a bucket, under `vocab` where keyed
+/// ([`vocab_for`]). Written after the rows: written first, a crash mid-insert
+/// would look like a fetched area with no roads.
 pub async fn record_coverage(
     pool: &MySqlPool,
     feature_type: &str,
@@ -463,21 +397,15 @@ pub fn bucket_of(kind: &str) -> Option<&str> {
 /// The bucket whose boxes depend on the venue-tag vocabulary.
 pub const VOCAB_BUCKET: &str = "landmark";
 
-/// A short, stable name for a venue-tag vocabulary: 64-bit FNV-1a of the tags
-/// in their served order, as 16 hex digits.
-///
-/// The vocabulary is part of a landmark box's identity, like its bucket. A
-/// box fetched when `VENUE_TAGS` lacked `building=train_station` holds no
-/// station buildings, and the gate cannot tell that from "there are none": the
-/// day would be served without them for `COVERAGE_FRESH_DAYS`. So the box is
-/// recorded with the vocabulary that fetched it, and a read under another one
-/// does not see it — the next fold declines, the drain fetches, the old row
-/// keeps its date.
 /// Bumped when what a landmark fetch files changes without the tag list
-/// changing — a parse or upsert rule — so the boxes fetched under the old
-/// filing stop counting. 2: `feature_type` follows the parse on a duplicate key.
+/// changing, so boxes filed the old way stop counting. 2: `feature_type`
+/// follows the parse on a duplicate key.
 pub const FILING_VERSION: u8 = 2;
 
+/// A short stable name for a venue-tag vocabulary: 64-bit FNV-1a of the tags in
+/// served order, 16 hex digits. Part of a landmark box's identity: a box fetched
+/// under an older vocabulary lacks its features, and the gate cannot tell that
+/// from "there are none", so it does not count under the new one.
 #[must_use]
 pub fn venue_vocab(venue_tags: &[(String, Vec<String>)]) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -507,14 +435,9 @@ pub fn vocab_for<'a>(bucket: &str, venue_vocab: &'a str) -> Option<&'a str> {
     (bucket == VOCAB_BUCKET).then_some(venue_vocab)
 }
 
-/// Every fresh coverage box for one bucket, so a drain can ask the same gate
-/// the serving path asks. `vocab` is [`vocab_for`] the bucket: when `Some`,
-/// only boxes recorded under it count.
-///
-/// `CAST(… AS CHAR)` then `str::parse`, for [`crate::mirror_source`]'s
-/// reason: these columns are `DECIMAL(9,6)` and sqlx will not hand a DECIMAL
-/// back as an `f64`. The first loader in this crate to get that wrong decoded
-/// 117 places to centroid 0.0 and still printed OK.
+/// Every fresh coverage box for one bucket, so a drain asks the serving path's
+/// gate; with `vocab`, only boxes under it count. DECIMAL(9,6) columns are cast
+/// to CHAR and parsed (sqlx will not decode them as `f64`).
 pub async fn coverage_rows(
     pool: &MySqlPool,
     feature_type: &str,

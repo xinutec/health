@@ -1,37 +1,19 @@
 //! The fetch queue's drain, running continuously beside the serving pod.
 //!
-//! The fold declines a lookup it has no data for and records it in
-//! `osm_fetch_queue` (`fetch_queue`); this drains both halves (Nominatim and
-//! Overpass) on demand rather than on a daily cron. The user's call: *"Daily
-//! stuff was because it was slow. I think over time our logic should be fast
-//! and not daily but on demand."*
+//! The fold records each lookup it has no data for in `osm_fetch_queue`
+//! (`fetch_queue`); this drains both halves, Nominatim and Overpass, on demand
+//! rather than on a daily cron (the user's call). [`watch`] polls every
+//! [`WATCH_INTERVAL`], so a day served with declines is complete on its next
+//! view, and queues the ground around fixes arriving since its last tick
+//! (`motion_log`), so a travel day is right the first time it is opened.
 //!
-//! # Shape
-//!
-//! [`watch`] polls the queue every [`WATCH_INTERVAL`] and drains both halves,
-//! so a day served with declines is complete on its next view (a settled day is
-//! cached five minutes, `Verified.VelocityCache`). It also reads the fixes that
-//! arrived since its last tick (`motion_log`, which the OwnTracks proxy writes)
-//! and queues the ground around them before a fold asks, so a travel day is
-//! right the first time he opens it.
-//!
-//! Not in the serving process. It runs as a sidecar container of the
-//! `health-auth` pod (kubes: `dhall/apps/health.dhall`), from the same image.
-//! An Overpass body is ~5 MB of JSON and a fold peaks around 320 MiB under a
-//! 512 MiB limit; the two must not share a cgroup, and nothing here is
-//! on a response path.
-//!
-//! Polite by construction, on the terms the CronJobs ran under: Nominatim one
-//! request per second (`nominatim::MIN_INTERVAL`, slept before each request so
-//! the spacing holds across ticks and processes), Overpass asked for a slot
-//! before each box. A failed key is recorded and retried on a later tick, never
-//! in a loop; see `fetch_queue::MAX_ATTEMPTS`.
-//!
-//! # The by-hand drains are the same code
-//!
-//! `backend fetch-osm` and `backend fetch-geocodes` call [`drain_osm`] and
-//! [`drain_geocodes`]. Two drains of one queue in two files is how they diverge
-//! on what a failure means.
+//! A sidecar of the `health-auth` pod (kubes `dhall/apps/health.dhall`), not the
+//! serving process: an Overpass body is ~5 MB of JSON and a fold peaks near
+//! 320 MiB under a 512 MiB limit, so they must not share a cgroup. Polite as the
+//! old CronJobs were: Nominatim one request a second (`nominatim::MIN_INTERVAL`,
+//! slept before each), an Overpass slot asked per box, and a failed key retried
+//! on a later tick, never in a loop (`fetch_queue::MAX_ATTEMPTS`).
+//! `backend fetch-osm` and `fetch-geocodes` call these same drains.
 
 use std::time::Duration;
 
@@ -40,12 +22,8 @@ use sqlx::MySqlPool;
 
 use crate::{fetch_queue, lean, nominatim, osm_mirror, overpass};
 
-/// How often the queue is looked at.
-///
-/// Set by the view, not by the fetch. A served day with declines is cached
-/// five minutes; the next view within that window is the one that should be
-/// complete, and a poll this often costs one `GROUP BY` over a table of a few
-/// hundred rows.
+/// How often the queue is looked at: set by the view (a served day with
+/// declines is cached five minutes), and a poll costs one small `GROUP BY`.
 pub const WATCH_INTERVAL: Duration = Duration::from_secs(15);
 
 /// How far back the first tick looks for fixes after a start. A restart happens
@@ -53,14 +31,9 @@ pub const WATCH_INTERVAL: Duration = Duration::from_secs(15);
 /// just walked, which is memoised and answered from the mirror once covered.
 pub const PRECOVER_LOOKBACK_S: i64 = 60 * 60;
 
-/// How far around a new fix the mirror is made ready, in metres.
-///
-/// The pre-fetch's own rule, not the fold's. The fold asks its own radii (50 m
-/// for a way or a building question; the queue's keys say so); this is how much
-/// ground to have ready around a point he has just been, so the fold's asks for
-/// the stay or the walk that follows are answered. Wider than the fold's radius
-/// on purpose and far narrower than a box: a highway box is 5 km across its
-/// half-width, so one fetch covers the next hour of walking too.
+/// How far around a new fix (m) the mirror is made ready, so the fold's own
+/// 50 m asks for the stay or walk that follows are answered. Far narrower than
+/// a box: a highway box covers the next hour of walking too.
 pub const PRECOVER_RADIUS_M: f64 = 500.0;
 
 /// Fixes inside one cell this wide are one question: 0.01° is ~1.1 km of
@@ -75,12 +48,9 @@ pub const OSM_KEYS_PER_TICK: i64 = 40;
 /// tick spends on names before it looks at the queue again.
 pub const GEOCODE_KEYS_PER_TICK: i64 = 200;
 
-/// The longest one box waits for an Overpass slot.
-///
-/// Not the tile refresh's cap, which is chosen against its CronJob deadline.
-/// This process has no deadline; the bound is the view's five-minute window. A
-/// box that cannot have a slot in two minutes is recorded as failed and tried
-/// on a later tick, rather than holding the whole tick past the next view.
+/// The longest one box waits for an Overpass slot, bounded by the view's
+/// five-minute window: a box without a slot in two minutes fails and is tried
+/// on a later tick.
 pub const SLOT_WAIT_CAP_S: u64 = 120;
 
 /// What one geocode drain did.
@@ -120,16 +90,11 @@ impl OsmDrain {
 
 /// Drain the geocode half of `osm_fetch_queue`.
 ///
-/// ⚠ rate limited to one request per second, and that is Nominatim's stated
-/// policy rather than a politeness. Exceeding it earns an IP-level ban, which
-/// would take the whole naming cascade down for everyone behind this address;
-/// the same terms `overpass.rs` records for Overpass.
+/// ⚠ One request per second is Nominatim's stated policy: exceeding it earns
+/// an IP-level ban that takes naming down for everyone behind this address.
 ///
-/// A failure is recorded, not retried in a loop. `attempts` rises and the
-/// key stays visible. Deleting it would make it reappear on the next fold and be
-/// retried forever against a rate-limited public service, with nothing to see.
-///
-/// `dry_run` lists what would be fetched and fetches nothing.
+/// A failure raises `attempts` and the key stays visible; deleting it would only
+/// have it re-asked forever. `dry_run` lists without fetching.
 pub async fn drain_geocodes(
     pool: &MySqlPool,
     client: &reqwest::Client,
@@ -138,12 +103,9 @@ pub async fn drain_geocodes(
 ) -> Result<GeocodeDrain> {
     let mut out = GeocodeDrain::default();
 
-    // The zooms come from the queue, not from a list here. `AREA_ZOOM` and
-    // `DETAIL_ZOOM` are declared in `Verified.Geo.BestPlace` and `CITY_ZOOM` in
-    // `Verified.Geo.Enrich`; restating them in Rust would be a second source of
-    // truth for a number the fold owns, and a drain that knew only the zooms
-    // someone remembered would silently leave a whole consumer's keys in the
-    // table forever.
+    // The zooms come from the queue, not a list here: they are declared in
+    // `Verified.Geo.BestPlace` and `Verified.Geo.Enrich`, and a drain knowing
+    // only remembered zooms would strand a consumer's keys forever.
     let zooms: Vec<i64> = fetch_queue::census(pool)
         .await?
         .into_iter()
@@ -161,10 +123,8 @@ pub async fn drain_geocodes(
             continue;
         }
         for p in pending {
-            // The key is `lat|lon` already rounded by whoever recorded it, so
-            // it is parsed and not re-rounded. Rounding twice is harmless here
-            // and rounding differently would write the answer under a key the
-            // reader never forms.
+            // The key is `lat|lon` as rounded by whoever recorded it, parsed not
+            // re-rounded, so the answer lands under the key the reader forms.
             let mut parts = p.key.split('|');
             let (Some(lat), Some(lon)) = (
                 parts.next().and_then(|v| v.parse::<f64>().ok()),
@@ -205,20 +165,11 @@ pub async fn drain_geocodes(
     Ok(out)
 }
 
-/// Drain `osm_fetch_queue`'s Overpass half: fill the base OSM mirror with the
-/// areas the serving path could not answer.
-///
-/// The skip is the point, and the coverage gate decides it rather than a
-/// grid. A day on new ground records dozens of declines a few hundred metres
-/// apart, and the first 10 km box answers nearly all of them. Re-asking
-/// `osm_covered` per key after each fetch collapses those into a handful of
-/// requests, and it cannot drift from what the serving path will conclude,
-/// because it is that function.
-///
-/// A skipped key is `done`, not `failed`. It is answered now.
-///
-/// `only` restricts the run to one queue kind; `dry_run` lists and fetches
-/// nothing.
+/// Drain `osm_fetch_queue`'s Overpass half, filling the base mirror with areas
+/// the serving path could not answer. After each fetch every key is re-asked
+/// `osm_covered`, the serving path's own gate, so dozens of nearby declines
+/// collapse into a few requests; a covered key is `done`, not `failed`. `only`
+/// limits the run to one kind; `dry_run` lists without fetching.
 pub async fn drain_osm(
     pool: &MySqlPool,
     client: &reqwest::Client,
@@ -258,21 +209,16 @@ pub async fn drain_osm(
         let mut boxes = osm_mirror::coverage_rows(pool, &bucket, bucket_vocab).await?;
 
         for p in pending {
-            // Both of the next two are retired rather than failed: a key
-            // that does not parse, and a question wider than its bucket's cap,
-            // are the same key tomorrow. Retrying either is the invisible loop
-            // `exhaust` exists to prevent.
+            // A key that does not parse and a question wider than its bucket's
+            // cap are retired, not failed: retrying is the invisible loop.
             let Some((lat, lon, radius_m)) = osm_mirror::parse_queue_key(&p.key) else {
                 fetch_queue::exhaust(pool, &kind, &p.key, "unparseable key").await?;
                 out.failed += 1;
                 continue;
             };
             let now_ms = chrono::Utc::now().timestamp_millis();
-            // `has_local_data: false`. The serving path's probe short-circuits
-            // on a sibling bucket's overflow rows, which is the right trade for
-            // a read that must not stall; a drain that honoured it would decline
-            // to fill an area on the strength of one stray row, and the coverage
-            // table would stay empty forever.
+            // `has_local_data: false`: the serving probe's short-circuit on a
+            // sibling bucket's stray rows would stop the drain filling the area.
             if lean::osm_covered(lat, lon, radius_m, &boxes, now_ms, false)? {
                 fetch_queue::done(pool, &kind, &p.key).await?;
                 out.covered_already += 1;
@@ -368,12 +314,9 @@ pub fn cells_of(fixes: &[Fix]) -> Vec<(f64, f64)> {
     out
 }
 
-/// Fixes the proxy recorded after `since_s`, oldest first.
-///
-/// By `recorded_at`, not by the fix's own time. OwnTracks posts a buffered
-/// batch with the fixes' original timestamps once the phone is back online; a
-/// cursor on `ts` would skip the whole batch. `recorded_at` is when the proxy
-/// saw it, which is the moment the ground around it became worth fetching.
+/// Fixes the proxy recorded after `since_s`, oldest first, by `recorded_at`:
+/// OwnTracks posts a buffered batch with original timestamps, which a cursor on
+/// `ts` would skip.
 pub async fn fixes_since(pool: &MySqlPool, since_s: i64) -> Result<Vec<Fix>> {
     use sqlx::Row;
     let rows = sqlx::query(
@@ -395,20 +338,11 @@ pub async fn fixes_since(pool: &MySqlPool, since_s: i64) -> Result<Vec<Fix>> {
         .collect()
 }
 
-/// Queue the ground around every fix that arrived after `since_s`, for every
-/// bucket the coverage gate says is not there yet.
-///
-/// Returns `(newest recorded_at seen, questions queued)`. The newest time is
-/// the caller's next `since_s`; it is `since_s` itself when nothing arrived.
-///
-/// Recorded into the same queue the fold's declines go to, under the same
-/// `(kind, key)` vocabulary, so [`drain_osm`] fetches them with the same
-/// dedup against the coverage gate. A second path to Overpass would be a second
-/// place to get the politeness wrong.
-///
-/// A fix that lands in the same second as the read, after it, is missed by
-/// the strict `>`; the fold's decline records that ground when it is asked, so
-/// the cost is a view, not a hole.
+/// Queue the ground around every fix after `since_s` for every bucket the
+/// coverage gate lacks, returning `(newest recorded_at, questions queued)`. Same
+/// queue and key vocabulary as the fold's declines, so [`drain_osm`] fetches
+/// them politely in one place. A fix in the same second after the read is
+/// missed by the strict `>`; the fold's decline catches it.
 pub async fn precover(
     pool: &MySqlPool,
     venue_tags: &[(String, Vec<String>)],
@@ -439,14 +373,9 @@ pub async fn precover(
 }
 
 /// Run the drain until SIGTERM: every [`WATCH_INTERVAL`], the ground around new
-/// fixes, then the Overpass half, then the Nominatim half.
-///
-/// A failed tick is logged and the next one runs. The queue holds the work;
-/// an Overpass outage or a dropped connection must not take the drain down
-/// with it, and the pod's restart would only replay the same tick.
-///
-/// Quiet when idle. A line every fifteen seconds saying "nothing" trains a
-/// reader to skip the line that says a box failed.
+/// fixes, then the Overpass half, then Nominatim. A failed tick is logged and
+/// the next runs (the queue holds the work). Quiet when idle, so a failure line
+/// is not skimmed past.
 pub async fn watch(pool: &MySqlPool, client: &reqwest::Client, interval: Duration) -> Result<()> {
     let venue_tags = lean::venue_tags()?;
     let mut since_s = chrono::Utc::now().timestamp() - PRECOVER_LOOKBACK_S;

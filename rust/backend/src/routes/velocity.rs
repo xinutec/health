@@ -1,20 +1,12 @@
-//! `GET /velocity` — a day, computed.
-//!
-//! The route the whole port was for. Everything it needs already exists; this
-//! parses, calls, and serialises, and decides nothing:
-//!
-//!   * how long the answer may be cached — `Verified.VelocityCache`
-//!   * whether a share recipient may see this date — `Verified.Share`
-//!   * what to clip off the future — `Verified.Geo.DayState`
-//!   * which train legs want a route fill — `Verified.Geo.RailRouteFill`
-//!   * the day itself — the head, then the fold.
+//! `GET /velocity`: a day, computed. This parses, calls and serialises; the
+//! decisions are Lean's (cache lifetime `Verified.VelocityCache`, share access
+//! `Verified.Share`, the future clip `Verified.Geo.DayState`, route fills
+//! `Verified.Geo.RailRouteFill`) and the day is the head then the fold.
 //!
 //! # The clip is applied after the cache, per request
 //!
-//! The cached value is the full deterministic day. `now` advances and a cached
-//! value does not, so clipping before seating would freeze the horizon at
-//! whatever it was when the day was computed — and every later view of a live
-//! day would assert a future that had already happened.
+//! The cached value is the full deterministic day; clipping before seating would
+//! freeze the horizon, and a live day would assert a future already past.
 
 use anyhow::{Context, Result};
 use axum::extract::{Query, State};
@@ -38,21 +30,11 @@ pub struct Params {
     walk_match: Option<String>,
 }
 
-/// `YYYY-MM-DD`, and nothing else.
-/// Folds run one at a time per process.
-///
-/// A fourteen-day browse at fourteen seconds a day stacked three folds, and
-/// the kernel killed the backend at 428 MiB anonymous memory (the 512 MiB pod
-/// limit, three Lean children beside it), then again at 472 MiB with two in
-/// flight once the arenas of the first burst were resident. A fold's working
-/// set is its OSM answers as JSON trees (10,000–20,000 ways per walkable-roads
-/// ask over a London walk), and two of those do not fit beside what the
-/// previous one leaves behind.
-///
-/// Requests queue here rather than stack. The permit is taken inside the
-/// cache-miss path, so a day already seated is served while another folds, and
-/// two requests for the same day still share one fold through the cache's
-/// per-key lock.
+/// Folds run one at a time per process: a day's working set is its OSM answers
+/// as JSON trees, and two folds beside a previous one's arenas exceeded the
+/// 512 MiB pod (killed at 428 and 472 MiB). The permit is taken on the
+/// cache-miss path, so a seated day is served while another folds, and two
+/// requests for one day share a fold through the cache's per-key lock.
 static FOLD_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 /// Take the fold slot. `pub` for the test that proves there is exactly one.
@@ -86,6 +68,7 @@ pub async fn fold_day(
     out
 }
 
+/// `YYYY-MM-DD`, and nothing else.
 fn valid_date(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 10
@@ -111,10 +94,8 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
     let now_ms = chrono::Utc::now().timestamp_millis();
     let now_s = now_ms / 1000;
 
-    // The default date is today in UTC, not the viewer's local date, even
-    // though `tz` may say otherwise. Changing it would silently move which day
-    // a bare `/velocity` returns for anyone east or west of UTC at the
-    // boundary; that is a product decision.
+    // The default date is today in UTC, not the viewer's date: changing it would
+    // move which day a bare `/velocity` returns near midnight, a product call.
     let date = p
         .date
         .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
@@ -184,12 +165,8 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
 }
 
 /// After a start, fold each user's today and yesterday once in the background,
-/// so the walk memo (`crate::walk_memo`) is warm before anyone loads a
-/// page: a deploy changes the code version and every remembered walk with it,
-/// and without this the first load after each deploy drew every walk again.
-/// One day at a time through the fold slot, so a request never waits behind
-/// more than one of these. Failures are logged and skipped; nothing depends on
-/// this having run.
+/// warming the walk memo (`crate::walk_memo`) that a deploy's new code version
+/// empties. One at a time through the fold slot; failures are logged.
 pub async fn warm_recent(st: &AppState) {
     let users: Vec<String> = match sqlx::query_scalar("SELECT user_id FROM nc_tokens")
         .fetch_all(&st.pool)
@@ -236,23 +213,15 @@ pub async fn warm_recent(st: &AppState) {
     }
 }
 
-/// Compute one day. Only reached on a cache miss.
-///
-/// `pub`, not `pub(crate)`, and the difference is not style: `backend` is a
-/// separate binary crate from the library, so `pub(crate)` is invisible to it.
-/// `backend velocity` calls this to run the assembly against production — the
-/// gate above it has tests, but nothing else anywhere proves this produces a
-/// real response body.
+/// Compute one day, on a cache miss. `pub` for the `backend velocity` binary
+/// (a separate crate), the one proof this assembles a real response.
 pub async fn compute(st: &AppState, user_id: &str, date: &str, tz: Option<&str>) -> Result<Value> {
     compute_with(st, user_id, date, tz, true).await
 }
 
-/// [`compute`] with the pedestrian matcher switchable.
-///
-/// `walk_match = false` is `?walkMatch=0`, the raw baseline the map compares
-/// the matched line against. It reaches the fold as `env.walkMatch`; spent only
-/// on the cache key, both arms would compute the identical day and the A/B
-/// would compare a value with itself.
+/// [`compute`] with the pedestrian matcher switchable: `walk_match = false` is
+/// `?walkMatch=0`, the raw baseline. It reaches the fold as `env.walkMatch`; in
+/// the cache key alone, the A/B would compare a value with itself.
 pub async fn compute_with(
     st: &AppState,
     user_id: &str,
@@ -270,29 +239,23 @@ pub async fn compute_with(
         .clone()
         .unwrap_or_else(|| classification_inputs::DAY_NEXTCLOUD_BASE_URL.to_string());
 
-    // Per-phase wall clock, and it ships in the response. The frontend's
-    // `VelocityData.timing` reads it, and it is the only thing that says WHERE a
-    // slow day went — the first production run of this route took 37.6 s, and
-    // without this the answer would have been a guess.
+    // Per-phase wall clock, shipped in the response (`VelocityData.timing`):
+    // the only record of where a slow day went.
     let mut timing = serde_json::Map::new();
     let mut phase = std::time::Instant::now();
     let mut mark = |timing: &mut serde_json::Map<String, Value>, name: &str| {
         timing.insert(name.into(), json!(phase.elapsed().as_millis() as u64));
-        // RSS printed, never shipped. `timing` goes over the wire into
-        // `VelocityData.timing`, so a memory figure in it would change the
-        // served shape and the generated TS types for a diagnostic.
-        // `FOLD_SPLIT` already gates the per-round half of the same picture.
+        // RSS printed, never shipped: a memory figure in `timing` would change
+        // the served shape and the generated TS types.
         if std::env::var_os("FOLD_SPLIT").is_some() {
             eprintln!("  phase {name}: RSS {} MiB", crate::fold::rss_mib());
         }
         phase = std::time::Instant::now();
     };
 
-    // Where the stored decode had data to, read before the decode itself: a
-    // decode written in between then pairs newer segments with an earlier
-    // horizon, which marks more as a guess, never less. Only short of the
-    // day's end: a finished day's states past midnight (the next morning's
-    // sleep, from the watch) are observed.
+    // Where the stored decode had data to, read before the decode itself, so a
+    // decode written in between only marks more as a guess. Only short of the
+    // day's end: a finished day's states past midnight are observed.
     let decoded_through = crate::decode_freshness::decoded_through(&st.pool, user_id, date)
         .await?
         .filter(|t| *t < bounds.end_utc);
@@ -309,21 +272,17 @@ pub async fn compute_with(
         Some(&home_tz),
     )
     .await?;
-    // Carried in `inputs` rather than through four signatures. `run_day` and
-    // `build_day_request` are shared with the gates and `decode-day`, and a
-    // parameter none of them can answer would have to be given a default at
-    // every call site — which is the same field, spelled four times, with four
-    // chances to disagree. Only written when the raw baseline was asked for, so
-    // every other caller's request is byte-for-byte what it was.
+    // Carried in `inputs` rather than through four shared signatures that would
+    // each need a default; written only when the raw baseline was asked for, so
+    // every other request is unchanged.
     let mut inputs = inputs;
     if !walk_match && let Some(o) = inputs.as_object_mut() {
         o.insert("walkMatch".into(), json!(false));
     }
     let inputs = inputs;
     // A day whose stored decode does not stand for these inputs is queued for
-    // the decode worker; this read serves what is stored.
-    // The home zone's day, as `decode-day` records it: judged against the
-    // display zone's, a day viewed west of home would never read as current.
+    // the decode worker; this read serves what is stored. Judged on the home
+    // zone's day, as `decode-day` records it.
     if let Ok(home) = timezone::date_bounds_utc(date, Some(&home_tz)) {
         backend_queue_if_stale(&st.pool, user_id, date, home.end_utc, &inputs).await;
     }
@@ -375,37 +334,24 @@ pub async fn compute_with(
         ledger.insert(format!("fold.{label}.n"), json!(n));
     }
 
-    // The signal that was missing for weeks. `walkableRoads`,
-    // `buildingsNear` and `drivableRoads` answer an empty Vec when the mirror
-    // refuses or fails, and empty is a legitimate answer — "no roads here". So a
-    // fold with every OSM read refused produced a well-formed day, a normal
-    // summary line, and a map drawing every walk as a raw chord through
-    // buildings. Nothing downstream could tell it apart.
-    //
-    // Not an error, deliberately. A day is still worth serving on raw chords,
-    // and failing the request would turn a degraded map into no map. What it
-    // must not do is stay silent.
-    //
-    // A gate cannot carry this check. Every gate answers from a captured
-    // trace with no mirror configured, so `pool()` returns before the counter is
-    // touched and the count is zero for the wrong reason. The assertion
-    // only means something where a mirror is real, which is here.
+    // `walkableRoads`, `buildingsNear` and `drivableRoads` answer empty when the
+    // mirror refuses, and empty is a legitimate answer, so a fully refused fold
+    // still makes a well-formed day with every walk a raw chord. Served, not an
+    // error, but logged. Only here can it be checked: every gate answers from a
+    // captured trace with no mirror, so the count is zero for the wrong reason.
     mark(&mut timing, "fold");
 
-    // A day whose asks were declined was built from defaults for them, and
-    // that is not the same day. It is not an error — unfetched ground declines
-    // by design and is queued for the drain beside the pod — but it must be
-    // visible, because the response looks identical either way.
+    // A day whose asks were declined was built from defaults for them; not an
+    // error (unfetched ground is queued for the drain) but logged, since the
+    // response looks identical.
     let by_table = folded.declined_by_table();
     if !by_table.is_empty() {
         tracing::info!(date, ?by_table, "day served with declined lookups");
     }
 
     let out: Value = serde_json::from_str(&folded.out).context("the fold's answer is not JSON")?;
-    // Where the fold's time went inside Lean: its stages, each pass, and per
-    // kind of lookup the wait for the answer and the parse of it. Overlapping
-    // by design (a pass's lookups are inside the pass), so they are read side
-    // by side, never summed.
+    // Where the fold's time went inside Lean: stages, passes, and per lookup
+    // kind the wait and the parse. They overlap, so read side by side.
     if let Some(lt) = out.get("leanTiming").and_then(Value::as_object) {
         for (k, v) in lt {
             timing.insert(format!("lean.{k}"), v.clone());
@@ -414,10 +360,8 @@ pub async fn compute_with(
     timing.append(&mut ledger);
     let segments = out.get("segs").cloned().unwrap_or_else(|| json!([]));
 
-    // Drawn geometry ships once, in `episodes`. The segment-level path arrays
-    // are pipeline intermediates `episodes` already consumed server-side; no
-    // frontend code reads them, and on a data-rich day they duplicate every
-    // polyline in the response — its dominant weight.
+    // Drawn geometry ships once, in `episodes`: the segment path arrays are
+    // intermediates no frontend reads and would double the response.
     let segments = strip_paths(segments);
 
     // The watch trace rides alongside rather than inside: a database hiccup
@@ -476,10 +420,8 @@ pub async fn compute_with(
     }))
 }
 
-/// The phase timings plus what the fold cost, as the response carries them.
-///
-/// `asks` and `answered` are counts, not durations: how many lookups the day
-/// made, and how many the mirror could answer.
+/// The phase timings plus the fold's cost; `asks` and `answered` are counts of
+/// lookups made and answered by the mirror.
 fn timing_with(
     t: &serde_json::Map<String, Value>,
     asks: usize,
@@ -537,19 +479,13 @@ fn rail_fill_candidates(out: &Value, h: &head::Head) -> Result<Vec<lean::FillCan
     lean::unsnapped_train_routes(&wire, &points)
 }
 
-/// Decode the fold's IEEE-754 bit-string coordinates into the numbers the
-/// client's wire type declares.
+/// Decode the fold's bit-string coordinates into the numbers the client's wire
+/// type declares.
 ///
-/// ⚠ the client must never see a bit string. The fold encodes coordinates
-/// that way so nothing is re-rounded on its internal wire; forwarding them made
-/// Leaflet read `"4632454559779392337"` as a latitude, spinning WebView's
-/// compositor at a full core. `points` and `rawFixes` are built here from typed
-/// `f64`s and were always numbers — only `episodes` was forwarded raw.
-///
-/// Tolerant of numbers, so a fold that starts emitting them is not
-/// double-decoded, and leaves what it cannot parse rather than defaulting to
-/// zero — a zeroed coordinate is a point off the coast of Africa that draws a
-/// line across the planet.
+/// ⚠ The client must never see a bit string: Leaflet read one as a latitude
+/// and spun the WebView's compositor at a full core. Numbers pass through, and
+/// what does not parse is left rather than zeroed (a zero draws a line to the
+/// Gulf of Guinea).
 pub fn decode_episode_bits(episodes: Value) -> Value {
     fn bits(v: &Value) -> Option<f64> {
         v.as_str()?.parse::<u64>().ok().map(f64::from_bits)
@@ -603,13 +539,9 @@ fn bad_request(msg: &str) -> Response {
     (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
 }
 
-/// The two Nextcloud states are not failures and must not read as one.
-///
-/// An unlinked account has no PhoneTrack source at all, so the honest answer is
-/// an empty timeline with a 200 — the day genuinely has no location data. A
-/// token needing reauth is a 409 with a structured error, so the SPA can render
-/// its reconnect banner instead of "No timeline data available", which is what a
-/// bare failure would produce and which tells the user nothing they can act on.
+/// The two Nextcloud states are not failures: an unlinked account has no
+/// location data (an empty timeline, 200), and a token needing reauth is a 409
+/// with a structured error so the SPA shows its reconnect banner.
 fn map_error(e: &anyhow::Error) -> Response {
     let text = format!("{e:#}");
     if text.contains("NextcloudNotLinked") {
