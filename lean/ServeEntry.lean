@@ -17,9 +17,8 @@ crosses here.
 /-!
 # `verified_cli` — JSON decode interface
 
-Reads one HSMM problem as JSON on stdin, decodes it with `sDecode` (proved equal
-to the specification's `decode`, `sDecode_eq`), and writes the result as JSON
-on stdout. Scores are parsed straight into the packed encoding (`enc`: `-∞ ↦ 0`,
+Decodes one HSMM problem from stdin with `sDecode` (proved equal to the spec's
+`decode`, `sDecode_eq`). Scores are parsed into the packed encoding (`-∞ ↦ 0`,
 `v ↦ v + 2^61`), and inputs outside the proven envelope are refused: `|v| ≤
 2^49` for emissions, `|v| ≤ 2^45` for the other tensors, `T ≤ 2048`.
 
@@ -44,19 +43,6 @@ Input shape (all scores integers; `null` = `-∞`):
 Output: {"path": [..T], "best": n}
       | {"degenerate": true}       // every path scores -∞
       | {"error": "..."}           (exit 1)
-
-## Rail mode (`verified_cli rail`)
-
-Shortest path over a rail graph given as its adjacency structure, with
-×2²⁰-quantised nonnegative integer weights. Entry order per vertex decides
-ties. `Nat` weights are exact at any magnitude, so there is no envelope.
-
-  { "adj": [[[to, w], ..] × n],   // adj[u] = directed edges out of u
-    "src": n, "dst": n }
-
-Output: {"path": [..], "dist": n}
-      | {"none": true}            // disconnected or endpoint out of range
-      | {"error": "..."}          (exit 1)
 -/
 
 open Lean (Json)
@@ -90,12 +76,10 @@ private def transTensor (j : Json) : Except String (Array (Array (Array Nat))) :
   | .ok _ => outer.mapM (matrix pOB) -- depth 3: per-t
   | .error _ => do return #[← matrix pOB j] -- depth 2: broadcast
 
-/-- One run-length-encoded row of the class-factorised duration deltas:
-`[[value, runLength], …]` over `e`. Rows are piecewise-constant over `e`, so
-the exporter ships runs instead of `T` raw cells — smaller wire payload and,
-the point, less for Lean's JSON parser to walk. `value` is shifted by `bound`
-(as the tensors are) so decode-time arithmetic stays scalar `Nat` (an `Int` add
-at the 2^61 scale would box per call — GMP, measured 5×). -/
+/-- One run-length-encoded row of the class duration deltas, `[[value,
+runLength], …]` over `e`: rows are piecewise-constant, so runs are less for the
+JSON parser to walk. `value` is shifted by `bound` so the arithmetic stays
+scalar `Nat`. -/
 private def deltaRunsRow (bound : Nat) (j : Json) : Except String (Array (Nat × Nat)) := do
   (← j.getArr?).mapM fun pair => do
     let a ← pair.getArr?
@@ -227,11 +211,8 @@ private def parseModel (j : Json) : Except String PData := do
     match j.getObjVal? "entry" with
     | .ok v => if v.isNull then pure #[] else matrix pOB v
     | .error _ => pure #[]
-  -- Flatten the remaining nested tensors so the decode reads one flat-array
-  -- probe per cell through `PData`'s monomorphic accessors (the accessors
-  -- carry the same lookup these closures used to; here we only lay out the
-  -- data they read). `emit`/`entry`/`dur` were `Array (Array Nat)`; `trans`
-  -- is the per-`t` (or single broadcast) base matrix.
+  -- Flatten the nested tensors so the decode reads one flat array per cell
+  -- through `PData`'s accessors. `trans` is the per-`t` (or broadcast) base.
   let emitFlat : Array Nat := Id.run do
     let mut a := Array.replicate (T * S) 0
     for t in [0:T] do
@@ -321,12 +302,10 @@ private def runOne (f : Json → Json) (input : String) : IO UInt32 := do
     IO.println out.compress
     return (if (out.getObjVal? "error").toOption.isSome then 1 else 0)
 
-/-- `verified_cli matchprof` — the matcher's phases run one at a time with
-wall-clock between them, plus the shape of the graph they produced. Attributes a
-slow leg to a phase without a sampling profiler (which mis-attributes across
-Lean's inlined loop closures). Each `IO.lazyPure` pins one phase's evaluation
-between two timestamps; `full` re-runs the whole matcher, so the phases before
-it are *included* in its own cost, not additional to it. -/
+/-- `verified_cli matchprof`: the matcher's phases timed one at a time, plus
+the graph's shape, to find a slow leg's phase without a sampling profiler. Each
+`IO.lazyPure` pins one phase; `full` re-runs the whole matcher, so it includes
+the phases before it. -/
 private def matchProfMain (input : String) : IO UInt32 := do
   match Json.parse input >>= parseMatch with
   | .error e => IO.eprintln s!"error: {e}"; return 1
@@ -458,10 +437,8 @@ graph-box-rings={t3e - t3d}ms graph-no-fixes={t3f - t3e}ms"
 
 /-! ## Assembling the model
 
-Build the HSMM model from parsed inputs in Lean (`Verified.Hsmm.Assemble`).
-Input is the post-boundary structured day (past the tz / WKT / `toFixed`
-boundary the shell owns): the observation tensor, the parsed route edges, the
-focus places, the train-generator coverage map, continuity, and the C4 flags.
+Build the HSMM model from parsed inputs (`Verified.Hsmm.Assemble`), past the
+tz / WKT / `toFixed` boundary the shell owns:
 
   { "maxD": n,
     "obs": [{ts, gps:{lat,lon,speedKmh}|null, hr, cadence, hourLocal, dayOfWeekLocal,
@@ -560,13 +537,12 @@ private def parseStationNode (j : Json) : Except String Verified.Hsmm.TrainCandi
   let edgeIds ← (← (← j.getObjVal? "edgeIds").getArr?).mapM (·.getStr?)
   return ⟨← (← j.getObjVal? "id").getStr?, ← jFloatField j "lat", ← jFloatField j "lon", name, edgeIds.toList⟩
 
-/-! ## Building the observation tensor here, instead of receiving it
+/-! ## Building the observation tensor here
 
-The tensor is a row per minute of the day, built from small inputs: the day's fixes, three
-biometric streams, and two per-minute lookup tables the shell resolves because
-they are not pure (the local hour/day-of-week, a timezone; the road/rail
-distances, an OSM query). So `assemblesegments` takes either a pre-built `obs`
-array or the raw `observation`, which is what `decode-day` sends.
+The tensor is a row per minute, built from the day's fixes, three biometric
+streams and two per-minute tables the shell resolves (local time, from tzdata;
+road/rail distance, from OSM). `assemblesegments` takes a pre-built `obs` array
+or the raw `observation` that `decode-day` sends.
 -/
 
 private def parseGpsPoint (j : Json) : Except String Verified.Hsmm.Observation.GpsPoint := do
@@ -584,13 +560,10 @@ private def parseSleepRec (j : Json) : Except String Verified.Hsmm.Observation.S
   return { startTs := ← (← j.getObjVal? "startTs").getInt?
          , endTs := ← (← j.getObjVal? "endTs").getInt? }
 
-/-- Build the tensor from raw materials.
-
-`localCtx` and `proximity` are lookup tables (JSON has no functions):
-`localCtx` is one `[hourLocal, dayOfWeek]` pair per minute of the day, and
-its length is the tensor's; `proximity` is a sparse list of
-`[minuteTs, roadDistM|null, railDistM|null]` for the minutes with a fix. A minute missing from it is `(none, none)`, no evidence, not "far
-from both". -/
+/-- Build the tensor from raw materials. `localCtx` is one `[hourLocal,
+dayOfWeek]` per minute, and its length is the tensor's; `proximity` is a sparse
+`[minuteTs, roadDistM|null, railDistM|null]` list, and a minute missing from it
+is no evidence, not "far from both". -/
 private def parseObservationInput (v : Json)
     : Except String (Array Verified.Hsmm.Observation.ObsRow) := do
   let startUtc ← (← v.getObjVal? "startUtc").getInt?
@@ -912,17 +885,6 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let stayMoveCorr := Verified.Hsmm.Assemble.stayMoveTable ctx maxD
   return ({ ctx with lineProxBest, pairPref, pairBoundary, stayMoveCorr }, maxD)
 
-/-! ## Coverage mode (`verified_cli coverage`)
-
-Rebuild the train-generator coverage map from the observation tensor and a
-node-annotated station graph (`enumerateTrainCandidates` + `buildCoverage`).
-The shell supplies the station annotation: `nodeKey` ids, station names,
-incident edge ids.
-
-  { "obs": [...], "edges": [...],
-    "nodes": [{id, lat, lon, stationName|null, edgeIds:[...]}] }
-
-Output: { "coverage": [[ts, [lines]]] }. -/
 
 /-- Encode a quantised score into the packed `Nat` (`enc`: -∞ ↦ 0, `v ↦ v + 2^61`),
     refusing values outside `bound` (the verified envelope). -/
@@ -976,13 +938,9 @@ private def packDeltaRef (qE qR : Int64) (h : Nat) : Nat × Option Int :=
   | _, _ => false
 
 /-- Class key for the duration factorisation. `dur(s,d,e)` depends on the state
-    only through `(mode, isNamedTrain, placeless stay)` — segment evidence sees
-    the mode, the train-hop relaxation the named-line + coverage (which is
-    line-independent), and the unlisted centre (`unlistedCentre`) the placeless
-    stay alone. So this partition is EXACT (no iterative refinement): every
-    state in a class has identical `dur(·,d,e)` at every cell. Named train ⇒ 7;
-    the mainline (`unknown_rail`, its own duration fit) ⇒ 9; another unnamed
-    train ⇒ 4; the placeless stay ⇒ 8. -/
+    only through (mode, named train, placeless stay), so this partition is
+    exact: every state in a class has the same `dur(·,d,e)`. Named train ⇒ 7,
+    mainline (`unknown_rail`) ⇒ 9, other unnamed train ⇒ 4, placeless stay ⇒ 8. -/
 private def durClassKey (s : Verified.Hsmm.Emissions.State) : Nat :=
   match s.mode with
   | .stationary =>
@@ -1036,11 +994,9 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   -- cost (the place is the entry prior's, the legs are the journey's cell).
   let jOn := (Verified.Hsmm.Assemble.journeyIdx c).isSome
   let isLeg := Verified.Hsmm.Assemble.isLegState
-  -- Transitions: the base matrix is time-constant; only chain-context makes a
-  -- transition vary with t, and only for structurally chain-eligible pairs
-  -- (stay into a place, leave a place into a move, board a named line). Build the
-  -- base once with a shared per-src weight sum (O(S²)), then per-t override rows
-  -- for the eligible pairs only — vs a T·S³ dense build.
+  -- Transitions: the base matrix is time-constant; only chain context varies
+  -- with `t`, and only for chain-eligible pairs. Build the base once (O(S²)),
+  -- then per-`t` override rows for those pairs, rather than a dense T·S³ build.
   let placeNear := fun (pid : Int) (line : String) => c.placeNearLine.contains s!"{pid}|{line}"
   let statesL := c.states.toList
   -- Each state with its weight sum and its index, so the pair loops below read
@@ -1124,12 +1080,9 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
   let legTrans : Option (FloatArray × FloatArray) := if !jOn then none else some (Id.run do
     let legs := Verified.Hsmm.Assemble.legIdxs c
     let L := legs.size
-    -- A ride's coverage is one fact however many legs it is cut into: the
-    -- generator's coverage evidence rides on a train leg's entry, so a train
-    -- leg straight after a train leg gives it back here — two one-minute hops
-    -- at calls earned it twice and out-scored the ride they cut (07-02's
-    -- Baker Street → Euston Square). The line share stays: a change is a
-    -- new line.
+    -- A ride's coverage counts once however many legs it is cut into: a train
+    -- leg straight after a train leg gives its coverage back, or two one-minute
+    -- hops at calls out-score the ride they cut. A line change still pays.
     let coveredT : Array Bool := c.obs.map fun o => Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts
     let coverageBack := fun (src dst : Verified.Hsmm.Emissions.State) (t : Nat) =>
       match c.segEm.p.trainLine with
@@ -1230,18 +1183,15 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
       | some p, _ => p.legDur
       | none, _ => Verified.FloatConst.floats (legSlots.size * maxJ * T) Verified.FloatConst.negInf
     for d0 in [0:maxD] do
-      -- The gamma prior once per (class, d) (`durAt_eq_durAtFrom`), and the
-      -- reference each delta is taken against: the prior itself, which no
-      -- minute's data moves (`durBase` holds it too, so a cell is its class's
-      -- cell at `e` whatever the reference).
+      -- The gamma prior once per (class, d) (`durAt_eq_durAtFrom`); each delta
+      -- is taken against it, so a cell is its class's cell at `e`.
       let bases := reps.map fun rep => Verified.Hsmm.Assemble.durPriorBase c rep (d0 + 1)
       let qRefs := bases.map fun base =>
         match quant base with
           | some v => qiOf v | none => 0
-      -- A segment of `d0 + 1` minutes ends at minute `d0` at the earliest;
-      -- the cells below start before the day and neither sweep reads them
-      -- (`τ ≤ t + 1`, a leg's `start ≥ 0`), so the triangle is skipped: half
-      -- the phase, exactly. Below `f` the cells are the previous build's.
+      -- A segment of `d0 + 1` minutes ends at minute `d0` at the earliest, and
+      -- no sweep reads the cells before that, so the triangle is skipped. Below
+      -- `f` the cells are the previous build's.
       for e in [max d0 f:T] do
         -- The segment's window once per (d, e) for every class
         -- (`durAtFrom_eq_W`).
@@ -1308,10 +1258,9 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
             lp - Float.log (Verified.FloatConst.natToFloat (max n 1))
           | none => Verified.FloatConst.negInf
         let jp := c.segEm.p.journey.get!
-        -- S2: a named line's leg per board station within reach of the day's
-        -- fixes. It shares its base's tables, begins only within reach of its
-        -- station, and prices its length by the along-line path to the station
-        -- the fixes put the ride's end at.
+        -- S2: a named line's leg per board station within reach of the fixes,
+        -- sharing its base's tables and priced by the along-line path to the
+        -- station the fixes end at.
         let fixAt := fun (t : Nat) => match c.obs[t]? with
           | none => none
           | some o => match o.gps with
@@ -1404,21 +1353,18 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
         let L := legList.size
         let legOuter := legList.map (·.1)
         let baseOf := legList.map (·.2.1)
-        -- A ride begins where the fixes leave its board station (in 85 of 86
-        -- corpus departures the decoded ride began inside the platform wait). A
-        -- minute with its own fix at the station starts a ride only when the next
-        -- minute is away; a minute whose fix is carried from before (a dark
-        -- platform, `fixAt`) may start one. The wait keeps every reach minute.
+        -- A ride begins where the fixes leave its board station. A minute with
+        -- its own fix at the station starts one only when the next minute is
+        -- away; a carried fix (a dark platform) may start one.
         let reachStarts : Array (Array Nat) := legList.map fun (l, _, st?) =>
           match st? with
           | none => #[]
           | some n =>
             let near := fun (t : Nat) => nearFix fixes[t]! n
             let seen := fun (t : Nat) => match c.obs[t]? with | some o => o.gps.isSome | none => false
-            -- Seen at the station as the minute ends (its own last fix): a train
-            -- pulling away slowly leaves its first moving minute's median within
-            -- reach, and the dark minute after a train enters the tunnel says
-            -- nothing of where he is.
+            -- Seen at the station as the minute ends (its own last fix): a slow
+            -- pull-away leaves the first moving minute's median within reach,
+            -- and the dark minute after the tunnel says nothing.
             let stillHere := fun (t : Nat) => t < T && seen t
               && nearFix (match fixBefore t with | some f => some f | none => fixes[t]!) n
             if (c.states[l]!).mode == .train then
@@ -1531,17 +1477,13 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
                   | none => acc
                   | some d => match acc with | none => some d | some bd => if d < bd then some d else acc) none, fc2)
               for e in [0:T] do
-                -- The arrival is the first minute after the leg whose end is away
-                -- from the board station and at a served station of the line,
-                -- within the stale window, read from the minute's last fix (a
-                -- minute can begin at a call on the way and end on the platform;
-                -- the last such minute would be the next ride). Underground the
-                -- phone repeats the board station's position, and the minute
-                -- straddling the arrival sits between two stations, so neither
-                -- ends the search. The arrival also lies at or beyond the farthest
-                -- station the ride's own fixes reached before its end (the phone
-                -- repeats a passed call too); the look-back stops at a fix at the
-                -- board station, so a short hop does not read the ride before it.
+                -- The arrival is the first minute after the leg ending away from
+                -- the board station at a served station of the line, within the
+                -- stale window, read from the minute's last fix. Underground the
+                -- phone repeats the board station, so a straddling minute does
+                -- not end the search. It also lies at or beyond the farthest
+                -- station the ride's own fixes reached; the look-back stops at a
+                -- fix at the board station, so a short hop skips the ride before.
                 let mut passedM : Float := journeyZero
                 let mut t := e
                 while true do
@@ -1740,10 +1682,9 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     return (durClass, durBaseJ, durDelta, some tb)
   | _, _, _ => return (durClass, durBase, durDelta, none)
 
-/-- The cheap half of a day's model: emissions, entries, transitions, the
-    duration bases and the journey's per-minute tables. An incremental run
-    compares these with the previous run's (`todayFrontier`); every run builds
-    the rest from them (`buildPDataFrom`). -/
+/-- The cheap half of a day's model: emissions, entries, transitions, duration
+    bases and the journey's tables, which an incremental run compares with the
+    previous run's (`todayFrontier`). -/
 structure Pre where
   T : Nat
   S : Nat
@@ -1800,23 +1741,18 @@ private def buildPDataFrom (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat
     transFlat := pre.transFlat, nRows := pre.nRows
     durBase, durClass, durDelta, hasOv := #[], durOv := {} }, journey)
 
-/-- Build the packed `PData` directly from the assembled model — the in-process
-    twin of `quantizeModel` + `parseModel`, so `verified_cli` goes raw-inputs →
-    trellis with NO marshalled tensor payload. Transitions are per-`t` dense
-    (`nTB = T`); durations use the `(mode, isNamedTrain)` class factorisation
-    (`durBase`, the prior, + `durDelta` per class), the compact form the decoder
-    reads. Scores are finite here (log-probabilities), so no -∞ path arises. -/
+/-- Build `PData` from the assembled model in process, with no marshalled
+    tensor. Transitions are per-`t` dense; durations use the class
+    factorisation (`durBase` plus `durDelta` per class). Scores are finite. -/
 private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat)
     (g? : Option Verified.Hsmm.StationChain.ChainGraph := none)
     (rels? : Option (Array Verified.Hsmm.ServedStations.RailStopRelation) := none) :
     Except String (PData × Option Verified.Hsmm.Journey.Tables) := do
   buildPDataFrom c maxD g? rels? (← buildPre c maxD g? rels?)
 
-/-- `verified_cli decodetrace`: the per-minute line evidence over a window, for
-reading why a ride took its line. An `assemblesegments` request plus
-`"window": [tsFrom, tsTo]`; per minute: the generator's coverage, and per state
-(place stays excepted) the emission, the entry prior, and the transition into
-it from `walking` and `stationary`. -/
+/-- `verified_cli decodetrace`: why a ride took its line. Per minute over
+`"window": [tsFrom, tsTo]`: the coverage, and per state (not place stays) the
+emission, entry prior and transition in from `walking` and `stationary`. -/
 private def decodeTraceResult (j : Json) : Json :=
   match parseAssemble j with
   | .error e => Json.mkObj [("error", Json.str e)]
@@ -1864,10 +1800,9 @@ private def decodeTraceResult (j : Json) : Json :=
       Json.mkObj [("minutes", Json.arr rows.toArray)]
     | _, _ => Json.mkObj [("error", Json.str "window: [tsFrom, tsTo] required")]
 
-/-- The journey state's station graph and stop relations, from the request:
-    what the leg tables need before the decode. `none` without the journey
-    state. One definition for the serving path and the profiler, so the
-    profiler times the decode the server runs. -/
+/-- The journey state's station graph and stop relations, `none` without the
+    journey state. Shared by serving and the profiler, so the profiler times
+    what the server runs. -/
 private def journeyInputs (c : Verified.Hsmm.Assemble.ModelContext) (j : Json) :
     Option Verified.Hsmm.StationChain.ChainGraph
       × Option (Array Verified.Hsmm.ServedStations.RailStopRelation) :=
@@ -1886,14 +1821,11 @@ private def journeyInputs (c : Verified.Hsmm.Assemble.ModelContext) (j : Json) :
     | .error _ => none
   (g?, rels?)
 
-/-- `verified_cli decodeprof`: the decoder's cost on one day, apart from the
-model build. An `assemblesegments` request plus `"runs"` (default 5): builds
-`PData` once, times `sDecode` per run (each pinned by `IO.lazyPure`), and
-replies with the trellis shape, `buildMs`, every `decodeMs`, and the best score,
-which every run must agree on.
-
-The instrument for a trellis change: `hsmm_decode_corpus` proves a decode exact,
-but its wall time swings 2× and cannot see a 10% change. -/
+/-- `verified_cli decodeprof`: the decoder's cost on one day, without the model
+build. Builds `PData` once, times `sDecode` per run (`"runs"`, default 5), and
+replies with the trellis shape, `buildMs`, each `decodeMs` and the best score.
+For a trellis change: the decode corpus proves exactness but its wall time
+swings 2×. -/
 private def decodeProfMain (input : String) : IO UInt32 := do
   match Json.parse input with
   | .error e => IO.eprintln s!"error: {e}"; return 1
@@ -1960,21 +1892,15 @@ private def decodeProfMain (input : String) : IO UInt32 := do
 
 /-! ## `assemblesegments` — assemble, decode, and return segments
 
-A decode is a path of state indices, meaningless without `c.states`, which
-never crosses: the grouping into `{mode, placeId, lineName}` runs
-(`HsmmSegments.groupStates`) happens here, once, and the reply is what
-`decoded_days` stores. The timestamps come from `c.obs`, which the path indexes;
-any other source could disagree in length or order. -/
+The path indexes `c.states` and `c.obs`, which never cross the wire, so the
+grouping into `{mode, placeId, lineName}` runs here and the reply is what
+`decoded_days` stores. -/
 private def MINUTES_PER_HOUR : Float := 60
 
-/-- `"emissionDebug": {"fromTs": n, "toTs": n}` on an `assemblesegments` request:
-every state's per-minute emission and entry over the window, beside the state
-the decode chose — the instrument for a minute that went to the wrong mode, as
-`chainDebug` is for a wrong line. Each minute also carries what the decoder
-observed of it (the windowed speed, the rail class, in bed, the minute's
-position and accuracy), and `"segments": [[fromTs, toTs], …]` asks for each
-span's net-displacement window (`SegmentEvidence.windowAt`): what the fitter
-(`fit_emissions`) measures, observed exactly as the decoder observes it. -/
+/-- `"emissionDebug": {"fromTs", "toTs"}`: every state's per-minute emission and
+entry over the window beside the decoded state, with what the decoder observed
+of each minute; `"segments"` asks for each span's net-displacement window as
+the fitter measures it. For a minute that went to the wrong mode. -/
 private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Array Nat)
     (dj : Json) : Json :=
   let fromTs := (dj.getObjValAs? Int "fromTs").toOption.getD 0
@@ -2046,13 +1972,10 @@ private def emissionDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : 
 
 private def PATH_ZERO : Float := 0
 
-/-- `"segScore": {"segs": [{"startTs": n, "endTs": n, "state": "<stateKey>"}]}` on
-an `assemblesegments` request: each segment over `[startTs, endTs)` scored
-alone with the model's own cells — the summed `emitAt`, `entryAt`, the
-duration prior and the segment-level emissions (`durAt`, or the inner pass's
-cell for a journey) — and no transition. Two segments of one state back to
-back, which no path can write, are two entries here: the instrument for the
-decoder's invariants (whether a stretch scores better split). -/
+/-- `"segScore": {"segs": [{startTs, endTs, state}]}`: each segment scored alone
+with the model's own cells (emissions, entry, duration, segment emissions), no
+transition. For checking the decoder's invariants, such as whether a stretch
+scores better split. -/
 private def segScoreJson (c : Verified.Hsmm.Assemble.ModelContext) (dj : Json)
     (journey : Option Verified.Hsmm.Journey.Tables) : Json :=
   let fl (v : Float) : Json := if v == Verified.Hsmm.FloatScore.negInf then Json.null else Lean.toJson v
@@ -2097,13 +2020,10 @@ private def segScoreJson (c : Verified.Hsmm.Assemble.ModelContext) (dj : Json)
           (Verified.Hsmm.SegmentEmission.statsAt c.segPref d last)).map fun (k, v) => (k, fl v))),
         ("total", fl (entry + emit + cell))]
 
-/-- `"pathDebug": {"alt": [{"startTs": n, "endTs": n, "state": "<stateKey>"}]}` on
-an `assemblesegments` request: the decoded path, and the decoded path with the
-caller's segments written over `[startTs, endTs)`, each scored segment by
-segment with the model's own cells (`initAt`, the trellis's transitions,
-`entryAt`, `emitAt`, `durAt`, composed as `Spec.scoreAux`) — the instrument for a boundary the
-decode did not place: which term paid for leaving it out. A written-over run
-may exceed `maxD`; `durAt` still prices it, the trellis never would. -/
+/-- `"pathDebug": {"alt": [{startTs, endTs, state}]}`: the decoded path and the
+path with the caller's segments written over it, each scored segment by segment
+with the model's cells (`Spec.scoreAux`): which term paid for a boundary the
+decode did not place. A written-over run may exceed `maxD`. -/
 private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Array Nat)
     (dj : Json) (journey : Option Verified.Hsmm.Journey.Tables := none) (pd : Option PData := none) : Json :=
   let fl (v : Float) : Json := if v == Verified.Hsmm.FloatScore.negInf then Json.null else Lean.toJson v
@@ -2170,10 +2090,9 @@ private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Arra
       start := start + seg.dur
       prev := some seg.state
     return (out, total)
-  -- What sharing the levels would give back (docs/proposals/2026-10-shared-levels.md,
-  -- stage 1): for a state that resumes after one segment of at most ten
-  -- minutes, its heart-rate/fix-share term and duration prior scored once over
-  -- both parts against twice, one part each.
+  -- What sharing the levels would give back: for a state resuming after one
+  -- segment of at most ten minutes, its heart-rate/fix-share term and duration
+  -- prior scored once over both parts against once per part.
   let shares (p : Array Nat) : Array Json := Id.run do
     let segs := (Verified.Hsmm.ofPath p.toList).toArray
     let starts := segs.foldl (fun (acc : Array Nat × Nat) sg => (acc.1.push acc.2, acc.2 + sg.dur)) (#[], 0) |>.1
@@ -2208,11 +2127,9 @@ private def pathDebugJson (c : Verified.Hsmm.Assemble.ModelContext) (path : Arra
               ("decodedShares", Json.arr (shares path)), ("altShares", Json.arr (shares altPath)),
               ("error", match bad with | some e => Json.str e | none => Json.null)]
 
-/-- `"journeyDebug": {"alt": [{startTs, endTs, leg}]}` under the journey state:
-every decoded journey's legs with their terms, and — for the journey the
-alternative's segments tile exactly — the forced legs scored the same way.
-`leg` is a leg's name (`train|Metropolitan Line`, or with `@Station` for a
-board-station leg). What `path_debug` cannot see inside a journey. -/
+/-- `"journeyDebug": {"alt": [{startTs, endTs, leg}]}`: every decoded journey's
+legs with their terms, and the forced legs of the journey the alternative
+tiles. `leg` is `train|Metropolitan Line`, or with `@Station`. -/
 private def journeyDebugJson (c : Verified.Hsmm.Assemble.ModelContext)
     (tb : Verified.Hsmm.Journey.Tables) (path : Array Nat) (dj : Json) : Json :=
   let fl (v : Float) : Json := if v == Verified.FloatConst.negInf then Json.null else Lean.toJson v
@@ -2381,10 +2298,8 @@ private def segmentsOf (j : Json) (c : Verified.Hsmm.Assemble.ModelContext)
           (legAt[t]?.bind id).bind fun l => tb.legStation[l]?.bind id
       let segs := folded.map fun s =>
         if s.lineName == some Verified.Hsmm.Assemble.WAIT_MARK then { s with lineName := none } else s
-      -- The station chain runs here, where the observation tensor already is
-      -- (the `stationchain` mode would put it back on the wire). The graph comes
-      -- from `c.model`, not a fresh `mkChainGraph`: `edgesNearIdx` reads
-      -- `model.edges` in builder order, and reusing the object guarantees it.
+      -- The station chain runs here, where the tensor already is. The graph is
+      -- `c.model`'s: `edgesNearIdx` reads `model.edges` in builder order.
       let chained : Except String (Array Json) := do
         let nodes ← (← optArr j "nodes").mapM parseChainNode
         -- Absent and `[]` differ: absent means the mirror was never consulted
@@ -2467,10 +2382,8 @@ private def segmentsOf (j : Json) (c : Verified.Hsmm.Assemble.ModelContext)
                   ("passPen", Lean.toJson p.passPen)]))])
           pure #[Json.mkObj [("chainDebug", dbg)]]
         else
-        -- `flags.posterior` (harness-only): each segment's confidence, the
-        -- posterior mass of its mode over its minutes (`Posterior`).
-        -- `flags.unknownBelow` (harness arm): a segment whose confidence is
-        -- under it leaves as `unknown`, the posterior's "don't know".
+        -- `flags.posterior` (harness): each segment's posterior mode mass.
+        -- `flags.unknownBelow` (harness): below it a segment leaves as `unknown`.
         let unknownBelow : Option Float := (j.getObjVal? "flags" >>= (·.getObjVal? "unknownBelow") >>= (·.getNum?)).toOption.map (·.toFloat)
         let wantPost := (j.getObjVal? "flags" >>= (·.getObjVal? "posterior") >>= (·.getBool?)).toOption == some true
           || unknownBelow.isSome
@@ -2544,11 +2457,9 @@ private def assembleSegmentsResult (j : Json) : Json :=
 
 /-! ## Today, from the earliest changed minute (`assemblesegmentsinc`)
 
-The serve loop keeps the day's previous run. A run whose per-minute tables match
-it before minute `f` copies every cell ending before `f`, computes the rest, and
-builds the trellis rows on from the previous run's, cut at `f` (`sDecodeInc_eq`:
-exactly the full decode). Any day-wide difference, a new key, or no previous run
-decodes in full. -/
+A run whose per-minute tables match the previous run's before minute `f` copies
+the cells before `f` and builds the trellis on from there (`sDecodeInc_eq`:
+exactly the full decode). Any other difference decodes in full. -/
 
 /-- What the day's next run reuses. -/
 structure TodayState where
@@ -2729,14 +2640,10 @@ private def assembleSegmentsInc (j : Json) (st? : Option TodayState) : Json × O
 
 /-! ## Float bit transport
 
-Most modes quantise before they emit (`qCell`, `ptJson`). The Kalman filter
-cannot: it runs over raw degrees, where the seventh decimal moves the gain. And
-`Lean.toJson (f : Float)` rounds to six places (`51.50009905063291` comes back
-`51.500099`, `1e-7` comes back `0`).
-
-So a Float crosses as its IEEE-754 bit pattern, as a decimal string: it reaches
-2^64, past the 2^53 a JSON number is exact to. The round trip is then exact by
-construction, `1e-7` and `-0.0` included. -/
+`Lean.toJson (f : Float)` rounds to six places (`1e-7` comes back `0`), and the
+Kalman filter runs on raw degrees where the seventh decimal matters. So a Float
+crosses as its IEEE-754 bit pattern in a decimal string, exact by construction
+(`-0.0` included). -/
 
 /-! ## Kalman mode (`verified_cli kalman`)
 
@@ -2847,10 +2754,9 @@ private def parsePriorsPlain (j : Json)
 
 /-! ## `bestplace` — the whole naming chain
 
-What `BestPlace.resolve` finally answers: the ranker's winner after the
-enclosing check, the Nominatim specific-venue branch, the lodging override and
-the residential-address branch. The only way to tell "the ranker chose X" from
-"the fold serves X".
+What `BestPlace.resolve` answers after the enclosing check, the Nominatim venue
+branch, the lodging override and the residential branch: the way to tell "the
+ranker chose X" from "the fold serves X".
 
   { "landmarks": [{name, type, subtype, distanceM, openingHours?, enclosing?}],
     "geocode": {"18": <result>|null, "16": <result>|null},
@@ -3208,12 +3114,9 @@ private def parseChainSeg (j : Json) : Except String ChainSeg := do
            startTs := ← (← j.getObjVal? "startTs").getInt?
            endTs := ← (← j.getObjVal? "endTs").getInt? }
 
-/-- `relations` absent and `relations: []` are different requests, and the
-    difference is not cosmetic: absent means the mirror was never consulted, so
-    every candidate's `servedPen` is 0, while an empty array means it was
-    consulted and had nothing — which `servedStationSet` also answers `none` to,
-    but only after `railRelationsForLine` runs. Kept distinct here so a shell
-    that cannot reach the mirror cannot be mistaken for one that found it bare. -/
+/-- `relations` absent means the mirror was never consulted (every `servedPen`
+    is 0); `[]` means it was consulted and had nothing. Kept distinct so an
+    unreachable mirror is not read as a bare one. -/
 def stationChainResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let edges ← (← (← j.getObjVal? "edges").getArr?).mapM parseEdge
@@ -3325,9 +3228,8 @@ private def osmSpatialResult (j : Json) : Json :=
 
 /-! ## `battery` — the chart series
 
-`appendBatteryTail(batterySeries(inDay), tail, endUtc)` in one mode: the
-pipeline never wants the untailed series, and two calls would let a caller ship
-it. -/
+`appendBatteryTail(batterySeries(inDay), tail, endUtc)` in one mode, so a caller
+cannot ship the untailed series. -/
 private def batteryResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let pts ← (← optArr j "points").mapM (fun e => do
@@ -3814,11 +3716,10 @@ def dispatch (j : Json) : Json :=
   | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
   | .error _ => Json.mkObj [("error", Json.str "missing mode")]
 
-/-- Persistent request loop: one NDJSON request per line (`{"id", "mode", …}`)
-→ one NDJSON response (`{"id", "result": …}`), flushed per line. A handler may
-write `{"ask": …}` lines and read the reply off the same stdin before its result
-goes out (`DayEntry.Host`). The loop carries the day's incremental state from
-one `assemblesegmentsinc` to the next; every other mode is `dispatch`. -/
+/-- The request loop: one NDJSON request per line (`{"id", "mode", …}`), one
+response per line. A handler may write `{"ask": …}` and read the reply off the
+same stdin first (`DayEntry.Host`). The loop carries the day's incremental state
+between `assemblesegmentsinc` calls; every other mode is `dispatch`. -/
 private partial def serveLoop (stdin stdout : IO.FS.Stream) (today : Option TodayState) :
     IO Unit := do
   let line ← stdin.getLine

@@ -4,57 +4,31 @@ import Verified.FloatConst
 /-!
 # Walk-geometry referee metrics
 
-The metric producer behind `Verified.Eval.WalkGate`: walk score, plausibility,
-building crossings and route correctness.
+What `Verified.Eval.WalkGate` measures "worse" with: walk score, plausibility,
+building crossings and route correctness. Kept apart from the ratchet, which is
+a handful of comparisons.
 
-The gate asks "did this walk get worse?"; this file is what "worse" is measured
-with. It is separate from the ratchet on purpose: the ratchet is a handful of
-comparisons and could be read at a glance, whereas these are the geometry, and
-mixing them would hide the one inside the other.
-
-## No single number is truth
-
-So this reports a vector per walk rather than a score; each metric is
+No single number is truth, so each walk gets a vector; each metric is
 confounded alone:
 
-* off-walkable p90 is snapper-biased — a phantom that hugs mapped ways scores
-  well, and a reconstruction that rightly dissolves it scores worse. The gate
-  records it and does not act on it.
-* corridor stall sees an invented detour but is blind to a coherent smear.
-* the step budget sees the smear — a line cannot draw more metres than the
-  pedometer counted — but says nothing about WHERE the line went.
-* route-correctness is the only one that scores by name rather than geometry,
-  and it exists only where the ground-truth narrative confirmed a street.
-
-A change is judged across all of them at once, which is what the gate does.
+* off-walkable p90 favours a phantom hugging mapped ways, so it is recorded,
+  not acted on;
+* corridor stall sees an invented detour but not a coherent smear;
+* the step budget sees the smear but not where the line went;
+* route correctness scores by name, only where the narrative confirmed a street.
 
 ## ⚠ `none` is unmeasured and never zero
 
-Every `Option` here means the question could not be asked — no building
-footprints in the fixture, no named-street truth over the leg, no step data for
-the day. A lost measurement that reads as a clean `0` is the failure mode this
-whole file is shaped against: it would turn an unanswerable question into the
-best possible answer.
+An `Option` here means the question could not be asked (no footprints, no
+named-street truth, no step data). A lost measurement read as `0` would turn an
+unanswerable question into the best possible answer.
 
 ## Exactness
 
-`tests/golden/walk-baseline.json` was blessed by this arithmetic: the planar
-lat/lon→metre approximation (111320 m/deg, `cos` at the segment midpoint), its
-clamps and its sampling steps. Structurally different arithmetic would redden
-the gate on a healthy tree.
-
-Two known divergences, both argued to be below the gate's resolution:
-
-* `Math.hypot`-style overflow care is not `sqrt(x²+y²)`, so a metre value can
-  differ in the last ULP. The gate's epsilons are 0.1 (a fraction) and 5–30 m,
-  so a ULP cannot move a verdict.
-* `String.toLower` is ASCII-only, so a non-ASCII street name could normalise
-  differently from a Unicode-aware lowering. Same caveat as
-  `Verified.Hsmm.ServedStations`.
-
-Neither is assumed. The port is checked against the blessed baseline over the
-real corpus by the Rust harness — that is the oracle, and it is a file, which is
-what makes this Group B rather than a parity gate against itself.
+`tests/golden/walk-baseline.json` was blessed by this arithmetic (planar
+lat/lon→metre, 111320 m/deg, `cos` at the midpoint), so different arithmetic
+reddens a healthy tree. A `hypot`-style ULP difference and ASCII-only
+`String.toLower` are below the gate's 5–30 m and 0.1 epsilons.
 -/
 
 namespace Verified.Eval.WalkMetrics
@@ -90,9 +64,9 @@ abbrev Ring := Array LatLon
 
 /-! ## Planar primitives
 
-Not haversine. The referee measures a walk — hundreds of metres — where the
-equirectangular approximation is exact to well under the metric's resolution,
-and changing it would move every value in the blessed baseline. -/
+Not haversine: over a walk's hundreds of metres the equirectangular
+approximation is far below the metric's resolution, and changing it would move
+every baseline value. -/
 
 open Verified.FloatConst (pi hyp posInf)
 
@@ -150,10 +124,8 @@ def distToNearestWay (p : LatLon) (roads : RoadGeometry) : Float := Id.run do
 
 /-! ## Pedometer -/
 
-/-- Steps overlapping `[from, to)` × stride (m). Per-minute rows are
-distributed by time overlap, so a sub-minute window gets its fraction rather
-than the whole row — a leg boundary must not import a neighbouring minute's
-steps wholesale. -/
+/-- Steps overlapping `[from, to)` × stride (m), distributed by time overlap so
+a leg boundary does not import a neighbouring minute's steps. -/
 def pedometerDistanceM (steps : Array PedStep) (from_ to : Float)
     (strideM : Float := 0.72) : Float := Id.run do
   if to ≤ from_ then return 0
@@ -166,24 +138,17 @@ def pedometerDistanceM (steps : Array PedStep) (from_ to : Float)
 
 /-! ## Step budget
 
-Two windowing rules and two strides, a few lines apart. `pedometerDistanceM`
-above distributes per-minute rows by time overlap at a 0.72 m stride;
-`stepsInWindow` here sums whole rows whose timestamp falls in an inclusive
-window, and the budget multiplies by 0.75. Merging them would move every
-`budgetM` in the blessed baseline. -/
+Two windowing rules and two strides: `pedometerDistanceM` distributes rows by
+overlap at 0.72 m; `stepsInWindow` sums whole rows in an inclusive window and
+the budget uses 0.75. Merging them would move every blessed `budgetM`. -/
 
 /-- The reconstruction profile's stride. 0.75 — not `scoreWalk`'s 0.72. -/
 def STEP_STRIDE_M : Float := 0.75
 
-/-- Steps whose row timestamp lies in `[startTs, endTs]` — inclusive at both
-ends, whole rows, no overlap distribution.
-
-`none` means no step data, and it is not the same as `some 0`. A window that
-contains no steps but sits within a day of some step row returns `some 0` —
-the pedometer positively saying the leg covered no counted steps, which is the
-strongest phantom evidence the referee has. Only a window with no rows at all,
-or none within 86400 s, declines to answer. Collapsing the two would turn the
-loudest signal into silence. -/
+/-- Steps whose row timestamp lies in `[startTs, endTs]`, whole rows. `none`
+(no rows within a day) is not `some 0`: an empty window near step data is the
+pedometer saying the leg walked nothing, the strongest phantom evidence the
+referee has. -/
 def stepsInWindow (rows : Array PedStep) (startTs endTs : Float) : Option Float := Id.run do
   if rows.isEmpty then return none
   let mut total := 0.0
@@ -224,9 +189,8 @@ structure WalkScore where
   deriving Inhabited, Repr
 
 /-- The `q`-quantile of the drawn line's distance to the network, sampled at
-the vertices and every `stepM` along the chords, with no openness exclusion.
-
-p90 rather than max: a single GPS spike must not become the metric. -/
+the vertices and every `stepM`, with no openness exclusion. A quantile, so one
+GPS spike does not become the metric. -/
 def offWalkableQuantile (drawn : Array LatLon) (walkable : RoadGeometry)
     (q : Float) (stepM : Float := 5) : Option Float := Id.run do
   if drawn.isEmpty then return none
@@ -273,57 +237,33 @@ def scoreWalk (drawn : Array LatLon) (startTs endTs : Float)
       let near := (drawn.map (fun p => distToNearestWay p w)).filter (· ≤ opennessRadiusM)
       offWalkableMeanM := if near.isEmpty then none
                           else some ((near.foldl (· + ·) 0) / near.size.toFloat)
-      -- `wantP90` exists for cost, and only the quantile is optional.
-      -- `offWalkableQuantile` samples the line every 5 m and asks
-      -- `distToNearestWay` for each sample, which scans every walkable way —
-      -- ~24k on a London day. It is 83% of the whole referee's runtime, and it
-      -- is the one metric the ratchet does not act on (`Metric` has no `p90`
-      -- case; see `WalkEntry.p90M`). The mean above is per-vertex, ~23 calls,
-      -- and stays.
-      --
-      -- Defaults to true so every existing caller and every pinned guard below
-      -- is unaffected; only the gating harness turns it off.
+      -- `wantP90` exists for cost: the p90 samples every 5 m against every
+      -- walkable way and is most of the referee's runtime, while the ratchet
+      -- does not act on it. Defaults to true; the gating harness turns it off.
       offWalkableP90M := if wantP90 then offWalkableQuantile drawn w 0.9 else none
   | none => pure ()
   return { tortuosity, drawnLengthM, pedometerM := ped, stepDistanceError,
            offWalkableMeanM, offWalkableP90M }
 
-/-! The referee keeps its own body, and that is a deliberate duplicate.
-
-`Verified.Geo.CorridorStall` holds the same DP over `Pt`, because the decision
-gate needs it and `Verified.Geo` cannot import `Verified.Eval`. The
-obvious move, delegating to that one, SIGSEGVs the corpus gate: with the veto
-inert and the fold-side DP disabled, so no line moves and no DP runs in the
-fold, the referee calling across the module boundary still crashes.
-
-So there are two copies on purpose, and they are not an unnoticed second
-notion: the six `#guard`s below pin this one, `Verified.Geo.CorridorStall`
-carries the same fixtures, and any divergence fails the build. A duplicate
-gated against its twin is a different thing from a fork nobody is comparing.
-
-If the boundary bug is ever found, collapse these back into one. Until then,
-changing either copy without the other is the failure mode to watch for.
+/-! The referee keeps its own copy of the stall DP. `Verified.Geo.CorridorStall`
+holds the same one for the decision gate, and `Verified.Geo` cannot import
+`Verified.Eval`; delegating across the boundary SIGSEGVs the corpus gate even
+with the fold's DP disabled. Both copies carry the same six fixtures, so a
+divergence fails the build. Collapse them if that crash is ever explained.
 -/
 
 /-- The longest run of `path` that travels far while its monotone projection
-onto the time-ordered `fixes` polyline barely advances (m).
+onto the time-ordered `fixes` barely advances (m).
 
-The projection is the min-cost monotone assignment (a DP), not a greedy
-nearest-projection ratchet. The greedy version mis-scored out-and-back walks: on
-a street walked twice, the locally-nearest projection of an early vertex could
-land on the return pass, ratcheting the floor forward so the whole rest of the
-walk read as one giant stall — measured, a line ≤12 m off a 118 m-stall matched
-line scored 2169 m. Choosing the jointly-cheapest assignment puts each pass of
-the drawn line on the pass of the fixes it actually follows. An invented detour
-still cannot advance, because there are no nearby fixes ahead of it, so the
-signal this exists to catch is unchanged. -/
+The projection is the min-cost monotone assignment (a DP). A greedy nearest
+projection was refuted: on a street walked twice an early vertex lands on the
+return pass and the rest reads as one giant stall (2169 m for a 118 m line). An
+invented detour still cannot advance, having no fixes ahead of it. -/
 def maxCorridorStall (fixes path : Array LatLon) (tolM : Float := 15) : Float := Id.run do
   if path.size < 2 || fixes.size < 2 then return 0
-  -- The grids are flat, `k * S + i`, and every index below is in range by
-  -- construction (`k < V`, `i < S`, a rank `< S`) — a product no index tactic can
-  -- bound, so the reads say their default instead: `0`, the neutral value a
-  -- `!` read would have produced, and `-1` (no parent) for `parent`. The twin
-  -- in `Geo.CorridorStall` reads the same way; this copy is the walk floor.
+  -- The grids are flat (`k * S + i`) and every index is in range by
+  -- construction, which no tactic can bound, so reads give their default (`0`,
+  -- or `-1` for `parent`), as in `Geo.CorridorStall`.
   let fArc : Array Float := (fixes.zip (fixes.extract 1 fixes.size)).foldl
     (init := #[0.0]) fun acc (a, b) => acc.push (acc.back?.getD 0 + metersBetween a b)
   let pArc : Array Float := (path.zip (path.extract 1 path.size)).foldl
@@ -424,20 +364,10 @@ def maxCorridorStall (fixes path : Array LatLon) (tolM : Float := 15) : Float :=
 /-! ## Coverage — does the drawn line still reach where the fixes went? -/
 
 /--
-The farthest a raw fix falls from the drawn line (m). `0` when there is no line
-to fall away from.
-
-A maximum, and that is the whole difference from the display gate's
-`strayM`, which is a quantile over the same two inputs. A quantile is the
-right shape for asking "is this line broadly faithful" and the wrong shape for
-asking "did it abandon part of the walk": a match that stops halfway leaves
-every fix in the second half far away, and a quantile set below that fraction
-reports a clean number for a line covering half the journey.
-
-It is not the same question as `corridorStallM` either. Stall asks whether
-the drawn line went somewhere the fixes did not. This asks whether the fixes
-went somewhere the drawn line did not. Both directions can be zero while the
-other is large, so neither substitutes.
+The farthest a raw fix falls from the drawn line (m); `0` with no line. A
+maximum, unlike the display gate's quantile `strayM`, so a match that stops
+halfway cannot hide under a quantile. Stall is the converse question (did the
+line go where the fixes did not), so neither substitutes.
 -/
 def maxFixDistToLine (fixes drawn : Array LatLon) : Float := Id.run do
   if drawn.size < 2 || fixes.isEmpty then return 0
@@ -451,22 +381,11 @@ def maxFixDistToLine (fixes drawn : Array LatLon) : Float := Id.run do
   return worst
 
 /--
-The `q`-quantile of the raw fixes' distance to the drawn line (m), and the share
-of fixes farther than `radiusM` from it.
-
-Both, because `maxFixDistToLine` alone cannot be used and the reason is
-measured. Over the 238 blessed walks its max is 3026.9 m and its p95 is
-932.8 m — a dozen blessed lines leave a kilometre or more of raw track behind.
-A maximum is set by the single farthest fix, so one GPS spike scores exactly
-like an abandoned half, and the corpus is full of spikes. That is the same
-reason the display gate takes a quantile of these two tracks rather than a max.
-
-The quantile has the opposite blind spot, which is why the share is here
-too: a quantile set below the abandoned fraction reports a clean number for a
-line covering half a journey. The share is the shape that survives both — one
-spike is `1/n`, and an abandoned half is `0.5`.
-
-`(0, 0)` when there is no line or no fixes.
+The `q`-quantile of the raw fixes' distance to the drawn line (m), and the
+share of fixes beyond `radiusM`. The maximum alone is set by one GPS spike,
+and the corpus is full of them; a quantile misses an abandoned half. The share
+survives both: a spike is `1/n`, an abandoned half `0.5`. `(0, 0)` with no
+line or fixes.
 -/
 def fixCoverage (fixes drawn : Array LatLon) (q radiusM : Float) : Float × Float := Id.run do
   if drawn.size < 2 || fixes.isEmpty then return (0, 0)
@@ -485,14 +404,10 @@ def fixCoverage (fixes drawn : Array LatLon) (q radiusM : Float) : Float × Floa
   return (at_, Float.ofNat far / Float.ofNat ds.size)
 
 /--
-How far the drawn line's two ends sit from the raw track's two ends (m), as
-`(head, tail)`. `(0, 0)` when either side has nothing to compare.
-
-Never zero for a legitimate match, and the floor is not noise. The matcher
-connects snapped endpoints rather than raw ones, so an accepted match pays a gap
-the size of the snap — `ONEOFF -> F_LINE` draws 222.64 m over a 241.95 m span
-for exactly this reason. A bar here has to clear that, which is what makes the
-distribution over the blessed corpus the only way to place one.
+How far the drawn line's ends sit from the raw track's ends (m), `(head,
+tail)`; `(0, 0)` when either is empty. Never zero for a real match, since the
+matcher joins snapped endpoints, so a bar here must be placed from the corpus
+distribution.
 -/
 def endpointGapsM (fixes drawn : Array LatLon) : Float × Float :=
   match fixes[0]?, fixes.back?, drawn[0]?, drawn.back? with
@@ -501,13 +416,9 @@ def endpointGapsM (fixes drawn : Array LatLon) : Float × Float :=
 
 /-! ## Buildings -/
 
-/-- Even-odd ray cast: is `p` inside the closed ring? The ring need not repeat
-its first vertex — the last→first edge is closed implicitly.
-
-Points exactly on an edge are reported inconsistently, as with any ray cast.
-That is acceptable here and only here: the callers sample at sub-metre spacing
-and sum length, so a single ambiguous sample moves the metric by its own step
-size, not by a whole crossing. -/
+/-- Even-odd ray cast: is `p` inside the ring (closed implicitly)? A point on an
+edge may go either way, which is harmless here: callers sample at sub-metre
+spacing and sum length. -/
 def pointInRing (p : LatLon) (ring : Ring) : Bool := Id.run do
   if ring.size < 3 then return false
   let mut inside := false
@@ -546,20 +457,10 @@ private def ringBox (ring : Ring) : Box := Id.run do
 private def inBox (p : LatLon) (b : Box) : Bool :=
   p.lat >= b.minLat && p.lat <= b.maxLat && p.lon >= b.minLon && p.lon <= b.maxLon
 
-/-- Whether `p` is inside any building ring, with the ray cast gated behind a
-bounding-box test.
-
-Exact, not approximate. `pointInRing` casts a ray in +lon: a point outside
-the box has no edge spanning its latitude, or every intersection on one side, so
-it already answered `false`. The box only decides which rings are worth walking,
-never whether a point is inside one. Bounds are inclusive, so a point on the box
-edge still reaches the ray cast.
-
-This is not the nearest-way prune. That one bounded a nearest-way search, where a
-bound bites only once the running best is small and nothing orders the ways —
-measured 3.3x slower. Containment has no running best and no ordering: each ring
-is accepted or rejected on its own. The two share the word "prune" and nothing
-else. -/
+/-- Whether `p` is inside any building ring, the ray cast gated behind an
+inclusive bounding box. Exact: a point outside the box already answers `false`.
+Unlike the refuted nearest-way prune (3.3x slower: it needs a running best),
+containment judges each ring alone. -/
 private def inAnyBuildingBoxed (p : LatLon) (boxed : Array (Box × Ring)) : Bool :=
   boxed.any (fun br => inBox p br.1 && pointInRing p br.2)
 
@@ -567,14 +468,10 @@ private def inAnyBuildingBoxed (p : LatLon) (boxed : Array (Box × Ring)) : Bool
 path. -/
 def ON_WAY_M : Float := 8
 
-/-- The true-defect lens: length (m) of the drawn line inside a building while
-more than `onWayM` from every walkable way.
-
-This is the metric the gate acts on, and the exclusion is the whole point. A
-line riding a mapped through-building footway — a station concourse, an arcade
-— is a legitimate passage that OSM says is walkable, and it reads 0 here. A
-chord through a house with no path counts in full. Gating on all in-building
-length would have made every concourse a defect. -/
+/-- The true-defect lens: length (m) of the drawn line inside a building and
+more than `onWayM` from every walkable way. The gate acts on this. A mapped
+through-building footway (a concourse) reads 0; gating all in-building length
+would make every concourse a defect. -/
 def offPathBuildingCrossingM (drawn : Array LatLon) (buildings : Array Ring)
     (walkable : RoadGeometry) (onWayM : Float := ON_WAY_M)
     (stepM : Float := 2) : Float := Id.run do
@@ -596,11 +493,9 @@ def offPathBuildingCrossingM (drawn : Array LatLon) (buildings : Array Ring)
 
 /-! ## Route correctness
 
-The only witness that scores by name. Everything else in this file is geometry
-against geometry, which cannot tell a faithful line from a plausible invention
-down the next street over; the ground-truth narrative can, but only where it
-confirmed a street, which is why this metric is `none` far more often than it
-is a number. -/
+The only witness that scores by name: geometry cannot tell a faithful line from
+an invention down the next street, the narrative can, where it confirmed a
+street. So this is usually `none`. -/
 
 /-- Lowercase, collapse internal whitespace, trim. `"  Example   Rise "` and
 `"example rise"` compare equal. See the ASCII caveat in the module header. -/
@@ -619,10 +514,7 @@ def normaliseWayName (name : String) : String := Id.run do
   return out
 
 /-- Nearest named walkable way to `p` within `radiusM`, as `(name, distM)`.
-
-Unnamed ways are skipped rather than treated as a mismatch: an unnamed footway
-cannot corroborate a named-street claim either way, and counting it as "not the
-accepted street" would charge the line for the map's silence. -/
+Unnamed ways are skipped: the map's silence cannot count against the line. -/
 def nearestNamedWay (p : LatLon) (roads : RoadGeometry) (radiusM : Float) :
     Option (String × Float) := Id.run do
   let mut best : Option (String × Float) := none
@@ -642,11 +534,8 @@ def nearestNamedWay (p : LatLon) (roads : RoadGeometry) (radiusM : Float) :
   return best
 
 /-- Fraction in `[0,1]` of the drawn line's length whose nearest named walkable
-way (within `matchRadiusM`) is one of `acceptedNames`.
-
-`none` when there is nothing to score against — no accepted name, no walkable
-geometry, or a zero-length line. That is the common case and it is not a
-failure; it is the metric declining to answer. -/
+way is one of `acceptedNames`. `none`, the common case, when there is nothing to
+score against. -/
 def onNamedWayFraction (drawn : Array LatLon) (acceptedNames : Array String)
     (walkable : RoadGeometry) (matchRadiusM : Float := 25)
     (stepM : Float := 5) : Option Float := Id.run do
@@ -674,15 +563,9 @@ def onNamedWayFraction (drawn : Array LatLon) (acceptedNames : Array String)
 
 /-! ## Witnesses
 
-Every number below is this arithmetic's recorded output, not hand arithmetic.
-`tests/golden/walk-baseline.json` was blessed by it, and a merely
-plausible metric would sit inside the gate's 5–30 m epsilons while measuring
-something else. These pin the arithmetic itself, at 1e-9, before the corpus is
-asked.
-
-The fixtures are a synthetic street grid near (51.5, −0.12) — a corner, a ring,
-three ways. No real coordinates; the referee has no opinion about which
-city it is in. -/
+Recorded outputs at 1e-9, pinning the arithmetic before the corpus is asked: a
+merely plausible metric would sit inside the gate's epsilons. The fixtures are
+a synthetic street grid near (51.5, −0.12). -/
 
 section Witnesses
 
@@ -728,9 +611,8 @@ private def ring : Ring :=
 
 /-! ### Pedometer
 
-The per-minute rows are distributed by time overlap. `ped_partial` is the one
-that shows it: half of one 120-step minute is 60 steps, 43.2 m — a whole-row
-implementation would read 86.4. -/
+Rows are distributed by overlap: half of a 120-step minute is 60 steps, 43.2 m,
+where whole rows would read 86.4. -/
 
 #guard approx (pedometerDistanceM #[⟨1000, 120⟩, ⟨1060, 90⟩] 1000 1120) 151.19999999999999
 #guard approx (pedometerDistanceM #[⟨1000, 120⟩] 1030 1060) 43.199999999999996
@@ -746,10 +628,8 @@ implementation would read 86.4. -/
     && (match s.stepDistanceError with
         | some e => approx e 0.52163184582311073 | none => false)
 
--- The line rides the ways exactly, so both off-walkable metrics are ~0 —
--- and the p90 is 7.1e-15 rather than a clean zero. That residue is the planar
--- projection's own rounding, and pinning it is the point: a port that produced
--- a tidy 0 here would be computing something else.
+-- The line rides the ways exactly, so both off-walkable metrics are ~0; the
+-- p90's 7.1e-15 is the projection's own rounding, pinned on purpose.
 #guard
   let s := scoreWalk line 1000 1600 #[⟨1000, 500⟩] (some ways)
   (match s.offWalkableMeanM with | some m => approx m 0 | none => false)
@@ -758,22 +638,15 @@ implementation would read 86.4. -/
 
 /-! ### Corridor stall
 
-The witness `scoreWalk` cannot see. Both arms below draw the same two streets;
-only the detour doubles back, and only the detour is charged. -/
+Both arms draw the same two streets; only the detour doubles back and is
+charged. -/
 
 #guard approx (maxCorridorStall fixes line) 0
 #guard approx (maxCorridorStall fixes detour) 89.055999999792448
 
--- The pair that constrains the monotone assignment, and the reason the two
--- guards above are not enough. They pass under a greedy nearest-projection
--- ratchet too, so on their own they say nothing about the DP the comment above
--- calls load-bearing. (Found by ablation: perturbing the projection left them
--- green.)
---
--- Both fixtures below walk one street twice — north, back south, then east —
--- which is the case the greedy version got wrong: an early vertex projects
--- onto the return pass, ratchets the corridor floor forward, and the rest of
--- the walk reads as one giant stall.
+-- The pair that constrains the monotone assignment: the guards above also pass
+-- under a greedy projection. Both walk one street twice, where greedy reads
+-- the rest of the walk as one stall.
 private def twoPassFixes : Array LatLon :=
   #[P 51.5 (-0.12), P 51.5004 (-0.12), P 51.5008 (-0.12),
     P 51.5004 (-0.12), P 51.5 (-0.12), P 51.5 (-0.1188)]
@@ -828,28 +701,18 @@ private def spiked : Array LatLon := fixes.push (P 51.6 (-0.12))
 #guard (fixCoverage spiked line 0.5 50).1 < 50
 #guard fixCoverage #[] line 0.9 50 == (0, 0)
 
--- One constant in this file is unwitnessed, stated here rather than left to
--- be discovered: the DP's 1 m backtrack tolerance (`sMax := arc + 1`). Setting
--- it to 0 leaves every guard above green, so nothing here constrains it.
---
--- It is not covered because a fixture that separates 1 m of permitted
--- backtrack from 0 needs an optimal assignment that backtracks by less than a
--- metre, and the sampling that would produce one is finer than the metric it
--- feeds — the gate's smallest epsilon is 5 m. The value is inherited from the
--- greedy implementation this DP replaced, where it was the same tolerance.
---
--- Recorded, not waived: if the stall metric is ever wrong in a way the two-pass
--- witnesses do not explain, this is the first place to look.
+-- One constant is unwitnessed: the DP's 1 m backtrack tolerance (`sMax := arc
+-- + 1`); 0 leaves every guard green. A separating fixture needs a sub-metre
+-- optimal backtrack, finer than the gate's 5 m epsilon. If the stall metric is
+-- ever wrong in a way the two-pass witnesses do not explain, look here first.
 
 /-! ### Buildings -/
 
 #guard pointInRing (P 51.5004 (-0.12)) ring == true
 #guard pointInRing (P 51.5 (-0.12)) ring == false
 
--- The pair that defines the gated metric. Same line, same building. With
--- the walkable network present the crossing is a mapped passage and counts 0;
--- with no network it is a chord through a house and counts in full. Gating the
--- superset would have made every station concourse a defect.
+-- The pair that defines the gated metric: with the walkable network present
+-- the crossing is a mapped passage (0); without, a chord through a house.
 #guard approx (offPathBuildingCrossingM line #[ring] ways) 0
 #guard approx (offPathBuildingCrossingM line #[ring] { ways := #[] }) 45.517511111005007
 
@@ -879,10 +742,8 @@ private def spiked : Array LatLon := fixes.push (P 51.6 (-0.12))
 
 /-! ### Step budget
 
-The last two are the pair that matters. An empty window near the data is
-`some 0` — the pedometer says this leg walked nothing — while a window far from
-any row is `none`, no data. The gate acts hard on the first and not at all on
-the second. -/
+The last two matter: an empty window near data is `some 0` (walked nothing),
+far from any row it is `none`. The gate acts hard on the first only. -/
 
 private def stepRows : Array PedStep := #[⟨1000, 100⟩, ⟨1060, 120⟩, ⟨1120, 90⟩]
 

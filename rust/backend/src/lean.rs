@@ -1,20 +1,12 @@
 //! Calling the Lean decisions.
 //!
-//! Every function here is one request to `verified_cli serve` —
-//! `{"mode":"backend","op":…}` for the decision table in `Verified/Session.lean`
-//! and its siblings, `{"mode":…}` for the algorithm modes — typed on this side
-//! so a caller never spells a wire shape. The process, the pool and the ask
-//! protocol are [`crate::lean_worker`]; this module is the vocabulary.
+//! Each function is one typed request to `verified_cli serve`
+//! (`{"mode":"backend","op":…}` for the decision tables, `{"mode":…}` for the
+//! algorithm modes), so the running backend uses the rules in Lean, not a Rust
+//! paraphrase. The process and pool are [`crate::lean_worker`].
 //!
-//! What that buys is that the rules the running backend uses are the ones in
-//! Lean — not a Rust paraphrase of them that drifts.
-//!
-//! # `init` once, and a failure there is fatal
-//!
-//! If Lean cannot be spawned, every later call would fail the same way, and a
-//! backend that limped on answering "could not decide" per request is worse
-//! than one that refuses to start. `init` is therefore called from the
-//! entrypoint, and it is what a test that needs Lean calls first.
+//! `init` runs once at startup and a failure there is fatal: a backend that
+//! answered "could not decide" per request is worse than one that does not start.
 
 use std::collections::BTreeSet;
 use std::sync::{Mutex, OnceLock};
@@ -30,12 +22,8 @@ pub fn init() -> Result<()> {
     crate::lean_worker::init().context("starting verified_cli")
 }
 
-/// One decision: the request object goes out as `{"mode":"backend","req":…}`,
-/// the reply body comes back as text.
-///
-/// Through [`serve`], so a traced run records the `backend` mode like any
-/// other. The request is wrapped, not merged: some ops carry a `mode` of their
-/// own, which merging would overwrite.
+/// One decision, sent as `{"mode":"backend","req":…}` through [`serve`] so a
+/// traced run records it. Wrapped, not merged: some ops carry their own `mode`.
 fn call_raw(request: &Value) -> Result<String> {
     let req = serde_json::json!({ "mode": "backend", "req": request });
     serve(&req.to_string())
@@ -55,11 +43,8 @@ struct LeanError {
     error: String,
 }
 
-/// One Google Health weigh-in. Mirrors `Verified.Weight.Weigh`.
-///
-/// `grams` is an integer end to end — Google stores it that way, and the
-/// conversion to the `DECIMAL(5,2)` kilograms the table holds happens at the
-/// write. Carrying it as a float through the FFI would round twice.
+/// One Google Health weigh-in (`Verified.Weight.Weigh`). `grams` stays an
+/// integer until the `DECIMAL(5,2)` write; a float would round twice.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Weigh {
     pub date: String,
@@ -180,16 +165,11 @@ pub fn session_is_valid(expires_at_ms: i64, now_ms: i64) -> Result<bool> {
     Ok(w.value)
 }
 
-/// `Verified.Session.mayProceed` — may this session do this?
-///
-/// Answers one question only: whether a share viewer is allowed this method on
-/// this path. An unauthenticated request is not a share viewer, so this returns
-/// `true` for one — and `true` here is not permission. The caller's own "is
-/// there a session" gate must run first.
-///
-/// `hides_location`: the viewer's link has location turned off
-/// (`Verified.Session.mayProceedSharing`). `path` must be the original request
-/// path, `/api` included.
+/// `Verified.Session.mayProceed`: whether a share viewer may use this method on
+/// this path. An unauthenticated request is not a share viewer, so it gets
+/// `true`, which is not permission: the session gate runs first.
+/// `hides_location` is the link's location switch; `path` is the original
+/// request path, `/api` included.
 pub fn may_proceed(
     is_share_viewer: bool,
     hides_location: bool,
@@ -225,13 +205,9 @@ pub fn shareable_date_range(today: &str, days_back: i64) -> Result<Option<(Strin
     Ok(w.value.map(|r| (r.from, r.to)))
 }
 
-/// `Verified.ApiWindow.validateDays`: the `days` query parameter. `None` out
-/// means reject, not "use the default": `days=400` is a 400, not a narrowed
-/// window.
-///
-/// `raw` is what JS `Number(...)` makes of the parameter: `None` only when
-/// absent, `Some(NaN)` when unparseable, `Some(0.0)` for the empty string.
-/// Mapping `""` to `None` would turn a rejection into a 30-day read.
+/// `Verified.ApiWindow.validateDays`: `None` means reject (`days=400` is a 400),
+/// not the default. `raw` is JavaScript's `Number(...)` of the parameter:
+/// `None` only when absent, `Some(0.0)` for `""`, so `?days=` is rejected.
 pub fn validate_days(raw: Option<f64>) -> Result<Option<i64>> {
     #[derive(Deserialize)]
     struct Wire {
@@ -420,14 +396,10 @@ pub fn unsnapped_train_routes(
 }
 
 /// `Verified.Geo.DayState.clipFuture`: never assert the future. Truncates a
-/// state straddling `now_ts`, drops one wholly beyond it, and marks a state
-/// starting at or after `observed_through` (the decode's horizon) inferred.
-///
-/// Apply per request, after the cache: the cached day is fixed while `now`
-/// moves, so clipping before caching would freeze the horizon.
-///
-/// `states` must be the `day` mode's own state objects: they round-trip
-/// through the same encoder, so unknown fields survive.
+/// state straddling `now_ts`, drops one beyond it, and marks one starting at or
+/// after `observed_through` inferred. Apply per request after the cache, or the
+/// horizon freezes. `states` are the `day` mode's own objects, so unknown
+/// fields survive.
 pub fn clip_future(
     states: &[serde_json::Value],
     now_ts: i64,
@@ -1150,15 +1122,10 @@ pub struct OwntracksConfig {
     pub move_mode_locator_interval: Option<i64>,
 }
 
-/// `Verified.Owntracks.decideRemoteConfig` — how hard the phone should look.
-///
-/// Takes the whole pruned history: the decision is about a trajectory, not a
-/// fix. Coordinates cross as IEEE-754 bit patterns because the straightness
-/// ratio divides two haversine distances, and a re-rounded coordinate can move
-/// it across the walking threshold.
-/// `local_hour` is the hour of the day where the phone is, 0–23 in the user's
-/// home zone; `None` when no zone could be resolved, which the rules read as
-/// daytime.
+/// `Verified.Owntracks.decideRemoteConfig`: how hard the phone should look,
+/// from the whole pruned history. Coordinates cross as bit patterns, since a
+/// re-rounded one can move the straightness ratio across the walking bar.
+/// `local_hour` is the phone's local hour; `None` reads as daytime.
 pub fn owntracks_config(
     history: &[OwntracksFix],
     prev_profile: Option<&str>,
@@ -1278,15 +1245,10 @@ pub fn line_names_matching(line: &str, all_names: &[String]) -> Result<Vec<Strin
     Ok(w.value)
 }
 
-/// `Verified.Geo.LineStations.filterStationsByLineProximity` — the stations a
-/// line's track passes within 300 m of.
-///
-/// Coordinates cross as IEEE-754 bit patterns in both directions. The rule
-/// compares a computed distance against a 300 m threshold, and a re-rounded
-/// coordinate moves which stations a line is held to serve.
-///
-/// Order is preserved and is part of the answer — downstream journey
-/// resolution reads positional relationships out of this list.
+/// `Verified.Geo.LineStations.filterStationsByLineProximity`: the stations a
+/// line's track passes within 300 m of. Coordinates cross as bit patterns, since
+/// a re-rounded one moves which stations a line serves. Order is part of the
+/// answer: journey resolution reads positions from it.
 pub fn filter_stations_by_line_proximity(
     stations: &[serde_json::Value],
     ways: &[serde_json::Value],
@@ -1410,14 +1372,10 @@ pub fn shape_landmarks(
     Ok(serde_json::Value::Array(out))
 }
 
-/// One focus cluster's amenity vote: `Verified.Geo.FocusMining.mineCluster`.
-///
-/// The whole vote crosses in one call: its three gates read each other's
-/// leavings (and an exact tie keeps the first name seen), so a call per gate
-/// would move those tie-breaks to this side.
-///
-/// `landmarks` on each stay and on `centroid` are `shape_landmarks` output,
-/// passed back with the raw `openingHours` for Lean to resolve per stay.
+/// One focus cluster's amenity vote (`Verified.Geo.FocusMining.mineCluster`), in
+/// one call: its gates read each other's leavings and an exact tie keeps the
+/// first name, so a call per gate would move tie-breaks here. `landmarks` are
+/// `shape_landmarks` output plus the raw `openingHours`.
 pub struct MinedCluster {
     pub amenity_label: Option<String>,
     pub amenity_kind: Option<String>,
@@ -1531,14 +1489,10 @@ pub fn mine_cluster(stays: &[MineStay], centroid: &serde_json::Value) -> Result<
     })
 }
 
-/// Aggregate every cluster's attributed stays into the venue-type prior blob:
-/// `Verified.Geo.VenuePrior.minePriors`. Returns the JSON stored in
-/// `venue_type_priors.priors_json`: `{bySubtype: {k: {visits, dwell[],
-/// hours[]}}, byCategory, totalVisits}`.
-///
-/// A full recompute, so a re-mine is reproducible from the stays alone. Keys
-/// keep first-seen order, which `shapeScore` reads back. Counts are written as
-/// JSON numbers, the column's form.
+/// Every cluster's attributed stays aggregated into the venue-type prior
+/// (`Verified.Geo.VenuePrior.minePriors`), as stored in
+/// `venue_type_priors.priors_json`. A full recompute, reproducible from the
+/// stays; keys keep first-seen order, which `shapeScore` reads.
 #[derive(Deserialize)]
 struct WirePriorsBlob {
     #[serde(rename = "bySubtype")]
@@ -1650,12 +1604,9 @@ pub fn mine_priors(attributed: &[AttributedStay]) -> Result<serde_json::Value> {
     wire_priors_to_json(&w.value)
 }
 
-/// The `focus` mode's answer, decoded.
-///
-/// `mined` stays `Value`. The caller reads a dozen optional fields off each
-/// cluster (`sleepFitbitH`, `sleepH`, the stay tuples); a struct here would be a
-/// second schema to hold in step with Lean's, for no checking the caller does
-/// not already do per field.
+/// The `focus` mode's answer. `mined` stays `Value`: the caller reads a dozen
+/// optional fields per cluster, and a struct would be a second schema to keep
+/// in step with Lean's.
 pub struct FocusPlaces {
     /// One mined cluster per entry, exactly as Lean emitted it.
     pub mined: Vec<serde_json::Value>,
@@ -1783,14 +1734,10 @@ pub fn relation_route(
     })
 }
 
-/// One train leg snapped onto its rail corridor: the `railsnap` mode over
-/// `Verified.Geo.RailSnap`, which builds the graph from the raw ways itself.
-///
-/// `on_line` selects the fallback, `snapTrainSegmentOnLine`: route over only
-/// the named line's ways, leaning on the label. The corridor form declines
-/// below 12 fixes, since a thin cloud cannot evidence a corridor.
-///
-/// `Ok(None)` means leave it raw, never a guessed path.
+/// One train leg snapped onto its rail corridor (`Verified.Geo.RailSnap`, which
+/// builds the graph from the raw ways). `on_line` routes over only the named
+/// line's ways; the corridor form declines below 12 fixes. `Ok(None)` means
+/// leave it raw.
 pub fn rail_snap(
     way_name: &str,
     start_ts: f64,
@@ -2059,13 +2006,9 @@ impl ProximityAnswer {
     }
 }
 
-/// The sparse `[minuteTs, road, rail]` table `assemblesegments` reads as
-/// `observation.proximity`, plus the number of fix-bearing minutes no answer
-/// covered.
-///
-/// The table is opaque here on purpose. It goes into the assemble request
-/// unread; a `Vec<(i64, f64, f64)>` on this side would be a second decode of
-/// numbers that only Lean compares.
+/// The sparse `[minuteTs, road, rail]` table `assemblesegments` reads, plus the
+/// count of fix-bearing minutes no answer covered. Opaque here: it goes into
+/// the request unread, and only Lean compares the numbers.
 pub fn proximity_table(
     minutes: &serde_json::Value,
     answers: &[ProximityAnswer],

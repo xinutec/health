@@ -11,100 +11,29 @@ import Verified.Geo.MatchViterbi
 /-!
 # Matcher core
 
-The pinned integer semantics of the walk map-matcher (`matchTrajectory` +
-`matchWalkSegment`), over the `Metric.lean` substrate
-(`qDist`/`cosQ`/`roundDiv`; divisions are `Int.tdiv` or `Int.fdiv` as the
-arithmetic requires, and midpoints are `tdiv` since lons can be negative).
+The pinned integer semantics of the walk map-matcher over the `Metric.lean`
+substrate. Divisions are `Int.tdiv` or `Int.fdiv` as the arithmetic requires;
+midpoints are `tdiv` since longitudes can be negative.
 
-The file runs the whole pipeline in three parts:
-- Part 1 — metric-local primitives: `qProject` (`projectPointToSegment`'s
-  twin — foot + exact fraction `tn/td` + distance), `QCorridor` (the
-  GPS-corridor penalty, brute-force nearest chord clamped at `farUm`, ramp
-  scaled by `S = farUm − nearUm`), `QBuildings` (the impassable-footprint
-  penalty, even-odd ray cast with an integer bbox reject and a fix-support
-  scan).
-- Part 2 — graph / candidates / routing: `buildQGraph`,
-  `qCandidatesForFixFast`, and `qRouteBetween` over the reused `LazyDijkstra`
-  cache.
-- Part 3 — Viterbi + walk pipeline: `qMatchTrajectory` /
-  `qMatchWalkSegment`, then the honesty corollaries.
+- Part 1, primitives: `qProject` (foot, exact fraction `tn/td`, distance),
+  `QCorridor` (the GPS-corridor penalty), `QBuildings` (the footprint penalty).
+- Part 2, graph and routing: `buildQGraph`, `qCandidatesForFixFast`,
+  `qRouteBetween` over the `LazyDijkstra` cache.
+- Part 3, Viterbi and the walk pipeline: `qMatchTrajectory`, `qMatchWalkSegment`.
 
-## Theorems (in progress)
+## What is proved
 
-The gate (bit-exact quant↔Lean on all 173 golden legs) is the shipped
-deliverable; the theorem arc on top of it, easiest first:
+- Honesty (`qMatchWalkSegment_{coarse_drop_only, path_sound}`): `coarsePath` is
+  a subsequence of the trajectory path, and every drawn vertex is a coarse
+  vertex or a route vertex within the splice `dropM` of its chord.
+- Route purity (`qRouteBetween_route_pure`): the route is the same from any
+  valid cache, so the trellis's edge weights depend on the graph, not on fill
+  order (`settleTo_reads_eq`, `comboFold_best_indep`).
+- Viterbi argmax (`MatchViterbi`): `qMatchTrajectory` runs the verified
+  `decodeFast` (`decodeFast = decode`), so its chain attains the maximum
+  `pathScore` (`decode_argmax`, `decode_none_iff`).
 
-- Honesty corollaries — landed (`qMatchWalkSegment_{coarse_drop_only,
-  path_sound}`): the display tail never fabricates geometry — `coarsePath`
-  is a subsequence of the trajectory path, and every drawn `path` vertex is
-  a coarse vertex or a route vertex within the splice `dropM` of its chord.
-  These specialise the already-proved `Metric.lean` pass theorems.
-- Cache purity — foundation landed (`LazyResume.lean` + `LazyPrev.lean`).
-  Two facts together make `qRouteBetween`'s route result a pure function of
-  the graph rather than of the trellis's fill order:
-  - `lsettle_read_stable` — a source's target reads (`dist`/`prev`/`done`)
-    are identical no matter where along its trajectory the settle resumes
-    (`lsettle_from_iter` + `settled_final`);
-  - `PInv` / `PInv.done_prev` — a settled vertex's whole `prev` chain is
-    settled, so the *reconstructed path* (not just the target) is
-    resume-stable (`iter_done_stable` freezes every chain vertex).
-
-  The atoms are all proved:
-  - `settleTo_onTraj` / `settleTo_state_onTraj` — `OnTrajCache` (every cached
-    state is on its source's search trajectory) is preserved by `settleTo`,
-    and the returned state is on-trajectory (via `lsettle_spec` + `iter_add`);
-  - `qReconstruct_congr` — two `prev` arrays that agree on a start-closed
-    predicate reconstruct identically (`reconGo` structural form). Its
-    instances: `P v =` "settled at the reference state", discharged by
-    `iter_done_stable` (agree) + `PInv.done_prev` (closed).
-
-  `qRouteBetween`'s 2×2 loop is a `List.foldl` of `comboStep` over
-  `routeCombos` (gate re-verified bit-exact), the structural form the purity
-  induction needs. Route-result purity — landed (`qRouteBetween_route_pure`):
-  the route result is the same for any two valid caches — a pure function of
-  the graph, not of the trellis's fill order. The chain, each atom proved:
-  - `settleTo_reads_eq` — a source's target `dist` and reconstructed chain
-    read the same from any valid cache as from a fresh per-source settle
-    (`iter_stop_read_stable` for `dist`, `qReconstruct_resume_stable` for the
-    chain; `lsettle_stops` discharges stop-reachability at `totalOut+1` fuel);
-  - `comboStep_best_indep` — hence one endpoint combo's `best` update is
-    cache-independent (factored through the pure `comboBest`);
-  - `comboStep_onTraj` — `comboStep` preserves `OnTrajCache` (its cache output
-    is `settleTo`'s);
-  - `comboFold_best_indep` — folding the two over the combo list carries both:
-    each step's `best` is cache-invariant while the cache stays valid.
-
-  Route-result purity is what makes the trellis's edge weights (`τ(i,j)`, from
-  `qRouteBetween`'s `distUm`) a well-defined *pure function of the graph*, so
-  the declarative score model below is well-formed.
-- Flagship — Viterbi argmax — landed (`MatchViterbi.lean`): on an abstract
-  first-order max-sum `Trellis` (the matcher's trajectory decoder shape, one
-  dimension simpler than the HSMM — no durations):
-  - `cell_eq_listMax` — the forward DP cell equals the max declarative
-    `pathScore` over all enumerated chains reaching it (the tropical-semiring
-    heart: `+` distributes over the running max, reusing `Hsmm.Score`);
-  - `decode_argmax` — the backtracked decoder's chain attains the maximum
-    `pathScore` over every full candidate chain;
-  - `decode_none_iff` — the decoder returns `none` exactly when no candidate
-    chain has a finite score.
-
-  These are the matcher analogue of the HSMM `decode_correct` / `decode_none_iff`.
-- Wired into production — landed. `qMatchTrajectory` no longer runs an
-  unverified imperative Viterbi. It hoists the route matrix (`routeOf[t-1][j][i]`,
-  filled in the trellis's exact `(t, j, i)` order — the same `qRouteBetween` call
-  sequence, so the cache and every value are unchanged; `qRouteBetween_route_pure`
-  shows the order never mattered), instantiates a concrete `MatchViterbi.Trellis`
-  (node score = `emissionScaled`, edge weight = `τ − switchPen`, `-∞` when
-  unrouteable, read from that finished array), and *runs* the verified
-  `MatchViterbi.decodeFast` — the `O(T·W²)` memoised decoder (`decodeFast_eq :
-  decodeFast = decode`, so `decodeFast_argmax` / `decodeFast_none_iff` hold). The
-  returned chain is thus, by construction, the maximum-`pathScore` candidate
-  chain; the display tail then reads it against the same matrix. The
-  `compare-match` gate (173/173 quant↔Lean exact) confirms the restructure is
-  bit-identical to the old imperative trellis — the referee that the rewiring
-  did not drift.
-
-Sorry-free convention: a theorem is stated only when proved.
+A theorem is stated only when proved.
 -/
 
 namespace Verified.Geo
@@ -158,11 +87,9 @@ def latGapUm (p a b : QPt) : Nat :=
 /-! ## `QCorridor` — the GPS-corridor penalty -/
 
 /-- One corridor chord `fixes[i-1] → fixes[i]` with its projection frame solved
-once instead of once per query: `c` is `cosQ` at the chord's mid-latitude, `bx`
-/ `vy` the chord vector in that local µm frame, `len2` its squared length.
-`loLa`…`hiLo` is the endpoint bounding box dilated by one coordinate unit —
-the clamped foot is a rounded convex combination of the endpoints, so it can sit
-at most half a unit outside the raw box.
+once: `c` is `cosQ` at the mid-latitude, `bx`/`vy` the chord vector in µm,
+`len2` its squared length. `loLa`…`hiLo` is the endpoint box dilated by one
+unit, since the rounded foot can sit half a unit outside the raw box.
 
 `len2` is a `Nat` (`bx`/`vy` are µm, so it reaches ~10^13) and the chord deltas
 are carried pre-split into magnitude and sign, because the projection multiplies
@@ -184,10 +111,8 @@ structure QChord where
   hiLo : Int
   deriving Inhabited
 
-/-- A chord's derived fields agree with its endpoints. `QChord` is a cache of
-quantities solved once in `mkQCorridor`, so nothing in the type stops a caller
-from building an inconsistent one; this is the contract the box argument needs,
-and it is exactly what `mkQCorridor` fills in. -/
+/-- A chord's cached fields agree with its endpoints: the contract the box
+argument needs, which `mkQCorridor` fills in and the type cannot enforce. -/
 structure QChord.WF (ch : QChord) : Prop where
   dLaAbs : ch.dLaAbs = (ch.b.la - ch.a.la).natAbs
   dLaNeg : ch.dLaNeg = decide (ch.b.la < ch.a.la)
@@ -198,13 +123,10 @@ structure QChord.WF (ch : QChord) : Prop where
   loLo : ch.loLo = min ch.a.lo ch.b.lo - 1
   hiLo : ch.hiLo = max ch.a.lo ch.b.lo + 1
 
-/-- The spec's `max 0 (min (px·bx + py·vy) len2)` — the projection parameter,
-clamped to the chord — with every product carried as a `Nat` magnitude and the
-sign in the term's shape. `px·bx` reaches ~10¹⁴, far past the `2^31` where
-Lean's `Int` becomes a GMP bignum, while `Nat` stays unboxed to 2⁶³. The cases
-are the sign combinations of the two products: agreeing and negative means the
-whole sum is negative, which `max 0` sends to zero; disagreeing means the
-smaller magnitude is subtracted from the larger. -/
+/-- The projection parameter `max 0 (min (px·bx + py·vy) len2)`, carried as
+`Nat` magnitudes with the sign in the case split: `px·bx` reaches ~10¹⁴, past
+where `Int` becomes a GMP bignum. Two negative products clamp to zero; opposite
+signs subtract the smaller from the larger. -/
 @[inline] def qDot (px py : Int) (ch : QChord) : Nat :=
   let m1 : Nat := px.natAbs * ch.bx.natAbs
   let n1 : Bool := decide (px < 0) != decide (ch.bx < 0)
@@ -266,10 +188,8 @@ theorem foot_axis_mem {a b : Int} {s : Nat} {neg : Bool} (hneg : neg = decide (b
     rw [show (if (true : Bool) then -(s : Int) else (s : Int)) = -(s : Int) from rfl]
     exact ⟨by omega, by omega⟩
 
-/-- The foot never leaves the chord's box. This is the premise
-`boxRejects_sound` needs, and the reason the box may simply be the endpoint
-box: the clamped, rounded foot is a genuine convex combination of the
-endpoints, so the one-unit dilation is slack rather than necessity. -/
+/-- The foot never leaves the chord's box: the premise `boxRejects_sound`
+needs. The one-unit dilation is slack, not necessity. -/
 theorem foot_mem_box {ch : QChord} (wf : ch.WF) {dot : Nat}
     (hlen : 0 < ch.len2) (hdot : dot ≤ ch.len2) :
     ch.loLa ≤ (ch.foot dot).la ∧ (ch.foot dot).la ≤ ch.hiLa ∧
@@ -283,21 +203,17 @@ theorem foot_mem_box {ch : QChord} (wf : ch.WF) {dot : Nat}
   simp only [QChord.foot, wf.loLa, wf.hiLa, wf.loLo, wf.hiLo]
   exact ⟨ka.1, ka.2, ko.1, ko.2⟩
 
-/-- Gap from `x` to the interval `[lo, hi]` in µm times `2^20`, with `k` the
-Q20 cos it is projected through (`2^20` itself for latitude, a `cosQ` lower bound
-for longitude). Kept scaled so the hot reject `gap ≥ best` is
-`gapScaled ≥ best · 2^20` — a comparison, not a division: for integers,
-`⌊S/2^20⌋ ≥ best ↔ S ≥ best · 2^20`. A `Nat`: the value runs to ~10^16, past
-the `2^31` where Lean's `Int` turns into a GMP bignum. -/
+/-- Gap from `x` to `[lo, hi]` in µm times `2^20`, through the Q20 cos `k`
+(`2^20` for latitude, a `cosQ` lower bound for longitude). Scaled so the hot
+reject is a comparison, `S ≥ best · 2^20`, not a division; a `Nat` because it
+reaches ~10^16. -/
 def boxGapScaled (x lo hi k : Int) : Nat :=
   if x < lo then (lo - x).toNat * 11132 * k.toNat
   else if x > hi then (x - hi).toNat * 11132 * k.toNat
   else 0
 
-/-- The box gap really is a gap: it never exceeds the separation from `x` to
-any point `f` of `[lo, hi]`, at the same `k` scale. Both the reject below and
-the cell widths lean on this direction and only this direction — an
-over-estimate here would drop a chord that could have won. -/
+/-- The box gap never exceeds the distance to any point of `[lo, hi]`. Only
+this direction matters: an over-estimate would drop a chord that could win. -/
 theorem boxGapScaled_le {x lo hi f k : Int} (hf : lo ≤ f) (hf' : f ≤ hi) :
     boxGapScaled x lo hi k ≤ (f - x).natAbs * 11132 * k.toNat := by
   unfold boxGapScaled
@@ -309,16 +225,10 @@ theorem boxGapScaled_le {x lo hi f k : Int} (hf : lo ≤ f) (hf' : f ≤ hi) :
       exact Nat.mul_le_mul (Nat.mul_le_mul (by omega) (Nat.le_refl 11132)) (Nat.le_refl k.toNat)
     · exact Nat.zero_le _
 
-/-- The reject `QCorridor.distToFast` applies before it will pay for a
-projection: the chord's box gap from `p`, per axis, against the incumbent
-`best`. Each axis is tried alone first — a single gap already exceeding `best`
-settles it — and only if both are inside does it pay for the two divisions back
-to µm and the combined test.
-
-Kept scaled by `2^20` for as long as possible so the first two tests are
-comparisons rather than divisions: for naturals `⌊S/2^20⌋ ≥ best ↔ S ≥ best·2^20`.
-`cmin` is the corridor's `cosQ` lower bound, which is what makes the longitude
-gap an under-estimate (`boxRejects_sound`). -/
+/-- `distToFast`'s reject before paying for a projection: the chord's box gap
+from `p` against the incumbent `best`, each axis alone first, then both. Kept
+scaled by `2^20` so the first two tests are comparisons. `cmin` is the
+corridor's `cosQ` lower bound, which makes the longitude gap an under-estimate. -/
 @[inline] def boxRejects (p : QPt) (ch : QChord) (cmin : Int) (best : Nat) : Bool :=
   let bestS : Nat := best * 1048576
   let gLaS := boxGapScaled p.la ch.loLa ch.hiLa 1048576
@@ -335,12 +245,10 @@ gap an under-estimate (`boxRejects_sound`). -/
 `f` in the chord's box, then `f` is at least `best` away — so skipping the chord
 can change neither the running minimum nor the final answer.
 
-The one premise that is not local is `hcos`: `cmin` must lower-bound `cosQ` at
-the *query's* mid-latitude, not merely over the chord. `mkQCorridor` supplies it
-from `cosQLowerBound`, which `cosQLowerBound_le` proves sits under `cosQ`
-throughout the band — so all that is left to assume is that the query's
-mid-latitude lies in the margin-widened band at all, which is a fact about where
-the matcher looks, not about arithmetic. -/
+The one non-local premise is `hcos`: `cmin` must lower-bound `cosQ` at the
+query's mid-latitude. `mkQCorridor` takes it from `cosQLowerBound`, proved under
+`cosQ` throughout the band; what remains assumed is that the query lies in the
+widened band. -/
 theorem boxRejects_sound {p f : QPt} {ch : QChord} {cmin : Int} {best : Nat}
     (hLa : ch.loLa ≤ f.la) (hLa' : f.la ≤ ch.hiLa)
     (hLo : ch.loLo ≤ f.lo) (hLo' : f.lo ≤ ch.hiLo)
@@ -378,20 +286,11 @@ theorem boxRejects_sound {p f : QPt} {ch : QChord} {cmin : Int} {best : Nat}
 /-- The corridor's tuned parameters, `S = farUm − nearUm` precomputed, plus the
 chord index `distToFast` reads.
 
-`cellLa`/`cellLo` are one `farUm` step in latitude / longitude coordinate units
-(the longitude step uses `cmin`, a corridor-wide `cosQ` lower bound, so it is
-never too narrow). `grid` files each chord `i` (`fixes[i-1] → fixes[i]`) in every
-cell its bounding box dilated by one cell touches. That is the whole basis
-for `distToFast` reading a single bucket, and it is discharged by
-`near_chord_cell_range`: a chord within `farUm` of a point `p` differs from `p`
-by less than `cellLa`/`cellLo` per axis, so `p`'s cell index lies inside the
-range that chord was filed under.
-
-`cmin` lower-bounds `cosQ` over the whole corridor plus a 0.1° latitude
-margin — far more than any point `distToFast` is asked about can stray — so it
-is a sound cos bound for the longitude gap as well as a safe (never too narrow)
-cell width — proved, via `cosQLowerBound_le`, rather than sampled. `chords`
-carries each chord's solved projection frame. -/
+`cellLa`/`cellLo` are one `farUm` step per axis (longitude through `cmin`, so
+never too narrow). `grid` files each chord in every cell its box, dilated by one
+cell, touches, so `distToFast` can read one bucket (`near_chord_cell_range`).
+`cmin` lower-bounds `cosQ` over the corridor plus 0.1° of latitude, proved by
+`cosQLowerBound_le`. `chords` carries each chord's solved frame. -/
 structure QCorridor where
   fixes : Array QPt
   nearUm : Nat
@@ -407,18 +306,10 @@ structure QCorridor where
 /-- The corridor-wide `cosQ` lower bound `mkQCorridor` sizes its cells with —
 one definition, so the cell budget below counts the cells the corridor builds. -/
 def corridorCmin (fixes : Array QPt) : Int := Id.run do
-  -- Corridor-wide `cosQ` lower bound, used both for the longitude leg of
-  -- `distToFast`'s reject and for the cell widths (a too-small `cmin` only ever
-  -- widens cells and loosens the reject, so erring low is always safe; erring
-  -- high is not — it would narrow a cell below `farUm` or over-estimate a
-  -- distance that is supposed to be a lower bound).
-  --
-  -- Taken from `cosQLowerBound`, which is proved (`cosQLowerBound_le`) to sit
-  -- under `cosQ` at every latitude in the band. It does not go via "cosQ falls
-  -- with |latitude|", which is false — see the discussion at `cosQLowerBound`.
-  -- The bound is ~4% loose, so cells are ~4% wider and the longitude reject ~4%
-  -- weaker than a tight bound would give; both are value-preserving, and that is
-  -- the whole cost of not having to sample a constant.
+  -- Corridor-wide `cosQ` lower bound for the longitude reject and the cell
+  -- widths. Erring low only widens cells and loosens the reject; erring high
+  -- would be unsound. `cosQLowerBound` is proved, about 4% loose, and "cosQ
+  -- falls with |latitude|" is false (see `cosQLowerBound`).
   let mut mnLa : Int := 0
   let mut mxLa : Int := 0
   if 0 < fixes.size then
@@ -494,17 +385,12 @@ def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := I
 
 /-! ### The corridor grid holds every chord that could win
 
-`distToFast` reads a single bucket, which is exact only if that bucket contains
-every chord able to beat the `farUm` clamp. That is the conjunction of three
-things: the cell widths are at least the reach (`la_near_within_cell`,
-`lo_near_within_cell`), a query within one cell of a box lands inside the filed
-cell range (`cell_mem_range`), and the fill loop runs over exactly that range —
-the last read off `mkQCorridor` directly.
-
-Dilating the box by a cell before filing is what makes the middle step pure
-interval containment. The alternative — filing the raw box and arguing that a
-nearby query still rasterises into some filed cell — needs a rasterisation
-density argument. -/
+`distToFast` reads one bucket, exact only if it holds every chord that can
+beat the `farUm` clamp: cells are at least the reach (`la_near_within_cell`,
+`lo_near_within_cell`), a query within one cell of a box lands in the filed
+range (`cell_mem_range`), and the fill loop covers that range. Dilating before
+filing makes the middle step interval containment, with no rasterisation
+argument. -/
 
 /-- Floor division is monotone: a smaller coordinate cannot land in a later
 cell. Every grid here rests on this. -/
@@ -514,12 +400,9 @@ theorem fdiv_le_fdiv {a b c : Int} (hc : 0 < c) (h : a ≤ b) : a.fdiv c ≤ b.f
   have := Int.ediv_le_ediv hc h
   omega
 
-/-- A point of `[lo, hi]` has a cell index inside the range that interval's
-endpoints were filed under. Every grid in this file reduces to this: file an
-item across the cells its interval spans, and any query inside the interval is
-found in one bucket. Grids that answer *proximity* rather than *containment*
-(the corridor's) dilate the interval by a cell first, and then apply this to the
-dilated one — which is why none of them needs a rasterisation-density argument. -/
+/-- A point of `[lo, hi]` has a cell index inside the range its endpoints were
+filed under. Every grid here reduces to this; proximity grids dilate the
+interval by a cell first. -/
 theorem fdiv_mem_range {lo hi p cell : Int} (hcell : 0 < cell)
     (h1 : lo ≤ p) (h2 : p ≤ hi) :
     lo.fdiv cell ≤ p.fdiv cell ∧ p.fdiv cell ≤ hi.fdiv cell :=
@@ -538,11 +421,9 @@ theorem la_near_within_cell {p f : QPt} {farUm : Nat} (h : qDist p f < farUm) :
   have := le_qDist_la p f
   omega
 
-/-- Longitude reach: closer than `farUm` means less than one `cellLo` apart,
-where the cell is stepped through `cmin` — any lower bound on the cosine will
-do, and a smaller one only widens the cell. The `< farUm` (rather than `≤`) is
-load-bearing: it is what absorbs `qDist`'s floor, and it is exactly the
-condition under which a chord can still lower `distToFast`'s running best. -/
+/-- Longitude reach: closer than `farUm` means less than one `cellLo` apart, for
+any cos lower bound. The strict `<` absorbs `qDist`'s floor, and is exactly when
+a chord can still lower `distToFast`'s best. -/
 theorem lo_near_within_cell {p f : QPt} {farUm : Nat} {cmin : Int}
     (hc : 0 < cmin) (hcos : cmin ≤ cosQ ((p.la + f.la).tdiv 2))
     (h : qDist p f < farUm) :
@@ -556,12 +437,9 @@ theorem lo_near_within_cell {p f : QPt} {farUm : Nat} {cmin : Int}
       = (f.lo - p.lo).natAbs * (11132 * cmin.toNat) := Nat.mul_assoc _ _ _
   exact (Nat.le_div_iff_mul_le (by omega)).mpr (by omega)
 
-/-- The bucket `distToFast` reads holds every chord that matters. Given a
-point `f` of the chord's box within `farUm` of the query `p`, the query's cell
-lies inside the range `mkQCorridor` filed that chord under — on both axes. With
-`foot_mem_box` supplying such an `f` for the chord's own foot, a chord closer
-than the `farUm` clamp is necessarily in `p`'s own bucket, so reading one bucket
-loses nothing.
+/-- The bucket `distToFast` reads holds every chord that matters: a box point
+within `farUm` of `p` puts `p`'s cell inside the chord's filed range on both
+axes, and `foot_mem_box` supplies that point.
 
 `hcos` is the same corridor-wide cosine bound `boxRejects_sound` needs, and
 `cosQLowerBound_le` discharges it the same way. -/
@@ -582,25 +460,12 @@ theorem near_chord_cell_range {p f : QPt} {farUm : Nat}
   exact ⟨cell_mem_range (by omega) (by omega) (by omega),
     cell_mem_range (by omega) (by omega) (by omega)⟩
 
-/-- Grid-indexed distance to the corridor — the value a scan of every chord
-gives, from one bucket. The scan was the matcher's hot spot (O(chords) per graph
-edge, one per edge weight); the float matcher hit the same wall and answered it
-with a chord grid. Reading only `p`'s own cell is exact because the bucket holds
-every chord within `farUm` (`near_chord_cell_range`), and the distance clamps at
-`farUm`, so a chord filed elsewhere could not have lowered the answer anyway.
-
-Two further departures from the spec's shape, both value-preserving:
-
-* the projection frame (`c`, `bx`, `vy`, `len2`) is read from `co.chords`
-  instead of recomputed — same numbers, solved once per chord in `mkQCorridor`
-  rather than once per (chord, query) pair;
-* the reject is the two-axis box gap, not `latGapUm`'s latitude alone —
-  sound by `chordReject_sound`: a rejected chord has `d ≥ best`, so dropping it
-  leaves both the `best` sequence and the minimum unchanged.
-
-Both of those theorems take the corridor's cosine bound `cmin ≤ cosQ` as a
-hypothesis, and `cosQLowerBound_le` discharges it for every latitude in the
-band. -/
+/-- Grid-indexed distance to the corridor: the value a scan of every chord
+gives, from one bucket, since the bucket holds every chord within `farUm`
+(`near_chord_cell_range`) and the distance clamps there. Also value-preserving:
+the frame is read from `co.chords`, and the reject is the two-axis box gap
+(`chordReject_sound`). Both take `cmin ≤ cosQ` as a hypothesis, which
+`cosQLowerBound_le` discharges across the band. -/
 def QCorridor.distToFast (co : QCorridor) (p : QPt) : Nat := Id.run do
   if co.fixes.size == 0 then return 0
   if co.fixes.size == 1 then return qDist p (co.fixes.getD 0 default)
@@ -618,18 +483,11 @@ def QCorridor.distToFast (co : QCorridor) (p : QPt) : Nat := Id.run do
     if d < best then best := d
   return best
 
-/-- `distToFast`'s reject only ever drops chords that could not have won —
-the loop body's soundness, assembled from the parts. The clamp keeps the
-projection parameter in range (`qDot_le`), rounding keeps each step inside the
-endpoint delta (`roundedStep_le`), so the foot lies in the chord's stored box
-(`foot_mem_box`), so a firing reject puts the foot at least `best` away
-(`boxRejects_sound`). A chord at distance `≥ best` cannot lower `best`, so
-skipping it changes neither the running minimum nor the returned value.
-
-What is still assumed, and deliberately left visible as a hypothesis: `hcos`,
-that the corridor's `cmin` really does lower-bound `cosQ` at this query's
-mid-latitude. `mkQCorridor` arranges that by band-widening and `cosSlack`, on
-measured rather than proved grounds. -/
+/-- `distToFast`'s reject only drops chords that could not have won: the clamp
+(`qDot_le`) and rounding (`roundedStep_le`) keep the foot in the chord's box
+(`foot_mem_box`), so a firing reject puts it at least `best` away
+(`boxRejects_sound`). Still assumed, as the hypothesis `hcos`: `cmin`
+lower-bounds `cosQ` at this query's mid-latitude. -/
 theorem chordReject_sound {p : QPt} {ch : QChord} {cmin : Int} {best dot : Nat}
     (wf : ch.WF) (hlen : 0 < ch.len2) (hdot : dot ≤ ch.len2)
     (hcos : cmin ≤ cosQ ((p.la + (ch.foot dot).la).tdiv 2))
@@ -662,22 +520,17 @@ structure QBox where
   maxLo : Int
   deriving Repr, Inhabited
 
-/-- Side of one footprint-grid cell, in µm. A pure bucketing knob: `inAnyRingFast`
-files a ring into every cell its bbox meets and reads only the query point's own
-cell, so *any* positive side gives the identical answer — this one is chosen to
-sit near a typical building's own size, which keeps both the filing and the
-buckets small. -/
+/-- Side of one footprint-grid cell, in µm: a bucketing knob only, since any
+positive side gives the same answer. Sized near a typical building. -/
 def buildingCellUm : Nat := 30000000
 
 /-- Prepared building set: rings (≥ 3 vertices), their bounding boxes,
 the fixes, and the two tuned thresholds (`QBuildings` constructor), plus the
 footprint index `inAnyRingFast` reads.
 
-`grid` files ring `i` in every cell its bounding box meets. Because the test
-here is *containment* rather than proximity, no dilation is needed: a `p` inside
-ring `i`'s box is inside one of those cells (`fdiv_mem_range` on each axis), so
-ring `i` is in `p`'s own bucket. The bucket therefore holds every ring that
-survives the box reject, which is exactly the set a scan of every ring tests. -/
+`grid` files ring `i` in every cell its box meets. Containment needs no
+dilation: a `p` inside the box is in one of those cells (`fdiv_mem_range`), so
+the bucket holds every ring a scan would test past its box reject. -/
 structure QBuildings where
   rings : Array (Array QPt)
   boxes : Array QBox
@@ -730,12 +583,9 @@ def mkQBuildings (buildings : Array (Array QPt)) (fixes : Array QPt)
       cy := cy + 1
   return { rings, boxes, fixes, crossFactor, supportUm, cellLa, cellLo, grid }
 
-/-- Grid-indexed footprint test — the value a scan of every ring gives, from
-one bucket. The scan was the matcher's dominant cost (two `factor` samples per
-graph edge, each over all ~3k corridor footprints); `p`'s bucket contains every
-ring whose box contains `p`, and a ring the scan would reject on its box cannot
-change a disjunction of ray casts, so the two agree. Bucket order is ascending
-ring index, as in the scan. -/
+/-- Grid-indexed footprint test: the value a scan of every ring gives, from
+`p`'s bucket, which holds every ring whose box contains `p`. Bucket order is
+ascending ring index, as in the scan. -/
 def QBuildings.inAnyRingFast (bld : QBuildings) (p : QPt) : Bool := Id.run do
   let cands := bld.grid.getD (cellKeyN (p.la.fdiv bld.cellLa) (p.lo.fdiv bld.cellLo)) #[]
   for i in cands do
@@ -773,32 +623,25 @@ def QBuildings.anyBad (bld : QBuildings) (a b : QPt) (n lo hi : Nat) : Bool := I
     if bld.sampleBad (QBuildings.sampleAt a b n k) then return true
   return false
 
-/-- The 3 m sample scan with the edge length already known (`factorLen a b
-(qDist a b)` is `factor`): `crossFactor` if any grid-quantised sample lands in a
-footprint without a nearby fix, else `1` (`QBuildings.factorOnce`; the memo of
-the twin is transparency-only). -/
+/-- The 3 m sample scan with the edge length given: `crossFactor` if any
+sample lands in a footprint no fix supports, else `1`. -/
 def QBuildings.factorLen (bld : QBuildings) (a b : QPt) (len : Nat) : Nat :=
   let n := QBuildings.sampleSteps len
   if bld.anyBad a b n 0 (n + 1) then bld.crossFactor else 1
 
 def QBuildings.factor (bld : QBuildings) (a b : QPt) : Nat := bld.factorLen a b (qDist a b)
 
-/-- `factorLen` with the two end samples read from a per-vertex memo
-(`badA = sampleBad a`, `badB = sampleBad b`) and only the interior sampled. The
-scan is a disjunction over the samples, so where it starts does not matter —
-and in a graph every vertex ends many edges (24 on a dense walk), so its
-own verdict is worth computing once. Same value as `factorLen` whenever the
-memo is honest; `#guard`ed below, and the corpus gate re-verifies. -/
+/-- `factorLen` with the end samples read from a per-vertex memo and only the
+interior sampled. The scan is a disjunction, so the order does not matter, and
+a vertex ends many edges. Same value when the memo is honest (`#guard`ed). -/
 def QBuildings.factorMemo (bld : QBuildings) (a b : QPt) (len : Nat) (badA badB : Bool) : Nat :=
   let n := QBuildings.sampleSteps len
   if badA || badB || bld.anyBad a b n 1 n then bld.crossFactor else 1
 
 /-! ## Graph build (part 2)
 
-The routing graph reuses `Verified/Rail/Graph.lean`'s `Graph` (weighted
-adjacency, `Nat` scalars) with weights precomputed eagerly in the µm·S
-scale — memo-transparent to the twin's lazy `weightOf`, and routing then
-reuses the fully-proved `LazyDijkstra` machinery (`linit`/`lsettle`). -/
+The routing graph is `Verified/Rail/Graph.lean`'s `Graph` with weights
+precomputed in the µm·S scale, so routing reuses the proved `LazyDijkstra`. -/
 
 open Verified.Rail (Graph WFEdges)
 
@@ -838,9 +681,9 @@ structure QGraph where
   g : Graph
   deriving Inhabited
 
-/-- `buildRoadGraph`'s twin: vertices deduped by the integer coord pair,
-way edges in iteration order, then `bridgeGaps` as the plain `i < j`
-scan; every edge weight precomputed eagerly. -/
+/-- The routing graph, as specified: vertices deduped by the integer coord
+pair, way edges in iteration order, then `bridgeGaps` as the plain `i < j`
+scan; every edge weight precomputed. -/
 def buildQGraph (ways : Array QWay) (co : QCorridor) (bld : Option QBuildings)
     (gapUm : Nat) : QGraph := Id.run do
   let mut vertices : Array QPt := #[]
@@ -882,10 +725,8 @@ def buildQGraph (ways : Array QWay) (co : QCorridor) (bld : Option QBuildings)
       adj := adj.setIfInBounds j ((adj.getD j #[]).push (i, w))
   return { vertices, segments, g := ⟨adj⟩ }
 
-/-- One edge's weight — `edgeWeightScaled × factor` — with `len = qDist a b`
-taken once by the caller (both factors need it, and so does the segment) and
-the endpoints' sample verdicts read from the per-vertex memo `vBad` (see
-`factorMemo`). -/
+/-- One edge's weight, `edgeWeightScaled × factor`, with `len = qDist a b` taken
+once by the caller and the endpoint verdicts read from the memo `vBad`. -/
 def edgeWeightMemo (co : QCorridor) (bld : Option QBuildings) (vBad : Array Bool)
     (ia ib : Nat) (a b : QPt) (len : Nat) : Nat :=
   let mid : QPt := { la := (a.la + b.la).tdiv 2, lo := (a.lo + b.lo).tdiv 2, ts := 0 }
@@ -894,35 +735,24 @@ def edgeWeightMemo (co : QCorridor) (bld : Option QBuildings) (vBad : Array Bool
     | none => 1
   len * co.penScaled (co.distToFast mid) * f
 
-/-- The O(V) executable twin of `buildQGraph`. Same graph, byte-identical,
-but linear instead of quadratic: the two O(V²) hotspots of `buildQGraph` are
-replaced by hash indices.
+/-- `buildQGraph` in O(V): the same graph, with its two O(V²) scans replaced
+by hash indices.
 
-* Vertex dedup — a `(la, lo) → id` hash replaces the per-coordinate linear
-  `findIdx?` scan. First-seen order (and hence vertex numbering) is unchanged.
-* `bridgeGaps` — candidate pairs come from a spatial grid keyed by `cellKeyN`
-  (cells span `gapUm` µm) instead of the all-pairs scan. A within-`gapUm` pair
-  lands within the 3×3 cell neighbourhood: the latitude cell is `gapUm`-wide by
-  construction, and the longitude cell uses a corridor-wide cos lower bound
-  `cmin` (`cosQ` only grows toward any pair's mid-latitude, so the cell is never
-  too narrow). Grid `cellKeyN` collisions can only *add* candidates, never drop
-  them, so they cost an extra exact check but never a missed edge.
+* Vertex dedup by a `(la, lo) → id` hash; numbering stays first-seen.
+* `bridgeGaps` candidates from a `gapUm` grid (`cellKeyN`) rather than all
+  pairs. A within-`gapUm` pair lands in the 3×3 neighbourhood, since the
+  longitude cell uses a cos lower bound; key collisions only add candidates.
 
-The exact accept/reject predicate and the ascending-`(i, j)` push order are
-copied verbatim from `buildQGraph`, so the output is identical (the intended
-`buildQGraphFast = buildQGraph` refinement; the executable path uses this, every
-theorem still speaks of `buildQGraph` via that equality). -/
+The accept predicate and the ascending-`(i, j)` push order are `buildQGraph`'s,
+so the output is identical and the theorems about `buildQGraph` apply. -/
 def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuildings)
     (gapUm : Nat) : QGraph := Id.run do
   let mut vertices : Array QPt := #[]
   let mut adj : Array (Array (Nat × Nat)) := #[]
   let mut segments : Array QSeg := #[]
   let mut vidx : Std.HashMap (Int × Int) Nat := ∅
-  -- The way edges, by vertex id, in way order; weighed below once every vertex
-  -- is known, so each endpoint's building verdict is computed once (`vBad`)
-  -- rather than once per edge it ends. A way vertex is its graph vertex (same
-  -- `la`/`lo`; the weight and the length read nothing else), so the edge can
-  -- be weighed from `vertices` later.
+  -- The way edges, weighed once every vertex is known, so each endpoint's
+  -- building verdict (`vBad`) is computed once rather than per edge.
   let mut wayEdges : Array (Nat × Nat × Option String) := #[]
   for way in ways do
     let mut prev : Int := -1
@@ -950,12 +780,9 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
     adj := adj.modify a (·.push (id, w))
     adj := adj.modify id (·.push (a, w))
     segments := segments.push { u := a, v := id, lenUm := len, name }
-  -- bridgeGaps via a spatial grid.
-  -- Everything below the cell index is carried as a `Nat` magnitude with the
-  -- sign in the shape: these products reach ~10^13 (cells) and ~10^15 (the gap
-  -- test), and Lean's `Int` is a GMP bignum past 2^31 while `Nat` is an unboxed
-  -- scalar to 2^63. `Int.fdiv` by a positive divisor is `⌊·⌋` on a non-negative
-  -- numerator and `−⌈·⌉` on a negative one, which is what the branches spell out.
+  -- bridgeGaps via a spatial grid. Below the cell index, values are `Nat`
+  -- magnitudes with the sign in the branches, since they reach ~10^15 and `Int`
+  -- turns into a GMP bignum past 2^31.
   let gapSq : Nat := gapUm * gapUm + 2 * gapUm
   let gY : Nat := if gapUm == 0 then 1 else gapUm
   let gX : Nat := gY * 1048576
@@ -1007,11 +834,10 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
 
 /-! ### `buildQGraphFast` is `buildQGraph`, on an instance with every arm live
 
-A corridor, footprints a fix supports and footprints none does, ways that share
-vertices, and vertices within the gap of each other: the memoised weights and
-the two-pass way loop must reproduce the spec's graph edge for edge, weight for
-weight. The corpus gate is the referee on real walks; this is the one that
-fails at build time. -/
+A corridor, supported and unsupported footprints, shared vertices and gap
+pairs: the memoised weights and the two-pass way loop must reproduce the
+spec's graph edge for edge. This fails at build time; the corpus gate checks
+real walks. -/
 
 private def gwWays : Array QWay := #[
   { coords := #[⟨515000000, -1300000, 0⟩, ⟨515005000, -1300000, 0⟩, ⟨515010000, -1300000, 0⟩,
@@ -1060,24 +886,19 @@ private def graphEq (a b : QGraph) : Bool :=
 
 /-! ## Candidates -/
 
-/-- The tie tolerance at the candidate cut, in µm: the largest amount by which
-quantising to 1e-7° can move a point-to-segment distance (1.97 cm at London's
-latitude), three times the 0.649 cm measured over the golden corpus. Below it,
-which of two candidates is "nearer" is an artifact of the arithmetic. A wider
-band is not safer: 5 cm introduced a new 16 m float↔quant divergence. -/
+/-- The tie tolerance at the candidate cut, in µm: the most quantising to
+1e-7° can move a point-to-segment distance (1.97 cm at London's latitude).
+Below it, "nearer" is an artefact of the arithmetic. A wider band is not safer:
+5 cm introduced a 16 m divergence. -/
 def candidateTieUm : Nat := 20000
 
 /-- Ceiling on the tie-inclusive extension, as a multiple of the cut — keeps
 the decode O(F·K²) when a junction puts many segments inside one band. -/
 def candidateTieCeiling : Nat := 2
 
-/-- Cut a sorted candidate list at `maxCands`, then keep going while the next
-candidate sits within `candidateTieUm` of the `maxCands`-th — the twin's
-tie-inclusive `slice`. Measuring from the `maxCands`-th rather than from the
-last kept one is what stops it chaining: the admitted set is an absolute band
-below one fixed distance, not a transitive walk that a run of closely spaced
-candidates could carry arbitrarily far. Where the boundary has a clean margin
-this stops at once and the result is `extract 0 maxCands`, as before. -/
+/-- Cut a sorted candidate list at `maxCands`, keeping the following
+candidates within `candidateTieUm` of the `maxCands`-th. Measured from that one
+fixed candidate, so a run of close candidates cannot chain the band onward. -/
 def cutTieInclusive (sorted : Array QCand) (maxCands : Nat) : Array QCand := Id.run do
   if sorted.size ≤ maxCands then return sorted
   let cutoff := (sorted.getD (maxCands - 1) default).dist + candidateTieUm
@@ -1088,22 +909,12 @@ def cutTieInclusive (sorted : Array QCand) (maxCands : Nat) : Array QCand := Id.
   return sorted.extract 0 n
 
 /-- Spatial index over a graph's segments, cells one `radiusUm` wide, each
-segment filed in every cell its endpoint box dilated by one cell touches. A
-segment within `radiusUm` of `fix` is within `radiusUm` of its own box, hence at
-most one cell away from it on each axis, hence filed in `fix`'s own cell — so
-one bucket holds every segment a scan of all segments could keep
-(`near_segment_cell_range`).
+segment filed in every cell its box dilated by one cell touches, so a segment
+within `radiusUm` of a fix is in the fix's cell (`near_segment_cell_range`).
 
-The longitude cell is stepped by `(radiusUm + 1)·2^20`, not `radiusUm·2^20`,
-and the extra unit is not decoration. The corridor grid gets away without it
-because a chord only matters when its distance is *strictly* under the clamp,
-and that strictness is what absorbs `qDist`'s floor. Here the radius test is
-inclusive (`proj.dist ≤ radiusUm`), so the floor has to be paid for explicitly:
-without the `+1` the cell is a unit too narrow whenever `11132·cmin < 2^20 − 1`,
-i.e. `cmin ≤ 94`, and the bucket can then miss a segment it should have
-returned. That is `cos(lat) ≤ 9·10⁻⁵` — within 0.005° of a pole, so unreachable
-for real fixes and never seen by the gate, but wrong, and the cost of being
-right is one coordinate unit (~1 cm) on a cell tens of metres wide. -/
+The longitude cell is `(radiusUm + 1)·2^20`: the radius test is inclusive, so
+`qDist`'s floor must be paid explicitly (the corridor's strict `<` absorbs it).
+Without the `+1` the cell is a unit too narrow within 0.005° of a pole. -/
 structure QSegIndex where
   cellLa : Int
   cellLo : Int
@@ -1141,10 +952,8 @@ theorem la_within_cell_le {p f : QPt} {radiusUm : Nat} (h : qDist p f ≤ radius
   have := le_qDist_la p f
   omega
 
-/-- Longitude reach under the inclusive radius test. The numerator carries
-`radiusUm + 1` because `≤ radiusUm` on a floored component only bounds the
-unfloored product by `(radiusUm + 1)·2^20`; see `QSegIndex` for why the
-corridor's strict `<` does not need this. -/
+/-- Longitude reach under the inclusive radius test, hence `radiusUm + 1` in
+the numerator (see `QSegIndex`). -/
 theorem lo_within_cell_le {p f : QPt} {radiusUm : Nat} {cmin : Int}
     (hc : 0 < cmin) (hcos : cmin ≤ cosQ ((p.la + f.la).tdiv 2))
     (h : qDist p f ≤ radiusUm) :
@@ -1159,11 +968,8 @@ theorem lo_within_cell_le {p f : QPt} {radiusUm : Nat} {cmin : Int}
   exact (Nat.le_div_iff_mul_le (by omega)).mpr (by omega)
 
 /-- The bucket `qCandidatesForFixFast` reads holds every segment that could be
-kept. `qProject`'s foot lies between the segment's endpoints (either `a`
-itself, when the segment is degenerate, or the clamped rounded combination), and
-`proj.dist` is `qDist` to it — so a segment passing `proj.dist ≤ radiusUm`
-supplies a box point within `radiusUm` of the fix, whose cell index is inside
-the range `mkQSegIndex` filed that segment under. -/
+kept: `qProject`'s foot lies within the segment's box, so a segment passing
+`proj.dist ≤ radiusUm` puts the fix's cell inside its filed range. -/
 theorem near_segment_cell_range {p f : QPt} {radiusUm : Nat}
     {cmin loLa hiLa loLo hiLo cellLa cellLo : Int}
     (hLaDef : cellLa = ((radiusUm / 11132 : Nat) : Int) + 1)
@@ -1181,22 +987,10 @@ theorem near_segment_cell_range {p f : QPt} {radiusUm : Nat}
   exact ⟨cell_mem_range (by omega) (by omega) (by omega),
     cell_mem_range (by omega) (by omega) (by omega)⟩
 
-/-- Grid-indexed candidates — the value a scan of every segment gives, from
-one bucket. The all-segments scan is `candidatesForFix`'s shape and was the
-matcher's largest single cost once the corridor was indexed (one scan of ~25 k
-segments per GPS fix). The bucket holds every segment that can pass the radius
-test (`near_segment_cell_range`), so both arms sort the same candidate set.
-
-That the kept *prefix* is the same needs nothing at all about `qsort`, and
-`cutTieInclusive` does not change that — it reads only the sorted array, so the
-same array in gives the same cut out. The two arms never hand `qsort`
-differently-ordered arrays: `mkQSegIndex` fills each bucket
-with `si` ascending (the outer loop is ascending and the push dedups against the
-bucket's last entry), this loop walks the bucket in index order, and the scan
-walks `[0, segments.size)` — so the two collect the *same* array (a strictly
-ascending bucket that omits nothing the filter keeps filters to the scan's
-sequence), and whatever `qsort` then does to it, it does to both. Bare core
-ships no `qsort` correctness lemma, and this path does not need one. -/
+/-- Grid-indexed candidates: the value a scan of every segment gives, from one
+bucket (`near_segment_cell_range`). Both arms build the same array, since the
+bucket is strictly ascending and omits nothing the filter keeps, so `qsort` and
+`cutTieInclusive` give the same result without a `qsort` lemma. -/
 def qCandidatesForFixFast (fix : QPt) (gr : QGraph) (idx : QSegIndex)
     (radiusUm maxCands : Nat) : Array QCand := Id.run do
   let cands0 := idx.grid.getD (cellKeyN (fix.la.fdiv idx.cellLa) (fix.lo.fdiv idx.cellLo)) #[]
@@ -1214,25 +1008,18 @@ def qCandidatesForFixFast (fix : QPt) (gr : QGraph) (idx : QSegIndex)
 
 /-! ## Routing over the LazyDijkstra model
 
-The twin's `QRouteCache` is a per-source lazy Dijkstra that pauses at the
-requested target and *resumes* on the next `settle`, memoised per source.
-We reproduce it as `RouteCache = Array (Option LState)`: `settleTo` pulls
-a source's paused state (or `linit`), advances it just far enough for the
-target to settle (`lsettle`, which stops at `done[tgt] ∨ lterminal`), and
-stores it back. Because a settled vertex's `dist`/`prev` are frozen
-(`settled_final`) and an unsettled target's `lsettle` runs to terminal
-anyway, the reads are value-identical to a run-to-terminal search — but
-only the *nearby* corridor is explored, matching the twin's cost.
+`RouteCache = Array (Option LState)` is a per-source lazy Dijkstra that pauses
+at the requested target and resumes on the next `settleTo`. A settled vertex's
+`dist`/`prev` are frozen (`settled_final`), so the reads equal a
+run-to-terminal search while only the nearby corridor is explored.
 
-The take-`none`/put-`some` around `lsettle` keeps the pulled state
-uniquely referenced, so the search updates its arrays in place rather
-than copying them (the twin's typed mutable arrays). -/
+The take-`none`/put-`some` around `lsettle` keeps the pulled state uniquely
+referenced, so the search updates its arrays in place rather than copying. -/
 
 abbrev RouteCache := Array (Option LState)
 
 /-- Resume source `src`'s search until `tgt` settles (or termination),
-returning the advanced state and cache (the twin's `cache.from(src)`
-then `rd.settle(tgt)`). -/
+returning the advanced state and cache. -/
 def settleTo (g : Graph) (maxR fuel n src tgt : Nat) (cache : RouteCache) :
     LState × RouteCache :=
   let st0 := (cache.getD src none).getD (linit n src)
@@ -1242,14 +1029,10 @@ def settleTo (g : Graph) (maxR fuel n src tgt : Nat) (cache : RouteCache) :
 
 /-! ### Cache purity, step 1: the `OnTraj` invariant
 
-A cache is *valid* when every state it holds for a source is a point on
-that source's own search trajectory (`iter m (linit n src)`). `settleTo`
-preserves this — it resumes from a trajectory point and `lsettle` advances
-along the same trajectory (`lsettle_spec` lands on `iter k`), so the
-returned state and the stored-back cache are both still on-trajectory. This
-is the invariant under which the resume-read stability (`LazyResume`) and
-prev-chain closure (`LazyPrev`) apply, making `qRouteBetween`'s result a
-pure function of the graph rather than of the trellis's fill order. -/
+A cache is valid when every state it holds lies on its source's search
+trajectory (`iter m (linit n src)`). `settleTo` preserves this (`lsettle_spec`),
+and it is the invariant under which `LazyResume` and `LazyPrev` make
+`qRouteBetween` a pure function of the graph. -/
 
 /-- Every cached state for a source lies on that source's search
 trajectory. -/
@@ -1299,28 +1082,21 @@ theorem settleTo_onTraj {g : Graph} {maxR fuel n src tgt : Nat} {c : RouteCache}
   · rw [getD_sib_ne (fun e => hs e.symm), getD_sib_ne (fun e => hs e.symm)] at hst'
     exact hc s' st' hst'
 
-/-- The prev-walk as a structural recursion on a step budget: from `v`,
-push `v` and follow `prev` until a `≥ n` sentinel or the budget runs out.
-This is the `Id.run do` loop's body in the form the congruence proof can
-induct on — same output, so the gate is unaffected. -/
+/-- The prev-walk as structural recursion on a step budget, the form the
+congruence proof inducts on. -/
 def reconGo (prev : Array Nat) (n : Nat) : Nat → Nat → Array Nat → Array Nat
   | 0, _, acc => acc
   | fuel + 1, v, acc => if v ≥ n then acc else reconGo prev n fuel (prev.getD v n) (acc.push v)
 
-/-- The prev-chain from `start` back to a `≥ n` sentinel (the twin's
-`for v; v!==-1; v=prev[v]`, then reversed so `idPath[0]` is the source).
-`prev` seeds to `n` at `linit`, so the walk stops at `prev[v] = n`. The
-budget `n` can never be exceeded (a valid chain has ≤ `n` distinct
-vertices). -/
+/-- The prev-chain from `start` back to the sentinel `n`, reversed so
+`idPath[0]` is the source. A valid chain has at most `n` vertices, so the budget
+is never exceeded. -/
 def qReconstruct (prev : Array Nat) (start n : Nat) : Array Nat :=
   (reconGo prev n n start #[]).reverse
 
-/-- Reconstruction congruence. If a predicate `P` holds at the start,
-is closed under the `prev₁`-step (up to the sentinel), and `prev₁`/`prev₂`
-agree on it, the two reconstructions coincide. Instantiated with `P v =`
-"`v` is settled at the reference state", this is what makes the
-reconstructed path resume-stable: the walk stays inside settled vertices
-(`PInv.done_prev`), where `prev` is frozen (`iter_done_stable`). -/
+/-- Reconstruction congruence: if `P` holds at the start, is closed under the
+`prev₁` step and `prev₁`/`prev₂` agree on it, the reconstructions coincide. With
+`P` = "settled", it makes the reconstructed path resume-stable. -/
 theorem reconGo_congr {prev₁ prev₂ : Array Nat} {n : Nat} {P : Nat → Prop}
     (hagree : ∀ v, P v → prev₁.getD v n = prev₂.getD v n)
     (hclosed : ∀ v, P v → n ≤ prev₁.getD v n ∨ P (prev₁.getD v n)) :
@@ -1352,12 +1128,9 @@ theorem qReconstruct_congr {prev₁ prev₂ : Array Nat} {start n : Nat} {P : Na
 
 /-! ### Cache purity, step 2: the reconstruction is resume-stable
 
-The reconstructed `prev`-chain to `tgt`, read at a later trajectory point,
-is the same as at the fresh first-stop — either the target *settled* (its
-whole `prev` chain is done, frozen by `iter_done_stable`, closed by
-`PInv.done_prev`) or the search *terminated* (a fixpoint, so the two states
-coincide). This lifts the single-vertex `iter_stop_read_stable` to the whole
-path the route result depends on. -/
+The reconstructed chain to `tgt` is the same at a later trajectory point as at
+the first stop: the target settled (its chain frozen and closed) or the search
+terminated. Lifts `iter_stop_read_stable` from one vertex to the whole path. -/
 
 /-- The reconstructed chain to `tgt` is identical at `iter (max m k)` and at
 the fresh first-stop `iter k`. -/
@@ -1424,12 +1197,9 @@ theorem qReconstruct_resume_stable {g : Graph} {maxR src tgt k m : Nat}
 
 /-! ### Cache purity, step 3: `settleTo` reads-equality
 
-The target `dist` and the whole reconstructed `prev`-chain that `settleTo`
-returns from a valid (on-trajectory) cache are identical to those of a fresh
-per-source settle — the route result reads nothing the cache's fill order
-could vary. `dist` at the target is `iter_stop_read_stable`; the chain is
-`qReconstruct_resume_stable`. Enough fuel (`totalOut g + 1`) discharges the
-stop-reachability the resume lemmas assume. -/
+The target `dist` and reconstructed chain `settleTo` returns from a valid cache
+equal a fresh per-source settle's (`iter_stop_read_stable`,
+`qReconstruct_resume_stable`), given `totalOut g + 1` fuel. -/
 
 /-- `settleTo` reads-equality. Under `OnTrajCache` and sufficient fuel,
 `settleTo`'s target-distance read and reconstructed chain equal the fresh
@@ -1473,10 +1243,8 @@ def buildVerts (a b : QCand) (gr : QGraph) (idPath : Array Nat) : Array QPt :=
     #[candPt a]).push (candPt b)
   (qDedupe (fun i => verts.getD i default) verts.size).toArray
 
-/-- One endpoint-combo step of `routeBetween`: settle `ae.1 → be.1`
-(threading the cache), and keep the lighter `(weighted, verts)` in `best`.
-The cache is advanced on every branch; `best` changes only on a strictly
-lighter, well-formed route. -/
+/-- One endpoint combo of `routeBetween`: settle `ae.1 → be.1`, threading the
+cache, and keep the strictly lighter well-formed route in `best`. -/
 def comboStep (a b : QCand) (gr : QGraph) (n maxR fuel : Nat)
     (acc : Option (Int × Array QPt) × RouteCache)
     (combo : (Nat × Int) × (Nat × Int)) : Option (Int × Array QPt) × RouteCache :=
@@ -1496,7 +1264,7 @@ def comboStep (a b : QCand) (gr : QGraph) (n maxR fuel : Nat)
       else (some (weighted, buildVerts a b gr idPath), c')
 
 /-- The four endpoint combos `{sa.u, sa.v} × {sb.u, sb.v}` with their
-`S`-scaled offsets, in the twin's iteration order. -/
+`S`-scaled offsets, in a fixed order. -/
 def routeCombos (a b : QCand) (sa sb : QSeg) (gr : QGraph) (bld : Option QBuildings)
     (S : Nat) : List ((Nat × Int) × (Nat × Int)) :=
   let aEnds : Array (Nat × Int) := #[
@@ -1510,13 +1278,10 @@ def routeCombos (a b : QCand) (sa sb : QSeg) (gr : QGraph) (bld : Option QBuildi
    (aEnds.getD 1 default, bEnds.getD 0 default),
    (aEnds.getD 1 default, bEnds.getD 1 default)]
 
-/-- `routeBetween`'s twin. Offsets and the same-segment hop are µm via
-`roundDiv`, lifted into the `S`-scaled weighted domain for the four
-endpoint-combo comparisons; the reported distance is the true metric
-length of the winning polyline. Threads the per-source `RouteCache`. The
-2×2 loop is a `List.foldl` of `comboStep` over `routeCombos` (same output
-as the twin's nested loop — the gate re-verifies), so the cache-purity
-proof can induct over the combo list. -/
+/-- The route between two candidates. Offsets and the same-segment hop are µm
+via `roundDiv`, lifted into the `S`-scaled domain for the four endpoint combos;
+the reported distance is the winning polyline's true length. The combos are a
+`List.foldl` of `comboStep`, the form the purity proof inducts over. -/
 def qRouteBetween (a b : QCand) (gr : QGraph) (bld : Option QBuildings)
     (S maxR fuel : Nat) (cache : RouteCache) :
     Option (Int × Array QPt) × RouteCache :=
@@ -1539,14 +1304,10 @@ def qRouteBetween (a b : QCand) (gr : QGraph) (bld : Option QBuildings)
 
 /-! ### Cache purity, step 4: `comboStep`, the fold, and the route result
 
-`comboStep`'s cache output is exactly `settleTo`'s, so `OnTrajCache` is
-preserved (`comboStep_onTraj`); its `best` output reads the cache only
-through the target `dist` and the reconstructed chain, both cache-invariant
-(`settleTo_reads_eq`), so it is independent of which valid cache is threaded
-(`comboStep_best_indep`). Folding those two facts over the combo list gives
-`comboFold_best_indep`, and hence `qRouteBetween_route_pure`: the route
-result is a pure function of the graph — not of the trellis's fill order —
-which is what makes the matcher's declarative score model well-defined. -/
+`comboStep` preserves `OnTrajCache` (`comboStep_onTraj`) and reads the cache
+only through cache-invariant values (`settleTo_reads_eq`), so its `best` does
+not depend on the cache (`comboStep_best_indep`). Folded over the combos this
+gives `qRouteBetween_route_pure`. -/
 
 /-- The `best`-update `comboStep` computes from an already-settled state,
 factored out so the `best` output is visibly a function of the target `dist`
@@ -1616,10 +1377,8 @@ theorem comboStep_best_indep {a b : QCand} {gr : QGraph} {n maxR fuel : Nat}
   dsimp only
   rw [hd₁.1, hd₁.2, hd₂.1, hd₂.2]
 
-/-- Combo-fold cache-independence. Folding `comboStep` over the combos
-from a valid cache yields a `best` independent of the cache (both stay valid
-via `comboStep_onTraj`; each step's `best` is cache-invariant via
-`comboStep_best_indep`). -/
+/-- Folding `comboStep` over the combos from a valid cache gives a `best`
+independent of the cache. -/
 theorem comboFold_best_indep {a b : QCand} {gr : QGraph} {n maxR fuel : Nat}
     (hwf : WFEdges gr.g) (hfuel : totalOut gr.g + 1 ≤ fuel) (hn : n = gr.g.n) :
     ∀ (combos : List ((Nat × Int) × (Nat × Int)))
@@ -1708,15 +1467,10 @@ structure QMatchProfile where
   simplifyTolUm : Nat
   buildingCrossFactor : Nat
   buildingSupportUm : Nat
-  /-- When attributing the chosen route's arc length per way name
-  (`QMatchResult.wayUm`), an edge on an unnamed way is charged to the nearest
-  named way within this distance; 0 disables. OSM models a street's pavement
-  and its carriageway as separate ways and the pavement is almost always
-  unnamed, so without this the street a walk rides loses its own metres to
-  the `none` bucket and any named square on the route outweighs it (raw
-  argmax broke a quarter of the enforceable named-walk truths that way). Same
-  rationale and bar as `RefineMode`'s `WALK_NAME_BORROW_MAX_M` (30 m), applied
-  per edge rather than per leg. -/
+  /-- When attributing route length per way name (`QMatchResult.wayUm`), an
+  edge on an unnamed way is charged to the nearest named way within this
+  distance; 0 disables. OSM maps a pavement as its own, usually unnamed, way,
+  so without it the street a walk follows loses its metres. -/
   nameBorrowUm : Nat := 0
 
 def WALK_QPROFILE : QMatchProfile :=
@@ -1733,14 +1487,10 @@ def WALK_QPROFILE : QMatchProfile :=
 /-- The road tuning in the pinned representation, of which `WALK_QPROFILE` is a
 delta.
 
-Two fields no walk guard exercises. `wayContinuityNats := 5` is the road
-turn prior: a way change costs 5 nats, which is what keeps a drive on the
-street it started on when the fixes drift onto a parallel service road
-(`qMatchTrajectory` charges it as `nats * 2σ² * β`). And
-`buildingCrossFactor := 1` puts buildings off — the `> 1` guard in
-`qMatchTrajectory` skips `mkQBuildings` entirely, so a road caller may pass
-a footprint layer and have it correctly ignored. A vehicle under a mapped
-structure (bridge deck, gate arch) is not a routing error. -/
+`wayContinuityNats := 5` is the road turn prior: a way change costs 5 nats,
+keeping a drive on its street when fixes drift onto a parallel service road.
+`buildingCrossFactor := 1` turns buildings off: a vehicle under a bridge deck
+is not a routing error. -/
 def ROAD_QPROFILE : QMatchProfile :=
   { minFixes := 3, radiusUm := 50000000, maxCandidatesPerFix := 5
     sigmaUm := 12000000, betaUm := 10000000, gapBridgeUm := 8000000
@@ -1764,12 +1514,9 @@ structure QObs where
 structure QMatchResult where
   path : Array QPt
   routeDetail : Array QPt
-  /-- Arc length attributed per way name along the chosen route, in `qDist`
-  units — the matcher reporting the identity it resolved, so naming never has
-  to re-derive "which way" by nearest-neighbour over a line that is snapped
-  onto the network and equidistant from everything near it. `none`
-  collects the unnamed ways; edges the graph cannot attribute (gap bridges)
-  are charged to nothing. -/
+  /-- Arc length per way name along the chosen route, in `qDist` units: the
+  identity the matcher resolved, so naming need not guess by nearest neighbour.
+  `none` collects unnamed ways; gap bridges are charged to nothing. -/
   wayUm : Array (Option String × Nat) := #[]
   deriving Inhabited, BEq
 
@@ -1795,16 +1542,14 @@ def qAppendInterpolated (out verts : Array QPt) (startTs endTs : Int) : Array QP
     o := o.push { la := v.la, lo := v.lo, ts }
   return o
 
-/-- `matchTrajectory`'s twin: candidate generation, the `2σ²β`-scaled
-Viterbi over `qRouteBetween`, backtrack, interpolation, then simplify /
-spur removal / length bail. -/
+/-- Match a trajectory: candidate generation, the `2σ²β`-scaled Viterbi over
+`qRouteBetween`, interpolation, then simplify, spur removal and length bail. -/
 def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
     (buildings : Array (Array QPt)) (P : QMatchProfile) : Option QMatchResult := Id.run do
   if fixes.size < P.minFixes then return none
-  -- A corridor whose grid would exceed the budget is declined, and the leg is
-  -- drawn from its fixes: fixes kilometres apart give a match nothing to hold
-  -- to, and their grid grows with the square of the gap — a train still
-  -- labelled `driving` reaches millions of entries and the serving pod's limit.
+  -- A corridor whose grid would exceed the budget is declined and the leg drawn
+  -- from its fixes: fixes kilometres apart give nothing to hold to, and the grid
+  -- grows with the square of the gap.
   if corridorEntries fixes P.corridorFarUm > CORRIDOR_MAX_ENTRIES then return none
   let co := mkQCorridor fixes P.corridorNearUm P.corridorFarUm P.corridorMaxPenalty
   let bld : Option QBuildings :=
@@ -1845,13 +1590,9 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
 
   let nObs := obs.size
 
-  -- Phase A — route matrix. Fill `routeOf[t-1][j][i]` = the route from
-  -- candidate `i` at layer `t-1` to candidate `j` at layer `t`, in the
-  -- trellis's exact `(t, j, i)` order, threading the per-source cache. This is
-  -- the same sequence of `qRouteBetween` calls the fused loop made — so the
-  -- cache evolution and every route value are unchanged — hoisted ahead of the
-  -- scoring so the trellis's edge weights are a pure function of a finished
-  -- array (`qRouteBetween_route_pure` shows the fill order never mattered).
+  -- Phase A: the route matrix `routeOf[t-1][j][i]`, filled in the trellis's
+  -- `(t, j, i)` order, so the edge weights are read from a finished array
+  -- (`qRouteBetween_route_pure`: the order does not matter).
   let mut routeAcc : Array (Array (Array (Option (Int × Array QPt)))) := #[]
   for t in [1:nObs] do
     let prev := obs.getD (t - 1) default
@@ -1866,22 +1607,15 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
         rrow := rrow.push route
       rmat := rmat.push rrow
     routeAcc := routeAcc.push rmat
-    -- Drop every cached search whose source is not an endpoint of this layer's
-    -- candidates, the only sources the next layer can ask for. Each `LState`
-    -- carries three arrays of `n` (`linit`), so an unbounded cache is
-    -- O(sources × n): 985 candidates over a 20,631-vertex corridor is ~500 MiB.
-    -- Value-preserving by `qRouteBetween_route_pure`: the route result is
-    -- independent of which valid cache is threaded, and a cache with entries
-    -- removed is still `OnTrajCache`. What is lost is re-use when a source
-    -- recurs two or more layers later; a source shared by consecutive layers is
-    -- kept.
+    -- Drop cached searches whose source is not an endpoint of this layer's
+    -- candidates: each `LState` holds three arrays of `n`, so an unbounded
+    -- cache grows to hundreds of MiB. Value-preserving by
+    -- `qRouteBetween_route_pure`; only re-use across non-adjacent layers is lost.
     let keep : Array Nat := cur.cands.foldl (init := #[]) fun acc c =>
       let s := graph.segments.getD c.si default
       (acc.push s.u).push s.v
     -- Only an entry this layer searched from, or one kept before, can be
-    -- `some`: clear those not kept and remember the rest. The same array
-    -- `mapIdx` produced, without rebuilding all `n` entries a layer (40k × 85
-    -- on a dense walk).
+    -- `some`: clear those not kept, without rebuilding all `n` entries.
     let sources : Array Nat := prev.cands.foldl (init := live) fun acc c =>
       let s := graph.segments.getD c.si default
       (acc.push s.u).push s.v
@@ -1892,14 +1626,10 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
       else routeCache := routeCache.setIfInBounds src none
   let routeOf := routeAcc
 
-  -- Phase B — the concrete first-order max-sum trellis (`MatchViterbi`): node
-  -- score = the `2σ²β`-scaled emission, edge weight = transition − switch
-  -- penalty (`-∞` when unrouteable), both read from the hoisted matrix. The
-  -- production matcher *runs* the verified decoder `decodeFast`, whose returned
-  -- chain is proved to attain the maximum declarative `pathScore` over every
-  -- candidate chain (`MatchViterbi.decodeFast_argmax`) — no unverified
-  -- imperative backtrack in the trust path. `none` (no finite-scoring chain)
-  -- returns `none`, exactly the old terminal-argmax / all-unreachable bail.
+  -- Phase B: the first-order max-sum trellis (`MatchViterbi`). Node score is
+  -- the `2σ²β`-scaled emission, edge weight is transition minus switch penalty
+  -- (`-∞` when unrouteable). The verified `decodeFast` picks the chain
+  -- (`decodeFast_argmax`); `none` means no chain scores finitely.
   let Tr : MatchViterbi.Trellis := {
     T := nObs
     width := fun t => (obs.getD t default).cands.size
@@ -1924,16 +1654,11 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
   if decoded.isNone then return none
   let chosen : Array Nat := (decoded.getD []).toArray
 
-  -- Assemble the interpolated route detail, attributing each route edge to the
-  -- way it runs along as it goes. Interior edges are graph edges and are
-  -- looked up by their endpoint coordinates (`vertices` is deduped on exactly
-  -- that pair, so the key is exact, not a tolerance). The first and last edge
-  -- of a hop touch a candidate foot — a projection that is on a segment but is
-  -- not a graph vertex — so they miss the map and are charged to the segment
-  -- that candidate projected onto, which `QCand.si` has known all along. The
-  -- same-segment fast path (`#[footA, footB]`, no graph vertex at all) lands in
-  -- that fallback too. A middle edge that misses is a gap bridge and is
-  -- deliberately charged to nothing.
+  -- Assemble the route detail, attributing each edge to its way. Interior
+  -- edges are looked up by exact endpoint coordinates. A hop's first and last
+  -- edges touch a candidate foot, not a vertex, so they are charged to the
+  -- segment the candidate projected onto (`QCand.si`); a middle edge that
+  -- misses is a gap bridge and is charged to nothing.
   let mut edgeName : Std.HashMap (Int × Int × Int × Int) (Option String) := ∅
   for s in graph.segments do
     let u := graph.vertices.getD s.u default
@@ -1944,12 +1669,10 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
     match acc.findIdx? (fun p => p.1 == n) with
     | some i => acc.set! i (n, (acc.getD i default).2 + d)
     | none => acc.push (n, d)
-  -- The per-edge borrow (`P.nameBorrowUm` — see the profile field): the
-  -- nearest named segment within the bar of the edge's midpoint. The 3×3 cell
-  -- block, because `segIdx`'s cells are sized for `radiusUm` (20 m walk) and
-  -- the borrow bar is 30 m — a single-cell read can miss a named carriageway
-  -- in the next cell. Nearest wins; a tie keeps the lower index, the same
-  -- determinism `qCandidatesForFixFast`'s sort uses.
+  -- The per-edge name borrow (`P.nameBorrowUm`): the nearest named segment
+  -- within the bar of the edge's midpoint, over the 3×3 cell block since the
+  -- cells are sized for the 20 m radius and the bar is 30 m. A tie keeps the
+  -- lower index.
   let borrowName := fun (pt qt : QPt) => Id.run do
     let mid : QPt := { la := (pt.la + qt.la) / 2, lo := (pt.lo + qt.lo) / 2, ts := 0 }
     let cy := mid.la.fdiv segIdx.cellLa
@@ -2011,7 +1734,7 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
     return none
   return some { path := cleanedArr, routeDetail := out, wayUm }
 
-/-- `matchWalkSegment`'s twin (walk profile, trim + despike + splice). -/
+/-- Match a walk leg: the walk profile, then trim, despike and splice. -/
 def qMatchWalkSegment (fixes : Array QPt) (ways : Array QWay)
     (buildings : Array (Array QPt)) : Option QWalkMatchResult := Id.run do
   match qMatchTrajectory fixes ways buildings WALK_QPROFILE with
@@ -2025,12 +1748,9 @@ def qMatchWalkSegment (fixes : Array QPt) (ways : Array QWay)
       1500000 WALK_QPROFILE.simplifyTolUm (fun i => cleaned.getD i default) cleaned.size).toArray
     return some { path, coarsePath := cleaned, wayUm := r.wayUm }
 
-/-- `matchRoadSegment`'s twin. Unlike the walk wrapper this adds nothing to
-the trajectory match — no trim, no despike, no route-detail splice — so the
-road leg is drawn exactly as the Viterbi routed it. `radiusUm` is the one
-knob the road callers have (`RoadMatchOpts.matchRadiusM`), spliced over the
-profile; `none` keeps the profile's 50 m. `none` out means "draw the raw
-fixes", never an invented path. -/
+/-- A road leg's match: the trajectory match with no trim, despike or splice,
+so the leg is drawn as the Viterbi routed it. `radiusUm` overrides the
+profile's 50 m. `none` means draw the raw fixes, never an invented path. -/
 def qMatchRoadSegment (fixes : Array QPt) (ways : Array QWay)
     (buildings : Array (Array QPt)) (radiusUm : Option Nat := none) : Option QMatchResult :=
   let P := match radiusUm with
@@ -2040,20 +1760,13 @@ def qMatchRoadSegment (fixes : Array QPt) (ways : Array QWay)
 
 /-! ## Honesty corollaries
 
-The matcher never fabricates geometry: its display tail (`qTrim →
-qDespike → qSplice`) only ever re-inserts real vertices near the tuned
-coarse line. These specialise the already-proved pass theorems
-(`Metric.lean`) to the walk result:
+The matcher never fabricates geometry: its display tail (`qTrim → qDespike →
+qSplice`) only re-inserts real vertices near the coarse line.
 
-- `qMatchWalkSegment_coarse_drop_only` — every `coarsePath` vertex is a
-  vertex of the trajectory path `r.path` (trim and despike are drop-only,
-  so the decision layer is a subsequence of what the Viterbi produced);
-- `qMatchWalkSegment_path_sound` — every drawn `path` vertex is either a
-  `coarsePath` vertex or a timestamp-clamped route vertex lying within the
-  splice `dropM` (`simplifyTolUm`, 5 m) of the coarse chord it was inserted
-  against (`qSplice_sound`: an excision window past `dropM` inserts nothing;
-  the `1.5 m` `tol` is the splice's internal simplify floor, the decision
-  layer's lower band).
+- `qMatchWalkSegment_coarse_drop_only`: every `coarsePath` vertex is a vertex
+  of the trajectory path (trim and despike only drop).
+- `qMatchWalkSegment_path_sound`: every drawn vertex is a `coarsePath` vertex
+  or a route vertex within the splice `dropM` (5 m) of its coarse chord.
 
 Both are corollary-grade — the flagship is the Viterbi argmax below. The
 `qMatchWalkSegment_eq` bridge isolates the one `Id.run do` reduction so the
@@ -2310,10 +2023,8 @@ private def rdStraight : Array QPt :=
 private def rdPath (r : Option QMatchResult) : Array QPt := (r.map (·.path)).getD #[]
 private def rdDetail (r : Option QMatchResult) : Array QPt := (r.map (·.routeDetail)).getD #[]
 
--- The turn prior decides. Same fixes, same ways: at 5 nats the drive stays
--- on `High Street` (latitude 515200000) for its whole length; at 0 nats the
--- same matcher follows the fixes onto `Service Road` (515200539). This is the
--- one road field the walk guards can never reach.
+-- The turn prior decides: at 5 nats the drive stays on `High Street`; at 0 it
+-- follows the fixes onto `Service Road`.
 #guard rdPath (qMatchRoadSegment rdDrift rdWays #[]) ==
   #[⟨515200000, -1297113, 1000⟩, ⟨515200000, -1244419, 1390⟩]
 -- The `routeDetail` is the full route the Viterbi walked, time-interpolated by
@@ -2333,10 +2044,8 @@ private def rdDetail (r : Option QMatchResult) : Array QPt := (r.map (·.routeDe
 #guard rdPath (qMatchRoadSegment rdStraight rdWays #[]) ==
   #[⟨515200000, -1300000, 1000⟩, ⟨515200000, -1274014, 1180⟩]
 
--- Buildings are inert at `buildingCrossFactor := 1`. A footprint over the
--- eastern half changes nothing, because `qMatchTrajectory` only builds the
--- penalty when the factor exceeds 1 — so a road caller may pass its geometry
--- layer wholesale, as `matchRoadSegment` does.
+-- Buildings are inert at `buildingCrossFactor := 1`: a footprint over the
+-- eastern half changes nothing, so a road caller may pass its geometry layer.
 private def rdBlock : Array QPt :=
   #[⟨515199102, -1271127, 0⟩, ⟨515200898, -1271127, 0⟩, ⟨515200898, -1242253, 0⟩,
     ⟨515199102, -1242253, 0⟩, ⟨515199102, -1271127, 0⟩]
@@ -2363,16 +2072,11 @@ private def rdFar : Array QPt :=
 
 /-! ## The reconstructed route is a valid costed path (routing-optimality, brick 1)
 
-`reconGo` (the accumulator-threaded `prev`-walk) computes exactly `LazyEdge`'s
-accumulator-free `chainList`, so the reconstructed vertex list is the reversed
-chain. Composing with `LazyEdge`'s `chainList_reverse_pathCost_isSome` lifts
-the per-`prev`-link edge fact (`EInv`) to the whole route: under `EInv`, and
-from any seed below the sentinel, `qReconstruct`'s output has a defined
-`pathCost` in the shared `Verified.Rail.Graph` spec — every step is a real
-edge, so the matcher's route is a genuine costed walk of `g`, the "valid path"
-half of the routing-optimality contract (`dijkstraC_correct`'s
-`isValidPath`). The remaining half — that the cost equals `oracleDist` — is
-the LoopInv-scale weight-optimality brick still to come. -/
+`reconGo` computes `LazyEdge`'s `chainList`, so the reconstructed route is the
+reversed chain. With `chainList_reverse_pathCost_isSome`, under `EInv` every
+step is a real edge of `g`: the route is a valid costed path
+(`dijkstraC_correct`'s `isValidPath`). `qReconstruct_pathCost_eq_iter` below
+gives the exact cost. -/
 
 /-- `reconGo` is `chainList` prepended by its accumulator. -/
 theorem reconGo_toList_chainList (prev : Array Nat) (n : Nat) :
@@ -2399,11 +2103,8 @@ theorem qReconstruct_toList (prev : Array Nat) (start n : Nat) :
   rw [Array.toList_reverse, reconGo_toList_chainList]
   simp
 
-/-- The matcher's reconstructed route is a valid costed path. Under the
-edge-provenance invariant `EInv` (which holds along every lazy-search
-trajectory — `iter_einv`/`linit_einv`), for any seed `start` below the
-sentinel `g.n`, the reconstructed route has a defined `pathCost`: every
-consecutive step is a genuine edge of `g`. -/
+/-- The matcher's reconstructed route is a valid costed path: under `EInv`,
+from any seed below the sentinel, every step is an edge of `g`. -/
 theorem qReconstruct_pathCost_isSome {g : Graph} {s : LState} (hE : EInv g s)
     {start : Nat} (hstart : start < g.n) :
     (Verified.Rail.pathCost g (qReconstruct s.prev start g.n).toList).isSome := by
@@ -2420,15 +2121,9 @@ theorem qReconstruct_pathCost_isSome_iter {g : Graph} {maxR src start k : Nat}
       (qReconstruct (iter g maxR k (linit g.n src)).prev start g.n).toList).isSome :=
   qReconstruct_pathCost_isSome (iter_einv k linit_einv) hstart
 
-/-- The matcher's reconstructed route costs exactly the search's answer.
-Composing `qReconstruct_toList` (the reconstruction is the reversed `prev`-chain)
-with `iter_route_pathCost_eq` (the chain telescopes to the target distance): at
-any trajectory state of a per-source lazy search, once the target `start` is
-settled and its `prev`-chain has completed (enough reconstruction fuel — `g.n`),
-the route's `pathCost` in the shared `Verified.Rail.Graph` spec is exactly
-`dist[start]`. This is the exact-cost half of the null-over-wrong routing
-contract: not just a valid path (`qReconstruct_pathCost_isSome_iter`) but a path
-whose cost *is* the distance the search recorded. -/
+/-- The matcher's reconstructed route costs exactly the search's answer: once
+the target is settled and its chain complete, its `pathCost` is `dist[start]`
+(`qReconstruct_toList` with `iter_route_pathCost_eq`). -/
 theorem qReconstruct_pathCost_eq_iter {g : Graph} {maxR src start k dt : Nat}
     (hwf : WFEdges g) (hsrc : src < g.n)
     (hdone : (iter g maxR k (linit g.n src)).done.getD start false = true)
