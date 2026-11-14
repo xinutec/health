@@ -1,18 +1,9 @@
-//! The Lean decisions, called through the C ABI.
+//! The Lean decisions, called through the worker: a pipe carrying the question
+//! wrongly would look like one that works. Expected values are the Lean
+//! modules' `#guard`s', so a failure here is the wire, not the rule.
 //!
-//! The point of asking Lean at all is that the rules the backend runs are the
-//! ones in Lean, and a pipe that carries the question wrongly
-//! would look exactly like one that works.
-//!
-//! One `#[test]` function, deliberately. `health_backend_init` starts a
-//! process-global runtime, and Rust runs a test binary's tests on many threads.
-//! Cargo gives this file its own binary but does not serialise the tests inside
-//! it, so several `#[test]`s racing on initialisation would flake in a way that
-//! reads as a Lean bug. Sections in order, each asserting with a message naming
-//! the case.
-//!
-//! The expected values are the ones in the Lean modules' `#guard`s and in
-//! the Rust tests these replaced — so this failing means the FFI, not the rule.
+//! One `#[test]` in ordered sections: `lean::init()` starts process-global
+//! state that parallel tests would race on.
 
 use backend::lean;
 

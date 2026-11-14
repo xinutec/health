@@ -1,18 +1,13 @@
 /-!
 # A train's stops, as a likelihood
 
-Where the fixes pass a station, the slowest minute there is evidence of whether
-the train called: a calling train stands at the platform, a train that does not
-call runs through. The record fits one mixture for both — a stopped component
-(an exponential on the minute's speed) and a moving one (a Gaussian) — with a
-calling share and a through share (`segEmission.journey.stops`). A line that
-calls at the station is scored by the ratio of the two; a line that does not
-call there scores nothing, which is the through share's own reading.
+At a passed station, the slowest minute says whether the train called. One
+fitted mixture (`segEmission.journey.stops`): stopped (exponential on speed) and
+moving (Gaussian), with calling and through shares. A line calling there is
+scored by the ratio; one that does not scores nothing.
 
-The populations are the narrated rides' passed stations, read off the decoder's
-own minute rows (`fit_emissions`): between Wembley Park and Finchley Road the
-Jubilee calls at five surface stations the Metropolitan runs through, and the
-two lines' rides separate on those passes alone.
+Fitted on the narrated rides' passed stations (`fit_emissions`); the Jubilee
+and Metropolitan separate on the surface stations only one calls at.
 -/
 
 namespace Verified.Hsmm.StopCalls

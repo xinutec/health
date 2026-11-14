@@ -1,13 +1,6 @@
-//! The mirror's coverage gate, across the bridge.
-//!
-//! `Verified.Geo.OsmCoverage` carries its own `#guard`s, so the decision is
-//! already pinned. What those guards cannot check is the wire: whether this
-//! host spells the question the way the mode reads it. A float that crossed as
-//! the wrong bit pattern, or a `fetchedAt` that arrived as seconds instead of
-//! milliseconds, would give a confident wrong answer with every guard still
-//! green.
-//!
-//! So these are the same twelve cases, asked through `lean::osm_covered`.
+//! The mirror's coverage gate across the bridge: `OsmCoverage`'s `#guard`s pin
+//! the decision, this pins the wire (bit patterns, `fetchedAt` in
+//! milliseconds) with the same twelve cases through `lean::osm_covered`.
 
 use backend::lean::{CoverageRow, osm_covered};
 
@@ -106,12 +99,9 @@ fn a_high_latitude_stretches_the_longitude_half_of_the_box() {
     assert!(osm_covered(70.0, 20.0, 500.0, &[r], NOW, false).expect("the bridge answers"));
 }
 
-/// The mirror ships only the rows whose box contains the query point (hundreds
-/// of calls a day, each otherwise carrying every box the bucket has). The claim
-/// that this changes no verdict is the module's to make and this test's to
-/// check: random rows, random points, every radius, both `hasLocalData` arms,
-/// with stale and legacy rows mixed in; the filtered list and the full list
-/// must agree every time.
+/// The mirror ships only rows whose box contains the query point; random rows,
+/// points and radii, both `hasLocalData` arms, stale and legacy rows: the
+/// filtered and full lists must agree.
 #[test]
 fn the_point_prefilter_changes_no_coverage_verdict() {
     use backend::mirror_source::MirrorSource;

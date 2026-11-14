@@ -1,12 +1,9 @@
-//! Google leaves a fragment behind when it records a night while it is still in
-//! progress and then never revises it. That fragment carries the same start
-//! instant as the full night, which is the column `uniq_sleep_user_start` keys
-//! on, so a backfill upsert does not land beside the night — it overwrites it.
+//! Google can leave an unrevised fragment of a night recorded in progress, with
+//! the full night's start instant, so a backfill upsert on
+//! `uniq_sleep_user_start` would overwrite the night.
 //!
-//! ⚠ the durations here are synthetic. A real sleep length is a biometric value
-//! and this repo is public, so the night is a round ten hours and each
-//! stub is the fragment its ratio implies. The ratios are the measured fact,
-//! and they are the only thing the bound is calibrated against.
+//! ⚠ Durations are synthetic (a ten-hour night, stubs at the measured ratios):
+//! real sleep lengths are biometrics and this repo is public.
 
 use backend::google::sync::{SLEEP_SHRINK_REFUSAL_RATIO, refuses_as_sleep_stub};
 
@@ -41,12 +38,8 @@ fn an_ordinary_revision_still_writes() {
     assert!(!refuses_as_sleep_stub(NIGHT_MS / 2, NIGHT_MS));
 }
 
-/// The bound is set below the evidence, not at it. Refusing at the narrowest
-/// observed ratio would fit the guard to the cases that happened to show the
-/// class rather than to the class itself.
-///
-/// Checked at compile time: raising the refusal ratio to or past the narrowest
-/// measured case stops the build, rather than leaving a test to notice.
+/// The bound is below the narrowest measured ratio, not at it, so it fits the
+/// class rather than the cases seen; a compile-time check enforces it.
 const _: () = assert!(SLEEP_SHRINK_REFUSAL_RATIO < NARROWEST_MEASURED_RATIO);
 
 /// A night with no existing row is the ordinary first write. The writer only

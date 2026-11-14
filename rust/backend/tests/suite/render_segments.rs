@@ -1,14 +1,6 @@
-//! `decoded_days.segments_json` in the field order node writes it in.
-//!
-//! This exists to make one diff possible. `segments_json` is TEXT and the only
-//! real check on the decode-day port is a comparison against the row node wrote.
-//! `Lean.Json.mkObj` sorts its keys, node's are in insertion order, so without
-//! this every row differs for every day on key order alone — and the diff could
-//! not tell "the decode changed" from "the keys moved".
-//!
-//! `jq` cannot do that diff either. It parses numbers to doubles, so
-//! `25.0 == 25`, and it cannot see an absent key against an explicit null. Both
-//! distinctions are live on this row.
+//! `decoded_days.segments_json` in the stored rows' field order, not
+//! `Lean.Json.mkObj`'s sorted keys, so a row diff shows decode changes, not key
+//! order. `jq` cannot do this diff: `25.0 == 25`, and absent equals null.
 
 use backend::row_json::render_segments;
 
@@ -91,10 +83,8 @@ fn a_resolved_but_unseparated_side_keeps_its_null() {
     assert_eq!(o["alightStation"], "Echo");
 }
 
-/// A field this list has not been told about is carried, not dropped. Silently
-/// discarding it would make a new Lean field look like a decode that stopped
-/// producing one — the failure would show up as a missing column in a consumer
-/// with nothing here to explain it.
+/// An unlisted field is carried, not dropped, or a new Lean field would look
+/// like a decode that stopped producing one.
 #[test]
 fn an_unknown_field_survives_after_the_known_ones() {
     let mut seg = lean_train_segment();

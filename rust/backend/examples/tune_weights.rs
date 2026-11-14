@@ -1,14 +1,11 @@
-//! How the decoder's term families should balance, learned on the narrated
-//! days and judged on days the search never saw.
+//! How the decoder's term families should balance, learned on half the narrated
+//! days and judged on the other half, both ways round.
 //!
-//! Each family of decoder terms — the base emission, geometric feasibility,
-//! the gap term, rail evidence, line proximity, continuity, entry, the chain
-//! context, the duration prior, segment evidence — carries a weight
-//! (`EmissionFull.TermWeights`, `flags.termWeights`), `1` in the shipped model.
-//! The days split in two by index; a coordinate search over the weights runs
-//! on one half and is scored on the other, both ways round. The objective,
-//! fixed before any run: matched journeys + leg modes + lines + stations, less
-//! twice the phantom rides — the scoreboard's own counts (`decoderscore`).
+//! Each family (base emission, geometric feasibility, gap term, rail evidence,
+//! line proximity, continuity, entry, chain context, duration, segment
+//! evidence) has a weight (`EmissionFull.TermWeights`, `flags.termWeights`), `1`
+//! as shipped. The objective, fixed in advance: matched journeys + leg modes +
+//! lines + stations − 2 × phantom rides (`decoderscore`).
 //!
 //! ```text
 //! cargo run --release --example tune_weights

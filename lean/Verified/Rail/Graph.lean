@@ -1,21 +1,18 @@
 /-!
-# Rail graph: spec substrate for the verified shortest path (V3)
+# Rail graph: spec substrate for the verified shortest path
 
 A rail graph with ×2²⁰-quantised `Nat` weights (≤ ~2^35 on real corridors).
 The served snapper (`Geo.RailSnap`) builds and searches its own float graph;
 nothing feeds this one at runtime. `Verified.Geo.Lazy*` reuse its definitions.
 
-`oracleDist` is the exhaustive spec: the minimum cost over every simple
-path. Exponential — `#guard`-scale instances only, exactly like the HSMM
-oracle.
+`oracleDist` is the exhaustive spec: the cheapest simple path. Exponential,
+`#guard`-scale only.
 -/
 
 namespace Verified.Rail
 
-/-- Weighted directed adjacency: `adj[u]` lists `(v, w)` edges. The builder
-always inserts both directions, so rail graphs are undirected in practice;
-nothing here relies on it. Parallel edges may occur (two OSM ways sharing a node
-pair); path cost uses the cheapest. -/
+/-- Weighted directed adjacency: `adj[u]` lists `(v, w)`. Nothing relies on
+symmetry; parallel edges may occur, and path cost uses the cheapest. -/
 structure Graph where
   adj : Array (Array (Nat × Nat))
 deriving Repr, Inhabited

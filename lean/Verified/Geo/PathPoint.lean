@@ -2,19 +2,11 @@ import Verified.Geo.WalkableRoute
 /-!
 # The drawn-path vertex
 
-`EnrichedSegment` carries four derived polylines: `snappedPath` (rail track),
-`matchedPath` (street network), `walkMatchedPath` (walkable network) and
-`walkSmoothedPath` (map reconstruction), all of one shape.
-
-The Lean port grew a separate vertex record per module, and they diverged on
-one field: `ts` came out `Int` where a module only ever compared timestamps, and
-`Float` where it read the interpolation. `Float` is the faithful one —
-`interpolateTimes` divides a span by a distance ratio and the result reaches the
-API unrounded, so an `Int` vertex is a projection that silently rounds a value
-production serves.
-
-This is the single vertex every pass in the fold agrees on. It has no
-dependencies so that any module may import it.
+The one vertex shape of `EnrichedSegment`'s four derived polylines:
+`snappedPath` (rail), `matchedPath` (streets), `walkMatchedPath` (walkable
+network) and `walkSmoothedPath` (reconstruction). `ts` is `Float`:
+`interpolateTimes` produces fractional timestamps the API serves unrounded. No
+dependencies, so any module may import it.
 -/
 
 namespace Verified.Geo

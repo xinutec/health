@@ -1,14 +1,7 @@
-//! Episode coordinates must leave `/api/velocity` as numbers.
-//!
-//! The defect this pins hung the Android app. The Lean fold encodes
-//! coordinates as IEEE-754 bit strings for its internal wire; forwarding them
-//! to the client made Leaflet read `"4632454559779392337"` as a latitude, and
-//! WebView's compositor spun a full core with JavaScript dead. The same
-//! response already sent `points` and `rawFixes` as numbers — only the field
-//! that draws the map was raw.
-//!
-//! The frontend has no bit-string decoder, which is the tell: it was never
-//! meant to receive them. The fix belongs at the serve boundary.
+//! Episode coordinates must leave `/api/velocity` as numbers. The fold's
+//! internal wire uses IEEE-754 bit strings; forwarded, Leaflet read one as a
+//! latitude and the Android WebView hung. The client has no bit decoder, so the
+//! conversion is at the serve boundary.
 
 use backend::routes::velocity::decode_episode_bits;
 use serde_json::json;
@@ -67,10 +60,7 @@ fn every_other_field_survives_untouched() {
 
 #[test]
 fn an_unparseable_value_is_left_rather_than_zeroed() {
-    // Not defaulted to 0. A zeroed coordinate is a point in the Gulf of
-    // Guinea that draws a line across the planet — worse than an obviously
-    // wrong string, and exactly the silent-corruption shape this repo keeps
-    // refusing elsewhere.
+    // Not defaulted to 0: a zeroed coordinate draws a line across the planet.
     let out = decode_episode_bits(json!([{ "points": [{ "lat": "banana", "lon": LON_BITS }] }]));
     assert_eq!(out[0]["points"][0]["lat"], "banana");
 }

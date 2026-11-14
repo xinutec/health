@@ -35,17 +35,9 @@ fn array_reports_its_elements_shape() {
     );
 }
 
-/// The type is the point, and a quoted number must say `string`.
-///
-/// A path alone cannot tell `62` from `"62"`, and `as_f64()` drops the second
-/// exactly like an absent field — which is how 1258 real
-/// `dailyRestingHeartRate.beatsPerMinute` points reported as `google 0 days`,
-/// i.e. as "Google does not carry resting heart rate".
-///
-/// The two fields here differ in type inside one object, which is the shape
-/// the live API actually returns: `date.year` is a number while
-/// `beatsPerMinute` beside it is a string. A per-stream assumption cannot
-/// express that.
+/// A quoted number must report `string`: `as_f64()` treats `"62"` like an
+/// absent field, which hid Google's resting heart rate. The live API mixes
+/// types in one object (`date.year` a number, `beatsPerMinute` a string).
 #[test]
 fn a_quoted_number_reports_as_a_string_not_a_number() {
     let v = serde_json::json!({
@@ -70,10 +62,8 @@ fn the_type_annotation_leaks_no_reading() {
     assert!(!joined.contains("resting"), "a value leaked: {joined}");
 }
 
-/// An empty array must be distinguishable from an absent field. "the type
-/// exists but carried nothing" and "the type does not have this field" are
-/// different answers to the migration question, and a readout that renders both
-/// as silence cannot be acted on.
+/// An empty array must differ from an absent field: "carried nothing" and "has
+/// no such field" answer the migration question differently.
 #[test]
 fn an_empty_array_is_not_silence() {
     let v = serde_json::json!({ "stages": [] });

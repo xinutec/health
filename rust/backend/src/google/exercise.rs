@@ -1,13 +1,7 @@
-//! Recorded workouts: Google's `exercise` points into `exercise_sessions`.
-//!
-//! Fitbit's history had no table for these. Google serves every one — the
-//! watch's (walks, runs, rides, workouts back to 2023) and the Fit app's —
-//! each with its interval, type, a metrics summary, start/stop events and
-//! splits.
-//!
-//! The whole point is kept (`raw`). The typed columns are what a query wants
-//! first; the splits, heart-rate zone durations and events are only in `raw`,
-//! and storing them whole is the rule: full resolution, no rollups.
+//! Recorded workouts: Google's `exercise` points into `exercise_sessions`, from
+//! the watch and the Fit app, each with interval, type, metrics summary,
+//! events and splits. Typed columns for queries; the whole point kept in `raw`
+//! (splits, zone durations and events live only there).
 
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;
@@ -93,12 +87,9 @@ pub fn parse_exercise(pt: &serde_json::Value) -> Option<ExerciseSession> {
 /// statement a round trip.
 const BATCH_ROWS: usize = 200;
 
-/// Every workout Google holds, into `exercise_sessions`.
-///
-/// All of them, every run: the sessions fit one page, so a filter would save
-/// nothing, and a full read is what picks up a session Google edited after the
-/// fact. An edit replaces its row (keyed by point id): this is Google's record
-/// of the session, not a re-decision of ours.
+/// Every workout Google holds, into `exercise_sessions`, each run: they fit one
+/// page, and a full read picks up edits, which replace the row (keyed by point
+/// id).
 pub async fn sync_exercise(
     pool: &MySqlPool,
     http: &reqwest::Client,

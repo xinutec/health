@@ -22,18 +22,10 @@ import Verified.Hsmm.TrainCandidates
 import Verified.Hsmm.Assembly
 import Verified.Hsmm.Assemble
 /-!
-# HSMM port aggregator (scoring factors + structural resolvers)
+# HSMM scoring factors and structural resolvers
 
-The HSMM's scoring-factor kernels and structural resolvers (state-space
-enumeration, …), each pinned by `#guard`s. Importing them here pulls every
-module, and so every guard, into the default `Verified` library build, so
-`lake build` fails on any divergence; the guards are worthless if they never
-run.
-
-This file itself defines nothing and asserts nothing — it is an import surface,
-and `lean-coverage` reports it as one. A checker that credited it would be
-crediting the imports below, which are counted in their own right.
-
-These compute in Lean `Float` (exactly for `sqrt`/arithmetic/discrete factors;
-≤1 ULP where a factor uses `sin`/`cos`/`atan2`/`log`).
+An import surface: it pulls every factor module, and so every `#guard`, into
+the default `Verified` build, so `lake build` fails on any divergence. It
+defines and asserts nothing (`lean-coverage` reports it so). Factors are exact,
+or ≤1 ULP where they use `sin`/`cos`/`atan2`/`log`.
 -/
