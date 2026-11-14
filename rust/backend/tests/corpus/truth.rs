@@ -5,35 +5,18 @@
 //!   ground-truth/<date>.md → Lean parse → tz resolve ───┴→ truthcheck → floorgate
 //! ```
 //!
-//! This is the reader of `tests/golden/truth-baseline.json`. Every other check
-//! compares the pipeline against itself or its blessed output; here a human
-//! wrote down what happened and the pipeline is graded against it. So it
-//! cannot be blessed away: `ratchetUpFloor` takes a union, and a row that
-//! stopped holding stays in the floor and keeps failing. The one escape is
-//! re-auditing the narrative so the row is no longer described, which is
-//! reported by name.
+//! Grades the pipeline against what a human wrote down, so it cannot be
+//! blessed away: `ratchetUpFloor` takes a union, and a row that stops holding
+//! keeps failing until the narrative stops describing it. The logic is
+//! `Verified.Eval.TruthCheck` and `FloorGate`; this file replays and prints.
 //!
-//! The verdicts, the field-level comparator, the midpoint windowing and the
-//! ratchet are `Verified.Eval.TruthCheck` and `Verified.Eval.FloorGate`; this
-//! file replays fixtures, reads the tz database, and prints.
+//! Grading shards (floor and `KNOWN_UNHELD` filtered to the days run).
+//! `TRUTH_BLESS` does not: it rewrites one floor file, so `corpus_gate` runs
+//! shard 0 over all days for a bless.
 //!
-//! # Sharding, and the one thing that does not shard
-//!
-//! Grading shards: the floor gate gets `measured_baseline`, the floor filtered
-//! to the days this run reported, and the rest are announced unchecked.
-//! `KNOWN_UNHELD` is filtered the same way, or a one-day run would report the
-//! exempted rows holding again on days it never opened.
-//!
-//! `TRUTH_BLESS` does not shard: it rewrites one floor file, so two shards
-//! would race on it and half a corpus would read as complete. `corpus_gate`
-//! runs shard 0 over all days and stands the others down for a bless.
-//!
-//! # Local-only
-//!
-//! `tests/golden/{days,ground-truth}` is gitignored: the fixtures carry real
-//! coordinates, place names and biometrics. `truth-baseline.json` is tracked,
-//! being unix timestamps only. This announces a skip rather than passing
-//! quietly, and prints counts and times, never a place.
+//! `tests/golden/{days,ground-truth}` is gitignored (real places and
+//! biometrics); `truth-baseline.json` holds timestamps only and is tracked. A
+//! missing corpus is announced as a skip; output never prints a place.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -52,12 +35,9 @@ pub const NAME_CONFIDENCE: &str = concat!(
     "/../../tests/golden/name-confidence.jsonl"
 );
 
-/// Per naming rule, `(right, graded)` over one day's graded stay rows: each row
-/// that asserts a stationary or sleeping place and carries a clean verdict is
-/// counted under the rule that named the state its verdict was read from
-/// (`covering`, the truth check's own midpoint lookup), when that state is a
-/// stay. A row whose verdict came from no stay judged no name, and a state with
-/// no rule shows no percentage, so neither has a hit rate to keep.
+/// Per naming rule, `(right, graded)` over one day's stay rows with a clean
+/// verdict, counted under the rule that named the `covering` state. Rows whose
+/// verdict came from no stay, and states with no rule, are not counted.
 pub fn name_confidence_counts(
     rows: &[Value],
     verdicts: &[Value],
@@ -103,21 +83,14 @@ const BASELINE: &str = concat!(
 );
 
 /// The confirmed rows that do not hold, exempted by name so the rest can gate.
-/// Not a blessing: the floor still holds these keys, they are printed every
-/// run, and the assertion fails both ways, on a new regression and on one of
-/// these holding again.
+/// Still in the floor, printed every run, and failing if one holds again.
 ///
-/// ⚠ A row here must be a pipeline defect confirmed against the fixes, never a
-/// diagnosis taken on trust, and a narrative row is re-cut only to what the
-/// fixes show, never to what the pipeline drew: that would make the corpus
-/// self-referential, the one property that makes it worth having.
+/// ⚠ An entry must be a pipeline defect confirmed against the fixes, and a
+/// narrative row is re-cut only to what the fixes show, never to what the
+/// pipeline drew: that would make the corpus self-referential.
 ///
-/// 06-24's two shops, Currys and Lidl, 49 m apart with a three-minute walk
-/// between, decode as one stay at the mined place beside them, since a stay at
-/// a listed place may move about inside (`stayMove`). The user ruled the merge
-/// the lesser defect: "You can reduce the amount of items (like Curry to Lidl)
-/// and lose a bit. The office 1 minute stuff is worse than having the 3 minute
-/// thing".
+/// The two shops 49 m apart decode as one stay at the mined place beside them
+/// (`stayMove`); the user ruled the merge a lesser defect than one-minute stays.
 const KNOWN_UNHELD: [(&str, i64, &str); 2] = [
     (
         "2026-06-24",
@@ -138,11 +111,8 @@ struct Resolved {
     starts: Vec<i64>,
 }
 
-/// Parse a narrative and resolve its civil windows through the tz database.
-///
-/// The zone is the narrative's when it declares one: `parseGroundTruth`
-/// returns the zone it read the clock times in, which a `Times:` line can
-/// override. The fixture's zone would shift every window on those days.
+/// Parse a narrative and resolve its civil windows in the zone
+/// `parseGroundTruth` read it in (a `Times:` line can override the fixture's).
 fn resolve_narrative(date: &str, tz: &str) -> Option<Resolved> {
     let md = std::fs::read_to_string(format!("{NARRATIVES}/{date}.md")).ok()?;
     let req = json!({ "mode": "groundtruth", "markdown": md, "date": date, "tz": tz });
@@ -347,10 +317,8 @@ impl Truth {
                 .append(true)
                 .open(path)
                 .expect("TRUTH_ROWS_OUT opens");
-            // One buffer, one write: shards append concurrently, and a
-            // `writeln!` lands in pieces. The verdicts and graded states ride
-            // along, so a row's served name and naming rule read beside its
-            // truth.
+            // One buffer, one write: shards append concurrently. The verdicts
+            // and graded states ride along beside the truth.
             let line = format!(
                 "{}\n",
                 json!({ "date": date, "rows": narrative.rows, "verdicts": verdicts, "states": states })
@@ -376,10 +344,8 @@ impl Truth {
                 .write_all(line.as_bytes())
                 .expect("VENUE_AB_OUT writes");
         }
-        // A regressed row names what broke, never what the pipeline said
-        // instead. `covering` comes from the lookup that produced the verdict,
-        // so this explains it with the states the check used. Off by default:
-        // it prints places.
+        // Explains a regressed row with the states the check used. Off by
+        // default: it prints places.
         if std::env::var("TRUTH_DEBUG").is_ok() {
             for (i, verdict) in verdicts.iter().enumerate() {
                 if verdict.as_str() != Some("regressed") {
@@ -439,12 +405,8 @@ impl Truth {
                 // reporter below.
                 _ => {
                     self.tally_u += 1;
-                    // Which of `rowVerdict`'s two branches sent it here. The row
-                    // carries both fields, so this is read rather than guessed:
-                    // a status outside {correct, wrong} is one cause, an
-                    // untrusted provenance the other, and they want different
-                    // repairs — the first is a malformed cell, the second is a
-                    // question only the user can answer.
+                    // Which `rowVerdict` branch refused it: a bad status is a
+                    // malformed cell; untrusted provenance only the user can fix.
                     let row = &narrative.rows[i];
                     let st = row["status"].as_str().unwrap_or("");
                     let e = self.ungraded.entry(date.to_string()).or_default();
@@ -540,25 +502,18 @@ impl Truth {
                  below the floor, reported not enforced:",
                 self.standing.values().filter(|v| !v.is_empty()).count()
             );
-            // Named, not counted: these are `correct` rows that have never
-            // held, so they sit under the floor and no gate will go red for
-            // them; someone has to read this line.
-            //
-            // A malformed cell lands here looking like a defect: a way cell
-            // naming a composed label ("A, B") matches no component. Check the
-            // cell first; `../README.md` has the rule.
+            // Named, not counted: `correct` rows that never held sit under the
+            // floor, so no gate fails for them. A composed way label ("A, B")
+            // lands here too; check the cell first (`../README.md`).
             for (date, rows) in &self.standing {
                 for ts in rows {
                     eprintln!("  standing  {date} @{}", hm(*ts));
                 }
             }
         }
-        // Refusals, not failures; the count is not debt. `rowVerdict`
-        // declines a row whose status is `partial`/`unclear`, or whose
-        // provenance is untrusted (`unspecified`, or `inferred` read back off
-        // the pipeline's own output); the provenance ladder exists so those
-        // cannot gate. Printed so a refusal is visible. Never "fix" an
-        // untrusted row by writing `{user}`: that asserts the user confirmed it.
+        // Refusals, not debt: `partial`/`unclear` status or untrusted
+        // provenance. Never fix one by writing `{user}`: that claims the user
+        // confirmed it.
         if !self.ungraded.is_empty() {
             let n: usize = self.ungraded.values().map(|(a, b)| a + b).sum();
             eprintln!(
@@ -641,14 +596,9 @@ impl Truth {
                 );
             }
         }
-        // The bless path is not a way to make a red gate green.
-        // `ratchetUpFloor` takes a union, so only a key the narrative no longer
-        // describes can leave, and each drop is printed above. This writes the
-        // floor Lean computed, not "the keys that passed this run".
-        //
-        // Safe on a partial run: a date absent from `described` was not
-        // measured, and its floor passes through. But it writes one file, so
-        // the runner must give it every day in one process (see the header).
+        // Bless writes the floor Lean computed, a union: only a key the
+        // narrative no longer describes leaves, printed above. Unmeasured dates
+        // pass through, but all days must run in one process (see the header).
         if std::env::var("TRUTH_BLESS").is_ok() {
             let mut floor = serde_json::Map::new();
             for entry in g["floor"].as_array().map_or(empty, Vec::as_slice) {
@@ -669,10 +619,8 @@ impl Truth {
             return out;
         }
 
-        // Fails when the debt is paid, so an exemption cannot rot: a row that
-        // holds again must leave the list, or the next real regression on its
-        // key is invisible. Unmeasured days are excluded, or a one-day run
-        // would report the exemptions holding on days it never opened.
+        // Fails when an exemption holds again, so it must leave the list.
+        // Unmeasured days are excluded.
         let repaid: Vec<&(&str, i64, &str)> = KNOWN_UNHELD
             .iter()
             .filter(|(d, _, _)| self.reported.contains(*d))

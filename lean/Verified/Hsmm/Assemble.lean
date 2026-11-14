@@ -5,28 +5,18 @@ import Verified.Hsmm.TrainCandidates
 import Verified.Hsmm.StateSpace
 import Verified.Hsmm.SegmentEmission
 /-!
-# Model orchestration — the Lean twin of `buildHsmmModel`
+# Model orchestration
 
-Bundles the resolved per-day context (observation tensor, state space, route-graph
-model, train-generator coverage, place maps, duration fits, C4 flags, continuity)
-and produces the five per-cell model callbacks — `emitAt`/`entryAt`/`initAt`/
-`transAt`/`durAt` — by composing the factor kernels. Feeding these through
-`Assembly`'s `buildCellTensor`/`buildVector` (with `quantize`) yields the
-integer tensors the verified trellis reads — the whole model, built in Lean
-from parsed inputs.
+Bundles the resolved per-day context (observation tensor, state space, route
+model, coverage, place maps, duration fits, flags, continuity) and produces the
+five per-cell callbacks `emitAt`/`entryAt`/`initAt`/`transAt`/`durAt` from the
+factor kernels. `Assembly`'s `buildCellTensor`/`buildVector` turn them into the
+integer tensors the trellis reads.
 
-The callbacks add no new arithmetic over the composition layer: each is a lookup
-into the bundled maps (`isCovered ts`, `placeCoords`, the mode's `baselineFit`)
-feeding an already pinned composed callback. So the guards here check the
-resolution, that each callback pulls the right observation row, state, coverage
-verdict, and place datum, riding on the composition's own pins
-(`EmissionFull`/`Assembly`).
-
-The `date → tz`-resolved context and the shell-parsed edges / station annotation
-enter as already-built Lean structures (the settled I/O boundary). Still deferred
-(not in the served flag set or null in prod): the `placeNearLine` station-graph
-transition hard-zero, learned emissions, per-place HR. UNPROVEN; pinned by the
-`#guard`s.
+The callbacks add no arithmetic, only lookups feeding already pinned composed
+callbacks, so the guards here check that each pulls the right row, state,
+coverage verdict and place. Not yet ported: the `placeNearLine` transition
+hard-zero, learned emissions, per-place HR. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.Assemble
@@ -76,9 +66,7 @@ structure ModelContext where
       (`RouteModel.minuteLines`) — computed once per minute, not per state. -/
   minuteLines : Array RouteModel.MinuteLines := #[]
   /-- Per minute, each train state's rail gap evidence by `stateKey`, computed
-      once per bracketing pair (`RouteModel.railKey`) and shared by every minute
-      of it. A state absent from the map scores 0, as a non-train state
-      does in `routeRailEvidence`. -/
+      once per bracketing pair and shared by its minutes. Absent scores 0. -/
   railByMinute : Array (Std.HashMap String Float) := #[]
   /-- The emission parameters per mode: the shipped table unless a request
       carries a fitted one (`flags.fittedPriors`, the harness's arm). -/
@@ -136,14 +124,9 @@ structure ModelContext where
     of the journey state only; the outer trellis never holds it. -/
 def WAIT_MARK : String := "wait"
 
-/-- The longest segment the HSMM will consider, in minutes.
-
-A model parameter, not a tuning knob: the `maxD` of the `O(T·S·maxD)` trellis.
-This is the only copy, so the shell omits `maxD` and lets the request default to
-it rather than spelling 240 in Rust.
-
-Four hours: long enough for a workday stay to be one segment, short enough that
-the duration axis stays affordable at S ≈ 160. -/
+/-- The longest segment the HSMM considers, in minutes: the trellis's `maxD`.
+The only copy; the Rust request omits it. Four hours: a workday stay fits in one
+segment, and the duration axis stays affordable at S ≈ 160. -/
 def DEFAULT_MAX_DURATION : Nat := 240
 
 /-- A segment does not continue into itself: the duration prior alone owns a
@@ -176,9 +159,8 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     states := (buildStateSpace (places.map (·.1)) lines
       ++ [(⟨.train, none, some Emissions.UNKNOWN_METRO⟩ : State)]
       -- The journey state (`segEm.journey`): mode `unknown`, which no other
-      -- state wears; `Journey` fills its cell.
-      -- Two of them, so a journey longer than the bound decodes as two back
-      -- to back (the trellis never continues a state into itself).
+      -- state wears. Two of them, so a journey longer than the bound decodes as
+      -- two back to back (the trellis never continues a state into itself).
       ++ (if segEm.journey.isSome then [(⟨.unknown, none, none⟩ : State), (⟨.unknown, none, some "second"⟩ : State)] else [])
       ++ (if segEm.journey.any (·.wait) then [(⟨.stationary, none, some WAIT_MARK⟩ : State)] else [])).toArray
     model
@@ -193,14 +175,11 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
       let connGraph := RouteModel.toConnGraph model
       let trainStates := (buildStateSpace (places.map (·.1)) lines
         ++ [(⟨.train, none, some Emissions.UNKNOWN_METRO⟩ : State)]).filter (·.mode == .train)
-      -- Walked minutes (cadence at `INTERCHANGE_CADENCE_SPM` or more) and the
-      -- run each belongs to. An interchange minute is a walked minute whose run
-      -- lies entirely inside the gap: a run touching the gap's first bookend
-      -- is the walk to the platform (06-09: 20:21–20:28 past the 20:26 fix),
-      -- one touching its last is the walk off the train. No length is asked
-      -- of it — the interchange at King's Cross was a walk–pause–walk whose
-      -- minutes never ran three in a row. Rows are one a minute from the first
-      -- row's `ts`, so a bookend's row is arithmetic (`Observation.bucketIndex`).
+      -- Walked minutes (cadence ≥ `INTERCHANGE_CADENCE_SPM`) and their runs. An
+      -- interchange minute is a walked minute whose run lies inside the gap: a
+      -- run touching a bookend is the walk to or off the train. No minimum
+      -- length: an interchange can be walk–pause–walk. One row a minute, so a
+      -- bookend's row is arithmetic (`Observation.bucketIndex`).
       let walked : Array Bool := obs.map fun o => (o.cadence.getD 0) ≥ RouteModel.INTERCHANGE_CADENCE_SPM
       let runOf : Array (Nat × Nat) := Id.run do  -- (start, end) of each walked minute's run
         let mut out := Array.replicate walked.size (0, 0)
@@ -252,9 +231,8 @@ private def MIN_ONE : Float := 1
 private def SECONDS_PER_MINUTE_F : Float := 60
 
 /-- A span's speed `v` (km/h, squared GPS noise `noise`) under a mode's prior:
-    the moving Gaussian, the fixes' accuracy in quadrature with its spread
-    and beside it a standstill component for a vehicle that
-    stops (`ModePrior.stopShare`). -/
+    the moving Gaussian with the noise in quadrature, beside a standstill
+    component for a vehicle that stops (`ModePrior.stopShare`). -/
 def spanScore (prior : Emissions.ModePrior) (v noise : Float) : Float :=
   let extra := noise
   let sd := Float.sqrt (prior.speedStd * prior.speedStd + extra)
@@ -278,11 +256,10 @@ def pairSpan (obs : Array ObsRow) (t : Nat) : Option (Float × Float) := do
   pure (FloatScore.haversineMeters a.lat a.lon b.lat b.lon * perS,
     (ea * ea + eb * eb) * perS * perS)
 
-/-- The pair tables: per state the prefix sums of each pair's score under
-    it (with the mode's outlier share), and per minute the score of its pair
-    across a boundary: exponential at `pairBoundaryMeanKmh`, else uniform over
-    0–`uMaxKmh`. Both weighted as the base
-    emission; empty without the flag. -/
+/-- The pair tables: per state, prefix sums of each pair's score (with the
+    mode's outlier share); per minute, its cross-boundary pair's score,
+    exponential at `pairBoundaryMeanKmh`, else uniform over 0–`uMaxKmh`. Empty
+    without the flag. -/
 def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
   let q := c.segEm
   let spans := (Array.range c.obs.size).map (pairSpan c.obs)
@@ -304,13 +281,9 @@ def pairTables (c : ModelContext) : Array (Array Float) × Array Float :=
     | none, _ => SEG_ZERO
   (pref, bound)
 
-/-- The base emission's terms a minute still carries under `SegmentEmission`:
-    the segment scores the awake heart rate and fix presence of every mode it
-    has parameters for (`segEmAt`), the asleep heart rate with `asleep`, the
-    stay's position with `unlistedCentre`, and every fix's speed
-    (`pairTables`); the minute keeps the rest — cadence, the bed, a listed
-    place's distance, a fitless mode's presence and heart rate, and a fixless
-    minute's speed term. -/
+/-- The base emission terms a minute keeps under `SegmentEmission`: cadence,
+    the bed, a listed place's distance, a fitless mode's presence and heart
+    rate, and a fixless minute's speed. The segment scores the rest. -/
 def segBaseAt (q : SegmentEmission.Prepared) (c : ModelContext) (st : State) (o : ObsRow) : Float :=
   let thin := EmissionFull.toThin o
   let prior := Emissions.priorOf c.priors st
@@ -375,15 +348,11 @@ private def hourShare (profiles : Std.HashMap Int (Array Float)) (p : Int) (h : 
     if tot > SEG_ZERO then pr.getD h SEG_ZERO / tot else UNIFORM_HOUR
   | none => UNIFORM_HOUR
 
-/-- `P(place | a stay begins at hour h)` from counts of visits, smoothed with
-    two pseudo-counts (`alpha` on the place, `beta` on its hour): a place's
-    share `(n_p + α) / (V + α·(K + 1))`, its hour `(n_p·prof_p[h] + β·g[h]) /
-    (n_p + β)` with `g` the visit-weighted hour profile over all places, and
-    a place not on the list `α / (V + α·(K + 1)) · g[h]`, or a measured share
-    of stays at no listed place when `newShare` is given; normalised over the
-    places and that one. Per hour: each place's log probability and the
-    unlisted place's. Replaces the entry prior's ratios and floors, which gave
-    a four-visit place at an unprofiled hour about −12. -/
+/-- `P(place | a stay begins at hour h)` from visit counts with pseudo-counts
+    `alpha` (place) and `beta` (hour): share `(n_p + α) / (V + α·(K + 1))`,
+    hour `(n_p·prof_p[h] + β·g[h]) / (n_p + β)` with `g` the pooled hour
+    profile, and an unlisted place `α / (V + α·(K + 1)) · g[h]` or `newShare`.
+    Per hour, each place's log probability and the unlisted one's. -/
 def entryCountsTable (places : List Int) (visits : Std.HashMap Int Float)
     (profiles : Std.HashMap Int (Array Float)) (alpha beta : Float)
     (newShare : Option Float := none) :
@@ -413,10 +382,9 @@ def entryCountsAt (c : ModelContext) (st : State) (h : Nat) : Option Float :=
   | some (m, unk) => some (match st.placeId with | some pid => m.getD pid unk | none => unk)
   | none => none
 
-/-- The train generator's entry for a train starting at `ts`
-    (`SegmentEmission.TrainLine`): the line term — `log q` for a line it vouches
-    there, the rest sharing `1 − q` evenly, `1/n` each where it is silent or
-    vouches none of them — plus the coverage term. -/
+/-- The train generator's entry for a train starting at `ts`: `log q` for a
+    line it vouches there, the rest sharing `1 − q`, `1/n` each where it vouches
+    none, plus the coverage term. -/
 def trainLineLog (c : ModelContext) (tl : SegmentEmission.TrainLine) (covered : Bool) (ts : Int)
     (st : State) : Float :=
   let q := tl.vouchedShare
@@ -506,24 +474,18 @@ def spellTable (c : ModelContext) (maxD : Nat) (aIn pStay : Float) (base alt : M
   return out
 
 /-- `ModelContext.stayMoveCorr`: for every stay segment of length `d ≤ maxD`
-    ending at `e`, the best reading of its minutes as still or moving about the
-    place (`stayMove`'s rates, a moving minute's steps scored as a walk's) less
-    the all-still reading the stay's minutes already carry. A spell comes back:
-    the stay's first and last minutes are still, so a walk that leaves for
-    elsewhere is never a spell — only moving about inside, out and back
-    (`lean/experiments/round-trip-census.py`: of 68 narrated walks between two
-    named stays, one returns to the place it left). Three readings, swept
-    forward from each start: still before any spell (the all-still reading,
-    `0`), moving, and still after a spell. -/
+    ending at `e`, the best still-or-moving reading of its minutes less the
+    all-still one. A spell's first and last minutes are still, so it is moving
+    about inside, never leaving: of 68 narrated walks between named stays, one
+    returned to where it left (`lean/experiments/round-trip-census.py`). -/
 def stayMoveTable (c : ModelContext) (maxD : Nat) : FloatArray :=
   match c.segEm.p.stayMove with
   | some (aIn, pStay) => spellTable c maxD aIn pStay .stationary .walking
   | none => FloatArray.empty
 
-/-- What moving about adds to stay `x` over minutes `[lo, hi)`: at a listed
-    place, a building whose rooms he moves between. A placeless stay keeps
-    the all-still reading, so a short walk between two shops tens of metres
-    apart stays a walk. -/
+/-- What moving about adds to stay `x` over `[lo, hi)`, at a listed place only.
+    A placeless stay keeps the all-still reading, so a short walk between two
+    nearby shops stays a walk. -/
 def stayMoveAt (c : ModelContext) (x : State) (lo hi : Nat) : Float :=
   if x.mode != .stationary || x.placeId.isNone
     || c.stayMoveCorr.size == 0 || hi ≤ lo then SEG_ZERO
@@ -564,10 +526,8 @@ def segEmFrom (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
       + stayMoveAt c x st.lo st.hi
   | none => SEG_ZERO
 
-/-- `segEmFrom`'s terms one by one, for the path debugger: the heart-rate and
-    fix-presence model, the stay's centre, the fix pairs inside the
-    segment, the pair across its end, and the net displacement. Their sum is
-    `segEmFrom` (guarded below on a real context). -/
+/-- `segEmFrom`'s terms one by one, for the path debugger. They sum to
+    `segEmFrom` (guarded below). -/
 def segEmParts (c : ModelContext) (s d : Nat) (w : Option SegmentEvidence.Window)
     (st : SegmentEmission.Stats) : List (String × Float) :=
   let q := c.segEm
@@ -643,10 +603,9 @@ theorem durAtFrom_eq_W (c : ModelContext) (s d e : Nat) (base : Float) :
   unfold durAtFrom durAtFromW coveredAtE segEmAt
   cases c.states[s]? <;> rfl
 
-/-- `duration(s, d, obs[e])`: the mode's duration prior at `d`, the train-hop
-    relaxation and the segment emission at `e`. Defined as the split
-    (`durPriorBase` then `durAtFrom`), so the hoisted decoder and this reference
-    cannot drift. -/
+/-- `duration(s, d, obs[e])`: duration prior, train-hop relaxation and segment
+    emission. Defined as `durPriorBase` then `durAtFrom`, so the hoisted decoder
+    and this reference cannot drift. -/
 def durAt (c : ModelContext) (s d e : Nat) : Float :=
   durAtFrom c s d e (durPriorBase c s d)
 

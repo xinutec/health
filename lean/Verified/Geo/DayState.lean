@@ -3,27 +3,17 @@ import Verified.PlaceSource
 /-!
 # Day assembly: states, sleep attribution, known-place stays, day grammar
 
-Port of the Tier-5 day-assembly cluster:
-
 * `segmentsToDayStates`: the boundary sweep that turns segments + watch sleep
   windows into the day's non-overlapping state sequence, and `clipFuture`.
-* `derivePlaceForSleepAt`: the side-ranked choice of which stay names a sleep
-  window.
+* `derivePlaceForSleepAt`: which stay names a sleep window.
 * `detectKnownPlaceStays`: dwell clustering in raw fixes snapped to mined
   focus places.
 * `buildInferredStayState`.
 
-All of these are pure: no DB, no `Intl`, no async, so they live here whole,
-including the output records; the `DayState[]` is the decision. What stays
-shell is the DB reads behind the sleep windows and the empty-day bracket
-(`loadDaySleepWindows`, `loadEmptyDayBracket`), the tz/civil-date work
-(`dateBoundsUtc`, `nextDateString`), and the OSM resolution in
-`inferEmptyDayStatesFromBracket`.
+All pure. The DB reads, tz/civil-date work and OSM resolution stay in Rust.
 
-Exactness: everything here is comparison, counting and string handling ⇒
-exact, except `haversineMeters` (atan2) behind the cluster/snap tests, which is
-≤1 ULP and only ever compared against metre thresholds. UNPROVEN; pinned by the
-`#guard`s.
+Exact except `haversineMeters` (atan2, ≤1 ULP), only compared against metre
+thresholds. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.DayState
@@ -32,10 +22,8 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 
 /-! ## Shapes -/
 
-/-- A `DayStateMode`: every `TransportMode` plus `sleeping` (which comes from
-    the Fitbit windows, not GPS) and `bus` (which lives on a segment as
-    `vehicleKind`, not as a mode). Kept as `String` for the same reason
-    `Verified.Geo.Segments` does. -/
+/-- A `DayStateMode`: every `TransportMode` plus `sleeping` (from the Fitbit
+    windows) and `bus` (a segment's `vehicleKind`, not a mode). -/
 abbrev Mode := String
 
 /-- One non-overlapping stretch of the day. `none` is an absent optional field,
@@ -108,18 +96,14 @@ structure Seg where
 
 private def REST_MODES : List Mode := ["stationary", "sleeping"]
 
-/-- Two states are *contiguous* — no time to do anything between them — when
-    the gap is at most this. The adjacency laws fire only on contiguous pairs:
-    a real gap is unobserved time in which the user could legitimately have
-    travelled or alighted, so it is INCOMPLETE, not IMPOSSIBLE. Flagging it
-    would punish the honest "we didn't see this". -/
+/-- Two states are *contiguous* when the gap is at most this. The adjacency
+    laws fire only on contiguous pairs: a real gap is unobserved time in which
+    the user could have travelled, so it is incomplete, not impossible. -/
 private def CONTIGUITY_MAX_GAP_S : Int := 120
 
-/-- A gap no segment covers is a seam, not unobserved time, when it is
-    contiguous and touches a moving segment: nobody sleeps between getting up
-    and the walk out. Sleep is not synthesised there, or a Fitbit sleep running
-    half an hour past the getting up leaves half-minute "sleeping" rows either
-    side of the walk to breakfast. -/
+/-- A contiguous uncovered gap touching a moving segment is a seam, not
+    unobserved time, and gets no synthesised sleep: otherwise a Fitbit sleep
+    running past getting up leaves half-minute "sleeping" rows around the walk. -/
 def awakeSeam (segments : List Seg) (start finish : Int) : Bool :=
   let moving (g : Seg) : Bool :=
     let m := if g.vehicleKind == some "bus" then "bus" else g.refinedMode.getD g.mode
@@ -186,10 +170,8 @@ def stateForInterval (start finish : Int) (seg : Option Seg) (sleep : Option Sle
     | none => some (makeStateFromSegment s start finish segMode false)
     | some w =>
       if segMode == "stationary" then
-        -- A stay with no place under a window that has one: asleep there. The
-        -- window's place is the night's (named from where the evening ended);
-        -- a stay nobody placed asserts nowhere else. The decoder covers a dark
-        -- night with such a stay where the cascade leaves no segment at all.
+        -- A placeless stay under a placed window: asleep at the window's place.
+        -- The decoder covers a dark night with such a stay.
         if w.place.isSome && s.place.isNone then
           some { startTs := start, endTs := finish, mode := "sleeping", place := w.place,
                  placeSource := some "sleep", placeAt := w.placeAt,
@@ -197,10 +179,8 @@ def stateForInterval (start finish : Int) (seg : Option Seg) (sleep : Option Sle
                  minutesAsleep := if w.minutesAsleep > 0 then some w.minutesAsleep else none }
         -- Stationary at the sleep place: rewrite to sleeping.
         else if w.place.isSome && s.place == w.place then
-          -- Prefer the window's tz over the segment's displayTz so the
-          -- rewritten half matches the synthesized half — otherwise strict
-          -- string equality in `sameState` would stop the two halves of one
-          -- sleep from merging into a single row.
+          -- The window's tz, not the segment's displayTz, so both halves of one
+          -- sleep are `sameState` and merge.
           some { startTs := start, endTs := finish, mode := "sleeping", place := s.place,
                  placeSource := s.servedSource.map (·.rule),
                  placeAt := s.servedSource.bind (·.askedAt),
@@ -229,10 +209,9 @@ def mergeAdjacent (states : List DayState) : List DayState :=
       else acc ++ [s]
     | [] => [s]) []
 
-/-- A merged sleeping row either matches its window exactly (the asleep total
-    describes the whole row) or covers only part of it (split across a
-    mid-night event). Strip `minutesAsleep` on the partial ones so the UI never
-    claims a multi-hour asleep total on a row that is a fraction of it. -/
+/-- Strip `minutesAsleep` from sleeping rows that cover only part of their
+    window (split by a mid-night event), so the UI never shows a whole night's
+    asleep total on a fraction of it. -/
 def stripPartialMinutesAsleep (states : List DayState) (sleeps : List SleepWindow) :
     List DayState :=
   states.map (fun s =>
@@ -240,24 +219,15 @@ def stripPartialMinutesAsleep (states : List DayState) (sleeps : List SleepWindo
     else if sleeps.any (fun w => w.startTs == s.startTs && w.endTs == s.endTs) then s
     else { s with minutesAsleep := none })
 
-/-- The city header the timeline draws above a state — a port of the client's
-`cityForState`, not a new rule.
+/-- The city header the timeline draws above a state, as the client's
+`cityForState` computes it: on the merged span, so the drawn timeline does not
+move.
 
-Computed after the merge, on the merged span, because that is where the client
-computes it. Taking the city from a contributing segment instead would answer
-differently for any state that merged across a city edge, and the whole point is
-that the drawn timeline does not move.
-
-Two lookups, in the client's order:
-
-* the segment whose span contains the state's midpoint and has a city. The
-  bounds are inclusive at both ends there, and the midpoint is float — so the
-  comparison is doubled here rather than floored, which is the same question in
-  exact integers (`2·segStart ≤ start + end ≤ 2·segEnd`).
-* failing that, any segment sharing the state's place. This is not decoration: a
-  synthesised sleeping state runs beyond segment coverage (morning sleep before
-  the first fix), so its midpoint lands in a gap, and without the fallback the
-  header sits below the sleep row instead of above it.
+* The segment containing the state's midpoint and having a city. Bounds are
+  inclusive and the midpoint is doubled to stay in integers
+  (`2·segStart ≤ start + end ≤ 2·segEnd`).
+* Else any segment sharing the state's place: a synthesised sleep before the
+  first fix has its midpoint in a gap, and the header would land below it.
 -/
 def cityForState (segments : List Seg) (s : DayState) : Option String :=
   let mid2 := s.startTs + s.endTs
@@ -269,10 +239,9 @@ def cityForState (segments : List Seg) (s : DayState) : Option String :=
     | none => none
     | some p => (segments.find? (fun g => g.place == some p && g.city.isSome)).bind (·.city)
 
-/-- The day's non-overlapping state sequence. Boundary sweep: take every
-    distinct boundary, and for each sub-interval pick the state from the
-    covering segment and covering sleep window (probed at the MIDPOINT, so a
-    zero-length sub-interval cannot pick up a neighbour). -/
+/-- The day's non-overlapping state sequence: for each sub-interval between
+    distinct boundaries, the covering segment and sleep window, probed at the
+    midpoint so a zero-length sub-interval cannot pick up a neighbour. -/
 def segmentsToDayStates (segments : List Seg) (sleeps : List SleepWindow) : List DayState :=
   let bs := collectBoundaries segments sleeps
   if bs.length < 2 then [] else
@@ -293,21 +262,12 @@ def segmentsToDayStates (segments : List Seg) (sleeps : List SleepWindow) : List
     state that has not yet had a minute to exist. -/
 def MIN_SHOWN_S : Int := 60
 
-/-- Never assert the future. The pipeline fills a day to its end: the decoder's
-    last stay runs to midnight and an inferred stay to a survival horizon, so on
-    TODAY either can end ahead of now. Observed or not, nothing past now was
-    measured. Presentation-layer only — the pipeline still fills to the end, so
-    goldens replaying past days are unaffected.
+/-- Never assert the future: the pipeline fills a day to its end, so today's
+    last state can run past now. Presentation only; goldens are unaffected.
 
-    A state that straddles `now` is truncated to it — unless less than
-    `MIN_SHOWN_S` of it has happened, in which case it is dropped like a
-    wholly-future one: it will appear once a minute of it has.
-
-    `observedThrough`, the instant the decode's inputs reached: a state that
-    begins at or after it was drawn with no data under it — the decoder fills
-    the minutes it has not seen with its likeliest guess, a stay at the place
-    the hour favours — so it is inferred, the best guess marked as one. A state
-    already under way there was observed beginning, and stands. -/
+    A state straddling `now` is truncated to it, or dropped if less than
+    `MIN_SHOWN_S` of it has happened. A state beginning at or after
+    `observedThrough` had no data under it and is marked inferred. -/
 def clipFuture (states : List DayState) (nowTs : Int) (observedThrough : Option Int := none) :
     List DayState :=
   states.filterMap (fun s =>
@@ -325,14 +285,11 @@ private def PLACE_FALLBACK_MAX_GAP_SEC : Int := 6 * 3600
 /--
 The place naming a sleep window, or `none`.
 
-You cannot relocate while asleep, so the location is anchored at sleep
-onset and the wake side only confirms it. Candidates are ranked first by side
-(overlap 0 < bedtime 1 < wake 2), then by smallest gap. This is why a
-bedtime-side home beats a wake-side hospital that is nearer in time: on a
-"walked straight out of home" morning the first stationary place after waking
-is where you went to, not where you slept. It is continuity, not a residential
-bias — the same rule keeps inpatient nights at the hospital, whose bedtime side
-is the hospital.
+Nobody relocates asleep, so onset anchors the place and waking only confirms
+it. Candidates rank by side (overlap 0 < bedtime 1 < wake 2), then gap: on a
+morning that walks straight out of home, the first stop after waking is where
+you went, not where you slept. Continuity, not a residential bias: the
+same rule keeps an inpatient night at the hospital.
 -/
 def derivePlaceForSleepAt (winStart winEnd : Int) (segments : List Seg) :
     Option (String × Option (Float × Float)) :=
@@ -389,10 +346,9 @@ private def DEFAULT_PLACE_RADIUS_M : Float := 50
 private def meanBy (f : StayFix → Float) (xs : List StayFix) : Float :=
   (xs.foldl (fun acc x => acc + f x) 0) / Float.ofNat xs.length
 
-/-- Split fixes into runs: a new run starts whenever the next fix is farther
-    than `CLUSTER_RADIUS_M` from the RUNNING centroid (which is recomputed from
-    the whole current run after each accepted fix, so a slow drift stays one
-    run). Runs of fewer than 2 fixes, or shorter than `MIN_DWELL_SEC`, drop. -/
+/-- Split fixes into runs: a new run starts when the next fix is farther than
+    `CLUSTER_RADIUS_M` from the running centroid, so a slow drift stays one run.
+    Runs under 2 fixes or `MIN_DWELL_SEC` drop. -/
 def clusterFixes (fixes : List StayFix) : List (List StayFix) := Id.run do
   let mut runs : Array (List StayFix) := #[]
   let mut current : Array StayFix := #[]

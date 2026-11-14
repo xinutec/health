@@ -1,65 +1,27 @@
 /-!
 # Which stations does a line serve?
 
-The two halves of the `stationsOnLine` ask, with the host's SQL between them:
-`lineNamesMatching` resolves the line name against the mirror's names, and
-`filterStationsByLineProximity` keeps the stations within 300 m of some way of
-the line — a spatial judgement, so it is made here from the raw rows rather
-than in the database.
+`lineNamesMatching` resolves a line name against the mirror's names, and
+`filterStationsByLineProximity` keeps the stations within `MAX_DIST_M` of some
+way of the line. The mirror holds way geometry, not route membership, so
+membership is inferred from proximity. It over-includes stations beside a line
+that passes without stopping: safe as a veto, useless as an assertion.
 
-## The mirror does not record membership, so this infers it
+300 m is a physical offset: a surface station's node sits 20-80 m from the
+track, a tube station's at the street entrance with the tunnel up to 300 m away.
 
-OSM route relations name their member stops, but the local mirror ingests way
-geometry only. So membership is proximity-inferred: a station point within
-`MAX_DIST_M` of any way of the line counts as served. The error direction is
-over-inclusion — a station beside a passing-but-not-stopping line counts — which
-is what makes the result safe as a veto and useless as an assertion.
+`pointToSegmentM` is equirectangular at the segment midpoint with `111_320`
+m/deg, unlike `EpisodeGeometry.equirectMeters`, `WalkableRoute.metersBetween`,
+`OsmSpatial.lineDistDeg` and `haversineMeters`. Do not unify them: the corpus
+was blessed under each where it sits.
 
-300 m is not a tolerance, it is a physical offset: a surface station's named node
-sits 20-80 m from the track, while a tube station's named node is at the street
-entrance and the tunnel runs 150-300 m horizontally beneath it. One bar covers
-both regimes.
+`lineBaseToken` cuts from the first whitespace-preceded "line"/"lines" at a
+word boundary to the end, then trims: "Northern Line (Bank Branch)" →
+"Northern". "Lineside", "514a" and "Line 1" survive whole. ASCII trim suffices:
+the only non-ASCII in mirror line names is an inner en dash.
 
-## The line's own metric — a fifth distance function in this repo
-
-`pointToSegmentM` projects with an equirectangular approximation at the
-segment midpoint and `111_320` m/deg, then `Math.hypot`. That is:
-
-* not `Verified.Geo.EpisodeGeometry.equirectMeters`, which uses the first point's
-  cosine and `sqrt`;
-* not `WalkableRoute.metersBetween`;
-* not `OsmSpatial`'s `lineDistDeg`, which works in degrees against MariaDB's
-  own metric and is the one the five bbox lookups use;
-* not the sphere `haversineMeters` uses.
-
-They disagree, and each is load-bearing where it sits — the corpus was blessed
-under this one for this predicate. Do not unify them. (The mirror image of the
-`Board → Alight · Line` parser landmine: same-shaped functions, deliberately
-different, and the guards are what stop a well-meaning merge.)
-
-## `lineBaseToken` strips a qualifier, and the regex has teeth
-
-`/\s+lines?\b.*$/i` on `String.replace` (non-global — first match only), then
-`trim`. "Victoria Line" → "Victoria"; "Circle and District Lines" → "Circle and
-District"; "Northern Line (Bank Branch)" → "Northern", because `.*$` eats the
-parenthetical too. A name with no whitespace-preceded "line" is returned whole,
-so "514a" and "Belsize Fast Tunnel" survive intact — and "Line 1" survives as
-well, since `\s+` cannot match before position 0.
-
-`\b` after `lines?` is what stops "Lineside" matching: JS tries "line" first,
-finds no boundary between 'e' and 's' in "lines", backtracks to "lines", and
-then needs a boundary after the final 's'.
-
-## Deliberate choices
-
-* The DB reads (`loadRailwayLineNames`, `loadAllRailwayStations`) and the
-  in-process cache are shell. What arrives here is the pushed data.
-* `String.prototype.trim` covers Unicode `Zs`; `trimAscii` does not. Line names
-  in the mirror are ASCII apart from an en dash inside `London–Aylesbury Line`,
-  which neither trims nor folds.
-
-Exactness: `cos` and `hypot` enter, so distances are `approx` (≤1 ULP). The
-name functions and the kept-set are exact. UNPROVEN; pinned by the `#guard`s.
+Exactness: `cos` and the hypotenuse make distances `approx` (≤1 ULP); the name
+functions and the kept set are exact. UNPROVEN; pinned by the `#guard`s.
 -/
 
 namespace Verified.Geo.LineStations
@@ -141,9 +103,7 @@ private def qualifierStart (cs : Array Char) : Option Nat :=
 
 /--
 A line's name with any trailing " line"/" lines …" qualifier stripped, trimmed.
-
-Exported because the rail-stops cache matches relations with the same
-normalisation, and the two must not drift.
+Exported so the rail-stops cache normalises relations the same way.
 -/
 def lineBaseToken (lineName : String) : String :=
   let cs := lineName.toList.toArray
@@ -152,12 +112,8 @@ def lineBaseToken (lineName : String) : String :=
   | some i => (String.ofList (cs.toList.take i)).trimAscii.toString
 
 /--
-The distinct mirror names containing `lineName`'s base token, case-insensitively
-— exactly the set a `name LIKE '%base%'` would have matched.
-
-A name stripping to the empty base matches nothing. That is deliberate and not a
-degenerate case: `'%%'` would have matched every line in the mirror, so the
-indexed path stays conservative where the like was permissive.
+The distinct mirror names containing `lineName`'s base token, case-insensitively,
+as `name LIKE '%base%'` would. An empty base matches nothing, not everything.
 -/
 def lineNamesMatching (lineName : String) (allNames : Array String) : Array String :=
   let base := lineBaseToken lineName
@@ -222,22 +178,13 @@ private def parseWay (w : WayGeometry) : Option ParsedWay :=
       { coords := w.coords, minLat := f.1, maxLat := f.1, minLon := f.2, maxLon := f.2 })
 
 /--
-Keep the station candidates within `MAX_DIST_M` of any of the ways. Dedupes by
-name and preserves input order.
+Keep the station candidates within `MAX_DIST_M` of any of the ways, deduped by
+name, in input order: downstream journey resolution reads positions out of this
+list. WKT parsing is left to the caller.
 
-`filterStationsByLineProximityParsed`: the geometry decision alone. Parsing the
-WKT is boundary work, not part of the rule.
-
-Order is part of the answer, not incidental: downstream journey resolution reads
-positional relationships out of this list, so a set-equal-but-reordered result is
-a different result.
-
-The bbox pre-filter is a cheap reject before the per-segment math, and it is
-output-identical rather than approximate — the box is padded by `MAX_DIST_M`, so
-it is a conservative superset of the neighbourhood and the exact test behind it
-is unchanged. The longitude pad uses the smallest cosine over all the data (the
-most poleward latitude), which can only widen the box: a wider box costs extra
-exact tests, never a wrong reject.
+The bbox pre-filter is padded by `MAX_DIST_M`, with the longitude pad at the
+most poleward latitude, so it only ever widens: no output change, only fewer
+exact tests.
 -/
 def filterStationsByLineProximity
     (stations : Array StationCandidate) (ways : Array WayGeometry) : Array StationCandidate :=

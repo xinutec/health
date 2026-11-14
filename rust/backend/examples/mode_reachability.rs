@@ -1,71 +1,25 @@
-//! Two-hop reachability for the Lean mode table.
+//! Two-hop reachability for the Lean mode table: a `ServeEntry` mode must be
+//! both dispatched and executed by something.
 //!
-//! # The gap this closes
+//!   1. `dispatch` routes to it — read off the arms in `lean/ServeEntry.lean`.
+//!   2. Something executes it — recorded by `backend::lean::serve` when the run
+//!      sets `HEALTH_MODE_TRACE`. By execution, not grep: several callers build
+//!      the mode name from a parameter.
 //!
-//! A `ServeEntry` mode can be dispatched and exercised by nothing, and every
-//! check we had passed anyway. `lean_serve.rs` asks whether `dispatch` still
-//! routes to a mode — it does that by asking the mode a question, so it passes
-//! while no production or test code anywhere calls it. A caller-side test like
-//! `corpus/walk.rs` asks the other half, and passes if the arm and its one caller
-//! are renamed together. Neither sees a mode that is wired and dead, which is
-//! how `gpsoutliers` sat dispatched with nothing executing it.
+//! `lean_serve.rs` checks hop 1 by calling each mode, so its calls must not
+//! count for hop 2 (see `PROBES`); a caller-side test alone passes when the arm
+//! and its one caller are renamed together.
 //!
-//! So: two hops, and both must hold.
+//! "No caller" is about the arm, not the handler: `cliMain` reaches some
+//! handlers straight from `argv`, and a path only the serving binary takes
+//! reads as dead here. The reason field says which case an entry is.
 //!
-//!   1. `dispatch` routes to it — read off the table's own arms in
-//!      `lean/ServeEntry.lean`, which is the source of truth rather than a copy.
-//!   2. Something executes it — recorded by `backend::lean::serve`, the one
-//!      function every caller funnels through, when the run sets
-//!      `HEALTH_MODE_TRACE`. By EXECUTION and not by grep: several callers build
-//!      the mode from a parameter, so no scan of the source can see them.
+//! The exception list is held exact in both directions: an entry whose mode
+//! gained a caller fails, and so does one naming a mode no longer dispatched.
+//! `dead` entries ratchet down like the dev-lint baseline.
 //!
-//! And hop 1'S own probe must not satisfy hop 2 — see `PROBES`. That is the
-//! whole difference between this check and the one that already exists.
-//!
-//! # What "no caller" means here, exactly
-//!
-//! This asks about the arm, not about the handler behind it. `cliMain` reaches
-//! `railMain`, `geoMain`, `coverageResult` and others straight from `argv`
-//! without going through `dispatch`, so a mode can have a thoroughly exercised
-//! handler and a dead arm at the same time. That is a real finding rather than
-//! a blind spot — an arm nothing routes to is dead weight whatever else calls
-//! the function — but the reason field has to say which of the two it is, or a
-//! reader will take "no caller" for "no user".
-//!
-//! And the trace sees what the gate runs. A mode reached only by the serving
-//! binary on a path no test covers reads as dead here. That is also worth
-//! knowing, and it is also not the same thing as nothing calling it — again,
-//! the reason field carries the difference.
-//!
-//! # Why the exception list is checked in both directions
-//!
-//! Some modes must never have a caller — an ablation exists to be subtracted
-//! from a real mode, `ceilingbless` rewrites the oracle a gate judges against.
-//! So the check cannot be a bare gate; it needs a list of modes allowed to have no
-//! caller, and a list like that is a baseline that rots.
-//!
-//! It is held exact instead, which is the whole design. An entry whose mode has
-//! gained a caller fails, so the list cannot quietly grow stale. An entry naming
-//! a mode the table no longer dispatches fails, so a deleted arm cannot leave
-//! its excuse behind. The list can only be right or red.
-//!
-//! And the two kinds of excuse mean opposite things when they break, so the
-//! file names which one each line is. An `ablation` mode gaining a caller is a
-//! defect — something in the tree is treating an empty reply as an answer. A `dead` mode gaining one is the repair this task wants, and the
-//! line just has to go. Both are red, because both mean the file is now wrong;
-//! a reader of the failure should not have to guess which they are looking at.
-//!
-//! `dead` is a grandfathered count, in the same discipline as the dev-lint
-//! baseline this repository already carries: it ratchets down. Nothing may be
-//! added to it without a caller being removed, and the check cannot tell the
-//! difference — that part is a review question, which is why the reason field
-//! is not optional.
-//!
-//! # Running it
-//!
-//! Not a `#[test]`: it must see the whole run's trace, and `cargo nextest` runs
-//! test-per-process with no ordering between them. It is a gate row after the
-//! two test rows, which set `HEALTH_MODE_TRACE`.
+//! Not a `#[test]`: it needs the whole run's trace, and nextest runs one
+//! process per test. It is a gate row after the two test rows:
 //!
 //!     rm -f rust/target/mode-trace.txt
 //!     HEALTH_MODE_TRACE=1 cargo nextest run --manifest-path rust/Cargo.toml --workspace …
@@ -80,12 +34,8 @@ fn at(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel)
 }
 
-/// The modes `dispatch` routes to, read off its arms.
-///
-/// The arms are `| .ok "<mode>" => …`, one per line, and that shape is what
-/// makes the table readable as data. A mode reached any other way would be
-/// missed here — and would then surface as an untracked mode in the trace,
-/// which is the fourth check below.
+/// The modes `dispatch` routes to, read off its `| .ok "<mode>" => …` arms. A
+/// mode reached another way shows up as an untracked mode in the trace.
 fn dispatched(src: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for line in src.lines() {
@@ -105,17 +55,9 @@ fn dispatched(src: &str) -> BTreeSet<String> {
     out
 }
 
-/// Binaries whose calls do not count as a caller.
-///
-/// Without this the two hops collapse into one. `lean_serve` is the hop-1
-/// probe: it asks eight modes a question for the sole purpose of proving that
-/// `dispatch` still routes to them, and it is deliberately indifferent to the
-/// answer — several of its cases assert only that the mode failed in its own
-/// words. If its calls counted as use, every mode it probes would read as
-/// exercised and this check would assert exactly what `lean_serve` already
-/// asserts. It also asks for `nope`, which is not a mode at all.
-///
-/// The test binary, not the test: a file whose whole purpose is probing.
+/// Binaries whose calls do not count as a caller. `lean_serve` probes modes
+/// only to prove `dispatch` routes to them, indifferent to the answer; counting
+/// it would collapse the two hops into one.
 const PROBES: &[&str] = &["lean_serve"];
 
 /// Mode -> the binaries that asked for it, from the run's trace.
@@ -144,25 +86,17 @@ fn exercised(trace: &str) -> BTreeMap<String, BTreeSet<String>> {
     out
 }
 
-/// What an excused mode is excused as.
-///
-/// The kinds exist because a caller appearing means opposite things. On
-/// `Ablation` and `Bless` it is a defect — a gate run that reaches them is
-/// measuring an empty reply or rewriting its own oracle. On `Dead` it is the
-/// repair this task wants, and the only thing left to do is delete the line.
-/// Both are red, because both mean this file is now wrong; a reader of the
-/// failure should not have to work out which they are looking at.
+/// What an excused mode is excused as. A caller appearing is a defect on
+/// `Ablation` and `Bless` (a gate measuring an empty reply or rewriting its own
+/// oracle) and the wanted repair on `Dead`; both fail so the line is fixed.
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Kind {
     /// Exists to be subtracted from a real mode. A caller here is a defect.
     Ablation,
     /// Reached only under a bless env var a gate must not set. Caller = defect.
     Bless,
-    /// Deliberately kept reachable with no caller expected. `cliMain` reaches
-    /// the handler straight from argv, which does not route through this table,
-    /// so the arm is the only way a linked host can call it — deleting it would
-    /// recreate the linkability problem the ServeEntry split exists to solve.
-    /// Not debt, and it does not ratchet.
+    /// Kept with no caller expected: `cliMain` reaches the handler from argv, and
+    /// this arm is the only way a linked host can call it. Not debt.
     Spare,
     /// Has no caller and should have one. Grandfathered; ratchets down.
     Dead,
@@ -216,10 +150,8 @@ fn main() {
     let base_src = std::fs::read_to_string(&baseline_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", baseline_path.display()));
 
-    // Fail closed on an absent trace. With no file every mode reads as
-    // "exercised by nothing", which is a red gate for the wrong reason — and
-    // with an empty one the check would be judging a run that never happened.
-    // Either way the answer is "this row ran out of order", not a verdict.
+    // Fail closed on an absent or empty trace: it means this row ran out of
+    // order, not that every mode is dead.
     let Ok(trace_src) = std::fs::read_to_string(&trace_path) else {
         eprintln!(
             "no trace at {}\n\nThis row must run AFTER the test rows, and those \

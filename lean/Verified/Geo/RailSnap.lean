@@ -9,25 +9,14 @@ import Verified.FloatConst
 # Fix-cloud-weighted rail snapper
 
 Snap a confident train leg onto the rail network, routing between its two named
-stations along the line the user's past journeys actually traced rather than the
-geometrically shortest one. The whole module is pure geometry and graph search,
-including the vertex fusion:
+stations along the line past journeys traced rather than the shortest one. Pure
+geometry and graph search, vertex fusion included: vertices are keyed by
+`Verified.JsNum.coordKey7`, exact even where the string rendering is not.
+`parseRailWayName` and `metersBetween` are reused from `Worldline` and
+`WalkableRoute`.
 
-* Fusion is in Lean. `buildRailGraph` keys a vertex by its coordinates at 7
-  decimals, so the builder takes raw ways and fuses them itself, and the shell
-  only reads the rows. {@link Verified.JsNum.coordKey7} is the key — a graph
-  builder needs only to know when two coordinates agree, and that comparison is
-  exact even where the string rendering is not.
-* Reuse. `parseRailWayName` is `Verified.Geo.Worldline`'s (splitting on the
-  first separator with the tail rejoined) and `metersBetween` is
-  `Verified.Geo.WalkableRoute`'s.
-
-`parseLineMemberships` is here because `wayOnLine` is its only consumer in this
-cluster, which also lets `snapTrainSegmentOnLine` do its own line filtering.
-
-The private helpers `cloudPenalty`, `edgeWeight` and `bridgeGaps` are pinned
-through the adjacency `buildRailGraph` returns, which exposes every weight as an
-exact number.
+The private `cloudPenalty`, `edgeWeight` and `bridgeGaps` are pinned through
+the adjacency `buildRailGraph` returns, which exposes every weight exactly.
 -/
 
 namespace Verified.Geo.RailSnap
@@ -64,9 +53,7 @@ def isRailSubtype (subtype : Option String) : Bool :=
 /-! ## The historic fix cloud -/
 
 /-- A grid-hashed cloud of historic GPS fixes. The cell is `cloudFarM`, so the
-    3×3 neighbourhood of any point contains every fix within `cloudFarM` of it.
-    The `Int × Int` key partitions exactly as a `"cy,cx"` string key would, so
-    the bucket contents, hence every distance, are fixed. -/
+    3×3 neighbourhood of a point holds every fix within `cloudFarM` of it. -/
 structure FixCloud where
   cLat : Float
   cLon : Float
@@ -155,11 +142,9 @@ private def pushUniq (xs : Array String) (s : String) : Array String :=
   if xs.contains s then xs else xs.push s
 
 /--
-Parse a way's `name` into the rail line names it belongs to, handling OSM's
-composite tagging where lines sharing track are merged into one name string:
-strip a trailing directional, strip a trailing `" Line"`/`" Lines"`, split on
-`" and "` then `", "`, and add `" Line"` back to each part. Names not ending in
-`Line`/`Lines` yield nothing.
+The rail line names a way's `name` belongs to, where OSM merges lines sharing
+track into one name: strip a trailing directional and `" Line"`/`" Lines"`,
+split on `" and "` then `", "`, and re-add `" Line"`. Other names yield nothing.
 -/
 def parseLineMemberships (name : Option String) : Array String := Id.run do
   match name with
@@ -235,13 +220,11 @@ private def bridgeGaps (vertices : Array Pt) (adj : Array (Array Edge)) (cloud :
           for j in b do
             -- Each unordered pair once; skip vertices already adjacent.
             if j ≤ i then continue
-            -- `j` came out of a bucket this function filled with vertex
-            -- indices, and `adj` has one row per vertex; the guard is where
-            -- the tactic sees that.
-            -- ⚠ No `continue` between the guard and the writes: in `do`
-            -- notation a statement that can exit rebinds every mutable
-            -- variable after it, and a bound on the old `adj` no longer names
-            -- the new one.
+            -- `j` came from a bucket of vertex indices and `adj` has a row per
+            -- vertex; the guard is where the tactic sees that.
+            -- ⚠ No `continue` between the guard and the writes: a statement that
+            -- can exit rebinds every mutable after it, and the bound on the old
+            -- `adj` no longer names the new one.
             if h : j < vertices.size ∧ i < adj.size ∧ j < adj.size then
               let gap := metersBetween v (vertices[j]'h.1)
               if !(gap > bridgeM) && !((adj[i]'h.2.1).any (fun e => e.to == j)) then
@@ -253,11 +236,9 @@ private def bridgeGaps (vertices : Array Pt) (adj : Array (Array Edge)) (cloud :
                 adj := (adj.set i rowI h.2.1).set j rowJ (by rw [Array.size_set]; exact h.2.2)
   return adj
 
-/-- Build the undirected rail graph. Vertices are way nodes deduplicated by
-    rounded coordinate — a node shared by two ways becomes ONE vertex, which is
-    what connects ways into a network — and are numbered in first-seen order.
-    Edges are consecutive node pairs within a way, plus gap-bridge edges. Only
-    train-carrying subtypes are included. -/
+/-- Build the undirected rail graph of train-carrying ways. Vertices are way
+    nodes deduplicated by rounded coordinate, so a shared node joins two ways,
+    numbered in first-seen order. Edges are consecutive nodes plus gap bridges. -/
 def buildRailGraph (lines : Array RailWay) (cloud : FixCloud) (bridgeM : Float := gapBridgeM) :
     RailGraph := Id.run do
   let mut vertices : Array Pt := #[]
@@ -295,9 +276,8 @@ def buildRailGraph (lines : Array RailWay) (cloud : FixCloud) (bridgeM : Float :
 
 /-! ## Dijkstra
 
-The binary min-heap has the same shape as `Verified.Geo.WalkableRoute`'s.
-Relaxation is on strict improvement, so among equal-cost routes the winner is
-decided by which vertex the heap pops first. -/
+Relaxation is on strict improvement, so among equal-cost routes the heap's pop
+order picks the winner. -/
 
 /-- Priority and vertex travel together, so one bound covers both reads —
 the two parallel arrays this used to hold shared a length only by discipline. -/
@@ -452,10 +432,8 @@ def interpolateTimes (coords : Array Pt) (startTs endTs : Float) : Array Snapped
   return out
 
 /-- The shared tail of both snappers: build the graph, route between the two
-    resolved stations and time-interpolate the result. `none` on every refusal —
-    no rail geometry, a station off the network, the two stations landing on one
-    vertex, or no path — which means "draw the raw fixes", never a guessed
-    line. -/
+    stations and time-interpolate. `none` on any refusal means "draw the raw
+    fixes", never a guessed line. -/
 private def routeBetweenStations (seg : TrainSegment) (lines : Array RailWay) (cloud : FixCloud)
     (board alight : ResolvedStation) (line : Option String) : Option SnapResult := Id.run do
   let graph := buildRailGraph lines cloud
@@ -475,15 +453,10 @@ private def routeBetweenStations (seg : TrainSegment) (lines : Array RailWay) (c
   | _, _ => return none
 
 /--
-Snap a confident train segment onto the rail network. `corridorFixes` is the
-cloud of historic GPS fixes for this route — the union of every past journey
-between the same two stations — and the search is weighted to follow it, so the
-snapped path traces the line actually ridden rather than the geometrically
-shortest one.
-
-`none` when the segment cannot be snapped: a too-thin corridor, a label that is
-not a station pair, an unknown or off-network station, or two disconnected
-stations.
+Snap a confident train segment onto the rail network, weighted to follow
+`corridorFixes`, every past journey's fixes between the same two stations.
+`none` for a thin corridor, a non-station label, an unknown or off-network
+station, or disconnected stations.
 -/
 def snapTrainSegment (seg : TrainSegment) (lines : Array RailWay) (stations : Array OsmStation)
     (corridorFixes : Array Pt) : Option SnapResult := Id.run do
@@ -499,12 +472,9 @@ def snapTrainSegment (seg : TrainSegment) (lines : Array RailWay) (stations : Ar
     | _, _ => return none
 
 /--
-Snap a confident train leg onto its known line, routing between the two named
-stations over only that line's ways, with no historic fix cloud: when the label
-carries a line name the line itself is the disambiguator, so the geometric
-shortest path within that line's ways is the ridden route. The restriction is
-done here, with {@link wayOnLine} — nothing is asked of the caller beyond the
-full way list.
+Snap a confident train leg onto its named line: the shortest path over only
+that line's ways (filtered here by {@link wayOnLine}), with no fix cloud, since
+the line itself disambiguates.
 -/
 def snapTrainSegmentOnLine (seg : TrainSegment) (lines : Array RailWay)
     (stations : Array OsmStation) : Option SnapResult := Id.run do
@@ -526,16 +496,12 @@ def snapTrainSegmentOnLine (seg : TrainSegment) (lines : Array RailWay)
 
 /-! ## A route relation's own track
 
-A long mainline ride has no connected track in the local mirror: the mirror is
-fetched around the fixes, and a TGV's fixes are kilometres apart. OSM records
-the service itself as a route relation whose member ways are the ridden track,
-so the path is searched over those ways alone. They are not one ordered line —
-a relation lists both branches and some one-direction pieces, and consecutive
-ways can meet without sharing a node — so near-touching ways are bridged, wider
-than over the open network: every way here is the same route, so a bridge
-cannot jump to another line. Measured on TGV 406 (Paris – Hendaye/Tarbes, 1,931
-ways): bridged at 50 m Hendaye and Gare Montparnasse do not connect, at 200 m
-they do along 770 km, and 1 km changes nothing. -/
+A long mainline ride has no connected track in the mirror, which is fetched
+around fixes kilometres apart, so the path is searched over the route
+relation's own ways. Those are unordered and can meet without sharing a node,
+so they are bridged wider than the open network: every way is the same route.
+On TGV 406 (1,931 ways) 50 m fails to connect, 200 m connects 770 km, and 1 km
+changes nothing. -/
 
 def relationBridgeM : Float := 200
 
@@ -581,11 +547,9 @@ private def relW (a b : Float) : RailWay := ⟨none, some "rail", #[⟨a, 0.0⟩
 
 /-! ## Guards
 
-Reference values are compared to within 1e-9 because they were measured with an
-overflow-careful hypot where `metersBetween` uses `sqrt` of the sum of squares.
-The nets below are the shell-side fusion: a line-restricted way set fuses a
-different set of ways and therefore numbers its vertices differently, so each
-scenario carries its own. -/
+Reference values match to 1e-9: they were measured with an overflow-careful
+hypot. Each scenario carries its own nets, since a line-restricted way set
+numbers its vertices differently. -/
 
 section Guards
 
