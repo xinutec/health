@@ -75,3 +75,56 @@ fn the_cap_counts_code_points() {
     assert_eq!(got.chars().count(), 2);
     assert_eq!(got, "\u{1D11E}\u{1D11E}");
 }
+
+/// Every client-sent field reaches the line flattened, not only the label: a
+/// newline in `kind`, `path` or `at` would forge a line as well.
+#[test]
+fn a_telemetry_line_is_one_line_whatever_field_carries_the_break() {
+    use backend::routes::logging::telemetry_line;
+    init();
+    let forged = "x\nclient-event user=victim";
+    for field in ["kind", "path", "label", "at"] {
+        let mut ev = serde_json::json!({ "kind": "tap", "path": "/day", "label": "ok", "at": 1 });
+        ev[field] = serde_json::json!(forged);
+        let line = telemetry_line("u", "owner", &ev)
+            .unwrap()
+            .expect("an object event logs");
+        assert!(!line.contains('\n'), "{field}: {line:?}");
+        assert!(
+            line.contains("x client-event user=victim"),
+            "{field}: {line:?}"
+        );
+    }
+    // A non-object element logs nothing.
+    assert_eq!(
+        telemetry_line("u", "owner", &serde_json::json!(3)).unwrap(),
+        None
+    );
+}
+
+/// `/client-log`'s `event` is client text too, and `data`, though serialised
+/// as JSON (which escapes `\n`), can still carry U+2028 and bidi overrides.
+#[test]
+fn a_client_log_line_is_one_line() {
+    use backend::routes::logging::client_log_line;
+    init();
+    let line = client_log_line(
+        "u",
+        &serde_json::json!({ "event": "boom\n[client/victim] x" }),
+    )
+    .unwrap();
+    assert_eq!(line, "[client/u] boom [client/victim] x");
+    let line = client_log_line(
+        "u",
+        &serde_json::json!({ "event": "e", "data": { "m": "a\u{2028}b\u{202e}c" } }),
+    )
+    .unwrap();
+    assert!(
+        !line.contains('\u{2028}') && !line.contains('\u{202e}'),
+        "{line:?}"
+    );
+    assert_eq!(
+        client_log_line("u", &serde_json::json!({ "event": "e" })).unwrap(),
+        "[client/u] e"
+    );
+}

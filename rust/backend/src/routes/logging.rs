@@ -2,9 +2,9 @@
 //! (what a person did in the browser) and `/client-log` (what broke). Both
 //! answer 204; the client neither reads nor retries.
 //!
-//! ⚠ The client writes into evidence: a newline in a label would forge lines,
-//! so `Verified.LogLine.oneLine` (called, not reimplemented) is this file's
-//! security boundary.
+//! ⚠ The client writes into evidence: a newline in any field it sends would
+//! forge lines, so every such field goes through `Verified.LogLine.oneLine`
+//! (called, not reimplemented), this file's security boundary.
 //!
 //! `actor=` beside `user=`: a share recipient's session carries the owner's
 //! id, and a log that silently attributes their clicks to the owner lies.
@@ -26,7 +26,9 @@ use crate::state::AppState;
 /// Most events one POST may log.
 const MAX_EVENTS: usize = 100;
 /// Most code points one label may contribute to a line.
-const MAX_LABEL: i64 = 160;
+const MAX_LABEL: usize = 160;
+/// Most code points of `kind`, `path` or `at`.
+const MAX_FIELD: usize = 200;
 /// Most UTF-16 units of `event` a client-log line may carry.
 const MAX_EVENT_NAME: usize = 100;
 /// Most UTF-16 units of serialised `data`.
@@ -80,6 +82,59 @@ fn js_string(v: Option<&Value>) -> String {
     }
 }
 
+/// One client-sent field, flattened to a single line of at most `max` code
+/// points.
+fn flat(raw: &str, max: usize) -> anyhow::Result<String> {
+    lean::one_line(raw, i64::try_from(max)?)
+}
+
+/// The log line for one telemetry event, or `None` for a non-object element.
+/// Every client-sent field is flattened; an error means the line must not be
+/// written.
+pub fn telemetry_line(user_id: &str, actor: &str, event: &Value) -> anyhow::Result<Option<String>> {
+    let Some(obj) = event.as_object() else {
+        return Ok(None);
+    };
+    let field = |k: &str, max: usize| flat(&js_string(obj.get(k)), max);
+    let kind = field("kind", MAX_FIELD)?;
+    let path = field("path", MAX_FIELD)?;
+    let label = field("label", MAX_LABEL)?;
+    let at = field("at", MAX_FIELD)?;
+    let at = if at.is_empty() { "0".to_string() } else { at };
+    Ok(Some(format!(
+        "client-event user={user_id} actor={actor} kind={kind} path={path} label={label} at={at}"
+    )))
+}
+
+/// The log line for one `/client-log` body: `event` and the serialised `data`,
+/// both flattened (JSON escapes `\n` but not U+2028 or bidi overrides).
+pub fn client_log_line(user_id: &str, body: &Value) -> anyhow::Result<String> {
+    let event = flat(
+        &truncate_utf16(&js_string(body.get("event")), MAX_EVENT_NAME),
+        MAX_EVENT_NAME,
+    )?;
+    let data = match body.get("data") {
+        None => String::new(),
+        Some(v) => match serde_json::to_string(v) {
+            Ok(s) => flat(&truncate_utf16(&s, MAX_DATA), MAX_DATA)?,
+            // Loud: a value just parsed should re-serialise, and a silent ""
+            // would hide lost data. The line still goes out, incomplete.
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "client-log data could not be re-serialised; the line below is MISSING its data"
+                );
+                String::new()
+            }
+        },
+    };
+    Ok(if data.is_empty() {
+        format!("[client/{user_id}] {event}")
+    } else {
+        format!("[client/{user_id}] {event} {data}")
+    })
+}
+
 /// `POST /telemetry` — what a person did. Always 204.
 pub async fn telemetry(
     State(_st): State<AppState>,
@@ -107,27 +162,14 @@ pub async fn telemetry(
 
     let actor = actor_of(&session);
     for raw in events.iter().take(MAX_EVENTS) {
-        // A non-object element is skipped, not rejected. One malformed event
-        // must not discard the batch around it.
-        let Some(obj) = raw.as_object() else { continue };
-        let kind = js_string(obj.get("kind"));
-        let path = js_string(obj.get("path"));
-        let at = js_string(obj.get("at"));
-        // The flattening. See the module note on why this is a boundary.
-        let label = match lean::one_line(&js_string(obj.get("label")), MAX_LABEL) {
-            Ok(l) => l,
-            Err(e) => {
-                // Refuse to log the line rather than log an unflattened label:
-                // the whole point is that this text cannot be trusted raw.
-                tracing::error!(error = %e, "oneLine failed; dropping a telemetry event");
-                continue;
-            }
-        };
-        let at = if at.is_empty() { "0".to_string() } else { at };
-        tracing::info!(
-            "client-event user={} actor={actor} kind={kind} path={path} label={label} at={at}",
-            session.user_id
-        );
+        match telemetry_line(&session.user_id, actor, raw) {
+            Ok(Some(line)) => tracing::info!("{line}"),
+            // A non-object element is skipped, not rejected: one malformed
+            // event must not discard the batch around it.
+            Ok(None) => {}
+            // Refuse the line rather than log unflattened client text.
+            Err(e) => tracing::error!(error = %e, "oneLine failed; dropping a telemetry event"),
+        }
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -159,31 +201,9 @@ pub async fn client_log(
             .into_response();
     }
 
-    let event = truncate_utf16(&js_string(body.get("event")), MAX_EVENT_NAME);
-    let data = body.get("data");
-    let data_str = match data {
-        None => String::new(),
-        Some(v) => match serde_json::to_string(v) {
-            Ok(s) => truncate_utf16(&s, MAX_DATA),
-            // Loud: a value just parsed should re-serialise, and a silent ""
-            // would hide lost data. The line still goes out, incomplete.
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    "client-log data could not be re-serialised; the line below is MISSING its data"
-                );
-                String::new()
-            }
-        },
-    };
-
-    // ⚠ Not flattened: `/client-log` can still inject newlines into the log.
-    // Flattening would change what production logs, so it is recorded here
-    // rather than fixed.
-    if data_str.is_empty() {
-        tracing::info!("[client/{}] {event}", session.user_id);
-    } else {
-        tracing::info!("[client/{}] {event} {data_str}", session.user_id);
+    match client_log_line(&session.user_id, &body) {
+        Ok(line) => tracing::info!("{line}"),
+        Err(e) => tracing::error!(error = %e, "oneLine failed; dropping a client-log line"),
     }
     StatusCode::NO_CONTENT.into_response()
 }
