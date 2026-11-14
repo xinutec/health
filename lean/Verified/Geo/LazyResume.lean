@@ -4,8 +4,8 @@ import Verified.Geo.LazyInv
 # Lazy Dijkstra: resume-read stability
 
 The single fact the matcher's per-source route cache rests on: the target
-reads after settling do not depend on where you resume from. The twin's
-`QRouteCache` pauses a source's search at one target and resumes it at the
+reads after settling do not depend on where you resume from. The matcher's
+`RouteCache` pauses a source's search at one target and resumes it at the
 next; this file proves the value it then reads — `dist`, `prev`, and `done`
 at the queried target — is exactly what a search resumed from the source's
 *start* would read.
@@ -98,8 +98,7 @@ theorem iter_stop_read_stable {g : Graph} {maxR t L : Nat} (hwf : WFEdges g)
 trajectory point `iter m s` reports the same target reads as one resumed
 from the start `s`, provided `k` is `t`'s first stop from `s` (reachable
 within the fuel). This is the per-source cache soundness at the read level:
-the value the twin's `rd.settle(t)` returns is independent of the paused
-state it resumes. -/
+the value a resumed settle returns is independent of the paused state. -/
 theorem lsettle_read_stable {g : Graph} {maxR t fuel L : Nat} (hwf : WFEdges g)
     {s : LState} (hs : LInv g L s) {k : Nat} (hkf : k ≤ fuel)
     (hstop : stopAt t (iter g maxR k s) = true)

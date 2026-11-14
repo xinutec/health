@@ -7,31 +7,21 @@ import Verified.FloatConst
 /-!
 # Continuous map walk reconstruction
 
-A walk is drawn as the maximum-a-posteriori continuous trajectory rather than
-the cheapest network path that touches the GPS dots. Three factors are fused —
-an accuracy-weighted GPS emission, a smoothness/physics prior on the second
-difference, and soft walkable-surface adherence — so the artifacts the cleanup
-passes chase (invented out-and-back detours, apex spikes, right-angle
-staircases) are low-probability under the model and never form.
+A walk drawn as the maximum-a-posteriori continuous trajectory, not the
+cheapest network path through the GPS dots. An accuracy-weighted GPS emission,
+a smoothness prior on the second difference and soft walkable-surface adherence
+are fused, so detours, apex spikes and staircases are improbable and never form.
 
-All factors are quadratic once the attractor targets are fixed, so each outer
-iteration is a linear least squares; the two coordinates decouple and the normal
-matrix is SPD and pentadiagonal, solved by Jacobi-preconditioned conjugate
-gradient with the targets recomputed each outer iteration (ICP-style).
+With the attractor targets fixed every factor is quadratic, so each outer
+iteration is a linear least squares: the coordinates decouple and the
+pentadiagonal SPD system is solved by Jacobi-preconditioned conjugate gradient,
+with targets recomputed per iteration (ICP-style). `reconstructWalk` adds a
+redescending Geman-McClure emission annealed by graduated non-convexity
+(deterministic, for the corpus), building repulsion, endpoint anchors and a
+pedometer step-length contraction.
 
-`reconstructWalk` is the robust upgrade: a redescending Geman-McClure emission
-annealed by graduated non-convexity (deterministic, no RNG — the golden corpus
-needs reproducibility), plus building repulsion, endpoint anchors and a
-pedometer-derived step-magnitude contraction.
-
-The module is pure geometry and linear algebra, so all of it ports. What stays
-shell: `reconstructProfileFromEnv` (env reads — the caller passes a resolved
-profile) and the `WALK_RECON_DEBUG` tracing.
-
-`Math.hypot` is `sqrt (x² + y²)` here, as elsewhere in this port. It agrees to
-≤1 ULP, and the PCG converges to a relative residual of 1e-14, so the solved
-positions agree far below any geographic significance — but they are not
-bit-identical, and the guards below compare with a tolerance rather than `==`.
+The caller passes a resolved profile. Hypot is `sqrt (x² + y²)` and the PCG
+stops at a 1e-14 relative residual, so the guards compare with a tolerance.
 -/
 
 namespace Verified.Geo.WalkSmooth
@@ -206,10 +196,9 @@ structure MapSmoothProfile where
   iterations : Nat := 6
   deriving Inhabited
 
-/-- Refining an already map-matched line: the attractor is the vetted matched
-    path itself (a single corridor), so there is no wrong-parallel-way to flip
-    onto. The network σ is deliberately loose so the corners can round; it is the
-    raw GPS that says where the true diagonal was. -/
+/-- Refining an already map-matched line: the attractor is the matched path
+    itself, so there is no wrong parallel way to flip onto. The network σ is
+    loose so corners can round toward where the raw GPS was. -/
 def REFINE_MATCHED_PROFILE : MapSmoothProfile :=
   { minFixes := 4, gpsSigmaFallbackM := 12, gpsSigmaMinM := 4,
     smoothSigmaM := 5, networkSigmaM := 14, networkRadiusM := 45, iterations := 6 }
@@ -292,10 +281,9 @@ def countSharpTurns (pts : Array Pt) (thresholdDeg : Float := 50) : Nat := Id.ru
 /-- How far (m) from a staircase-artifact corner the full de-boxing budget
     reaches; it tapers linearly to the tight budget at this distance. -/
 private def REFINE_CORNER_REACH_M : Float := 30
-/-- Sharp corners clustered within this of each other are the staircase-artifact
-    signature. An isolated sharp corner is real street geometry: the walked
-    pavement goes AROUND it, so "rounding" it puts the line through the corner
-    building. -/
+/-- Sharp corners clustered within this are the staircase artefact. An isolated
+    sharp corner is real street geometry, and rounding it would put the line
+    through the corner building. -/
 private def REFINE_STAIRCASE_NEIGHBOR_M : Float := 25
 /-- A real pedestrian-crossing double-back is exactly two clustered sharp
     corners; a genuine staircase has many. -/
@@ -309,13 +297,9 @@ private def REFINE_STRAIGHT_DEVIATION_M : Float := 2.5
 private def SPLICE_MAX_LEN_RATIO : Float := 1.6
 private def SPLICE_MAX_EXTRA_M : Float := 50
 
-/-- Refine an already map-matched walk line: round its corners toward where the
-    raw GPS actually was, using the matched path itself as the on-route
-    corridor. `none` when the matched path or the fix count is too thin.
-
-    The robust half of the continuous smoother — attracting to the one vetted
-    line rather than the whole walkable network keeps the matcher's
-    route-faithfulness while gaining the smoother's natural geometry. -/
+/-- Refine a map-matched walk line: round its corners toward the raw GPS, using
+    the matched path as the corridor, so the matcher's route stays while the
+    geometry becomes natural. `none` when the path or fixes are too thin. -/
 def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
     (profile : MapSmoothProfile := REFINE_MATCHED_PROFILE)
     (maxDeviationM : Float := 12) : Option (Array SmoothedPoint) := Id.run do
@@ -361,10 +345,9 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
         let f := budget / near.distM
         ⟨near.lat + (p.lat - near.lat) * f, near.lon + (p.lon - near.lon) * f, p.ts⟩
 
-  -- Splice back skipped route vertices: the smoother resamples the matched line
-  -- one-vertex-per-fix, so a route corner with no fix near it vanishes and the
-  -- chord cuts the block — a defect the per-vertex clamp is structurally blind to
-  -- (every vertex is on-route; the edge shortcuts).
+  -- Splice back skipped route vertices: resampling one vertex per fix drops a
+  -- corner with no fix near it, and the chord cuts the block, which the
+  -- per-vertex clamp cannot see.
   let toXY := fun (p : Pt) =>
     ((p.lon - mp0.lon) * 111320.0 * cl, (p.lat - mp0.lat) * 111320.0)
   -- `cum[k]` is the arclength of matched vertex `k`: one entry per vertex.
@@ -454,15 +437,12 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
 
 /-! ## `reconstructWalk` — the robust, annealed map reconstruction
 
-The upgrade over `smoothWalkMap`: no input is trusted as ground truth. The plain
-smoother is a convex weighted least-squares — it believes every fix's position,
-so a tight cluster of confidently-wrong fixes (a post-tunnel GPS reacquire
-smear) still wins and the line detours to follow it. This fixes that with a
-smarter minimiser, not more trust in the numbers: a redescending Geman-McClure
-emission (outliers inferred from mutual inconsistency, not the reported
-accuracy), graduated non-convexity as deterministic annealing, accuracy as a
-weak clamped scale prior only, the map as first-class factors including a
-one-sided building repulsion, and optional endpoint anchors.
+The plain smoother believes every fix, so a tight cluster of confidently wrong
+fixes (a post-tunnel reacquire smear) wins and the line detours. Here outliers
+are inferred from mutual inconsistency by a redescending Geman-McClure emission
+under graduated non-convexity, accuracy is only a weak clamped scale prior, and
+the map enters as factors, including a one-sided building repulsion and
+optional endpoint anchors.
 -/
 
 /-- A soft endpoint anchor: pull a terminal state toward a confident coordinate. -/
@@ -506,15 +486,13 @@ structure ReconstructProfile where
   networkRobustM : Float := 12
   /-- Building-repulsion σ; small → buildings are near-impassable. -/
   buildingSigmaM : Float := 1.5
-  /-- Clearance band (m): a state is repelled to at least this far outside the
-      nearest wall whenever it is inside a footprint OR within the band outside
-      it. A field, so a chord grazing a corner is pushed off the wall even with
-      no vertex inside it. -/
+  /-- Clearance band (m): a state inside a footprint or within this of its wall
+      is repelled to at least this far outside, so a chord grazing a corner is
+      pushed off. -/
   buildingClearM : Float := 4
-  /-- Densify the state chain to ≤ this spacing by inserting free states.
-      Effectively off by default (vertex-per-fix): free states do not reduce
-      building crossing (those residuals are OSM graph gaps) and inflate
-      corridor stall ~2×. -/
+  /-- Densify the state chain to this spacing with free states. Effectively off
+      (one state per fix): free states did not reduce building crossings and
+      doubled corridor stall. -/
   targetSpacingM : Float := 100000
   /-- A free state's weak, non-robust tether toward its interpolated position on
       the raw GPS corridor. Large → nearly free. -/
@@ -801,10 +779,8 @@ def WalkGrid.ringContaining (g : WalkGrid) (px py : Float) : Int := Id.run do
 
 /-! ### The stages of `reconstructWalk`
 
-Split out as stages, not as a decomposition of the solver: each is a contiguous
-prefix or suffix of the whole with clean inputs and outputs. The GNC/IRLS core
-stays whole: it threads too much shared mutable state to divide without
-inventing a state record.
+Each stage is a contiguous prefix or suffix of the whole with clean inputs and
+outputs; the GNC/IRLS core stays whole, sharing too much mutable state.
 -/
 
 /-- One state of the chain the solver runs over: an observed fix (`obsW > 0`)
@@ -824,10 +800,9 @@ structure ChainState where
     than six parallel arrays that happen to agree. -/
 abbrev StateChain := Array ChainState
 
-/-- Densify: keep every fix as an observed state and insert free states so the
-    spacing is ≤ `targetSpacingM`. Free states are placed purely by smoothness +
-    network + building, so the line can bend AROUND a block between two fixes — a
-    straight chord would otherwise cut through it with no vertex inside to repel. -/
+/-- Densify: every fix an observed state, plus free states to `targetSpacingM`,
+    placed by smoothness, network and buildings, so the line can bend around a
+    block between two fixes. -/
 def buildStateChain (fixes : Array WalkFix) (fr : Frame) (profile : ReconstructProfile) :
     StateChain := Id.run do
   let mut states : StateChain := #[]
@@ -854,10 +829,8 @@ def buildStateChain (fixes : Array WalkFix) (fr : Frame) (profile : ReconstructP
             ts := jsRound (fix.ts + (next.ts - fix.ts) * f) }
   return states
 
-/-- The leg's spatial index in the metric frame: walkable segments plus building
-    rings (a ring with fewer than 3 points is not a polygon and is dropped).
-    `none` when the leg has neither — what makes the per-state lookups
-    near-constant instead of a whole-network scan. -/
+/-- The leg's spatial index in the metric frame: walkable segments and building
+    rings (fewer than 3 points is no polygon). `none` with neither. -/
 def buildLegGrid (ways : Ways) (buildings : Array Ring) (fr : Frame) (cell : Float) :
     Option WalkGrid := Id.run do
   let mut segs : Array (Array Float) := #[]
@@ -877,14 +850,10 @@ def buildLegGrid (ways : Ways) (buildings : Array Ring) (fr : Frame) (cell : Flo
     return some (mkWalkGrid segs ringPts cell)
   return none
 
-/-- Indoor-presence exemption: a run of ≥ `minFixes` consecutive observed fixes
-    whose RAW positions sit inside the SAME footprint is evidence of genuine entry
-    (a café, a shop, a mall walkway) — for those states, and the free states
-    between them, the building is occupied space rather than an obstacle: no
-    clearance pull, no hard projection, no corner routing. Weight-don't-filter:
-    many points inside beat the impossibility prior; an isolated point or an
-    interpolated chord does not. Judged on the RAW observations, so the exemption
-    is stable evidence the solver cannot drag. -/
+/-- Indoor-presence exemption: `minFixes` or more consecutive fixes whose raw
+    positions sit inside the same footprint are genuine entry (a café, a mall),
+    so for those states and the free states between, the building is space, not
+    an obstacle. Judged on raw observations, which the solver cannot drag. -/
 def presenceExempt (chain : StateChain) (grid : Option WalkGrid) (minFixes : Nat) :
     Array Bool := Id.run do
   let m := chain.size
@@ -924,11 +893,9 @@ def chainLenM {n : Nat} (e nn : Vector Float n) : Float := Id.run do
     if h : i + 1 < n then len := len + hyp (e[i+1] - e[i]) (nn[i+1] - nn[i])
   return len
 
-/-- Corner insertion: the clearance field keeps vertices out of footprints, but an
-    edge between two exterior vertices can still pass through one (the
-    between-vertex gap). Route each such edge around the ring's own corners — only
-    when a bounded, crossing-free corner path exists, and never across a
-    presence-exempt endpoint (an edge entering an occupied café is honest). -/
+/-- Corner insertion: an edge between two outside vertices can still cross a
+    footprint, so route it around the ring's corners, when a bounded
+    crossing-free path exists and neither end is presence-exempt. -/
 def spliceCornerDetours (out : Array SmoothedPoint) (buildings : Array Ring)
     (exempt : Array Bool) (fr : Frame) : Array SmoothedPoint := Id.run do
   let CORNER_DETOUR_MAX_RATIO := 2.5
@@ -968,11 +935,9 @@ def spliceCornerDetours (out : Array SmoothedPoint) (buildings : Array Ring)
       repaired := repaired.push b
   return repaired
 
-/-- The GNC/IRLS core over a chain of `m` states: the annealed robust solve,
-    returning the east and north estimates in the metric frame. `m` is a
-    parameter so every index proof below is about a variable — not about the
-    output of the chain builder, which the elaborator would otherwise try to
-    unfold. -/
+/-- The GNC/IRLS core over `m` states, returning east and north estimates. `m` is
+    a parameter so the index proofs are about a variable, not the builder's
+    output. -/
 private def solveChain {m : Nat} (cv : Vector ChainState m) (exempt : Array Bool)
     (grid : Option WalkGrid) (fr : Frame) (profile : ReconstructProfile)
     (evidence : WalkEvidence) : Vector Float m × Vector Float m := Id.run do
@@ -992,12 +957,9 @@ private def solveChain {m : Nat} (cv : Vector ChainState m) (exempt : Array Bool
   let stepTargetM : Option Float :=
     evidence.stepsWalked.map fun s => max 1 (s * profile.stepStrideM * profile.stepSlackRatio)
 
-  -- GNC: geometric anneal of the GPS kernel scale from start → target. When the
-  -- step budget or an anchor is still grossly violated after the schedule, keep
-  -- re-linearising at the target scale: a coherent smear contracts a bounded
-  -- distance per solve (its GPS is rejected, so only the map priors resist),
-  -- while an honest leg sits at a static equilibrium and extra iterations move
-  -- nothing.
+  -- GNC: anneal the GPS kernel scale geometrically. While the step budget or an
+  -- anchor is still grossly violated, keep re-linearising at the target scale: a
+  -- smear contracts a bounded distance per solve, an honest leg does not move.
   let ratio :=
     if profile.gncSteps > 1 then
       Float.pow (profile.gncTargetM / profile.gncStartM) (1 / (profile.gncSteps - 1).toFloat)
@@ -1028,11 +990,9 @@ private def solveChain {m : Nat} (cv : Vector ChainState m) (exempt : Array Bool
           let mut dN := Vector.replicate m 0.0
           let mut be := Vector.replicate m 0.0
           let mut bn := Vector.replicate m 0.0
-          -- Step-magnitude contraction, re-linearised at the current estimate:
-          -- when the current length L exceeds the budget, every edge gets a
-          -- first-difference target of `s·(current edge)` with s = target/L — a
-          -- uniform shrink whose force fades to zero as L reaches the target
-          -- (self-limiting; it cannot over-collapse).
+          -- Step-length contraction: above budget, every edge targets
+          -- `s·(current edge)` with `s = target/L`, a uniform shrink that fades
+          -- to zero at the target, so it cannot over-collapse.
           let mut wEdge := 0.0
           match stepTargetM with
           | none => pure ()
@@ -1075,12 +1035,10 @@ private def solveChain {m : Nat} (cv : Vector ChainState m) (exempt : Array Bool
             match grid with
             | none => pure ()
             | some g =>
-              -- Adaptive walkable attraction — hug hard when close to a way,
-              -- redescend to weak when far. Normal-only (point-to-line): an
-              -- isotropic point spring also resists sliding along the way, which
-              -- drags every anchor/step correction to a crawl. Keeping the
-              -- east/north systems separable means dropping the nx·ny cross term:
-              -- exact for an axis-aligned way, mildly soft for a diagonal one.
+              -- Walkable attraction, strong near a way and redescending far from
+              -- it. Normal-only: an isotropic spring also resists sliding along
+              -- the way. Dropping the nx·ny term keeps east and north separable,
+              -- exact for axis-aligned ways and slightly soft for diagonal ones.
               match g.nearest px py profile.networkRadiusM with
               | none => pure ()
               | some near =>
@@ -1122,11 +1080,9 @@ private def solveChain {m : Nat} (cv : Vector ChainState m) (exempt : Array Bool
               bn := bn.set (m-1) (bn[m-1] + w * toN a.lat)
           e := solvePCG dE wSmooth be e wEdge
           nn := solvePCG dN wSmooth bn nn wEdge
-          -- Hard projection: occupancy of a footprint is impossible for the
-          -- iterate — a non-exempt interior state inside a ring is moved to its
-          -- clearance target, not merely pulled. Terminals are spared (a walk may
-          -- start at an indoor doorway); states riding a mapped way through the
-          -- building are the passage class.
+          -- Hard projection: a non-exempt interior state inside a ring is moved
+          -- to its clearance target. Terminals are spared (a walk may start at
+          -- a doorway), as are states on a mapped way through the building.
           if profile.hardProjectBuildings then
             match grid with
             | none => pure ()
@@ -1169,15 +1125,9 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
 
 /-! ## Guards
 
-Reference geometry: a straight east-west street with a north-south cross street,
-footprints placed against them, and a GPS-wobbly walk along the street. Profiles
-are passed explicitly (never read from the environment), and the reference
-output is reproduced verbatim.
-
-The tolerance is `1e-9` degrees (~0.1 mm) rather than `==`: `Math.hypot` is not
-guaranteed to equal `sqrt (x²+y²)`, and the PCG only converges to a relative
-residual of `1e-14`. On these references the residual measured exactly zero —
-every value below is bit-identical — but the tolerance is the honest contract.
+A straight east-west street with a north-south cross street, footprints
+against them, and a wobbly walk. Profiles are passed explicitly. Tolerance
+`1e-9` degrees (~0.1 mm), though these references happen to be bit-identical.
 -/
 
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9
@@ -1459,11 +1409,9 @@ private def OUTLIER : Array WalkFix := WOBBLE.set! 4 (F 120 40 1040 (some 6))
      ⟨51.520410939025439, -0.12927816507344128, 1040.0000000000000⟩,
      ⟨51.520558546893746, -0.12927816507344128, 1050.0000000000000⟩]
 
--- Corner insertion only ever fires on an edge that passes through a ring with
--- both ends outside — the between-vertex gap the per-state field is structurally
--- blind to. Sparse fixes (30 m apart) with the soft field all but switched off
--- put a whole edge across the narrow footprint, which is exactly that case:
--- 5 solved vertices become 7 as the two interior corners are spliced in.
+-- Corner insertion fires only on an edge crossing a ring with both ends
+-- outside: sparse fixes with the soft field off put an edge across the narrow
+-- footprint, and 5 solved vertices become 7.
 #guard optApprox (reconstructWalk SPARSE STREETS #[NARROW] { buildingSigmaM := 1000 })
     [⟨51.519461013295007, -0.12927816507344128, 1000.0000000000000⟩,
      ⟨51.519730506647505, -0.12927816507344128, 1030.0000000000000⟩,

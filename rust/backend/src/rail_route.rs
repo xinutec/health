@@ -72,7 +72,7 @@ pub fn parse_point_wkt(wkt: &str) -> Option<(f64, f64)> {
     Some((lat, lon))
 }
 
-/// The corridor around a fix cloud, snapped — `computeRailRoute`'s twin.
+/// The corridor around a fix cloud, snapped.
 ///
 /// Corridor-weighted snap first; if that refuses (thin cloud, ambiguous
 /// corridor) and the key names a line, route between the two stations over only

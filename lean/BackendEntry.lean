@@ -30,22 +30,13 @@ import Verified.VelocityCache
 /-!
 # The backend's C ABI entry point
 
-`rust/backend` links this as `rust/day-shell` links `DayEntry`, so the
-decisions in `Verified.Session` and its siblings are called by the backend
-rather than reimplemented beside it.
+`rust/backend` links this, so the decisions in `Verified.Session` and its
+siblings are called rather than reimplemented. A `lean_lib`, not a `lean_exe`:
+an archive carrying `_main` silently wins the link in a foreign host.
 
-A `lean_lib`, not a `lean_exe`: an exe's root module emits `main`, and an
-archive carrying `_main` silently wins the link in a foreign host, answering
-from the wrong entry point.
-
-String in, string out, as `DayEntry`: the narrowest C ABI that carries a
-request, with no structs to keep in sync across three languages. These calls
-are small enough that the JSON round trip is invisible beside the HTTP or
-database work around them.
-
-One dispatch rather than one export per function: one symbol to declare and
-keep working across toolchain bumps, and a new decision costs only a `match`
-arm.
+String in, string out: the narrowest ABI, with no structs to keep in sync
+across languages, and the JSON cost is invisible beside the HTTP and database
+work. One dispatch symbol, so a new decision is a `match` arm.
 -/
 
 namespace BackendEntry
@@ -213,14 +204,9 @@ def dispatch (j : Json) : Json :=
     | some sv, some hl, some m, some p =>
       Json.mkObj [("value", Json.bool (Verified.Session.mayProceedSharing sv hl m p))]
     | _, _, _, _ => err "mayProceed: isShareViewer, hidesLocation, method, path required"
-  -- The multi-day API window.
-  --
-  -- `days` is validated, not clamped: `null` out means reject the request,
-  -- since a narrowed window would hide that the ask was impossible.
-  --
-  -- `days` follows JS `Number(...)`: absent is `null`, and an unparseable value
-  -- is NaN, which JSON cannot carry, so the host sends `daysNaN: true` rather
-  -- than letting it read as absent.
+  -- The multi-day API window. `days` is validated, not clamped (`null` means
+  -- reject). It follows JavaScript's `Number(...)`: NaN cannot cross JSON, so
+  -- the host sends `daysNaN: true` rather than letting it read as absent.
   | some "validateDays" =>
     let raw : Option Float :=
       if (j.getObjVal? "daysNaN" >>= (·.getBool?)).toOption == some true then some (0.0 / 0.0)
@@ -272,15 +258,10 @@ def dispatch (j : Json) : Json :=
       | none => err s!"nextDay: {d} is not YYYY-MM-DD"
       | some nx => Json.mkObj [("value", Json.str nx)]
     | none => err "nextDay: date required"
-  -- How hard a phone should look for itself.
-  --
-  -- Takes the whole pruned history, since the decision is about a trajectory.
-  -- Coordinates cross as IEEE-754 bit patterns: the straightness ratio
-  -- divides two haversine distances, and re-rounding moves it across the
-  -- walking threshold.
-  --
-  -- Always a concrete profile, never "no change": the phone applies the full
-  -- config idempotently on every fix, so there is no anti-flap state to lose.
+  -- How hard a phone should look for itself, from the whole pruned history.
+  -- Coordinates cross as bit patterns: re-rounding moves the straightness
+  -- ratio across the walking bar. Always a concrete profile, applied
+  -- idempotently on every fix.
   | some "owntracksConfig" =>
     let fixes : List Verified.Owntracks.Fix :=
       match j.getObjVal? "history" with
@@ -314,12 +295,9 @@ def dispatch (j : Json) : Json :=
       , ("moveModeLocatorInterval", match interval with
           | none => Json.null
           | some i => Json.num i) ]
-  -- The two halves of `stationsOnLine`, with the SQL between them in the host:
-  -- resolve the substring match against a cached name list here, fetch that
-  -- geometry with an indexed `name IN (…)` there, then filter by proximity.
-  --
-  -- The split keeps the query indexed: a leading-wildcard `LIKE '%base%'`
-  -- scans every railway row, ~28 s a call, and one leg can fan out fifty.
+  -- The two halves of `stationsOnLine`, with the indexed `name IN (…)` fetch in
+  -- the host between them: a `LIKE '%base%'` scans every railway row (~28 s a
+  -- call, and a leg can fan out fifty).
   | some "lineNamesMatching" =>
     match str? j "line", j.getObjVal? "allNames" with
     | some line, .ok v =>
@@ -410,12 +388,9 @@ def dispatch (j : Json) : Json :=
   -- Distances cross as IEEE-754 bit patterns: the enclosing-institution rule
   -- compares one against 80 m.
   | some "shapeLandmarks" =>
-    -- A tag pair is a two-element array, `["amenity", "restaurant"]`, as
-    -- `ServeEntry.tagsJson` writes it. Read as a `{k, v}` object every pair
-    -- parses to nothing, no feature spawns a landmark, and every stay answers
-    -- `[]`, claiming "no venues here" while every count reads as answered.
-    -- Neither spelling can be told from the other by shape, so a pair that
-    -- does not parse is an error.
+    -- A tag pair is `["amenity", "restaurant"]`, as `ServeEntry.tagsJson`
+    -- writes it. Read as an object, every pair would parse to nothing and every
+    -- stay claim "no venues", so a pair that does not parse is an error.
     let pairOf (pair : Json) : Except String (String × String) := do
       let kv ← pair.getArr?
       match kv[0]? >>= (·.getStr?.toOption), kv[1]? >>= (·.getStr?.toOption) with
@@ -453,14 +428,9 @@ def dispatch (j : Json) : Json :=
             , ("openingHours", match l.openingHours with
                 | none => Json.null
                 | some h => Json.str h) ]).toArray) ]
-  -- The venue-type prior, mined from every cluster's attributed stays.
-  --
-  -- A full recompute every run, so a re-mine after a gate change is
-  -- reproducible.
-  --
-  -- The output's key order is first-seen order. The blob is stored as TEXT
-  -- in `venue_type_priors.priors_json`, so the same numbers in another order
-  -- write a different row.
+  -- The venue-type prior, recomputed in full every run so a re-mine is
+  -- reproducible. Keys in first-seen order: the blob is stored as TEXT, so
+  -- another order writes a different row.
   | some "minePriors" =>
     let stayOf (e : Json) : Except String Verified.Geo.VenuePrior.AttributedStay := do
       let sub ← match str? e "subtype" with
@@ -612,16 +582,9 @@ def dispatch (j : Json) : Json :=
               , ("stationName", match n.stationName with
                   | none => Json.null | some s => Json.str s)
               , ("edgeIds", Json.arr ((n.edgeIds.map Json.str).toArray)) ])) ]
-  -- The focus cron's amenity vote for one cluster.
-  --
-  -- Landmarks arrive in `shapeLandmarks`' output shape, including the raw
-  -- `openingHours` tag, which `toLandmark` resolves against this stay's
-  -- `samples`; resolving hours in Rust would be a second
-  -- `Verified.Geo.OpeningHours`.
-  --
-  -- The centroid's landmarks are resolved with `hasStay := false`: a centroid
-  -- has no interval to be open during, and its gate reads neither hours nor
-  -- `openFraction`.
+  -- The focus cron's amenity vote for one cluster. Landmarks come in
+  -- `shapeLandmarks`' shape with the raw `openingHours`, resolved here per stay;
+  -- the centroid's with `hasStay := false`, having no interval to be open in.
   | some "mineCluster" =>
     let poiOf (e : Json) : Except String Verified.Geo.BestPlace.Poi := do
       let need (k : String) : Except String String :=
@@ -631,10 +594,8 @@ def dispatch (j : Json) : Json :=
       let nm ← need "name"
       let ty ← need "type"
       let sub ← need "subtype"
-      -- The field is `distanceM`, a bit-pattern string: the Rust
-      -- `shape_landmarks` wrapper renames `shapeLandmarks`' `distanceMBits` to
-      -- it, because `DayEntry.parsePoi` and the trace-fed fold read that name.
-      -- Reading `distanceMBits` here refused every landmark.
+      -- `distanceM`, a bit-pattern string: the Rust wrapper renames
+      -- `distanceMBits` to it, the name `DayEntry.parsePoi` reads.
       let db ← need "distanceM"
       pure { name := nm, type := ty, subtype := sub
            , distanceM := Float.ofBits db.toNat!.toUInt64
@@ -738,13 +699,9 @@ def dispatch (j : Json) : Json :=
               , ("centroidLonBits", Json.str (toString cp.centroidLon.toBits))
               , ("distanceMBits", Json.str (toString cp.distanceM.toBits)) ]) ]
     | _, _ => err "pickCurrentPlace: latBits, lonBits required"
-  -- The raw recovery picture for one morning.
-  --
-  -- Numbers, never a readiness score: coach owns that judgement, and two apps
-  -- scoring it would drift.
-  --
-  -- Floats cross as IEEE-754 bit patterns: `Lean.JsonNumber` prints six
-  -- places, so a JSON number would re-round every value.
+  -- The raw recovery picture for one morning: numbers, never a readiness score
+  -- (coach owns that). Floats cross as bit patterns, since `Lean.JsonNumber`
+  -- prints six places.
   | some "recoveryAsOf" =>
     match str? j "day" with
     | some day =>
@@ -910,13 +867,9 @@ def dispatch (j : Json) : Json :=
     | some [y, m, d, h, mi, s, ms] =>
       Json.mkObj [("value", Json.str (Verified.RowShape.formatDateTimeIso y m d h mi s ms))]
     | _ => err "formatIso: parts must be [y,m,d] or [y,m,d,h,mi,s,ms]"
-  -- The two Overpass mirrors' whole judgement: which region, which tiles,
-  -- which relations, and whether the run may write. The shell does HTTP and
-  -- SQL.
-  --
-  -- The raw Overpass response comes in here, so `Verified.Geo.Osm*` stays pure
-  -- over its own types and there is one definition of an element, not a Rust
-  -- parse narrowing a ~5 MB tile first.
+  -- The two Overpass mirrors' whole judgement (region, tiles, relations,
+  -- whether a run may write); the shell does HTTP and SQL. The raw response
+  -- comes in here, so there is one definition of an element.
   | some "mirrorRegion" =>
     -- Focus-place coordinates in, the home metro's tiles out. `points` are
     -- [latBits, lonBits] pairs; the cutoff that made them "recent" is the

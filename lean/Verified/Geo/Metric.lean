@@ -7,34 +7,24 @@ import Verified.Geo.Clean
 import Verified.Geo.Trim
 
 /-!
-# The pinned integer metric — V4's arithmetic substrate
+# The pinned integer metric
 
-The corpus-probed representation (`lean/experiments/quant-probe.mjs`,
-173 walking legs / 31 golden days — see the proposal doc):
+The matcher's arithmetic substrate:
 
-- coordinates as 1e-7° integers (OSM-native, ~11 mm; one unit of
-  latitude is exactly 11 132 µm, so the degree→metre factor is an
-  integer multiply with no division);
-- distances in µm via `isqrt` (Newton floor square root, mirroring
-  the twin's BigInt loop) of the exact squared sum;
-- equirectangular projection with a Q20 fixed-point degree-6 minimax
-  cos evaluated by integer Horner — no float transcendental anywhere;
-- the foot of the chord projection rounded half-away-from-zero
-  (`roundDiv`), the clamp exact.
+- coordinates as 1e-7° integers (OSM-native, ~11 mm; one unit of latitude is
+  exactly 11 132 µm, so degree→metre is an integer multiply);
+- distances in µm as `isqrt` of the exact squared sum;
+- equirectangular projection with a Q20 fixed-point degree-6 minimax cos by
+  integer Horner, so no float transcendental anywhere;
+- the chord foot rounded half away from zero (`roundDiv`), the clamp exact.
 
-Probe verdict vs the float pipeline: max |Δdist| 38 mm, mean 0.24 mm,
-zero keep-set flips on simplify-5 m / the 12 km/h speed hold / spike
-rejection, and one near-threshold tie in 173 legs on the display-only
-1.5 m detail tolerance.
+Against the float pipeline over the walking corpus: max |Δdist| 38 mm, and no
+keep-set flip in simplify, the speed hold or spike rejection. Division
+semantics are part of the contract: each division is `Int.fdiv` (floor) or
+`Int.tdiv` (toward zero), chosen per expression and pinned by the `#guard`s.
 
-Division semantics are part of the contract: `Int.fdiv` (floor) is an
-arithmetic shift, `Int.tdiv` truncates toward zero, and every division below is
-one of the two, chosen expression by expression. The `#guard` vectors at the
-bottom pin the arithmetic.
-
-This file also instantiates the metric-parametric pass layer
-(`Simplify`/`Splice`/`Prefilter`) with the pinned metric, so the pass
-theorems specialise for free: `qSimplify_dropped_le`,
+The metric-parametric passes (`Simplify`/`Splice`/`Prefilter`) are instantiated
+here, so their theorems specialise: `qSimplify_dropped_le`,
 `qSplice_sound`/`qSplice_coarse_sublist`, `qHoldSpeed_chain`.
 -/
 
@@ -59,10 +49,8 @@ def QPt.ofLatLon (lat lon : Float) : QPt :=
 /-- Even-odd ray cast, cross-multiplied exact (the float side divides;
 `qPointInRing`). -/
 def qPointInRing (p : QPt) (ring : Array QPt) : Bool := Id.run do
-  -- One pass carrying the previous vertex: the `j` of the classic loop is
-  -- always `i - 1` (wrapping to the last), and reading each vertex once is
-  -- what this costs on the matcher's hot path — four `getD`s an edge were a
-  -- third of a dense walk's matching stage.
+  -- One pass carrying the previous vertex (`j = i - 1`, wrapping): reading each
+  -- vertex once matters on the matcher's hot path.
   let some last := ring.back? | return false
   let mut yj := last.la
   let mut xj := last.lo
@@ -79,22 +67,16 @@ def qPointInRing (p : QPt) (ring : Array QPt) : Bool := Id.run do
     xj := xi
   return inside
 
-/-- Newton's descent for the floor square root, as the twin's BigInt loop
+/-- Newton's descent for the floor square root
 (`while (y < x) { x = y; y = (x + n/x)/2 }`). The iterate strictly decreases,
 and the fixed point of the loop is `⌊√n⌋` from any start `x₀ ≥ √n`. -/
 def isqrtGo (n x y : Nat) : Nat :=
   if _h : y < x then isqrtGo n y ((y + n / y) / 2) else x
 termination_by x
 
-/-- Integer floor square root — the same value as the twin, reached in far fewer
-steps. The twin seeds the descent at `x₀ = n`, which costs one halving per bit of
-`n`: for the ~10¹⁴ operands here (µm², squared), ~24 big divisions per call, and
-`qDist` is called several times per graph edge. Seeding instead at the next power
-of two above `√n` — `2^⌈bits(n)/2⌉`, so `x₀² ≥ 2^bits(n) > n` — puts the start
-within a factor of √2 and Newton then doubles the correct digits each step, ~4
-iterations. The precondition for the descent is exactly `x₀ ≥ √n`, and
-`isqrt_isSqrt` discharges it for this seed, so the fixed point — and hence the
-value — is the twin's. -/
+/-- Integer floor square root by Newton's method, seeded at `2^⌈bits(n)/2⌉`
+(above `√n`, within √2), so ~4 iterations instead of one per bit from `x₀ = n`.
+`isqrt_isSqrt` discharges the seed precondition, so the value is the floor root. -/
 def isqrt (n : Nat) : Nat :=
   if n < 2 then n
   else
@@ -103,17 +85,12 @@ def isqrt (n : Nat) : Nat :=
 
 /-! ### `isqrt` is the floor square root
 
-The seed change above is a claim about a numeric algorithm, not a rearrangement
-of one expression into another, so the twin comparison cannot check it: both
-sides would have to be wrong in the same way to agree, and they are different
-programs. It is discharged here instead. Everything the matcher measures —
-`qDist`, `qDistA`, `qChordDist` — bottoms out in `isqrt`, so this is the
-foundation the rest of the geometry stands on. -/
+A claim about a numeric algorithm, proved rather than compared, since
+everything the matcher measures (`qDist`, `qDistA`, `qChordDist`) bottoms out
+here. -/
 
-/-- `r` is the integer floor square root of `n`: the largest `r` with `r² ≤ n`.
-Stated as a two-sided bracket rather than as a maximum so that both halves are
-directly usable — the lower half bounds distances from below (the matcher's
-rejects), the upper half from above. -/
+/-- `r` is the integer floor square root of `n`, as a two-sided bracket so each
+half is usable on its own (lower bounds for rejects, upper for the rest). -/
 def IsSqrt (n r : Nat) : Prop := r * r ≤ n ∧ n < (r + 1) * (r + 1)
 
 /-- The bracket pins a unique value, so "the" floor square root is well defined
@@ -148,10 +125,8 @@ theorem mul_le_sq_of_add_eq {a b r : Nat} (h : a + b = 2 * r) : a * b ≤ r * r 
     have h3 : b * d = d * b := Nat.mul_comm b d
     omega
 
-/-- The descent never overshoots. A Newton step from any positive `x` stays
-at or above every `r` with `r² ≤ n` — in particular above the root itself. This
-is the loop invariant: it is what stops the iterate from sliding past `⌊√n⌋` and
-converging to something smaller. -/
+/-- The descent never overshoots: a Newton step from any positive `x` stays at
+or above every `r` with `r² ≤ n`. The loop invariant. -/
 theorem le_newtonStep {n x r : Nat} (hx : 0 < x) (hr : r * r ≤ n) :
     r ≤ (x + n / x) / 2 := by
   rcases Nat.le_total (2 * r) x with h | h
@@ -168,10 +143,8 @@ theorem newtonStep_lt {n x : Nat} (h : n < x * x) : (x + n / x) / 2 < x := by
   have : n / x < x := Nat.div_lt_of_lt_mul h
   omega
 
-/-- The loop returns `⌊√n⌋` from any start at or above it. `hge` is the seed
-precondition, stated as "no `r` with `r² ≤ n` exceeds `x`"; the two Newton
-lemmas above carry it through each step, and the exit test `¬ y < x` is exactly
-what forces `x² ≤ n` at the end. -/
+/-- The loop returns `⌊√n⌋` from any start at or above it; the exit test
+`¬ y < x` forces `x² ≤ n`. -/
 theorem isqrtGo_spec (n x : Nat) (hn : 0 < n) (hx : 0 < x)
     (hge : ∀ r, r * r ≤ n → r ≤ x) :
     IsSqrt n (isqrtGo n x ((x + n / x) / 2)) := by
@@ -238,13 +211,10 @@ theorem isqrt_le {k n : Nat} (h : n < (k + 1) * (k + 1)) : isqrt n ≤ k :=
 theorem isqrt_le_isqrt {m n : Nat} (h : m ≤ n) : isqrt m ≤ isqrt n :=
   le_isqrt (Nat.le_trans (isqrt_isSqrt m).1 h)
 
-/-- `isqrt`, compiled: the hardware square root as a guess, checked against the
-bracket `IsSqrt` in exact `Nat` arithmetic, and `isqrt`'s own descent when the
-guess misses (a sum past 2^53 rounds in the `Float`, or a float `sqrt` is off by
-one). The bracket pins the value (`IsSqrt.unique`), so this is `isqrt` — the
-float is never trusted, only tried. Newton from the power-of-two seed cost ~4
-big divisions and a `log2` per call, and `qDist` is called several times per
-graph edge. -/
+/-- `isqrt`, compiled: the hardware square root as a guess, checked against
+`IsSqrt` in exact `Nat`, with `isqrt`'s descent when the guess misses (past 2^53
+or off by one). The bracket pins the value (`IsSqrt.unique`): the float is only
+tried, never trusted. -/
 def isqrtFrom (r n : Nat) : Nat :=
   if r * r ≤ n ∧ n < (r + 1) * (r + 1) then r
   else if (r + 1) * (r + 1) ≤ n ∧ n < (r + 1 + 1) * (r + 1 + 1) then r + 1
@@ -281,25 +251,20 @@ def isqrtFast (n : Nat) : Nat :=
 #guard isqrtFast (2 ^ 62 + 12345) == isqrt (2 ^ 62 + 12345)
 #guard (List.range 2000).all fun k => let n := 9007199254740993 + k * 7919; isqrtFast n == isqrt n
 
-/-- `cosMul`'s two constants — `round(π/180 · 2^40)` and `2^20 · 10^7` — by name.
+/-- `cosMul`'s two constants, `round(π/180 · 2^40)` and `2^20 · 10^7`.
 
-⚠ `@[noinline]`, and that is the point of the definitions: a `def` whose body
-is a bare literal is inlined back into every caller, and the C emitter spells
-a `Nat` or `UInt64` literal ≥ 2^32 as a GMP string parse (`lean_cstr_to_nat`)
-on every evaluation; `cosQ` paid two per bridge pair. `Hsmm.pOff` carries the
-attribute for the same reason. Oracle: grep `lean_cstr_to_nat(` in
-`.lake/build/ir/<Module>.c` outside `_init_`. -/
+⚠ `@[noinline]` is the point: a `def` whose body is a bare literal is inlined,
+and the C emitter spells a literal ≥ 2^32 as a GMP string parse
+(`lean_cstr_to_nat`) on every evaluation. Check by grepping
+`lean_cstr_to_nat(` in `.lake/build/ir/<Module>.c` outside `_init_`. -/
 @[noinline] def COS_K : UInt64 := 19190098069
 @[noinline] def COS_D : UInt64 := 10485760000000
 @[noinline] def COS_K_N : Nat := 19190098069
 @[noinline] def COS_D_N : Nat := 10485760000000
 
-/-- The one wide multiply inside `cosQ`: `|la| · 19190098069` reaches ≈ 2⁶³
-(for a real latitude `|la| ≤ 9·10⁸`), which tips `Nat` off its unboxed range
-and onto a GMP bignum on every call — the dominant matcher hotspot. Done in
-`UInt64` it is exact (the product `≤ 9·10⁸ · 19190098069 ≈ 1.73·10¹⁹ < 2⁶⁴`)
-and allocation-free; past that bound it falls back to `Nat` so the value is
-unconditionally the same (`cosMul_eq`). -/
+/-- The one wide multiply inside `cosQ`, `|la| · 19190098069`, which reaches
+≈2⁶³ and would be a GMP bignum as `Nat`. In `UInt64` it is exact for any real
+latitude and allocation-free; past that it falls back to `Nat` (`cosMul_eq`). -/
 @[inline] def cosMul (la : Int) : Nat :=
   if la.natAbs ≤ 900000000 then
     (la.natAbs.toUInt64 * COS_K / COS_D).toNat
@@ -353,26 +318,17 @@ theorem fdiv_neg_natCast' (m d e : Nat) (hd : 0 < d) (he : e + 1 = d) :
     (-(m : Int)).fdiv (d : Int) = -(((m + e) / d : Nat) : Int) := by
   rw [fdiv_neg_natCast m d hd, show m + d - 1 = m + e by omega]
 
-/-- Q20 fixed-point cosine of a 1e-7°-unit latitude, by integer Horner
-over a degree-6 minimax polynomial (|poly err| ≈ 1e-7; the Q20 width,
-not the polynomial, is the binding precision). Constants:
-`19190098069 = round(π/180 · 2^40)`, coefficients `round(cᵢ · 2^20)` of
-the Hastings minimax for `cos` on `[0, π/2]`;
-`10485760000000 = 1e7 · 2^20`. The wide first multiply is `cosMul`. -/
+/-- Q20 fixed-point cosine of a 1e-7°-unit latitude, by integer Horner over the
+Hastings degree-6 minimax for `cos` on `[0, π/2]` (|err| ≈ 1e-7; Q20 binds the
+precision). Coefficients are `round(cᵢ · 2^20)`; `10485760000000 = 1e7 · 2^20`. -/
 def cosQ (la : Int) : Int :=
   let x : Nat := cosMul la
   let x2 : Nat := x * x / 1048576
   if x2 ≤ 4000000 then
-    -- Every Horner product here lands between 2^31 and 2^41, and Lean's `Int`
-    -- is a GMP bignum past 2^31 (`LEAN_MAX_SMALL_INT = INT_MAX`) while `Nat`
-    -- stays an unboxed scalar to 2^63 — so the same three multiplies cost three
-    -- heap allocations as `Int` and none as `Nat`. The signs are static, so they
-    -- can be carried in the shape instead of the values: `fdiv` by a positive
-    -- divisor is `⌊·⌋` on a non-negative numerator and `−⌈·⌉` on a negative one,
-    -- which is what the ceilings below spell out. Both subtractions stay in
-    -- `Nat`: over `x2 ≤ 4·10^6`, `⌈1453·x2/2^20⌉ ≤ 5544 < 43687` and
-    -- `⌊s1·x2/2^20⌋ ≤ 166 653 < 524 287`. The final value may still be slightly
-    -- negative (the minimax polynomial undershoots at 90°), so it is an `Int`.
+    -- The Horner products lie between 2^31 and 2^41, past `Int`'s unboxed range,
+    -- so they are `Nat` with the signs in the shape (`fdiv` of a negative is
+    -- `−⌈·⌉`). Both subtractions stay non-negative for `x2 ≤ 4·10^6`. The result
+    -- can undershoot below zero at 90°, so it is an `Int`.
     let s1 : Nat := 43687 - (1453 * x2 + 1048575) / 1048576
     let s2 : Nat := 524287 - s1 * x2 / 1048576
     (1048576 : Int) - (((s2 * x2 + 1048575) / 1048576 : Nat) : Int)
@@ -381,8 +337,7 @@ def cosQ (la : Int) : Int :=
     let s2 : Int := (s1 * (x2 : Int)).fdiv 1048576 + -524287
     (s2 * (x2 : Int)).fdiv 1048576 + 1048576
 
-/-- The reference Horner, exactly as the BigInt twin writes it: signed `Int`
-throughout, no case split. `cosQ` runs the `Nat`-magnitude form instead, for
+/-- The reference Horner: signed `Int` throughout, no case split. `cosQ` runs the `Nat`-magnitude form instead, for
 speed; `cosQ_eq` proves the two agree at every latitude. -/
 def cosQSpec (la : Int) : Int :=
   let x2 : Nat := cosMul la * cosMul la / 1048576
@@ -390,13 +345,9 @@ def cosQSpec (la : Int) : Int :=
   let s2 : Int := (s1 * (x2 : Int)).fdiv 1048576 + -524287
   (s2 * (x2 : Int)).fdiv 1048576 + 1048576
 
-/-- `cosQ` computes the reference Horner. The fast branch replaces three
-signed `fdiv`s by `Nat` divisions with the signs moved into the term's shape;
-this discharges that rewrite, including the two `Nat` subtractions, which
-truncate at zero rather than going negative and so would silently return a
-different cosine if the `x2 ≤ 4·10^6` guard did not bound them. Neither branch
-is assumed: the guard is what makes the bounds hold, and it is discharged here
-rather than argued in a comment. -/
+/-- `cosQ` computes the reference Horner: the `Nat` rewrite, including the two
+truncating subtractions bounded by the `x2 ≤ 4·10^6` guard, is discharged here
+rather than argued. -/
 theorem cosQ_eq (la : Int) : cosQ la = cosQSpec la := by
   unfold cosQ cosQSpec
   simp only []
@@ -443,30 +394,15 @@ theorem cosQ_eq (la : Int) : cosQ la = cosQSpec la := by
     omega
   · rfl
 
-/-! ### A *provable* floor under `cosQ`
+/-! ### A provable floor under `cosQ`
 
-The corridor needs a `cosQ` lower bound valid over a whole latitude band. The
-obvious route — evaluate `cosQ` at the band's extreme |latitude| and rely on
-`cosQ` falling with |latitude| — is not sound: `cosQ` is a floor-rounded
-minimax polynomial and ticks back up by up to 2 Q20 units
-(`scripts/probe-cosq-monotonicity.py`). Those dips are not noise. `cosQ` is
-`2^20 − ⌈s2(t)·t/2^20⌉` with `t` the squared argument, and each step of the
-inner `⌊s1(t)·t/2^20⌋` drops `s2(t)·t` by about `t`, which is millions — so the
-ceiling really does fall back by a unit or two. Bounding that globally is cubic
-interval analysis.
-
-None of which is needed, because the bound does not have to be tight. `s2(t)`
-is `524287 − ⌊s1(t)·t/2^20⌋`, hence never exceeds `524287`, so replacing it by
-that constant gives a floor under `cosQ` that depends on the band only through
-`t` — and `t` *is* monotone in |latitude|, trivially. No property of `cosQ`
-itself is used.
-
-The price is looseness: at 51.5° this returns 624 968 against a true 652 731,
-about 4.3% low, which widens grid cells and weakens the longitude reject by the
-same 4.3%. Both stay sound (a smaller cos bound only ever widens a cell and
-loosens a reject) and neither changes a returned value. That is the trade — a
-few percent of candidate pruning, for a bound that is proved rather than
-sampled. -/
+The corridor needs a `cosQ` lower bound over a latitude band. "`cosQ` falls
+with |latitude|" is false: the floor-rounded polynomial ticks back up by up to 2
+Q20 units. But `s2(t) ≤ 524287` always, so substituting that constant gives a
+floor depending on the band only through `t`, which is monotone in |latitude|.
+It is about 4.3% loose at 51.5°, which widens grid cells and loosens the
+longitude reject without changing any returned value: a few percent of pruning
+for a proved bound. -/
 
 /-- Lower bound on `cosQ` at every latitude of magnitude at most `|la|`.
 Sound for `|la| ≤ 10^9`, which covers every latitude plus the corridor's
@@ -515,12 +451,9 @@ def qDistC (a b : QPt) (c : Int) : Nat :=
 /-- µm between two points, cos at the mid-latitude, as `metersBetween`. One
 latitude unit = 11 132 µm exactly. -/
 def qDist (a b : QPt) : Nat :=
-  -- Carried as `Nat` magnitudes, not `Int`: the intermediates here reach ≈2⁴⁸
-  -- (`Δlo·11132·c`) and ≈2⁵⁶ (the squares), which is inside `Nat`'s unboxed
-  -- range but *not* `Int`'s — as `Int` every one of these allocated a GMP
-  -- bignum, the matcher's dominant cost. Only the squares are used, so the sign
-  -- drops out; `fdiv`'s magnitude is the floor when the product is ≥ 0 and the
-  -- ceiling when it is negative, which is what `dloAbs` reproduces exactly.
+  -- `Nat` magnitudes: the intermediates reach ≈2⁵⁶, inside `Nat`'s unboxed range
+  -- but not `Int`'s. Only squares are used, so the sign drops out; `dloAbs`
+  -- reproduces `fdiv`'s floor or ceiling exactly.
   let dlaAbs : Nat := (b.la - a.la).natAbs * 11132
   let c : Int := cosQ ((a.la + b.la).tdiv 2)
   let yAbs : Nat := (b.lo - a.lo).natAbs * 11132 * c.natAbs
@@ -530,16 +463,10 @@ def qDist (a b : QPt) : Nat :=
 
 theorem qDistC_eq (a b : QPt) : qDistC a b (cosQ ((a.la + b.la).tdiv 2)) = qDist a b := rfl
 
-/-- Per-axis under-estimates compose into a distance under-estimate. `qDist`
-is `isqrt` of the sum of two squared axis components, so anything that
-under-estimates each component separately bounds the distance from below —
-without ever taking a square root. This is what lets a matcher reject a
-candidate on cheap axis-aligned arithmetic and still be sure it could not have
-won: `gLa`/`gLo` are the caller's bounds, `b` the incumbent best.
-
-The longitude bound is stated against the *floor* of the scaled product because
-that is the weaker of `qDist`'s two roundings — the ceiling branch only ever
-makes the true component larger. -/
+/-- Per-axis under-estimates compose into a distance under-estimate, without a
+square root, so a matcher can reject a candidate on cheap axis arithmetic and
+know it could not have won. The longitude bound uses the floor, the weaker of
+`qDist`'s two roundings. -/
 theorem le_qDist_of_axes {p f : QPt} {gLa gLo b : Nat}
     (hLa : gLa ≤ (f.la - p.la).natAbs * 11132)
     (hLo : gLo ≤ (f.lo - p.lo).natAbs * 11132 * (cosQ ((p.la + f.la).tdiv 2)).natAbs
@@ -573,16 +500,14 @@ def qDistA (a b : QPt) : Nat :=
   let dlo : Int := ((b.lo - a.lo) * 11132 * c).fdiv 1048576
   isqrt (dla * dla + dlo * dlo).toNat
 
-/-- `round(p/q)` half-away-from-zero for `q > 0` — the twin's
-`roundDiv`. -/
+/-- `round(p/q)` half away from zero, for `q > 0`. -/
 def roundDiv (p q : Int) : Int :=
   if p ≥ 0 then (p + q.tdiv 2).tdiv q
   else -((-p + q.tdiv 2).tdiv q)
 
-/-- µm from `p` to the segment `a`–`b` — mirrors `segmentDistM`:
-project onto the chord in the local equirectangular frame (cos at the
-chord's mid-latitude), clamp to `[0, len²]`, round the foot back to
-coordinate units, and measure `qDist` to it. -/
+/-- µm from `p` to the segment `a`–`b`: project onto the chord (cos at its
+mid-latitude), clamp to `[0, len²]`, round the foot to coordinate units, and
+take `qDist` to it. -/
 def qChordDist (p a b : QPt) : Nat :=
   let c : Int := cosQ ((a.la + b.la).tdiv 2)
   let bx : Int := ((b.lo - a.lo) * 11132 * c).fdiv 1048576
@@ -766,10 +691,7 @@ theorem qTrim_sublist (fx : Nat → QPt) (nf : Nat) (path : Nat → QPt)
     (qTrim fx nf path n).Sublist ((List.range n).map path) :=
   trim_sublist qTrimP qDist qChordDist qArcPos qNearLe fx nf path n
 
--- ---------------------------------------------------------------
--- Cross-language pin: values computed by the BigInt twin arithmetic
--- (node; see the module docstring). London test points.
--- ---------------------------------------------------------------
+-- Pinned values, London test points.
 
 #guard cosQ 515074000 == 652636
 #guard cosQ (-515074000) == 652636
