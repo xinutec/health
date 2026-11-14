@@ -5,40 +5,18 @@
 //!   fixture.osmTrace.stationsOnLine ──┴→ feasibility → ceilinggate
 //! ```
 //!
-//! The user's standing requirement: *"Correct or at least viable
-//! trajectory is important. It shouldn't show definitely-wrong interpretations
-//! that can't be right given the data."* A model-independent assertion on the
-//! output: a real worldline is one continuous path through space-time, so some
-//! drawn timelines are impossible regardless of how the cascade produced them.
-//! Five invariants — `impossible-mode-kinematics` (a walk at vehicle pace, and
-//! a train at pedestrian pace while the wearer steps), `invalid-rail-triple`
-//! (a line labelled through a station it does not reach), `teleport` (two
-//! stays at different places too far apart for the time between),
-//! `rail-discontinuity` and `degenerate-train-leg`.
-//!
-//! It rides the shared replay. As a separate test with its own fold it
-//! was too slow for the commit table, ran only in the deploy gate, and never in
-//! the `CORPUS_DAYS=` replays a change is developed against, so a regression
-//! passed every replay and failed the deploy an hour later. Behind the shared
-//! replay it costs one Lean question per day already folded, so it is judged on
-//! every day anyone replays.
-//!
-//! # A ceiling, not a floor, and the ratchet is the other way
+//! The user's requirement: *"It shouldn't show definitely-wrong interpretations
+//! that can't be right given the data."* A worldline is one continuous path, so
+//! some timelines are impossible whatever produced them: `impossible-mode-kinematics`,
+//! `invalid-rail-triple`, `teleport`, `rail-discontinuity`, `degenerate-train-leg`.
+//! On the shared replay it costs one Lean call per folded day, so every replay
+//! judges it.
 //!
 //! `feasibility-baseline.json`, `rail-triple-baseline.json` and
-//! `teleport-baseline.json` record standing defects as per-day counts that may only shrink. A day emitting more than its
-//! committed count fails; fewer is an improvement to re-bless with
-//! `FEASIBILITY_BLESS=1` (single-shard, like every bless in this runner).
-//!
-//! Silence is not zero. `current[date] ?? 0` cannot tell a day with no
-//! defects from a day that never ran, and against a non-zero ceiling the second
-//! reads as the first — so a change that breaks a fixture and worsens that day
-//! would report as an improvement. `measured` and `attempted` are passed
-//! separately for exactly that reason; see `Verified.Eval.CeilingGate`.
-//!
-//! Sharding is sound the way it is for the floors: the committed ceiling is
-//! filtered to the days this shard attempted, and between the shards every
-//! ceiling key is checked exactly once.
+//! `teleport-baseline.json` are per-day ceilings that only shrink: more fails,
+//! fewer is re-blessed with `FEASIBILITY_BLESS=1` (single-shard). `measured` and
+//! `attempted` are passed separately so a day that never ran cannot read as
+//! zero (`Verified.Eval.CeilingGate`). Shards check each key exactly once.
 //!
 //! `FEASIBILITY_DEBUG` prints every violation; `FEASIBILITY_DUMP=<path>`
 //! writes the `(legs, points, steps, lineStations)` each day was judged on.
@@ -91,11 +69,8 @@ fn ceiling_wire(m: &BTreeMap<String, u64>) -> Vec<Value> {
 }
 
 /// `[[ts, a, b, …]]` rows out of the day request, as `{ts, <k1>, <k2>}` objects.
-///
-/// `/env/points` carries lat/lon as IEEE-754 bit strings and the Lean wire
-/// reads either encoding, so they are passed through untouched — re-parsing
-/// them here would put a rounding step between the fold and the invariant that
-/// judges it.
+/// The bit-string coordinates pass through untouched: no rounding between the
+/// fold and the judge.
 fn rows(request: &Value, at: &str, keys: &[&str]) -> Vec<Value> {
     request
         .pointer(at)
@@ -217,10 +192,8 @@ impl Feasibility {
             );
             match CEILINGS.iter().position(|c| c.1 == kind) {
                 Some(i) => counts[i] += 1,
-                // Continuity and self-ride are at zero and have no ceiling
-                // file. They are hard failures, not standing debt: there is no
-                // committed count for them, so any occurrence is reported and
-                // fails below rather than being silently tolerated.
+                // Continuity and self-ride have no ceiling file: any
+                // occurrence fails.
                 None => self.failures.push(format!("{date}: {kind} — {detail}")),
             }
             if std::env::var("FEASIBILITY_DEBUG").is_ok() {

@@ -5,51 +5,22 @@ import Verified.JsNum
 /-!
 # `WalkMatchAdapt` — `WalkAnnotate.Env.matcher`, backed by the real matcher
 
-`WalkAnnotate` takes its matcher as an `Env` field, and the matcher it wants is
-`Verified.Geo.Match.qMatchWalkSegment`. They speak different coordinate types,
-which is what this module bridges.
+Bridges `WalkAnnotate`'s float `Env.matcher` to
+`Verified.Geo.Match.qMatchWalkSegment`, which takes `QPt` (`la`/`lo` in 1e-7°
+and `ts` in seconds, as `Int`). The results have the same two fields.
 
     Env.matcher       Array MPt → Ways → Array Ring → Option MatchOut
     qMatchWalkSegment Array QPt → Array QWay → Array (Array QPt)
                         → Option QWalkMatchResult
 
-`MPt` is `PathPt` — `lat`/`lon`/`ts` as `Float`. `QPt` is `la`/`lo` in 1e-7°
-units and `ts` in epoch seconds, as `Int`. `MatchOut` and `QWalkMatchResult`
-have the same two fields, so only the points need translating.
+⚠ Quantisation is `jsRoundInt (x · 1e7)` (halves up), not `JsNum.toFixed`,
+which rounds the magnitude and disagrees on every negative tie, i.e. London
+longitudes. The round trip moves a point at most half a unit (≤0.56 cm). The corpus gates judge
+this arm; do not widen an accepted delta to quiet a divergence.
 
-# The quantisation is `Math.round(x * 1e7)`, and that is not `toFixed(7)`
-
-The pinned rule:
-
-    la = Math.round(lat * 1e7)
-    lo = Math.round(lon * 1e7)
-    ts = Math.round(ts)
-
-`Math.round` is round-half-toward-+∞. It is tempting to reach for
-`Verified.JsNum.toFixed`, which is also a 7-decimal JS rounding rule and is
-already in this tree — and it is the wrong one: `toFixed` strips the sign first
-and takes ties on the magnitude, so it and `Math.round` disagree on every
-negative tie. At London's longitudes that is not a hypothetical sign.
-
-# What the round trip costs, and why that is the accepted cost
-
-A coordinate returned by this matcher is a multiple of 1e-7°, so the drawn line
-sits up to half a unit from the float arm's: 0.56 cm in latitude, 0.35 cm in
-longitude at London's latitude, far below anything a drawn walk shows.
-
-⚠ The quantised arm is judged by the corpus gates; do not quiet a divergence by
-widening an accepted delta.
-
-# Ways carry names here, and they still decide nothing
-
-`QWay` has a `name`. For the walk profile it cannot move the line:
-`WALK_QPROFILE.wayContinuityNats = 0`, so the way-switch penalty it feeds is
-zero nats (`switchPenScaled` multiplies through to 0) and the trellis scores are
-bit-identical with or without the names. What the names feed is the matcher's
-identity report (`QMatchResult.wayUm`): naming a walk by re-deriving "which way"
-from the drawn line is unanswerable (the line is snapped onto the network, every
-nearby way is ~0 m from it), so the matcher reports the way each stretch of its
-route ran along, and naming reads that.
+Way names cannot move the line (`WALK_QPROFILE.wayContinuityNats = 0`). They
+feed `QMatchResult.wayUm`, which names a walk by the ways its route ran along:
+re-deriving that from the snapped line is unanswerable.
 -/
 
 namespace Verified.Geo.WalkMatchAdapt
@@ -69,11 +40,8 @@ def toQ (lat lon : Float) (ts : Float := 0) : QPt :=
 
 def pathPtToQ (p : Verified.Geo.PathPt) : QPt := toQ p.lat p.lon p.ts
 
-/-- `Int → Float`, sign included.
-⚠ not `i.toNat.toFloat`, which is the idiom used elsewhere in this tree and is
-wrong here: `Int.toNat` clamps at zero, so every London longitude would come
-back `0.0`. It is safe at those call sites because the values are durations and
-counts; it is not safe for a coordinate. -/
+/-- `Int → Float`, sign included. ⚠ Not `i.toNat.toFloat`, which clamps at zero:
+fine for durations elsewhere, `0.0` for every London longitude. -/
 def intToFloat (i : Int) : Float :=
   if i < 0 then -((-i).toNat.toFloat) else i.toNat.toFloat
 

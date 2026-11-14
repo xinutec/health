@@ -1,31 +1,16 @@
-//! The two endpoints that write to the log and nowhere else.
+//! The two endpoints that write to the log and nowhere else: `/telemetry`
+//! (what a person did in the browser) and `/client-log` (what broke). Both
+//! answer 204; the client neither reads nor retries.
 //!
-//! `/telemetry` records what a person did — navigations and taps the browser
-//! sees and the API does not. `/client-log` records what broke. Neither stores
-//! anything: these are logs, not data, and both answer 204 because the client
-//! neither reads the response nor retries.
+//! ⚠ The client writes into evidence: a newline in a label would forge lines,
+//! so `Verified.LogLine.oneLine` (called, not reimplemented) is this file's
+//! security boundary.
 //!
-//! # ⚠ The log is evidence, and the client can write to it
+//! `actor=` beside `user=`: a share recipient's session carries the owner's
+//! id, and a log that silently attributes their clicks to the owner lies.
 //!
-//! A label is verbatim UI text placed into a line as `label=…`. A newline
-//! inside it forges whole lines, including further `client-event` lines
-//! attributed to someone else, so the flattening in `Verified.LogLine.oneLine`
-//! is the security boundary of this file, not tidiness. It is called rather
-//! than reimplemented, because it depends on derived Unicode tables.
-//!
-//! # `user=` and `actor=` are different questions
-//!
-//! A share recipient's session carries the owner's user id — that is how the
-//! link grants read access. Logging `user=` alone would attribute a stranger's
-//! clicks to the owner, which is worse than not logging them: a gap in a log is
-//! visible, a lie in one is not.
-//!
-//! # The caps
-//!
-//! A per-batch cap so one POST cannot become a log flood, and a per-label cap
-//! so one event cannot bloat a line. Events past the cap are dropped
-//! silently: a client sending 200 events is told nothing about the 100 that
-//! vanished.
+//! A per-batch cap stops a log flood, a per-label cap a bloated line. Events
+//! past the cap are dropped silently.
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -56,16 +41,10 @@ fn actor_of(session: &UserSession) -> &'static str {
     }
 }
 
-/// `String.prototype.slice(0, n)`, which counts UTF-16 code units.
-///
-/// Not code points, unlike `oneLine`'s cap, which does count them: the two
-/// truncations differ, and this one is for `event` and `data`.
-///
-/// One deliberate divergence. JavaScript will cut a surrogate pair in half
-/// and emit a lone surrogate; a Rust `String` cannot hold one, so this stops at
-/// the last whole character instead. The difference is at most one character at
-/// the very end of an over-long log field, and the alternative is unrepresentable
-/// rather than merely different.
+/// Truncate to `max_units` UTF-16 code units, as the client counts `event` and
+/// `data` (`oneLine`'s cap counts code points). Where the cut would split a
+/// surrogate pair this stops one character early, since a `String` cannot
+/// hold a lone surrogate.
 fn truncate_utf16(s: &str, max_units: usize) -> String {
     let mut out = String::new();
     let mut units = 0usize;
@@ -80,11 +59,8 @@ fn truncate_utf16(s: &str, max_units: usize) -> String {
     out
 }
 
-/// `String(x ?? "")` for a JSON value.
-///
-/// A missing field and an explicit `null` both become `""`, and a number
-/// becomes its JS rendering — which is why this goes through the same number
-/// rule the wire uses rather than through `serde_json`'s.
+/// `String(x ?? "")` for a JSON value: missing and `null` become `""`, numbers
+/// render by the wire's number rule.
 fn js_string(v: Option<&Value>) -> String {
     match v {
         None | Some(Value::Null) => String::new(),
@@ -189,13 +165,8 @@ pub async fn client_log(
         None => String::new(),
         Some(v) => match serde_json::to_string(v) {
             Ok(s) => truncate_utf16(&s, MAX_DATA),
-            // Loud, not silent. This is a value that just came off the wire as
-            // JSON, so re-serialising it should be impossible to fail — which is
-            // exactly why a quiet empty string here would be the wrong answer:
-            // the log would show an event with no data and nothing would say the
-            // data had been lost rather than absent. The line still goes out,
-            // because dropping a diagnostic report over its payload would be
-            // worse than reporting it incomplete.
+            // Loud: a value just parsed should re-serialise, and a silent ""
+            // would hide lost data. The line still goes out, incomplete.
             Err(e) => {
                 tracing::error!(
                     error = %e,
@@ -206,10 +177,9 @@ pub async fn client_log(
         },
     };
 
-    // Not flattened, so `/client-log` can still inject newlines into the log
-    // where `/telemetry` cannot. It is the class of hole the flattening exists to
-    // close; closing it here would change what production logs, so it is
-    // recorded rather than fixed.
+    // ⚠ Not flattened: `/client-log` can still inject newlines into the log.
+    // Flattening would change what production logs, so it is recorded here
+    // rather than fixed.
     if data_str.is_empty() {
         tracing::info!("[client/{}] {event}", session.user_id);
     } else {

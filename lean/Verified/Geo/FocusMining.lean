@@ -5,34 +5,14 @@ import Verified.Geo.VenuePrior
 /-!
 # The focus cron's amenity vote
 
-`refresh-focus-places` decides one thing per cluster that the rest of the cron
-does not: the `amenity_label`, which mapped venue, if any, this place is. That
-decision is this module.
+`refresh-focus-places` decides per cluster its `amenity_label`, the mapped venue
+it is, if any. The geometry (stays, clusters, hour profiles, identity) is in
+{@link Verified.Geo.FocusPlaces} and {@link Verified.Geo.FocusIdentity}.
 
-The geometry half of the cron (stay detection, clustering, splitting, hour
-profiles, identity) lives in {@link Verified.Geo.FocusPlaces} and
-{@link Verified.Geo.FocusIdentity}, reachable through `ServeEntry`'s `focus`
-mode.
-
-## Why one function and not three
-
-The three gates read each other's leavings, so they cannot be composed from
-outside without moving the state between them into the shell:
-
-* the near-field exemption is a set built from the same pass that builds the
-  tally — a name is exempt because some stay saw it from inside
-  `NEAR_FIELD_DECISIVE_M`, which is known only while voting;
-* the centroid gate re-asks `isLabelWorthyVenue` about a different landmark
-  list (the cluster centroid's, not any stay's);
-* the tally's iteration order decides ties.
-
-Putting any of that in Rust is putting the tie-breaks in Rust.
-
-## What the shell still owns
-
-Timezones and OSM rows. `localHour` and `samples` arrive resolved because
-{@link Verified.Geo.VenuePrior.StayShape} takes them that way, and the landmark
-lists arrive as `shapeLandmarks` output because the shell already fetched them.
+One function, since the gates read each other's state: the near-field
+exemption is built while tallying, the centroid gate re-ranks the centroid's
+landmarks, and tally order breaks ties. Rust supplies resolved `localHour`,
+`samples` and `shapeLandmarks` output.
 -/
 
 namespace Verified.Geo.FocusMining
@@ -95,16 +75,12 @@ private def tallyTotal (votes : List (String × Float)) : Float :=
   votes.foldl (fun a p => a + p.2) 0
 
 /--
-The vote, in the cron's own order.
+The vote, in the cron's own order. Per stay: attribute it (for the prior), rank
+its venues over the stay's window (opening hours count), and let the leader
+vote its dwell if it is a real venue type close enough and plausible.
 
-Per stay: attribute it (for the prior), then rank its venues with the stay's
-own window so opening-hours evidence weighs in, then let the leader vote its
-dwell — if it is a real venue type close enough to be the place the stay is at,
-and if even the best candidate is plausible.
-
-`priors` is deliberately `none` when ranking. This same pass rebuilds the
-priors blob, and voting with the previous run's blob would let one bad label
-echo into the next.
+Ranked with `priors = none`: this pass rebuilds the priors, and voting with the
+previous run's would echo a bad label.
 -/
 def mineCluster (stays : List MinedStay) (centroid : List Landmark)
     (minWeight minFraction : Float) : Mined := Id.run do
@@ -142,11 +118,9 @@ def mineCluster (stays : List MinedStay) (centroid : List Landmark)
       else some Refusal.majority
     pure { label := none, kind := none, attributed := attributed, refusal := refusal }
   | some winner =>
-    -- The centroid gate: the winner must be at the cluster, within venue range
-    -- of its centroid, not merely near some scattered stays. Two co-located
-    -- places ~45 m apart would otherwise let the residence's evening stays —
-    -- the ones whose GPS drifts venue-ward — vote the café's name onto the
-    -- residence, whose centroid stays a clear ~70 m off it.
+    -- The centroid gate: the winner must be within venue range of the
+    -- cluster's centroid, not just of some stays, or a residence's drifting
+    -- evening stays vote a café ~45 m away onto it.
     match centroid.find? (fun l => l.name == winner) with
     | some here =>
       if isLabelWorthyVenue here.type here.distanceM then
@@ -161,10 +135,8 @@ def mineCluster (stays : List MinedStay) (centroid : List Landmark)
 
 /-! ## Guards
 
-These are the only check on this module until the Rust arm runs against prod
-and its output is diffed against `focus_places` — there is no live comparator
-for the mining half. Written to pin the gates and the tie-breaks, which
-is what drifted last time. -/
+The only check on the mining half: no live comparator exists. They pin the
+gates and the tie-breaks. -/
 
 private def LM (name type_ subtype : String) (d : Float) : Landmark :=
   { name := name, type := type_, subtype := subtype, distanceM := d }

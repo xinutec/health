@@ -433,14 +433,10 @@ pub async fn hsmm_decode(pool: &MySqlPool, user_id: &str, date: &str) -> Result<
 pub const CLASSIFIER_VERSION: i32 = 18;
 
 /// The main-sleep windows bracketing this day: this morning's (filed under
-/// today) and tonight's (filed under tomorrow, the date it ends). Every main
-/// sleep of each date is read, since a nap can be marked main too; which
-/// overlapping window stands is `DayChain.distinctSleepWindows`.
-///
-/// `start_time`/`end_time` are wall clock in `tz`. A row without `tz` is read
-/// in `home_tz`, not UTC: rows written without a zone are local, and reading
-/// them as UTC put every summer night an hour late. The `_utc` columns derive
-/// from this same wall clock and are not the source.
+/// today) and tonight's (filed under tomorrow). Every main sleep of each date
+/// is read, since naps can be marked main; `DayChain.distinctSleepWindows`
+/// picks. `start_time`/`end_time` are wall clock in the row's `tz`, else
+/// `home_tz` (never UTC, which put summer nights an hour late).
 pub async fn sleep_windows(
     pool: &MySqlPool,
     user_id: &str,
@@ -502,16 +498,10 @@ pub fn next_date_string(date: &str) -> Result<String> {
 }
 
 /// The day's watch streams: per-minute heart rate, sleep stages, stepped
-/// minutes.
-///
-/// Each stream has two reads: the primary on `ts_utc`, and a fallback for rows
-/// without one, which carry a wall clock and a zone (`row.tz`, else `home_tz`,
-/// else the caller's). The primary bounds are half-open, the fallback's
-/// closed, and sleep's fallback is an overlap test: a stage that starts early
-/// can still fall inside.
-///
-/// Heart rate per minute is `ROUND(AVG(bpm))` in SQL, cast to CHAR because
-/// `AVG` returns a DECIMAL.
+/// minutes. Each is read on `ts_utc` (half-open), plus a fallback for rows with
+/// only a wall clock in `row.tz`, `home_tz` or the caller's zone (closed; for
+/// sleep, an overlap test). Heart rate is `ROUND(AVG(bpm))`, cast to CHAR as
+/// `AVG` gives a DECIMAL.
 pub async fn biometrics(
     pool: &MySqlPool,
     user_id: &str,
@@ -854,15 +844,10 @@ pub fn decode_window(now: chrono::DateTime<chrono::Utc>, days: i64) -> Vec<Strin
 }
 
 /// The PhoneTrack half of the inputs: three fix windows and the battery tail.
-///
-/// `today` is the date's UTC span, `morning` runs to noon UTC the next day, and
-/// `priorEvening` spans the whole previous day: a local day is not a UTC day,
-/// and a night is attributed to where the phone last reported, possibly hours
-/// before midnight. `batteryTail` is display-only: the first reading in the 18 h
-/// after the local day ends, for the battery chart to draw to.
-///
-/// PhoneTrack silently caps a request at 10 000 points; a capped window that
-/// cannot be split further is warned about below.
+/// `today` is the date's UTC span, `morning` runs to noon UTC next day, and
+/// `priorEvening` spans the previous day, since a night is attributed to where
+/// the phone last reported. `batteryTail` is the first reading within 18 h
+/// after the day, for the chart. PhoneTrack caps a request at 10 000 points.
 async fn phonetrack_windows(
     pool: &MySqlPool,
     http: &reqwest::Client,

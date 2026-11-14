@@ -1,23 +1,10 @@
-//! The config layer refuses rather than defaults.
+//! The config layer refuses rather than defaults: a missing `DB_PASSWORD`
+//! defaulted to `""` dies later at a connection, as a credential error, in a
+//! CronJob nobody watches.
 //!
-//! This is the whole value of the layer, and the failure it guards against is
-//! silent by construction. A config that turns a missing `DB_PASSWORD` into
-//! `""` starts a process that dies later at a connection, reporting a
-//! credential problem rather than a configuration one — inside a CronJob where
-//! nobody is watching the stderr.
-//!
-//! One `#[test]` function, deliberately, and it is not laziness.
-//! `std::env::set_var` mutates process-global state, and Rust runs a test
-//! binary's tests on many threads by default. Cargo gives each file under
-//! `tests/` its own binary but does not serialise the tests inside one, so two
-//! `#[test]`s arranging different environments would race — and the resulting
-//! flake would look like a config bug rather than a test bug. Splitting these
-//! needs `--test-threads=1`, which is a flag a future runner can drop without
-//! anything failing until it flakes.
-//!
-//! So: one function, sections in order, each asserting with a message naming
-//! the case. `clear_all` runs before each section so none of them can pass on a
-//! leftover from the one above.
+//! One `#[test]`, in ordered sections, because `set_var` is process-global and
+//! tests in one binary run in parallel; splitting would rely on
+//! `--test-threads=1`. `clear_all` runs before each section.
 
 #![expect(
     unsafe_code,
@@ -127,9 +114,8 @@ fn the_config_layer_refuses_rather_than_defaults() {
     );
 
     // ---- an unparseable port is an error, not the default ----------------
-    // `mirror.rs` falls back here and is right to — it is an optional read-only
-    // mirror. This is the primary database: `DB_PORT=three` must not silently
-    // connect to 3306 while the manifest claims otherwise.
+    // Unlike the optional read-only mirror: `DB_PORT=three` must not connect
+    // to 3306.
     unsafe { fresh() };
     unsafe { std::env::set_var("DB_PORT", "three") };
     match Config::from_env() {
@@ -147,10 +133,8 @@ fn the_config_layer_refuses_rather_than_defaults() {
     }
 
     // ---- credentials cannot move the host --------------------------------
-    // A generated password contains `@`, `/`, `?` or `#` often enough that this
-    // is not hypothetical, and each of them terminates a URL component early.
-    // Unencoded, `p@ss` would compose a URL pointing at a different host — a
-    // connection somewhere else, not a parse error.
+    // Generated passwords contain `@`, `/`, `?` or `#`; unencoded, `p@ss`
+    // composes a URL to another host.
     unsafe { fresh() };
     unsafe {
         std::env::set_var("DB_USER", "user@name");
@@ -176,16 +160,8 @@ fn the_config_layer_refuses_rather_than_defaults() {
     );
 
     // ---- a DB-only command asks for the database alone ---------------------
-    //
-    // The batch CronJobs set DB_* and nothing else. `refresh-presence-log`
-    // once used the full config, which then required a credential it never
-    // read, and died in production on it — after `decode-day` had spent twelve
-    // minutes decoding seven days, because the config was read at the start of
-    // the step rather than the start of the job.
-    //
-    // A command should ask for what it uses. This pins that `DbConfig::from_env`
-    // does, so the next DB-only subcommand cannot quietly reintroduce a
-    // requirement.
+    // The batch CronJobs set DB_* only, so `DbConfig::from_env` must require
+    // nothing else, or a job dies on a credential it never reads.
     unsafe { clear_all() };
     unsafe {
         std::env::set_var("DB_USER", "syncer");
@@ -205,18 +181,9 @@ fn the_config_layer_refuses_rather_than_defaults() {
     );
 
     // ---- the focus cron's env is DB_* + NC_*, and that must be enough ------
-    //
-    // This is the second time. `refresh-presence-log` died on a credential
-    // it never read (above); `refresh-focus-places` did the same thing in
-    // production, because it was written to call `Config::from_env` on the
-    // reasoning that it "needs Nextcloud too". It does not: the NC credentials
-    // come from the database, and the only extra it wants is a base URL.
-    //
-    // The test above could not catch that — it pins the config layer, not which
-    // config a subcommand reaches for. This pins the focus cron's actual
-    // requirement: its pod sets DB_* and NC_CLIENT_ID/NC_CLIENT_SECRET and no
-    // NC_BASE_URL, and everything the command reads at startup must resolve
-    // under exactly that.
+    // Its pod sets DB_* and NC_CLIENT_ID/NC_CLIENT_SECRET, no NC_BASE_URL (NC
+    // credentials come from the database). Everything the command reads at
+    // startup must resolve under exactly that.
     unsafe { clear_all() };
     unsafe {
         std::env::set_var("DB_USER", "syncer");

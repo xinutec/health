@@ -1,32 +1,23 @@
-//! The decoder's fitted parameters, every number of them, from the narrated
-//! days: the four files a decode request's harness flags take
-//! (`HSMM_SEG_EMISSION`, `HSMM_TRANS_FIT`, `HSMM_ENTRY_COUNTS`, and the speed
-//! priors `HSMM_FITTED_PRIORS_DIR` wants per day).
+//! The decoder's fitted parameters from the narrated days: the files the
+//! harness flags take (`HSMM_SEG_EMISSION`, `HSMM_TRANS_FIT`,
+//! `HSMM_ENTRY_COUNTS`, and the per-day `HSMM_FITTED_PRIORS_DIR` speed priors).
 //!
-//! Every minute strictly inside a confirmed narrative row (`user`, `derived` or
-//! `corroborated`; the first and last minute are left out because they hold the
-//! next mode too) is a labelled minute, observed exactly as the decoder observes
-//! it — the request's own `emissionDebug` rows, which carry the windowed speed,
-//! the rail class, in-bed and the minute's position. Consecutive rows of one
-//! mode join into a run; a run's net displacement is the decoder's own window
-//! over it (`emissionDebug.segments`).
+//! A labelled minute is one strictly inside a confirmed narrative row (`user`,
+//! `derived`, `corroborated`; the edge minutes hold the next mode too), observed
+//! through the request's own `emissionDebug` rows. Consecutive rows of one mode
+//! form a run, displaced by the decoder's own window (`emissionDebug.segments`).
 //!
-//! The form is not fitted: which terms are on (`speedWindow`, `dispPosterior`,
-//! `centreAnchor`, …), the outlier range, the pseudo-counts, and
-//! the parameters no narrated minute reaches (cycling, plane, the inert
-//! beta-binomial) come from `--form <dir>` (the golden fits); every number the
-//! narrated days do reach is replaced.
+//! The form is not fitted: which terms are on, the outlier range, pseudo-counts
+//! and parameters no narrated minute reaches come from `--form <dir>`.
 //!
 //! ```text
 //! cargo run --release --example fit_emissions -- --form <dir> --out <dir> [--loo <dir>] [--exclude <YYYY-MM-DD>]...
 //! ```
 //!
-//! `--out` gets the fit over every day but `--exclude`: the four files, and
-//! `decoder-params.json`, the one record the serving pod loads
-//! (`backend::decoder_params`), with `decoder-form.json`'s settings and the
-//! days it came from. `--loo` gets, per file, `<loo>/<file>/<date>.json` fitted
-//! without that day — point `DECODER_PARAMS` (or a harness variable) at its
-//! directory. Exit 2 when the corpus is absent.
+//! `--out` gets the fit over every day but `--exclude`, plus
+//! `decoder-params.json` (what the pod loads, `backend::decoder_params`).
+//! `--loo` gets `<loo>/<file>/<date>.json` fitted without that day. Exit 2 when
+//! the corpus is absent.
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
@@ -159,10 +150,9 @@ struct Day {
 }
 
 /// EM for the calling evidence: each pass's slowest-minute speed is stopped
-/// (exponential) or moving (Gaussian), the stopped share by class. A share is
-/// read by the rule of succession, as every share of a count in the record:
-/// the calling class's EM share alone reaches 1, which would make a calling
-/// station passed at speed impossible. Started from the pooled median split.
+/// (exponential) or moving (Gaussian), the stopped share by class, read by the
+/// rule of succession so a calling station passed at speed is never impossible.
+/// Started from the pooled median split.
 fn fit_stops(xs: &[(f64, bool)]) -> [f64; 5] {
     let mut sorted: Vec<f64> = xs.iter().map(|x| x.0).collect();
     sorted.sort_by(f64::total_cmp);
@@ -987,10 +977,9 @@ fn write_fit(
             se["obsChain"][m] = json!(chain_rows(&cls));
         }
     }
-    // A mode no narrated minute reaches (cycling, a plane) takes the chains
-    // pooled over every narrated minute: the population is the honest prior for
-    // a mode with no data of its own. Without them it paid nothing for where
-    // its fixes fall, so a train's tail along the tracks read as a bicycle.
+    // A mode no narrated minute reaches (cycling, plane) takes chains pooled
+    // over every narrated minute, or its fixes cost nothing and a train's tail
+    // reads as a bicycle.
     if form.pool_unobserved {
         let mut cls = vec![vec![0.0f64; 3]; 3];
         for r in &runs {
@@ -1115,10 +1104,9 @@ fn write_fit(
             ));
         }
     }
-    // A stopped vehicle reads as a stay does: a minute under the stays' 95th
-    // percentile of windowed speed. (A free mixture fitted by EM puts the
-    // standstill's spread at 2 km/h on the Tube, and a train then takes the
-    // slow platform minutes: lines −3, stations −3 against this definition.)
+    // A stopped vehicle reads as a stay does: under the stays' 95th percentile
+    // of windowed speed. A free EM mixture gave trains the slow platform
+    // minutes.
     let stop_cut = {
         let mut st = speeds(&of("stationary"));
         st.sort_by(f64::total_cmp);
@@ -1238,14 +1226,10 @@ fn write_fit(
     // The one record (`backend::decoder_params`): the four, the form's settings,
     // and which days the numbers came from.
     let mut record = form.decoder.clone();
-    // With `fitStayMove`, moving about inside a stay's place: a two-state
-    // chain over the minutes of each narrated stay at a listed place (still /
-    // moving), the moving minute's steps scored under walking's cadence and
-    // the still minute's under the stay's (the form's own priors), its first
-    // and last minute still (a spell comes back), its two rates by maximum
-    // likelihood (EM, forward–backward), a pseudo-count each side. The decoder
-    // scores the same chain (`Assemble.stayMoveTable`), so the rates are
-    // fitted on the term's own likelihood, not on a step threshold.
+    // With `fitStayMove`: a still/moving chain over each narrated stay at a
+    // listed place, moving steps scored under walking's cadence, still under
+    // the stay's, first and last minute still, rates by EM with a pseudo-count
+    // each side: the likelihood `Assemble.stayMoveTable` scores.
     if form.decoder["fitStayMove"].as_bool() == Some(true) {
         let cad = |m: &str, c: f64| -> Option<f64> {
             let row = sp["modePriors"][m].as_array()?;
