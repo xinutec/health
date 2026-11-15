@@ -23,7 +23,7 @@ allowBuilds:
   esbuild: true
   lmdb: true
   msgpackr-extract: true
-  "@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/a3848c2306ba1a67e910baed8dc2870936ad20ea": true
+  "@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/f3dcfff77efae5cb8768604bd026d1c90713adf3": true
 
 # Carried across from package.json's npm-format `overrides`, which pnpm does not
 # read. Leaving them there does not merely ignore them going forward: `pnpm
@@ -35,7 +35,7 @@ overrides:
   "@babel/core": ^7.29.6
   # One vite for the workspace: @angular/build pins its own exact vite and vitest
   # resolves another, so without this the lock carries both.
-  vite: ~8.3.7
+  vite: ~8.3.8
 
 # The catalog names only versions a day old (dev-lint tables/deps.dhall);
 # strict, so a younger install fails instead of writing itself an exclusion.
