@@ -185,6 +185,20 @@ fn the_narrative_corpus_matches_its_blessed_shape() {
             }
         }
 
+        // One person is in one state at a time: a row starting inside the row
+        // before it is a boundary moved on one side and not the other.
+        for w in resolved.windows(2) {
+            let (a0, b0, a1) = (&w[0]["startTs"], &w[0]["endTs"], &w[1]["startTs"]);
+            if let (Some(a0), Some(b0), Some(a1)) = (a0.as_i64(), b0.as_i64(), a1.as_i64())
+                && a0 <= a1
+                && a1 < b0
+            {
+                failures.push(format!(
+                    "{name}: a row starting at {a1} overlaps the row before it ({a0}-{b0})"
+                ));
+            }
+        }
+
         // The ground-truth side of the decoder scoreboard. Rows go back to Lean
         // resolved; the zone conversion above is the only part of this chain
         // that is not logic.

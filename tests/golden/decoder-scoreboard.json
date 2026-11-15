@@ -207,13 +207,13 @@
 		"journeysExpected": 3,
 		"journeysMatched": 3,
 		"legModeScorable": 9,
-		"legModeMatching": 8,
+		"legModeMatching": 9,
 		"legLineScorable": 2,
 		"legLineMatching": 2,
 		"stationsAsserted": 2,
 		"stationsMatching": 2,
 		"stationsMissing": 0,
-		"phantomRides": 1
+		"phantomRides": 0
 	},
 	"2026-06-23": {
 		"journeysExpected": 2,
