@@ -7,7 +7,7 @@
 //! counted toward the breaker, or it wastes both budgets and trips the breaker
 //! for queries that would work.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use std::time::Duration;
 
 /// Identify ourselves. Overpass's public mirrors block unattributed clients,
@@ -219,11 +219,17 @@ pub async fn fetch_attempt(
 /// empty list (Overpass omits it when nothing matched), but a malformed one is an
 /// error: a default would shrink the mirror with every signal saying it worked.
 pub fn elements(body: &str) -> Result<Vec<serde_json::Value>> {
-    let v: serde_json::Value =
-        serde_json::from_str(body).context("the Overpass response is not JSON")?;
-    match v.get("elements") {
-        None | Some(serde_json::Value::Null) => Ok(Vec::new()),
-        Some(serde_json::Value::Array(a)) => Ok(a.clone()),
-        Some(other) => bail!("the Overpass response's `elements` is {other}, not an array"),
+    elements_as(body)
+}
+
+/// [`elements`], each parsed straight into `T`: a dense city box is 53 MB, and
+/// as a `Value` tree it is over ten times that.
+pub fn elements_as<T: serde::de::DeserializeOwned>(body: &str) -> Result<Vec<T>> {
+    #[derive(serde::Deserialize)]
+    struct Answer<T> {
+        elements: Option<Vec<T>>,
     }
+    let a: Answer<T> = serde_json::from_str(body)
+        .context("the Overpass response is not JSON with an `elements` array")?;
+    Ok(a.elements.unwrap_or_default())
 }

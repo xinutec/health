@@ -261,11 +261,8 @@ pub async fn drain_osm(
                 }
             };
 
-            let elements = overpass::elements(&body)?;
-            let features: Vec<_> = elements
-                .iter()
-                .filter_map(|el| osm_mirror::parse_element(el, venue_tags))
-                .collect();
+            let features = osm_mirror::features_from_body(&body, venue_tags)?;
+            drop(body);
             let written = osm_mirror::upsert_features(pool, &features).await?;
             // After the rows. A coverage row is a promise the area can be
             // answered from the mirror; written first, a crash mid-insert would
@@ -283,8 +280,7 @@ pub async fn drain_osm(
             out.rows_written += written;
             tracing::info!(
                 "  {bucket} {lat:.4},{lon:.4} r={radius_m:.0}m box={half_width_m:.0}m \
-                 elements={} features={} rows={written}",
-                elements.len(),
+                 features={} rows={written}",
                 features.len(),
             );
         }

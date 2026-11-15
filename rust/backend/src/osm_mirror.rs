@@ -201,16 +201,38 @@ impl Feature {
     }
 }
 
+/// One Overpass element, typed: as a `Value` tree a dense box's answer is over
+/// ten times its body. An absent or `null` field drops the element; a field of
+/// the wrong type fails the whole answer.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct Element {
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    pub id: Option<i64>,
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    /// Insertion order, as `tags_json` has always been written.
+    #[serde(default)]
+    pub tags: Map<String, Value>,
+    pub geometry: Option<Vec<Option<LatLon>>>,
+}
+
+/// One vertex of a way's `geometry`.
+#[derive(Debug, serde::Deserialize)]
+pub struct LatLon {
+    pub lat: f64,
+    pub lon: f64,
+}
+
 /// Translate one Overpass element, or `None` without a bucketed tag or usable
 /// geometry. Relations are dropped (neither table holds one). A named feature
 /// with a [`crate::lean::venue_tags`] tag and no venue tag is a landmark (a
 /// hotel mapped as the building alone, a beach).
 #[must_use]
-pub fn parse_element(el: &Value, venue_tags: &[(String, Vec<String>)]) -> Option<Feature> {
-    let kind = el.get("type")?.as_str()?;
-    let id = el.get("id")?.as_i64()?;
-    let empty = Map::new();
-    let tags = el.get("tags").and_then(Value::as_object).unwrap_or(&empty);
+pub fn parse_element(el: &Element, venue_tags: &[(String, Vec<String>)]) -> Option<Feature> {
+    let kind = el.kind.as_deref()?;
+    let id = el.id?;
+    let tags = &el.tags;
     let tag = |k: &str| tags.get(k).and_then(Value::as_str);
 
     // Furniture first: these carry `highway=` and must not land in the road
@@ -242,11 +264,11 @@ pub fn parse_element(el: &Value, venue_tags: &[(String, Vec<String>)]) -> Option
 
     let geom_wkt = match kind {
         "node" => {
-            let (lat, lon) = (el.get("lat")?.as_f64()?, el.get("lon")?.as_f64()?);
+            let (lat, lon) = (el.lat?, el.lon?);
             format!("POINT({lon} {lat})")
         }
         "way" => {
-            let pts = el.get("geometry")?.as_array()?;
+            let pts = el.geometry.as_deref()?;
             // A single-vertex way is dropped, not stored: `LINESTRING` with one
             // point is invalid and MariaDB rejects the whole 500-row batch.
             if pts.len() < 2 {
@@ -254,11 +276,7 @@ pub fn parse_element(el: &Value, venue_tags: &[(String, Vec<String>)]) -> Option
             }
             let coords = pts
                 .iter()
-                .map(|p| {
-                    let lat = p.get("lat")?.as_f64()?;
-                    let lon = p.get("lon")?.as_f64()?;
-                    Some(format!("{lon} {lat}"))
-                })
+                .map(|p| p.as_ref().map(|p| format!("{} {}", p.lon, p.lat)))
                 .collect::<Option<Vec<_>>>()?
                 .join(",");
             format!("LINESTRING({coords})")
@@ -274,9 +292,20 @@ pub fn parse_element(el: &Value, venue_tags: &[(String, Vec<String>)]) -> Option
         // `ref` is the fallback, and it is what names a motorway: the A41 has
         // no `name`. Dropping it would leave every trunk road anonymous.
         name: tag("name").or_else(|| tag("ref")).map(str::to_string),
-        tags_json: Value::Object(tags.clone()).to_string(),
+        tags_json: serde_json::to_string(tags).ok()?,
         geom_wkt,
     })
+}
+
+/// Every feature in one Overpass answer.
+pub fn features_from_body(
+    body: &str,
+    venue_tags: &[(String, Vec<String>)],
+) -> Result<Vec<Feature>> {
+    Ok(crate::overpass::elements_as::<Element>(body)?
+        .iter()
+        .filter_map(|el| parse_element(el, venue_tags))
+        .collect())
 }
 
 /// How many rows go into one INSERT.

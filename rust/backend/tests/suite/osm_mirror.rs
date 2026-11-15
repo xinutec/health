@@ -3,8 +3,8 @@
 //! `feature_type` filter never selects.
 
 use backend::osm_mirror::{
-    BUCKETS, Bbox, bucket_of, fetch_bbox_around, half_width_for, overpass_query, parse_element,
-    parse_queue_key, queue_key, queue_kind,
+    BUCKETS, Bbox, bucket_of, features_from_body, fetch_bbox_around, half_width_for,
+    overpass_query, parse_queue_key, queue_key, queue_kind,
 };
 use serde_json::json;
 
@@ -12,8 +12,12 @@ use serde_json::json;
 fn venue() -> Vec<(String, Vec<String>)> {
     backend::lean::venue_tags().expect("lean answers venuetags")
 }
+/// Through the answer the drain parses, so the typed element is what is tested.
 fn parse(el: &serde_json::Value) -> Option<backend::osm_mirror::Feature> {
-    parse_element(el, &venue())
+    let body = json!({ "elements": [el] }).to_string();
+    let mut fs = features_from_body(&body, &venue()).expect("a well-formed answer");
+    assert!(fs.len() <= 1);
+    fs.pop()
 }
 fn query(bucket: &str, bbox: &Bbox) -> anyhow::Result<String> {
     overpass_query(bucket, bbox, &venue())
