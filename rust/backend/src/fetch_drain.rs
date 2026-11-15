@@ -12,7 +12,8 @@
 //! 320 MiB under a 512 MiB limit, so they must not share a cgroup. Polite as the
 //! old CronJobs were: Nominatim one request a second (`nominatim::MIN_INTERVAL`,
 //! slept before each), an Overpass slot asked per box, and a failed key retried
-//! on a later tick, never in a loop (`fetch_queue::MAX_ATTEMPTS`).
+//! on a later tick, never in a loop: an attempt is counted before it is made,
+//! so a crash counts too (`fetch_queue::claim`, `MAX_ATTEMPTS`).
 //! `backend fetch-osm` and `fetch-geocodes` call these same drains.
 
 use std::time::Duration;
@@ -93,8 +94,8 @@ impl OsmDrain {
 /// ⚠ One request per second is Nominatim's stated policy: exceeding it earns
 /// an IP-level ban that takes naming down for everyone behind this address.
 ///
-/// A failure raises `attempts` and the key stays visible; deleting it would only
-/// have it re-asked forever. `dry_run` lists without fetching.
+/// Each attempt is counted before it is made and the key stays visible on
+/// failure; deleting it would only have it re-asked forever. `dry_run` lists without fetching.
 pub async fn drain_geocodes(
     pool: &MySqlPool,
     client: &reqwest::Client,
@@ -123,6 +124,7 @@ pub async fn drain_geocodes(
             continue;
         }
         for p in pending {
+            let attempt = fetch_queue::claim(pool, &kind, &p.key).await?;
             // The key is `lat|lon` as rounded by whoever recorded it, parsed not
             // re-rounded, so the answer lands under the key the reader forms.
             let mut parts = p.key.split('|');
@@ -130,7 +132,7 @@ pub async fn drain_geocodes(
                 parts.next().and_then(|v| v.parse::<f64>().ok()),
                 parts.next().and_then(|v| v.parse::<f64>().ok()),
             ) else {
-                fetch_queue::failed(pool, &kind, &p.key, "unparseable key").await?;
+                attempt.failed("unparseable key").await?;
                 out.failed += 1;
                 continue;
             };
@@ -149,15 +151,15 @@ pub async fn drain_geocodes(
                     // there is a fact about the world and re-asking it every
                     // tick would spend the budget on settled questions.
                     nominatim::cache_put(pool, zoom, lat, lon, &answer).await?;
-                    fetch_queue::done(pool, &kind, &p.key).await?;
+                    attempt.done().await?;
                 }
                 Ok(nominatim::Fetched::Refused(status)) => {
                     out.failed += 1;
-                    fetch_queue::failed(pool, &kind, &p.key, &format!("HTTP {status}")).await?;
+                    attempt.failed(&format!("HTTP {status}")).await?;
                 }
                 Err(e) => {
                     out.failed += 1;
-                    fetch_queue::failed(pool, &kind, &p.key, &e.to_string()).await?;
+                    attempt.failed(&e.to_string()).await?;
                 }
             }
         }
@@ -209,10 +211,11 @@ pub async fn drain_osm(
         let mut boxes = osm_mirror::coverage_rows(pool, &bucket, bucket_vocab).await?;
 
         for p in pending {
+            let attempt = fetch_queue::claim(pool, &kind, &p.key).await?;
             // A key that does not parse and a question wider than its bucket's
             // cap are retired, not failed: retrying is the invisible loop.
             let Some((lat, lon, radius_m)) = osm_mirror::parse_queue_key(&p.key) else {
-                fetch_queue::exhaust(pool, &kind, &p.key, "unparseable key").await?;
+                attempt.exhaust("unparseable key").await?;
                 out.failed += 1;
                 continue;
             };
@@ -220,14 +223,14 @@ pub async fn drain_osm(
             // `has_local_data: false`: the serving probe's short-circuit on a
             // sibling bucket's stray rows would stop the drain filling the area.
             if lean::osm_covered(lat, lon, radius_m, &boxes, now_ms, false)? {
-                fetch_queue::done(pool, &kind, &p.key).await?;
+                attempt.done().await?;
                 out.covered_already += 1;
                 continue;
             }
             let half_width_m = match osm_mirror::half_width_for(&bucket, radius_m) {
                 Ok(w) => w,
                 Err(e) => {
-                    fetch_queue::exhaust(pool, &kind, &p.key, &e.to_string()).await?;
+                    attempt.exhaust(&e.to_string()).await?;
                     out.failed += 1;
                     continue;
                 }
@@ -244,18 +247,14 @@ pub async fn drain_osm(
                     // Retired, not merely failed. A non-429 4xx is a malformed
                     // query and will be malformed tomorrow too, so spending five
                     // attempts discovering that buys nothing.
-                    fetch_queue::exhaust(
-                        pool,
-                        &kind,
-                        &p.key,
-                        &format!("HTTP {status} — a permanent refusal, not retried"),
-                    )
-                    .await?;
+                    attempt
+                        .exhaust(&format!("HTTP {status} — a permanent refusal, not retried"))
+                        .await?;
                     out.refused += 1;
                     continue;
                 }
                 overpass::Outcome::AllFailed { errors, .. } => {
-                    fetch_queue::failed(pool, &kind, &p.key, &errors.join("; ")).await?;
+                    attempt.failed(&errors.join("; ")).await?;
                     out.failed += 1;
                     continue;
                 }
@@ -275,7 +274,7 @@ pub async fn drain_osm(
                 max_lon: bbox.max_lon,
                 fetched_at: Some(now_ms),
             });
-            fetch_queue::done(pool, &kind, &p.key).await?;
+            attempt.done().await?;
             out.fetched += 1;
             out.rows_written += written;
             tracing::info!(

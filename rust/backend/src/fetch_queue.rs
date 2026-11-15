@@ -109,52 +109,88 @@ pub async fn due(pool: &MySqlPool, kind: &str, limit: i64) -> Result<Vec<Pending
         .collect()
 }
 
-/// Drop a key that has been fetched.
-pub async fn done(pool: &MySqlPool, kind: &str, key: &str) -> Result<()> {
-    sqlx::query("DELETE FROM osm_fetch_queue WHERE kind = ? AND fetch_key = ?")
-        .bind(kind)
-        .bind(key)
-        .execute(pool)
+/// One counted attempt at a key. Counting after the fetch, a crash mid-fetch (an
+/// OOM kill) counted nothing and every restart asked the same key first,
+/// forever; an outcome is written only through this, so it is always counted.
+#[must_use = "record the outcome with done, failed or exhaust"]
+pub struct Attempt<'a> {
+    pool: &'a MySqlPool,
+    kind: &'a str,
+    key: &'a str,
+}
+
+/// Count an attempt at `key` before making it.
+pub async fn claim<'a>(pool: &'a MySqlPool, kind: &'a str, key: &'a str) -> Result<Attempt<'a>> {
+    sqlx::query(
+        "UPDATE osm_fetch_queue SET attempts = attempts + 1, \
+         last_error = 'attempt started; no outcome recorded' \
+         WHERE kind = ? AND fetch_key = ?",
+    )
+    .bind(kind)
+    .bind(key)
+    .execute(pool)
+    .await
+    .context("claiming an osm_fetch_queue row")?;
+    Ok(Attempt { pool, kind, key })
+}
+
+impl Attempt<'_> {
+    /// The key is answered: drop it.
+    pub async fn done(self) -> Result<()> {
+        sqlx::query("DELETE FROM osm_fetch_queue WHERE kind = ? AND fetch_key = ?")
+            .bind(self.kind)
+            .bind(self.key)
+            .execute(self.pool)
+            .await
+            .context("clearing an osm_fetch_queue row")?;
+        Ok(())
+    }
+
+    /// The attempt failed; the key stays visible and is retried while
+    /// attempts remain.
+    pub async fn failed(self, why: &str) -> Result<()> {
+        self.note(None, why).await
+    }
+
+    /// The key will fail the same way every time (a malformed query, an area
+    /// the endpoint will not serve): no further attempts, the row carries why.
+    pub async fn exhaust(self, why: &str) -> Result<()> {
+        self.note(Some(MAX_ATTEMPTS), why).await
+    }
+
+    /// A clean shutdown interrupted it: not an attempt. Every deploy stops the
+    /// drains, and counting that would retire whichever key was in flight.
+    pub async fn release(self) -> Result<()> {
+        sqlx::query(
+            "UPDATE osm_fetch_queue SET attempts = GREATEST(attempts - 1, 0), \
+             last_error = 'interrupted by a shutdown' \
+             WHERE kind = ? AND fetch_key = ?",
+        )
+        .bind(self.kind)
+        .bind(self.key)
+        .execute(self.pool)
         .await
-        .context("clearing an osm_fetch_queue row")?;
-    Ok(())
-}
+        .context("releasing an osm_fetch_queue row")?;
+        Ok(())
+    }
 
-/// Record a failed attempt, keeping the key visible.
-pub async fn failed(pool: &MySqlPool, kind: &str, key: &str, why: &str) -> Result<()> {
-    // Truncated here: MariaDB truncates silently or errors depending on strict
-    // mode.
-    let why: String = why.chars().take(255).collect();
-    sqlx::query(
-        "UPDATE osm_fetch_queue SET attempts = attempts + 1, last_error = ? \
-         WHERE kind = ? AND fetch_key = ?",
-    )
-    .bind(&why)
-    .bind(kind)
-    .bind(key)
-    .execute(pool)
-    .await
-    .context("recording an osm_fetch_queue failure")?;
-    Ok(())
-}
-
-/// Retire a key that will fail the same way every time: a malformed query or an
-/// area the endpoint will not serve. Unlike [`failed`], no further attempts; the
-/// row stays, carrying why.
-pub async fn exhaust(pool: &MySqlPool, kind: &str, key: &str, why: &str) -> Result<()> {
-    let why: String = why.chars().take(255).collect();
-    sqlx::query(
-        "UPDATE osm_fetch_queue SET attempts = ?, last_error = ? \
-         WHERE kind = ? AND fetch_key = ?",
-    )
-    .bind(MAX_ATTEMPTS)
-    .bind(&why)
-    .bind(kind)
-    .bind(key)
-    .execute(pool)
-    .await
-    .context("retiring an osm_fetch_queue row")?;
-    Ok(())
+    async fn note(self, attempts: Option<i32>, why: &str) -> Result<()> {
+        // Truncated here: MariaDB truncates silently or errors depending on
+        // strict mode.
+        let why: String = why.chars().take(255).collect();
+        sqlx::query(
+            "UPDATE osm_fetch_queue SET attempts = COALESCE(?, attempts), last_error = ? \
+             WHERE kind = ? AND fetch_key = ?",
+        )
+        .bind(attempts)
+        .bind(&why)
+        .bind(self.kind)
+        .bind(self.key)
+        .execute(self.pool)
+        .await
+        .context("recording an osm_fetch_queue outcome")?;
+        Ok(())
+    }
 }
 
 /// What is waiting, by kind: `(kind, waiting, exhausted)`.

@@ -863,8 +863,9 @@ pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
 /// `backend watch-decode-queue`: the decoder beside the serving pod. Each turn
 /// takes a day a read queued, else the newest stale stored day in
 /// `window_days`, and decodes it in a child process (one process over many days
-/// held memory), then writes its presence row. Failures count attempts, so a
-/// day that keeps failing stops being tried. `backend serve` migrates.
+/// held memory), then writes its presence row. Each decode counts an attempt
+/// before it starts, so a day that keeps failing or crashing stops being tried;
+/// a SIGTERM hands it back. `backend serve` migrates.
 pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Result<()> {
     use backend::decode_freshness as fresh;
     use backend::fetch_queue as queue;
@@ -894,6 +895,7 @@ pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Res
             }
         };
         let key = fresh::queue_key(&user_id, &date);
+        let attempt = queue::claim(&pool, fresh::QUEUE_KIND, &key).await?;
         let started = std::time::Instant::now();
         // Today's request comes back to this loop, which decodes it on its own
         // worker from the day's previous run; every other day decodes whole in
@@ -913,7 +915,10 @@ pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Res
             cmd.env("DECODE_HANDOFF", &handoff);
         }
         let status = tokio::select! {
-            _ = term.recv() => break,
+            _ = term.recv() => {
+                attempt.release().await?;
+                break;
+            }
             s = cmd.status() => s,
         };
         match status {
@@ -922,14 +927,17 @@ pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Res
                 let _ = std::fs::remove_file(&handoff);
                 let outcome = match handed {
                     Some(bytes) => tokio::select! {
-                        _ = term.recv() => break,
+                        _ = term.recv() => {
+                            attempt.release().await?;
+                            break;
+                        }
                         r = decode_today(&mut today_worker, &pool, &user_id, &date, &bytes) => r,
                     },
                     None => Ok(String::new()),
                 };
                 match outcome {
                     Ok(note) => {
-                        queue::done(&pool, fresh::QUEUE_KIND, &key).await?;
+                        attempt.done().await?;
                         if let Err(e) =
                             super::refresh::refresh_presence_log(&pool, 1, Some((&user_id, &date)))
                                 .await
@@ -943,23 +951,17 @@ pub(crate) async fn watch_decode_queue(interval_s: u64, window_days: i64) -> Res
                     }
                     Err(e) => {
                         eprintln!("decode watch: {user_id} {date} failed: {e:#}");
-                        queue::failed(&pool, fresh::QUEUE_KIND, &key, &format!("{e:#}")).await?;
+                        attempt.failed(&format!("{e:#}")).await?;
                     }
                 }
             }
             Ok(s) => {
                 eprintln!("decode watch: {user_id} {date} failed ({s})");
-                queue::failed(
-                    &pool,
-                    fresh::QUEUE_KIND,
-                    &key,
-                    &format!("decode-day exited {s}"),
-                )
-                .await?;
+                attempt.failed(&format!("decode-day exited {s}")).await?;
             }
             Err(e) => {
                 eprintln!("decode watch: could not run decode-day for {user_id} {date}: {e:#}");
-                queue::failed(&pool, fresh::QUEUE_KIND, &key, "decode-day did not start").await?;
+                attempt.failed("decode-day did not start").await?;
             }
         }
     }
