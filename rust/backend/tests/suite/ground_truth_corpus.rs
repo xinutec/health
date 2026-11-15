@@ -88,6 +88,10 @@ const POST_TS: &[&str] = &[
     // A day at the office the user said they never left; its walks out and the
     // stay at the change station are known-wrong.
     "2026-11-03.md",
+    // A Saturday in town read from the data and confirmed by the user: the
+    // stay at IKEA (served as Vapiano) and two one-stop Jubilee hops inside
+    // walks are known-wrong.
+    "2026-11-08.md",
 ];
 
 /// The blessed totals over the files not in [`POST_TS`]. Each change since the
