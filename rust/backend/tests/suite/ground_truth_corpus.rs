@@ -92,6 +92,9 @@ const POST_TS: &[&str] = &[
     // stay at IKEA (served as Vapiano) and two one-stop Jubilee hops inside
     // walks are known-wrong.
     "2026-11-08.md",
+    // Waiting outside, then a restaurant among five equidistant ones: the two
+    // waits are ungraded notes, the restaurant (served as Wagamama) known-wrong.
+    "2026-11-14.md",
 ];
 
 /// The blessed totals over the files not in [`POST_TS`]. Each change since the
