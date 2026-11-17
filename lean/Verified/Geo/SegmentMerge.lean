@@ -64,6 +64,8 @@ structure Seg where
       `("railway", "train_station")`, so a later pass knows what enclosed it
       without a second ask, which a golden fixture could not answer. -/
   placeKind : Option (String × String) := none
+  /-- `ResolvedPlace.share` of the name in `placeSource`. -/
+  placeShare : Option Float := none
   city : Option String := none
   wayName : Option String := none
   refinedReason : Option String := none
@@ -413,6 +415,9 @@ structure ResolvedPlace where
       from a reader that does not say. -/
   category : String := ""
   type_ : String := ""
+  /-- A guessed venue's share of its candidates' evidence
+      (`BestPlace.evidenceShare`); absent for every other rule. -/
+  share : Option Float := none
   deriving Inhabited, BEq, Repr
 
 end Verified.Geo.SegmentMerge

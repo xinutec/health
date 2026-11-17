@@ -88,7 +88,7 @@ and invents none. -/
 
 def stateSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.DayState.Seg :=
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, refinedMode := s.refinedMode
-    vehicleKind := s.vehicleKind, place := s.place, placeSource := s.placeSource, wayName := s.wayName
+    vehicleKind := s.vehicleKind, place := s.place, placeSource := s.placeSource, placeShare := s.placeShare, wayName := s.wayName
     -- The roads under the fixes, and — where the matcher's route is the one
     -- drawn — the roads of that route: a walk through a park reaches its road
     -- by the route, not by a fix's nearest way.

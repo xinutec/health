@@ -268,19 +268,27 @@ def Source.key : Source → String
   | .residential => "residential" | .nearField => "nearField" | .ranked => "ranked"
   | .landmark => "landmark" | .openSpace => "openSpace" | .address => "address"
 
+/-- The winner's share of the candidates' summed evidence, "none of these" at
+the rank floor: how clearly it beat its neighbours. -/
+def evidenceShare (top : Verified.Geo.VenuePrior.VenueCandidateScore)
+    (ranked : List Verified.Geo.VenuePrior.VenueCandidateScore) : Float :=
+  let mx := ranked.foldl (fun m c => max m c.total) (max top.total VENUE_RANK_FLOOR_NATS)
+  let den := ranked.foldl (fun s c => s + Float.exp (c.total - mx)) (Float.exp (VENUE_RANK_FLOOR_NATS - mx))
+  Float.exp (top.total - mx) / den
+
 /--
 `bestPlace`, whole, with the branch that answered (`Source`), or `none` when
 nothing names the place. A `stay` selects the plausibility ranking, its absence
 `pickBestLandmark`; `preferResidential` enables the overnight overrides.
 -/
-def bestPlaceSourced (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
-    (preferResidential : Bool) : Option (Result × Source) :=
+def bestPlaceScored (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
+    (preferResidential : Bool) : Option (Result × Source) × Option Float :=
   let landmarks := reads.landmarks.map (toLandmark reads.samples stay.isSome)
   let openSpace := (reads.landmarks.find? (·.inside)).map (toLandmark reads.samples stay.isSome)
   let detailed := reads.geocode DETAIL_ZOOM
   -- `bestLandmark` and `nominatimWon` thread through the chain; the third
   -- component says whether near-field dominance decided the ranking.
-  let (bestLandmark, nominatimWon, byNearField) : Option Landmark × Bool × Bool :=
+  let (bestLandmark, nominatimWon, byNearField, share) : Option Landmark × Bool × Bool × Option Float :=
     match stay with
     | some _ =>
       let nomVenue := match detailed with
@@ -292,25 +300,28 @@ def bestPlaceSourced (reads : Reads) (stay : Option StayShape) (priors : Option 
         | some nv => if landmarks.any (fun l => l.name == nv.name) then landmarks
                      else landmarks ++ [nv]
         | none => landmarks
-      if candidates.isEmpty then (none, false, false) else
-      match (rankVenues candidates stay priors).head? with
-      | none => (none, false, false)
+      if candidates.isEmpty then (none, false, false, none) else
+      let ranked := rankVenues candidates stay priors
+      match ranked.head? with
+      | none => (none, false, false, none)
       | some top =>
         let accepted := top.landmark.enclosing || decide (top.total ≥ VENUE_RANK_FLOOR_NATS)
-        if !accepted then (none, false, false)
-        else match nomVenue with
-          | some nv => if top.landmark.name == nv.name then (none, true, false) else (some top.landmark, false, top.nearField)
-          | none => (some top.landmark, false, top.nearField)
+        if !accepted then (none, false, false, none)
+        else
+          let share := some (evidenceShare top ranked)
+          match nomVenue with
+          | some nv => if top.landmark.name == nv.name then (none, true, false, share) else (some top.landmark, false, top.nearField, share)
+          | none => (some top.landmark, false, top.nearField, share)
     | none =>
-      if landmarks.isEmpty then (none, false, false)
-      else ((rankVenues landmarks none none).head?.map (·.landmark), false, false)
+      if landmarks.isEmpty then (none, false, false, none)
+      else ((rankVenues landmarks none none).head?.map (·.landmark), false, false, none)
   let rankedSource : Source :=
     if stay.isNone then .landmark else if byNearField then .nearField else .ranked
-  if bestLandmark.any (·.enclosing) then
+  (if bestLandmark.any (·.enclosing) then
     some (withAddressFrom (landmarkToResult (bestLandmark.getD default)) detailed, .enclosing)
   else if detailed.any (fun d => hasSpecificVenue d && (if stay.isSome then nominatimWon else true))
     then detailed.map (·, .geocodeVenue)
-  else rest bestLandmark rankedSource detailed reads.geocode preferResidential landmarks openSpace
+  else rest bestLandmark rankedSource detailed reads.geocode preferResidential landmarks openSpace, share)
 where
   /-- The tail of the chain, split out because Lean has no early `return`. The
   order is load-bearing: the lodging override beats the residential address,
@@ -350,6 +361,11 @@ where
                      else (detailed.orElse fun _ => area).map (·, .address)
         | none => detailed.map (·, .address)
 
+/-- The chain's answer and its branch. -/
+def bestPlaceSourced (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
+    (preferResidential : Bool) : Option (Result × Source) :=
+  (bestPlaceScored reads stay priors preferResidential).1
+
 /-- The chain's answer without its branch — what every caller before the
 confidence number read, and what the parity guards pin. -/
 def bestPlace (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
@@ -360,9 +376,11 @@ def bestPlace (reads : Reads) (stay : Option StayShape) (priors : Option VenuePr
 fold's jitter pass and the sleep-place attribution both consume. -/
 def resolve (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
     (preferResidential : Bool) : Option Verified.Geo.SegmentMerge.ResolvedPlace :=
-  (bestPlaceSourced reads stay priors preferResidential).map fun (r, src) =>
+  let (named, share) := bestPlaceScored reads stay priors preferResidential
+  named.map fun (r, src) =>
     { label := placeLabel r, city := extractCity (some r.address), source := src.key
-      category := r.category, type_ := r.type }
+      category := r.category, type_ := r.type
+      share := if src == .geocodeVenue || src == .nearField || src == .ranked then share else none }
 
 /-! ## Guards
 

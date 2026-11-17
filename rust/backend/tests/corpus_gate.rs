@@ -260,7 +260,7 @@ fn the_name_confidence_table_is_its_measurement() {
 fn a_name_is_graded_by_the_state_its_verdict_read() {
     use serde_json::json;
     let states = [
-        json!({"mode": "stationary", "startTs": 0, "endTs": 600, "placeSource": "station"}),
+        json!({"mode": "stationary", "startTs": 0, "endTs": 600, "placeConfidenceKey": "station"}),
         json!({"mode": "walking", "startTs": 600, "endTs": 1200}),
     ];
     let row = |a: i64, b: i64| json!({"startTs": a, "endTs": b, "truth": {"mode": "stationary", "place": "Somewhere"}});

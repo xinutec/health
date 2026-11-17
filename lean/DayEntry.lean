@@ -710,9 +710,13 @@ def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
     ("mode", Json.str s.mode), ("place", jOptS s.place), ("city", jOptS s.city),
     ("placeSource", jOptS s.placeSource),
     -- How often the rule that named `place` has been right.
-    ("placeConfidence", match s.placeSource with
-      | some src => Lean.toJson (Verified.Geo.NameConfidence.confidence src)
+    ("placeConfidenceKey", jOptS (s.placeSource.bind fun src =>
+      Verified.Geo.NameConfidence.key src s.placeShare)),
+    ("placeConfidence", match s.placeSource.bind fun src =>
+        Verified.Geo.NameConfidence.key src s.placeShare with
+      | some k => Lean.toJson (Verified.Geo.NameConfidence.confidence k)
       | none => Json.null),
+    ("placeShare", match s.placeShare with | some p => Lean.toJson p | none => Json.null),
     ("placeAt", match s.placeAt with
       | some (lat, lon) => Json.arr #[Lean.toJson lat, Lean.toJson lon]
       | none => Json.null),

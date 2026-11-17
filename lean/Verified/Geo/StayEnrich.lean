@@ -192,7 +192,7 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
       if let some p := inside then
         withCity
           { seg with place := some p.label, placeSource := some ⟨p.label, p.source, some (cLat, cLon)⟩
-                     placeKind := some (p.category, p.type_) }
+                     placeKind := some (p.category, p.type_), placeShare := p.share }
           (some p)
       else if wp.displayName == some "Home" || wp.displayName == some "Work" then
         withCity
@@ -214,7 +214,7 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
           withCity
             { seg with place := some p.label, focusPlaceId := some wp.cand.id
                        placeSource := some ⟨p.label, p.source, some (askLat, askLon)⟩
-                       placeKind := some (p.category, p.type_) }
+                       placeKind := some (p.category, p.type_), placeShare := p.share }
             (some p)
     | none =>
       -- 5b. Somewhere new. The day's own centroid, and the overnight check
@@ -222,7 +222,7 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
       match reads.place cLat cLon isSleepWindow true with
       | none => seg
       | some p => withCity { seg with place := some p.label, placeSource := some ⟨p.label, p.source, some (cLat, cLon)⟩
-                                      placeKind := some (p.category, p.type_) } (some p)
+                                      placeKind := some (p.category, p.type_), placeShare := p.share } (some p)
 
 /-! ## Guards
 

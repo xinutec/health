@@ -146,9 +146,10 @@ export interface DayState {
   mode: DayStateMode;
   /** Human-readable place (stationary / sleeping). */
   place?: string;
-  /** How often the rule that named `place` has been right on the confirmed
-   *  days (0–1, #325): `Verified.Geo.NameConfidence`. Absent or `null` when the
-   *  name has no recorded rule. */
+  /** How often a name like this one has been right on the confirmed days
+   *  (0–1): by the rule that named it, and for a guessed venue by how
+   *  clearly it beat its neighbours (`Verified.Geo.NameConfidence`). `null`
+   *  when the name has no recorded rule or is a street. */
   placeConfidence?: number | null;
   /** The metro area this state sits in — the timeline's city header. Served
    *  by the backend (`DayState.cityForState`) rather than re-derived here: the

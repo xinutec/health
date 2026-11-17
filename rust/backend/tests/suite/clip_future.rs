@@ -73,7 +73,8 @@ fn state(start: i64, end: i64, inferred: Option<bool>) -> Value {
         "startTs": start, "endTs": end, "mode": "stationary",
         // A source no naming rule produces: the table reads it as unknown, 0.5,
         // so this fixture does not move when a measured rate does.
-        "place": "somewhere", "city": null, "placeSource": "unmeasured", "placeConfidence": 0.5,
+        "place": "somewhere", "city": null, "placeSource": "unmeasured",
+        "placeConfidenceKey": "unmeasured", "placeConfidence": 0.5, "placeShare": 0.25,
         // Off any map, and exact in binary, so the round trip is byte-equal.
         "placeAt": [0.5, 0.25],
         "wayName": "a way", "roads": ["a way"], "asleep": false,
@@ -125,7 +126,8 @@ fn absent_optional_fields_survive_as_null_rather_than_vanishing() {
     // sides, because both come from `Day.stateJson`.
     let bare = json!({
         "startTs": 100, "endTs": 200, "mode": "walking",
-        "place": null, "city": null, "placeSource": null, "placeConfidence": null,
+        "place": null, "city": null, "placeSource": null,
+        "placeConfidenceKey": null, "placeConfidence": null, "placeShare": null,
         "placeAt": null, "wayName": null, "roads": [], "asleep": null,
         "tz": null, "minutesAsleep": null, "inferred": null,
     });

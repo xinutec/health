@@ -41,6 +41,9 @@ structure DayState where
       at, which the worldline referee checks for continuity. Gated like
       `placeSource`. Not part of `sameState`. -/
   placeAt : Option (Float × Float) := none
+  /-- A guessed venue's share of its candidates' evidence (`Seg.placeShare`).
+      Gated like `placeSource`. Not part of `sameState`. -/
+  placeShare : Option Float := none
   /-- The city header the timeline draws above this state. Served rather than
   re-derived by the client; see `cityForState`. -/
   city : Option String := none
@@ -82,6 +85,7 @@ structure Seg where
   place : Option String := none
   /-- `SegmentMerge.Seg.placeSource`, carried to the state. -/
   placeSource : Option Verified.PlaceSource := none
+  placeShare : Option Float := none
   wayName : Option String := none
   /-- The roads of a moving leg, longest first (`SegmentMerge.Seg.walkWayUm`'s
   names); `wayName` is the label composed from the first three. -/
@@ -138,6 +142,7 @@ private def makeStateFromSegment (seg : Seg) (startTs endTs : Int) (mode : Mode)
     place := seg.place,
     placeSource := seg.servedSource.map (·.rule),
     placeAt := seg.servedSource.bind (·.askedAt),
+    placeShare := seg.servedSource.bind fun _ => seg.placeShare,
     wayName := seg.wayName,
     roads := seg.roads,
     asleep := if asleep && mode != "sleeping" then some true else none,

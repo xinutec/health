@@ -67,7 +67,7 @@ pub fn name_confidence_counts(
         if !matches!(st["mode"].as_str(), Some("stationary" | "sleeping")) {
             continue;
         }
-        let Some(src) = st["placeSource"].as_str() else {
+        let Some(src) = st["placeConfidenceKey"].as_str() else {
             continue;
         };
         let e = out.entry(src.to_string()).or_default();
