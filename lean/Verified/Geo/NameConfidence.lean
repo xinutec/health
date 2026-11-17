@@ -22,7 +22,7 @@ namespace Verified.Geo.NameConfidence
 /-- `(source, right, graded)` over the corpus's graded stay rows. -/
 def COUNTS : List (String × Nat × Nat) :=
   [("home", 80, 80), ("sleep", 29, 29), ("enclosing", 25, 25), ("work", 24, 24),
-   ("guessBarely", 8, 19), ("guessClearly", 31, 40), ("guessDecisively", 5, 5),
+   ("guessBarely", 8, 21), ("guessClearly", 31, 40), ("guessDecisively", 5, 6),
    ("lodging", 24, 24), ("station", 25, 28), ("geocodeVenue", 1, 1),
    ("openSpace", 3, 3), ("residential", 0, 2)]
 
@@ -62,7 +62,7 @@ def key (source : String) (share : Option Float) : Option String :=
 #guard key "address" none == none
 
 #guard confidence "enclosing" == 26 / 27
-#guard confidence "guessBarely" == 9 / 21
+#guard confidence "guessBarely" == 9 / 23
 #guard confidence "guessClearly" == 32 / 42
 #guard confidence "unmeasured" == 0.5
 

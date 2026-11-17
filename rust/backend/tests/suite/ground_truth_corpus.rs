@@ -95,6 +95,9 @@ const POST_TS: &[&str] = &[
     // Waiting outside, then a restaurant among five equidistant ones: the two
     // waits are ungraded notes, the restaurant (served as Wagamama) known-wrong.
     "2026-11-14.md",
+    // The café served as a pub twice, a walk on the Fields served as the
+    // leisure centre beside them, and a supermarket stop inside a walk.
+    "2026-11-16.md",
 ];
 
 /// The blessed totals over the files not in [`POST_TS`]. Each change since the
