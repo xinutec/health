@@ -239,10 +239,23 @@ def cityForState (segments : List Seg) (s : DayState) : Option String :=
     | none => none
     | some p => (segments.find? (fun g => g.place == some p && g.city.isSome)).bind (·.city)
 
+/-- A window the watch gave no zone takes the zone of the segment nearest it in
+time (an overlapping one is at distance zero), so the half of a night no
+segment covers and the half one does are the same state and merge. -/
+def withSegmentTz (segments : List Seg) (w : SleepWindow) : SleepWindow :=
+  if w.tz.isSome then w else
+  let gap := fun (g : Seg) => max 0 (max (g.startTs - w.endTs) (w.startTs - g.endTs))
+  let best := (segments.filter (·.displayTz.isSome)).foldl (fun acc g =>
+    match acc with
+    | none => some g
+    | some b => if gap g < gap b then some g else acc) none
+  { w with tz := best.bind (·.displayTz) }
+
 /-- The day's non-overlapping state sequence: for each sub-interval between
     distinct boundaries, the covering segment and sleep window, probed at the
     midpoint so a zero-length sub-interval cannot pick up a neighbour. -/
 def segmentsToDayStates (segments : List Seg) (sleeps : List SleepWindow) : List DayState :=
+  let sleeps := sleeps.map (withSegmentTz segments)
   let bs := collectBoundaries segments sleeps
   if bs.length < 2 then [] else
   let pairs := bs.zip (bs.drop 1)
@@ -512,6 +525,17 @@ private def upAndOut : List Seg :=
   [sw T0 (T0+3600) (some "Home") 55 (some "Europe/London")]
   == [{ startTs := T0, endTs := T0+3600, mode := "sleeping", place := some "Home", placeSource := some "sleep",
         tz := some "Europe/London", minutesAsleep := some 55 }]
+-- A window with no zone of its own, begun before the day's first segment: one
+-- night is one row, in the segment's zone, with its minutes asleep.
+#guard segmentsToDayStates
+  [sg (T0+1800) (T0+3600) (place := some "Home") (displayTz := some "Europe/Madrid")]
+  [sw T0 (T0+3600) (some "Home") 55 none]
+  == [{ startTs := T0, endTs := T0+3600, mode := "sleeping", place := some "Home", placeSource := some "sleep",
+        tz := some "Europe/Madrid", minutesAsleep := some 55 }]
+-- The nearest segment's zone, not the first's.
+#guard (withSegmentTz
+  [sg T0 (T0+60) (displayTz := some "Europe/London"), sg (T0+7200) (T0+9000) (displayTz := some "Europe/Paris")]
+  (sw (T0+9100) (T0+9900) none)).tz == some "Europe/Paris"
 -- A sleeping row covering only part of its window loses minutesAsleep.
 #guard segmentsToDayStates [sg (T0+1800) (T0+3600) (place := some "Work")]
   [sw T0 (T0+3600) (some "Home") 55]

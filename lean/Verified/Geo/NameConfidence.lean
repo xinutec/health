@@ -20,8 +20,8 @@ namespace Verified.Geo.NameConfidence
 
 /-- `(source, right, graded)` over the corpus's graded stay rows. -/
 def COUNTS : List (String × Nat × Nat) :=
-  [("home", 82, 82), ("sleep", 21, 21), ("enclosing", 25, 25), ("work", 24, 24),
-   ("nearField", 20, 28), ("ranked", 9, 15), ("lodging", 30, 30), ("station", 25, 28),
+  [("home", 80, 80), ("sleep", 29, 29), ("enclosing", 25, 25), ("work", 24, 24),
+   ("nearField", 20, 28), ("ranked", 9, 15), ("lodging", 24, 24), ("station", 25, 28),
    ("geocodeVenue", 16, 22), ("openSpace", 3, 3), ("residential", 0, 2),
    ("address", 0, 1)]
 
