@@ -542,7 +542,12 @@ def truthCheckResult (j : Json) : Json :=
       ("knownError", Lean.toJson r.knownError), ("cleared", Lean.toJson r.cleared),
       ("unverified", Lean.toJson r.unverified),
       ("hasRegression", Json.bool r.hasRegression),
-      ("covering", Json.arr (r.covering.map Lean.toJson))]
+      ("covering", Json.arr (r.covering.map Lean.toJson)),
+      -- Per confirmed stay: `[arrival, departure]` error in seconds, `null`
+      -- where the narrative wrote no neighbour on that side.
+      ("stayEdges", Json.arr ((stayEdges rows states).map fun (x, y) =>
+        let o := fun (v : Option Int) => match v with | some n => Lean.toJson n | none => Json.null
+        Json.arr #[o x, o y]))]
   match parsed with
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out

@@ -271,6 +271,54 @@ def classifyDay (rows : Array TRow) (states : Array StateWindow) : DayResult :=
     unverified := count .unverified,
     hasRegression := verdicts.any (· == .regressed) }
 
+/-! ## Stay edges
+
+The verdicts sample a row's midpoint, so they cannot see a stay drawn at the
+right place and the wrong time. -/
+
+/-- Two rows or states this close in time are one run, or neighbours. -/
+def EDGE_TOUCH_S : Int := 120
+
+private def isRest (mode : String) : Bool := mode == "stationary" || mode == "sleeping"
+
+/-- Consecutive spans of one key that touch, merged: `(start, end, key)`. -/
+private def mergeRuns (spans : Array (Int × Int × Option String)) : Array (Int × Int × Option String) :=
+  spans.foldl (fun acc (a, b, k) =>
+    match acc.back? with
+    | some (pa, pb, pk) =>
+      if pk == k && a - pb ≤ EDGE_TOUCH_S then acc.pop.push (pa, b, k) else acc.push (a, b, k)
+    | none => acc.push (a, b, k)) #[]
+
+/-- For each confirmed stay (its rows at one place, merged), how far the served
+stay over it begins and ends from the row's own times, in seconds, served minus
+truth. A side counts only where another confirmed row meets it: an edge the
+narrative did not write is not a claim. `none` on both sides where no served
+stay overlaps. -/
+def stayEdges (rows : Array TRow) (states : Array StateWindow) : Array (Option Int × Option Int) :=
+  let confirmed := rows.filter fun r =>
+    (r.status == .correct || r.status == .wrong) && trusted r.provenance
+  let restOf := fun (r : TRow) =>
+    r.truth.bind fun t => if t.mode == .stationary || t.mode == .sleeping then some t else none
+  let truthRuns := mergeRuns (confirmed.filterMap fun r =>
+    (restOf r).map fun t => (r.startTs, r.endTs, normOpt t.place))
+  let servedRuns := mergeRuns (states.filterMap fun s =>
+    if isRest s.mode then some (s.startTs, s.endTs, normOpt s.place) else none)
+  truthRuns.map fun (a, b, _) =>
+    -- A neighbour is a confirmed row outside the run meeting that side.
+    let met := fun (t : Int) (ending : Bool) => confirmed.any fun r =>
+      !(r.startTs ≥ a && r.endTs ≤ b && (restOf r).isSome) &&
+        (let d := (if ending then r.endTs else r.startTs) - t
+         d ≤ EDGE_TOUCH_S && -d ≤ EDGE_TOUCH_S)
+    let best := servedRuns.foldl (fun (acc : Option (Int × Int × Int)) (sa, sb, _) =>
+      let ov := min b sb - max a sa
+      if ov ≤ 0 then acc else
+      match acc with
+      | some (bo, _, _) => if ov > bo then some (ov, sa, sb) else acc
+      | none => some (ov, sa, sb)) none
+    match best with
+    | none => (none, none)
+    | some (_, sa, sb) =>
+      (if met a true then some (sa - a) else none, if met b false then some (sb - b) else none)
 
 /-! ## Witnesses
 
@@ -484,6 +532,26 @@ private def demoStates : Array StateWindow := #[
 #guard (classifyDay demoRows #[]).knownError == 2
 #guard (classifyDay #[] demoStates).verdicts == #[]
 #guard !(classifyDay #[] demoStates).hasRegression
+
+-- stayEdges: a walk, a stay, a walk; the served stay begins a minute late and
+-- ends a minute early.
+private def er (a b : Int) (m : Mode) (pl : Option String := none) : TRow :=
+  { startTs := a, endTs := b, status := .correct, provenance := .user, truth := some (tw m (pl := pl)) }
+#guard stayEdges #[er 0 600 .walking, er 600 3600 .stationary (some "Cafe"), er 3600 4200 .walking]
+    #[st 0 660 "walking", st 660 3540 "stationary" (some "Cafe"), st 3540 4200 "walking"]
+  == #[(some 60, some (-60))]
+-- No row before the stay: its arrival is not a claim.
+#guard stayEdges #[er 600 3600 .stationary (some "Cafe"), er 3600 4200 .walking]
+    #[st 0 3600 "stationary" (some "Cafe"), st 3600 4200 "walking"]
+  == #[(none, some 0)]
+-- A night and the morning at one place are one stay: the row boundary between
+-- them is no edge.
+#guard stayEdges #[er 0 600 .walking, er 600 3600 .sleeping (some "Home"), er 3600 7200 .stationary (some "Home")]
+    #[st 0 600 "walking", st 600 7200 "sleeping" (some "Home")]
+  == #[(some 0, none)]
+-- No served stay over it.
+#guard stayEdges #[er 0 600 .walking, er 600 3600 .stationary (some "Cafe"), er 3600 4200 .walking]
+    #[st 0 4200 "walking"] == #[(none, none)]
 
 end Witnesses
 

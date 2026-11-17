@@ -26,6 +26,7 @@ tests/golden/*
 !tests/golden/rail-triple-baseline.json
 !tests/golden/teleport-baseline.json
 !tests/golden/truth-baseline.json
+!tests/golden/edge-baseline.json
 !tests/golden/decoder-scoreboard.json
 # The Lean delta ceiling carries fingerprints, not measurements: a `match` entry
 # is a hash of the quantised leg input and a `passes` one is `op/n/note`. Neither

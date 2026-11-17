@@ -77,6 +77,15 @@ pub fn name_confidence_counts(
     out
 }
 
+/// Per date `[within, total]`: the confirmed stay edges (an arrival or a
+/// departure the narrative wrote) the served stay puts within
+/// `EDGE_WITHIN_S`. A floor: `within` may not fall. `EDGE_BLESS` rewrites it.
+const EDGE_BASELINE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/golden/edge-baseline.json"
+);
+const EDGE_WITHIN_S: i64 = 120;
+
 const BASELINE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/golden/truth-baseline.json"
@@ -168,6 +177,8 @@ pub struct Truth {
     /// `TRUTH_ROWS_OUT`: every narrative row with its resolved window, one
     /// JSON line per date, appended so the shards do not clobber each other.
     rows_out: Option<String>,
+    /// Per date, each confirmed stay edge's error in seconds (served − truth).
+    edges: BTreeMap<String, Vec<i64>>,
     failures: Vec<String>,
     /// Injection makes the run report-only: a floor graded on injected priors
     /// would enforce against an arm nobody blessed.
@@ -203,6 +214,7 @@ impl Truth {
             standing: BTreeMap::new(),
             reported: BTreeSet::new(),
             rows_out: std::env::var("TRUTH_ROWS_OUT").ok(),
+            edges: BTreeMap::new(),
             failures: Vec::new(),
             report_only,
             tally_v: 0,
@@ -275,6 +287,16 @@ impl Truth {
             "{name}: the verdict list must be positional"
         );
         self.reported.insert(date.to_string());
+        self.edges.insert(
+            date.to_string(),
+            tr["stayEdges"]
+                .as_array()
+                .map_or(&[][..], Vec::as_slice)
+                .iter()
+                .flat_map(|pair| pair.as_array().cloned().unwrap_or_default())
+                .filter_map(|v| v.as_i64())
+                .collect(),
+        );
         // The name-confidence counts, re-measured every run against their
         // blessed values: the percentage the app shows is this measurement,
         // and a naming change that moves it must say so.
@@ -420,6 +442,62 @@ impl Truth {
         }
     }
 
+    /// The stay-edge floor: prints the corpus's share within two and five
+    /// minutes, and fails a day whose count within two fell.
+    fn edge_floor(&self) -> Vec<String> {
+        let all: Vec<i64> = self.edges.values().flatten().copied().collect();
+        let within = |xs: &[i64], s: i64| xs.iter().filter(|e| e.abs() <= s).count();
+        eprintln!(
+            "truth: stay edges — {} of {} within 2 min, {} within 5 min, over {} day(s)",
+            within(&all, EDGE_WITHIN_S),
+            all.len(),
+            within(&all, 300),
+            self.edges.len()
+        );
+        // Absent before its first bless; a file that is there must parse.
+        let mut floor: BTreeMap<String, (usize, usize)> =
+            match std::fs::read_to_string(EDGE_BASELINE) {
+                Ok(text) => serde_json::from_str(&text).expect("the edge floor parses"),
+                Err(_) => BTreeMap::new(),
+            };
+        if std::env::var("EDGE_BLESS").is_ok() {
+            for (date, xs) in &self.edges {
+                floor.insert(date.clone(), (within(xs, EDGE_WITHIN_S), xs.len()));
+            }
+            let text = serde_json::to_string_pretty(&floor).expect("the edge floor serialises");
+            std::fs::write(EDGE_BASELINE, format!("{text}\n")).expect("the edge floor is writable");
+            eprintln!("truth: stay-edge floor re-blessed to {EDGE_BASELINE}");
+            return Vec::new();
+        }
+        let fell: Vec<String> = self
+            .edges
+            .iter()
+            .filter_map(|(date, xs)| {
+                let now = within(xs, EDGE_WITHIN_S);
+                match floor.get(date) {
+                    Some((was, _)) if now < *was => Some(format!(
+                        "      ✗ {date} — {now} of {} stay edge(s) within 2 min, was {was}",
+                        xs.len()
+                    )),
+                    Some(_) => None,
+                    None if xs.is_empty() => None,
+                    None => Some(format!(
+                        "      ✗ {date} — {} stay edge(s) with no floor: EDGE_BLESS=1",
+                        xs.len()
+                    )),
+                }
+            })
+            .collect();
+        if fell.is_empty() {
+            Vec::new()
+        } else {
+            vec![format!(
+                "truth: FAIL — a confirmed stay's arrival or departure moved off its time:\n{}",
+                fell.join("\n")
+            )]
+        }
+    }
+
     pub fn finish(self) -> Vec<String> {
         let mut out = Vec::new();
         if !self.failures.is_empty() {
@@ -435,6 +513,7 @@ impl Truth {
             );
             return out;
         }
+        out.extend(self.edge_floor());
 
         // Both sides lose the unmeasured days, or their floors read as lost.
         let unmeasured: Vec<&String> = self

@@ -78,9 +78,14 @@ fn run(shard: usize, of: usize) {
     // ⚠ A floor bless is single-shard: `truth`, `walk` and `feasibility` each
     // rewrite one file, and half a corpus would read as complete. `day` writes
     // per fixture and shards normally.
-    let blessing = ["TRUTH_BLESS", "WALK_BLESS", "FEASIBILITY_BLESS"]
-        .iter()
-        .any(|k| std::env::var(k).is_ok());
+    let blessing = [
+        "TRUTH_BLESS",
+        "WALK_BLESS",
+        "FEASIBILITY_BLESS",
+        "EDGE_BLESS",
+    ]
+    .iter()
+    .any(|k| std::env::var(k).is_ok());
     let names = if blessing {
         if shard != 0 {
             eprintln!("corpus: a bless is single-shard — shard {shard} stands down");
