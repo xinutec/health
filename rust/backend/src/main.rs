@@ -73,11 +73,13 @@ async fn main() -> Result<()> {
             lookback_days,
             dry,
             places_out,
+            priors_out,
             as_of,
         } => {
             let sinks = MineSinks {
                 dry,
                 places_out,
+                priors_out,
                 // End of that civil day in UTC, so the day itself is inside the
                 // window rather than cut off at its start.
                 as_of: as_of.map(|d| {

@@ -14,6 +14,8 @@ pub(crate) struct MineSinks {
     /// centroid, the visit count and spread — before the amenity vote; a dry
     /// run with no other sink stops there.
     pub(crate) places_out: Option<String>,
+    /// The priors blob as it would be written, his habits included.
+    pub(crate) priors_out: Option<String>,
     /// Mine as the window stood at this instant: a measurement flag, far too
     /// slow to serve (a 730-day mine is ~273,000 points).
     pub(crate) as_of: Option<chrono::DateTime<chrono::Utc>>,
@@ -230,6 +232,9 @@ pub(crate) async fn refresh_focus_places_one(
         lat: f64,
         lon: f64,
         stays: Vec<PendingStay>,
+        /// Its stays teach his habits: not where the day names him by intent
+        /// (Home, Work), whose stays never reach the venue picker.
+        habits: bool,
     }
 
     let mut pending: Vec<PendingCluster> = Vec::with_capacity(mined.len());
@@ -256,9 +261,15 @@ pub(crate) async fn refresh_focus_places_one(
                 lat: clat,
                 lon: clon,
                 stays: Vec::new(),
+                habits: false,
             });
             continue;
         }
+        let intent = c
+            .get("id")
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|id| names.get(&id))
+            .is_some_and(|n| n == "Home" || n == "Work");
 
         let mut ps = Vec::with_capacity(stays.len());
         for s in stays {
@@ -297,13 +308,17 @@ pub(crate) async fn refresh_focus_places_one(
             lat: clat,
             lon: clon,
             stays: ps,
+            habits: !intent,
         });
     }
 
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let (voted, unanswered) =
+    let (voted, unanswered, habit_stays) =
         backend::mirror_source::with_mirror_answerer(pool.clone(), now_ms, move |ans| {
             let mut out: Vec<backend::lean::MinedCluster> = Vec::with_capacity(pending.len());
+            // Every answered stay of every cluster: the habits learn from all
+            // of them at once, not per cluster.
+            let mut habit_stays: Vec<backend::lean::MineStay> = Vec::new();
             // Per cluster: did the mirror fail to answer for any of its stays?
             let mut unanswered: Vec<bool> = Vec::with_capacity(pending.len());
             for c in pending {
@@ -330,9 +345,12 @@ pub(crate) async fn refresh_focus_places_one(
                     .nearby_landmarks(c.lat, c.lon)?
                     .unwrap_or_else(|| serde_json::json!([]));
                 out.push(backend::lean::mine_cluster(&ms, &centroid)?);
+                if c.habits {
+                    habit_stays.extend(ms);
+                }
                 unanswered.push(missed);
             }
-            Ok((out, unanswered))
+            Ok((out, unanswered, habit_stays))
         })
         .await?;
 
@@ -365,7 +383,21 @@ pub(crate) async fn refresh_focus_places_one(
     );
 
     // ── 6. the priors blob — a full recompute, never incremental ────────────
-    let priors = backend::lean::mine_priors(&attributed_all)?;
+    let mut priors = backend::lean::mine_priors(&attributed_all)?;
+    // His habits over every stay ride in the same blob, so the row and its
+    // snapshots carry them together; the server aggregates them as of a day.
+    let habits = backend::lean::learn_habits(&habit_stays)?;
+    eprintln!(
+        "[{user_id}] habits: {} event(s) from {} stay(s)",
+        habits.len(),
+        habit_stays.len()
+    );
+    priors["habits"] = serde_json::json!({ "events": habits });
+    if let Some(path) = &sinks.priors_out {
+        std::fs::write(path, serde_json::to_string(&priors)?)
+            .with_context(|| format!("writing {path}"))?;
+        eprintln!("[{user_id}] priors -> {path}");
+    }
 
     if sinks.dry {
         eprintln!("[{user_id}] --dry: NOT writing venue_type_priors or focus_places");

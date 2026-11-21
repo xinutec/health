@@ -953,6 +953,10 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
         "venuePriors".into(),
         encode_venue_priors(i.get("venuePriors")),
     );
+    env.insert(
+        "venueHabits".into(),
+        encode_venue_priors(i.get("venueHabits")),
+    );
     // The filter sits here, not in `encode_caches`: `fold_env` pins that
     // encoder whole against the frozen fixtures, so an optimisation belongs one
     // level up, visible at the call site and with its own test.

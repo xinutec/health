@@ -15,6 +15,7 @@ import Verified.Geo.LineStations
 import Verified.PresenceLog
 import Verified.Geo.CurrentPlace
 import Verified.Geo.VenuePrior
+import Verified.Geo.SoftVenue
 import Verified.Geo.OsmRegions
 import Verified.Geo.OsmRouteMembers
 import Verified.Geo.OsmMirrorRefresh
@@ -53,6 +54,45 @@ private def int? (j : Json) (k : String) : Option Int :=
   match j.getObjVal? k with
   | .ok v => match v.getInt? with | .ok i => some i | .error _ => none
   | .error _ => none
+
+/-! ## A mined stay on the wire
+
+`mineCluster` and `learnHabits` read the same stays: landmarks in
+`shapeLandmarks`' shape with raw `openingHours`, resolved over the stay's
+samples. -/
+
+private def minePoiOf (e : Json) : Except String Verified.Geo.BestPlace.Poi := do
+  let need (k : String) : Except String String :=
+    match str? e k with
+    | some s => pure s
+    | none => throw s!"a mined stay's landmark has no {k}"
+  -- `distanceM`, a bit-pattern string: the Rust wrapper renames
+  -- `distanceMBits` to it, the name `DayEntry.parsePoi` reads.
+  let db ← need "distanceM"
+  pure { name := ← need "name", type := ← need "type", subtype := ← need "subtype"
+       , distanceM := Float.ofBits db.toNat!.toUInt64
+       , openingHours := str? e "openingHours"
+       , enclosing := (e.getObjVal? "enclosing" >>= (·.getBool?)).toOption == some true }
+
+private def minePoisOf (v : Json) : Except String (List Verified.Geo.BestPlace.Poi) := do
+  (← v.getArr?).toList.mapM minePoiOf
+
+/-- A stay's samples and the stay, its landmarks resolved over them. -/
+private def mineStayOf (e : Json) : Except String (List (Nat × Nat) × Verified.Geo.FocusMining.MinedStay) := do
+  let sampleOf (x : Json) : Except String (Nat × Nat) := do
+    let a ← x.getArr?
+    match a[0]?, a[1]? with
+    | some d, some m => pure ((← d.getNat?), (← m.getNat?))
+    | _, _ => throw "a mined stay's sample is not [dayOfWeek, minuteOfDay]"
+  let intOf (k : String) : Except String Int :=
+    match int? e k with
+    | some i => pure i
+    | none => throw s!"a mined stay has no {k}"
+  let samples ← (← (← e.getObjVal? "samples").getArr?).toList.mapM sampleOf
+  let pois ← minePoisOf (← e.getObjVal? "landmarks")
+  pure (samples, { shape := { startUnix := ← intOf "startTs", endUnix := ← intOf "endTs", localHour := ← intOf "localHour" }
+                 , durationSec := ← intOf "durationSec"
+                 , landmarks := pois.map (Verified.Geo.BestPlace.toLandmark samples true) })
 
 /-- A required boolean field. -/
 private def bool? (j : Json) (k : String) : Option Bool :=
@@ -582,49 +622,13 @@ def dispatch (j : Json) : Json :=
   -- `shapeLandmarks`' shape with the raw `openingHours`, resolved here per stay;
   -- the centroid's with `hasStay := false`, having no interval to be open in.
   | some "mineCluster" =>
-    let poiOf (e : Json) : Except String Verified.Geo.BestPlace.Poi := do
-      let need (k : String) : Except String String :=
-        match str? e k with
-        | some s => pure s
-        | none => throw s!"mineCluster: a landmark has no {k}"
-      let nm ← need "name"
-      let ty ← need "type"
-      let sub ← need "subtype"
-      -- `distanceM`, a bit-pattern string: the Rust wrapper renames
-      -- `distanceMBits` to it, the name `DayEntry.parsePoi` reads.
-      let db ← need "distanceM"
-      pure { name := nm, type := ty, subtype := sub
-           , distanceM := Float.ofBits db.toNat!.toUInt64
-           , openingHours := str? e "openingHours"
-           , enclosing := (e.getObjVal? "enclosing" >>= (·.getBool?)).toOption == some true }
-    let poisOf (v : Json) : Except String (List Verified.Geo.BestPlace.Poi) := do
-      (← v.getArr?).toList.mapM poiOf
-    let sampleOf (e : Json) : Except String (Nat × Nat) := do
-      let a ← e.getArr?
-      match a[0]?, a[1]? with
-      | some d, some m => pure ((← d.getNat?), (← m.getNat?))
-      | _, _ => throw "mineCluster: a sample is not [dayOfWeek, minuteOfDay]"
     let bitsOf (k : String) : Except String Float :=
       match str? j k with
       | some s => pure (Float.ofBits s.toNat!.toUInt64)
       | none => throw s!"mineCluster: no {k}"
-    let intOf (e : Json) (k : String) : Except String Int :=
-      match int? e k with
-      | some i => pure i
-      | none => throw s!"mineCluster: a stay has no {k}"
-    let stayOf (e : Json) : Except String Verified.Geo.FocusMining.MinedStay := do
-      let samples ← (← (← e.getObjVal? "samples").getArr?).toList.mapM sampleOf
-      let pois ← poisOf (← e.getObjVal? "landmarks")
-      let st ← intOf e "startTs"
-      let en ← intOf e "endTs"
-      let lh ← intOf e "localHour"
-      let dur ← intOf e "durationSec"
-      pure { shape := { startUnix := st, endUnix := en, localHour := lh }
-           , durationSec := dur
-           , landmarks := pois.map (Verified.Geo.BestPlace.toLandmark samples true) }
     match (do
-        let stays ← (← (← j.getObjVal? "stays").getArr?).toList.mapM stayOf
-        let centroid ← poisOf (← j.getObjVal? "centroidLandmarks")
+        let stays ← (← (← j.getObjVal? "stays").getArr?).toList.mapM (fun e => do let (_, m) ← mineStayOf e; pure m)
+        let centroid ← minePoisOf (← j.getObjVal? "centroidLandmarks")
         let minWeight ← bitsOf "minWeightBits"
         let minFraction ← bitsOf "minFractionBits"
         pure (Verified.Geo.FocusMining.mineCluster stays
@@ -645,6 +649,24 @@ def dispatch (j : Json) : Json :=
                   -- A plain integer, not bits: a unix second the shell holds
                   -- as an integer, as with `zoom`.
                   , ("startUnix", Lean.toJson a.startUnix) ]).toArray)) ]) ]
+  -- His habits over every mined stay (`SoftVenue.learn`): the events, each a
+  -- candidate's posterior share of one stay-hour, for the as-of aggregation.
+  | some "learnHabits" =>
+    match (do
+        let stays ← (← (← j.getObjVal? "stays").getArr?).toList.mapM mineStayOf
+        pure (Verified.Geo.SoftVenue.learn (stays.filterMap
+          fun (x : List (Nat × Nat) × Verified.Geo.FocusMining.MinedStay) =>
+            Verified.Geo.SoftVenue.visitOf x.1 x.2.shape x.2.landmarks))) with
+    | .error e => err e
+    | .ok evs =>
+      Json.mkObj
+        [ ("value", Json.mkObj
+            [ ("events", Json.arr ((evs.map fun (e : Verified.Geo.VenuePrior.PriorEvent) => Json.mkObj
+                [ ("subtype", Json.str e.subtype)
+                , ("startUnix", Lean.toJson e.startUnix)
+                , ("dwell", Lean.toJson e.dwell)
+                , ("hour", Lean.toJson e.hour)
+                , ("weightBits", Json.str (toString e.weight.toBits)) ]).toArray)) ]) ]
   -- The place picker's projection of one focus place.
   --
   -- `label` and `named` differ: a bare "Stay" gets a label so the row renders,

@@ -135,6 +135,17 @@ fn run(shard: usize, of: usize) {
                 continue;
             }
         };
+        // His habits over every visit, for the habit rule, as of the day
+        // (`VENUE_HABITS_DIR`, laid out as `VENUE_PRIORS_DIR`).
+        let fx = match std::env::var("VENUE_HABITS_DIR") {
+            Ok(dir) => {
+                let mut fx = fx;
+                fx["inputs"]["venueHabits"] =
+                    corpus::Injection::Dir(std::path::PathBuf::from(dir)).for_fixture(name);
+                fx
+            }
+            Err(_) => fx,
+        };
         // Once for both arms: the trace is read-only and both replays borrow it.
         let traced = match corpus::load_trace(
             GOLDEN,

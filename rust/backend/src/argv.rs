@@ -141,6 +141,9 @@ pub enum Command {
         /// write the mined places (id, centroid, visits, spread) as JSON
         #[arg(long, requires = "user")]
         places_out: Option<String>,
+        /// write the mined priors blob, his habits included, as JSON
+        #[arg(long, requires = "user")]
+        priors_out: Option<String>,
         /// mine as of the end of this YYYY-MM-DD
         #[arg(long, value_parser = parse_date)]
         as_of: Option<chrono::NaiveDate>,

@@ -2685,6 +2685,55 @@ runs just before the Kalman filter, over the whole day's track.
 
 Output: the surviving rows, same shape: a pure selection. -/
 
+/-! ## `softvenue` — the venue from his habits (`Verified.Geo.SoftVenue`)
+
+  { "visits": [{startUnix, bucket, hours: [[h, minutes]], cands: [{name, subtype, distanceM, hoursNats?}]}],
+    "query": [ <visits> ], "iters"? }
+  → { "events": [{subtype, startUnix, dwell, hour, weight}],
+      "posteriors": [[{name, p}]] }   -- per query visit, over habits learned from `visits`
+
+A probe for the fit and the harness; floats cross as plain numbers. -/
+
+private def parseSoftVisit (j : Json) : Except String Verified.Geo.SoftVenue.Visit := do
+  let hours ← (← (← j.getObjVal? "hours").getArr?).mapM fun h => do
+    let a ← h.getArr?
+    let some k := a[0]? | throw "softvenue: hour"
+    let some m := a[1]? | throw "softvenue: minutes"
+    return ((← k.getNat?), (← m.getNum?).toFloat)
+  let cands ← (← (← j.getObjVal? "cands").getArr?).mapM fun c => do
+    return ({ name := ← (← c.getObjVal? "name").getStr?, subtype := ← (← c.getObjVal? "subtype").getStr?
+              distanceM := (← (← c.getObjVal? "distanceM").getNum?).toFloat
+              hoursNats := match c.getObjVal? "hoursNats" with
+                | .ok v => (v.getNum?.toOption).map (·.toFloat)
+                | .error _ => none } : Verified.Geo.SoftVenue.Cand)
+  return { startUnix := ← (← j.getObjVal? "startUnix").getInt?, bucket := ← (← j.getObjVal? "bucket").getNat?
+           hours := hours.toList, cands := cands.toList }
+
+private def softVenueResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let visits ← (← (← j.getObjVal? "visits").getArr?).mapM parseSoftVisit
+    let query ← (← (← j.getObjVal? "query").getArr?).mapM parseSoftVisit
+    let iters := (j.getObjValAs? Nat "iters").toOption.getD Verified.Geo.SoftVenue.ITERS
+    let evs := Verified.Geo.SoftVenue.learn visits.toList iters
+    let h := Verified.Geo.SoftVenue.Habits.of (Verified.Geo.VenuePrior.priorsOfEvents evs)
+    return Json.mkObj [
+      ("events", Json.arr (evs.toArray.map fun e => Json.mkObj [
+        ("subtype", Json.str e.subtype), ("startUnix", Lean.toJson e.startUnix),
+        ("dwell", Lean.toJson e.dwell), ("hour", Lean.toJson e.hour), ("weight", Lean.toJson e.weight)])),
+      -- The blob as the fold reads it (`inputs.venuePriors`): every event.
+      ("priors", let pr := Verified.Geo.VenuePrior.priorsOfEvents evs
+        let tbl := fun (t : List (String × Verified.Geo.VenuePrior.VenueTypeStats)) =>
+          Json.mkObj (t.map fun (k, st) => (k, Json.mkObj [("visits", Lean.toJson st.visits),
+            ("dwell", Json.arr (st.dwell.toArray.map Lean.toJson)), ("hours", Json.arr (st.hours.toArray.map Lean.toJson))]))
+        Json.mkObj [("bySubtype", tbl pr.bySubtype), ("byCategory", tbl pr.byCategory),
+                    ("totalVisits", Lean.toJson pr.totalVisits)]),
+      ("posteriors", Json.arr (query.map fun v =>
+        Json.arr ((Verified.Geo.SoftVenue.posterior h v).toArray.map fun (c, p) =>
+          Json.mkObj [("name", Json.str c.name), ("p", Lean.toJson p)])))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-! ## `rankvenues` — the venue ranking, candidate by candidate
 
 `Verified.Geo.VenuePrior.rankVenues`, with every candidate's score broken out,
@@ -3672,6 +3721,7 @@ def dispatch (j : Json) : Json :=
   | .ok "kalman" => kalmanResult j
   | .ok "rankvenues" => rankVenuesResult j
   | .ok "bestplace" => bestPlaceResult j
+  | .ok "softvenue" => softVenueResult j
   | .ok "resthr" => restHrResult j
   | .ok "gpsquality" => gpsQualityResult j
   | .ok "gpsoutliers" => gpsOutliersResult j

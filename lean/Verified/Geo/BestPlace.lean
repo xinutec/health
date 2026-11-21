@@ -1,5 +1,6 @@
 import Verified.Geo.Enrich
 import Verified.Geo.VenuePrior
+import Verified.Geo.SoftVenue
 import Verified.Geo.OpeningHours
 import Verified.Geo.SegmentMerge
 /-!
@@ -234,6 +235,9 @@ structure Reads where
   geocode : Int → Option Result
   /-- The stay's minutes as `(weekday, minute-of-day)` in the venue's tz. -/
   samples : List (Nat × Nat) := []
+  /-- His habits learned over every visit (`SoftVenue.learn`), which the habit
+      rule weighs by; the ranking keeps its own mined priors. -/
+  habits : Option VenuePriors := none
 
 /-- The zoom the venue naming asks for first — a building-level result. -/
 def DETAIL_ZOOM : Int := 18
@@ -259,6 +263,9 @@ inductive Source where
   | landmark
   /-- An open space the stay lies inside, where nothing else named it. -/
   | openSpace
+  /-- The venue his habits make likeliest among those near the stay
+      (`SoftVenue`). -/
+  | habit
   /-- A geocoded address or area, with no venue behind it. -/
   | address
   deriving Inhabited, BEq, Repr
@@ -267,6 +274,23 @@ def Source.key : Source → String
   | .enclosing => "enclosing" | .geocodeVenue => "geocodeVenue" | .lodging => "lodging"
   | .residential => "residential" | .nearField => "nearField" | .ranked => "ranked"
   | .landmark => "landmark" | .openSpace => "openSpace" | .address => "address"
+  | .habit => "habit"
+
+/-- The venue his habits make likeliest for a daytime stay with a typed venue
+    within `SoftVenue.MAX_M`, and its probability. A footprint the stay lies in
+    (an institution enclosing it, an open space around it) is the stronger
+    evidence and stands; an overnight stay keeps the lodging and residence
+    rules. -/
+def habitPick (samples : List (Nat × Nat)) (stay : Option StayShape) (priors : Option VenuePriors)
+    (preferResidential inOpenSpace : Bool) (landmarks : List Landmark) : Option (Landmark × Float) :=
+  match stay, priors with
+  | some st, some p =>
+    -- No visit learned yet is no habit: the ranking decides.
+    if preferResidential || inOpenSpace || !(p.totalVisits > 0) then none else
+    (Verified.Geo.SoftVenue.visitOf samples st landmarks).bind fun visit =>
+    (Verified.Geo.SoftVenue.best (Verified.Geo.SoftVenue.Habits.of p) visit).bind fun (c, pr) =>
+      (landmarks.find? (·.name == c.name)).map (·, pr)
+  | _, _ => none
 
 /-- The winner's share of the candidates' summed evidence, "none of these" at
 the rank floor: how clearly it beat its neighbours. -/
@@ -317,11 +341,14 @@ def bestPlaceScored (reads : Reads) (stay : Option StayShape) (priors : Option V
       else ((rankVenues landmarks none none).head?.map (·.landmark), false, false, none)
   let rankedSource : Source :=
     if stay.isNone then .landmark else if byNearField then .nearField else .ranked
-  (if bestLandmark.any (·.enclosing) then
-    some (withAddressFrom (landmarkToResult (bestLandmark.getD default)) detailed, .enclosing)
+  let habit := habitPick reads.samples stay reads.habits preferResidential openSpace.isSome landmarks
+  if bestLandmark.any (·.enclosing) then
+    (some (withAddressFrom (landmarkToResult (bestLandmark.getD default)) detailed, .enclosing), share)
+  else if let some (l, p) := habit then
+    (some (withAddressFrom (landmarkToResult l) detailed, .habit), some p)
   else if detailed.any (fun d => hasSpecificVenue d && (if stay.isSome then nominatimWon else true))
-    then detailed.map (·, .geocodeVenue)
-  else rest bestLandmark rankedSource detailed reads.geocode preferResidential landmarks openSpace, share)
+    then (detailed.map (·, .geocodeVenue), share)
+  else (rest bestLandmark rankedSource detailed reads.geocode preferResidential landmarks openSpace, share)
 where
   /-- The tail of the chain, split out because Lean has no early `return`. The
   order is load-bearing: the lodging override beats the residential address,
@@ -380,7 +407,7 @@ def resolve (reads : Reads) (stay : Option StayShape) (priors : Option VenuePrio
   named.map fun (r, src) =>
     { label := placeLabel r, city := extractCity (some r.address), source := src.key
       category := r.category, type_ := r.type
-      share := if src == .geocodeVenue || src == .nearField || src == .ranked then share else none }
+      share := if src == .geocodeVenue || src == .nearField || src == .ranked || src == .habit then share else none }
 
 /-! ## Guards
 
@@ -525,6 +552,21 @@ private def streetGeocode : Result := res "house" "building" { A with road := so
 private def landmarkVsStreet : Reads :=
   { landmarks := [poi "Olivomare" "amenity" "restaurant" 11], geocode := geo (some streetGeocode) none }
 #guard (bestPlace landmarkVsStreet (some stay) none false).map placeLabel == some "Olivomare"
+
+-- His habits name the café 14 m off over a bookmaker at 5: twenty café visits
+-- against none at a bookmaker. Without habits the ranking decides.
+private def cafeHabits : VenuePriors :=
+  { bySubtype := [("cafe", ⟨20, [0, 0, 20, 0], (List.range 24).map fun h => if h == 10 then 20 else 0⟩)]
+    byCategory := [], totalVisits := 20 }
+private def highStreet : Reads :=
+  { landmarks := [poi "Bookie" "shop" "bookmaker" 5, poi "Corner Cafe" "amenity" "cafe" 14]
+    geocode := geo none none, samples := (List.range 60).map fun m => (1, 600 + m) }
+private def morning : StayShape := { startUnix := 0, endUnix := 3600, localHour := 10 }
+#guard (bestPlaceSourced { highStreet with habits := some cafeHabits } (some morning) none false).map
+  (fun (r, s) => (placeLabel r, s.key)) == some ("Corner Cafe", "habit")
+#guard ((bestPlaceSourced highStreet (some morning) none false).map (·.2.key)) != some "habit"
+#guard ((bestPlaceSourced { highStreet with habits := some { cafeHabits with bySubtype := [], totalVisits := 0 } }
+  (some morning) none false).map (·.2.key)) != some "habit"
 
 -- Nothing nearby and a residential geocode: the street is the honest label.
 -- Would catch an edit that widened `hasResidentialAddress` instead.

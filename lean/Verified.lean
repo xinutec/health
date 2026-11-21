@@ -77,6 +77,7 @@ import Verified.Geo.BiometricCoherence
 import Verified.Geo.Bus
 import Verified.Geo.OpeningHours
 import Verified.Geo.VenuePrior
+import Verified.Geo.SoftVenue
 import Verified.Geo.PlacePrior
 import Verified.Geo.FocusPlaces
 import Verified.Geo.BiometricWindows

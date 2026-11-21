@@ -90,6 +90,7 @@ mod session_rules;
 mod share_route;
 mod share_wire_shape;
 mod sleep_stub_guard;
+mod soft_venue;
 mod static_serving;
 mod station_chain;
 mod stations_on_line;

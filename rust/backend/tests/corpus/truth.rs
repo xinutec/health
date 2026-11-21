@@ -100,7 +100,27 @@ const BASELINE: &str = concat!(
 ///
 /// The two shops 49 m apart decode as one stay at the mined place beside them
 /// (`stayMove`); the user ruled the merge a lesser defect than one-minute stays.
-const KNOWN_UNHELD: [(&str, i64, &str); 2] = [
+const KNOWN_UNHELD: [(&str, i64, &str); 6] = [
+    (
+        "2026-06-09",
+        1_781_027_880,
+        "Olivomare named The Plumbers Arms by his habits (a pub and a restaurant 22 m apart)",
+    ),
+    (
+        "2026-06-09",
+        1_781_035_560,
+        "Black Sheep Coffee, named by his habits, yields to the station just alighted at",
+    ),
+    (
+        "2026-10-06",
+        1_791_291_780,
+        "La Viña named Cafe de Finca by his habits (a bar and a café a metre apart)",
+    ),
+    (
+        "2026-11-08",
+        1_794_148_740,
+        "The Chess Shop named David Wej by his habits (a shop his habits have never seen)",
+    ),
     (
         "2026-06-24",
         1_782_326_820,

@@ -22,8 +22,8 @@ namespace Verified.Geo.NameConfidence
 /-- `(source, right, graded)` over the corpus's graded stay rows. -/
 def COUNTS : List (String × Nat × Nat) :=
   [("home", 80, 80), ("sleep", 29, 29), ("enclosing", 25, 25), ("work", 24, 24),
-   ("guessBarely", 8, 21), ("guessClearly", 31, 40), ("guessDecisively", 5, 6),
-   ("lodging", 24, 24), ("station", 25, 28), ("geocodeVenue", 1, 1),
+   ("habit", 28, 38), ("guessBarely", 4, 6), ("guessClearly", 14, 18), ("guessDecisively", 3, 4),
+   ("lodging", 24, 24), ("station", 25, 29), ("geocodeVenue", 1, 1),
    ("openSpace", 3, 3), ("residential", 0, 2)]
 
 /-- The chance a name from `source` is right: the rule of succession over its
@@ -54,6 +54,13 @@ def key (source : String) (share : Option Float) : Option String :=
     else some "guessDecisively"
   | none => some source
 
+/-- What a served name shows: a name from his habits its own posterior,
+    calibrated held out (`SoftVenue`); any other the hit rate of its key. -/
+def shown (k : String) (share : Option Float) : Float :=
+  if k == "habit" then share.getD (confidence k) else confidence k
+
+#guard shown "habit" (some 0.8) == 0.8
+#guard shown "home" (some 0.8) == confidence "home"
 #guard key "ranked" (some 0.05) == some "guessBarely"
 #guard key "nearField" (some 0.3) == some "guessClearly"
 #guard key "geocodeVenue" (some 0.7) == some "guessDecisively"
@@ -62,8 +69,8 @@ def key (source : String) (share : Option Float) : Option String :=
 #guard key "address" none == none
 
 #guard confidence "enclosing" == 26 / 27
-#guard confidence "guessBarely" == 9 / 23
-#guard confidence "guessClearly" == 32 / 42
+#guard confidence "guessBarely" == 5 / 8
+#guard confidence "guessClearly" == 15 / 20
 #guard confidence "unmeasured" == 0.5
 
 end Verified.Geo.NameConfidence

@@ -271,9 +271,9 @@ private def parseVenueStats (j : Json) : Except String Verified.Geo.VenuePrior.V
 /-- The mined visit-shape priors, or `none` when nothing is mined. Association
 lists in the encoder's order: `shapeScore` reads the subtype count off
 `bySubtype`. -/
-private def parseVenuePriors (j : Json) :
+private def parseVenuePriors (j : Json) (key : String := "venuePriors") :
     Except String (Option Verified.Geo.VenuePrior.VenuePriors) := do
-  match j.getObjVal? "venuePriors" with
+  match j.getObjVal? key with
   | .error _ => pure none
   | .ok v =>
     if v.isNull then pure none else do
@@ -393,6 +393,8 @@ private structure Namer where
   geocodeAt : Float → Float → Int → Option Verified.Geo.BestPlace.Result
   stayCtx : Float → Float → Int → Int → String → List (Nat × Nat) × Int
   priors : Option Verified.Geo.VenuePrior.VenuePriors
+  /-- His habits over every visit, for the habit rule (`venueHabits`). -/
+  habits : Option Verified.Geo.VenuePrior.VenuePriors := none
 
 private def namerOf (j : Json) : Except String Namer := do
   return {
@@ -407,6 +409,7 @@ private def namerOf (j : Json) : Except String Namer := do
     stayCtx := fun lat lon s e tz =>
       askRow "bestPlace" s!"{lat.toBits}|{lon.toBits}|{s}|{e}|{tz}" entryPlace
     priors := ← parseVenuePriors j
+    habits := ← parseVenuePriors j "venueHabits"
   }
 
 /-- One naming's input in the shape `verified_cli serve` mode `bestplace`
@@ -466,7 +469,7 @@ private def Namer.name (n : Namer) (lat lon : Float) (stay : Option (Int × Int 
   DayEntry.Host.dump "place"
     (fun _ => placeInputJson pois (n.geocodeAt lat lon) samples shape n.priors preferResidential)
     (Verified.Geo.BestPlace.resolve
-      { landmarks := pois, geocode := n.geocodeAt lat lon, samples := samples }
+      { landmarks := pois, geocode := n.geocodeAt lat lon, samples := samples, habits := n.habits }
       shape n.priors preferResidential)
 
 private def parseChain (j : Json) (segs : Array Seg)
@@ -714,7 +717,7 @@ def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
       Verified.Geo.NameConfidence.key src s.placeShare)),
     ("placeConfidence", match s.placeSource.bind fun src =>
         Verified.Geo.NameConfidence.key src s.placeShare with
-      | some k => Lean.toJson (Verified.Geo.NameConfidence.confidence k)
+      | some k => Lean.toJson (Verified.Geo.NameConfidence.shown k s.placeShare)
       | none => Json.null),
     ("placeShare", match s.placeShare with | some p => Lean.toJson p | none => Json.null),
     ("placeAt", match s.placeAt with

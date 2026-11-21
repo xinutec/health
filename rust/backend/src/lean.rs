@@ -1413,6 +1413,42 @@ pub struct MineStay {
 pub const MINE_MIN_WEIGHT_SEC: f64 = 60.0 * 30.0;
 pub const MINE_MIN_FRACTION: f64 = 0.5;
 
+/// Mined stays on the wire `mineCluster` and `learnHabits` both read.
+fn mine_stays_json(stays: &[MineStay]) -> Vec<serde_json::Value> {
+    stays
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "startTs": s.start_ts,
+                "endTs": s.end_ts,
+                "localHour": s.local_hour,
+                "durationSec": s.duration_sec,
+                "samples": s.samples.iter().map(|(d, m)| vec![*d, *m]).collect::<Vec<_>>(),
+                "landmarks": s.landmarks,
+            })
+        })
+        .collect()
+}
+
+/// His habits over every mined stay (`Verified.Geo.SoftVenue.learn`): the
+/// events, each a candidate's posterior share of one stay-hour, which
+/// `priors_as_of` aggregates as of a day.
+pub fn learn_habits(stays: &[MineStay]) -> Result<Vec<WirePriorEvent>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Inner,
+    }
+    #[derive(Deserialize)]
+    struct Inner {
+        events: Vec<WirePriorEvent>,
+    }
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "learnHabits",
+        "stays": mine_stays_json(stays),
+    }))?;
+    Ok(w.value.events)
+}
+
 pub fn mine_cluster(stays: &[MineStay], centroid: &serde_json::Value) -> Result<MinedCluster> {
     #[derive(Deserialize)]
     struct Wire {
@@ -1440,23 +1476,9 @@ pub fn mine_cluster(stays: &[MineStay], centroid: &serde_json::Value) -> Result<
         start_unix: i64,
     }
 
-    let stays_json: Vec<serde_json::Value> = stays
-        .iter()
-        .map(|s| {
-            serde_json::json!({
-                "startTs": s.start_ts,
-                "endTs": s.end_ts,
-                "localHour": s.local_hour,
-                "durationSec": s.duration_sec,
-                "samples": s.samples.iter().map(|(d, m)| vec![*d, *m]).collect::<Vec<_>>(),
-                "landmarks": s.landmarks,
-            })
-        })
-        .collect();
-
     let w: Wire = call_json(&serde_json::json!({
         "op": "mineCluster",
-        "stays": stays_json,
+        "stays": mine_stays_json(stays),
         "centroidLandmarks": centroid,
         "minWeightBits": crate::fold_payload::bits(MINE_MIN_WEIGHT_SEC),
         "minFractionBits": crate::fold_payload::bits(MINE_MIN_FRACTION),

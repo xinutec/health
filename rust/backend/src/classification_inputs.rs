@@ -222,6 +222,34 @@ pub async fn mode_biometrics(pool: &MySqlPool, user_id: &str) -> Result<Value> {
 /// does not parse is `null` with a warning: priors are evidence, and losing
 /// them must not fail the day.
 pub async fn venue_priors(pool: &MySqlPool, user_id: &str, as_of_unix: i64) -> Result<Value> {
+    Ok(match venue_blob(pool, user_id, as_of_unix).await? {
+        Some(blob) => as_of(blob, user_id, as_of_unix),
+        None => Value::Null,
+    })
+}
+
+/// His habits over every visit (`habits.events` in the same blob) as of the
+/// day served, or `null` where the blob predates them.
+pub async fn venue_habits(pool: &MySqlPool, user_id: &str, as_of_unix: i64) -> Result<Value> {
+    let Some(events) = venue_blob(pool, user_id, as_of_unix)
+        .await?
+        .and_then(|b| b.get("habits").and_then(|h| h.get("events")).cloned())
+    else {
+        return Ok(Value::Null);
+    };
+    let events: Vec<crate::lean::WirePriorEvent> = match serde_json::from_value(events) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!("venue habits for {user_id} did not parse ({e}) — treating as none");
+            return Ok(Value::Null);
+        }
+    };
+    crate::lean::priors_as_of(&events, as_of_unix)
+}
+
+/// The stored blob a day is served from: the newest snapshot at or before it,
+/// else the current row; `None` for none or one that does not parse.
+async fn venue_blob(pool: &MySqlPool, user_id: &str, as_of_unix: i64) -> Result<Option<Value>> {
     // The newest snapshot at or before the day, else the current row. Never a
     // later snapshot: that would score a day with evidence mined after it.
     let snap = sqlx::query(
@@ -243,7 +271,7 @@ pub async fn venue_priors(pool: &MySqlPool, user_id: &str, as_of_unix: i64) -> R
             .with_context(|| format!("reading venue_type_priors for {user_id}"))?,
     };
     let Some(row) = row else {
-        return Ok(Value::Null);
+        return Ok(None);
     };
     let raw: String = row
         .try_get("priors_json")
@@ -255,10 +283,10 @@ pub async fn venue_priors(pool: &MySqlPool, user_id: &str, as_of_unix: i64) -> R
             tracing::warn!(
                 "venue_type_priors blob for {user_id} did not parse ({e}) — treating as no evidence"
             );
-            return Ok(Value::Null);
+            return Ok(None);
         }
     };
-    Ok(as_of(blob, user_id, as_of_unix))
+    Ok(Some(blob))
 }
 
 /// Re-aggregate the blob's evidence as of the end of the day served. A blob
@@ -1069,5 +1097,10 @@ pub async fn load_timed(
         venue_priors(pool, user_id, end_utc).await?,
     );
     lap("venuePriors", &mut split);
+    m.insert(
+        "venueHabits".into(),
+        venue_habits(pool, user_id, end_utc).await?,
+    );
+    lap("venueHabits", &mut split);
     Ok((Value::Object(m), split))
 }

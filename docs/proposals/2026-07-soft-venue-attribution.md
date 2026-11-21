@@ -1,7 +1,7 @@
 ---
 created: 2026-07-12
-updated: 2026-07-12
-status: P0 shipped (stop condition passed 6.8x); P1 built, measured TRUTH-NEUTRAL, NOT shipped — the blocker is near-field decisiveness, and #325 owns it
+updated: 2026-11-21
+status: SHIPPED 2026-11-21 in another form — the habits decide the venue themselves (`Verified.Geo.SoftVenue`, `BestPlace.habitPick`), not as a prior under the ranking, which the near-field rule overrode; see "2026-11: the habits as the decision" at the end
 references:
   - 2026-07-venue-measurement-model.md
   - ../design/probabilistic-principles.md
@@ -524,3 +524,26 @@ and everything above is about only the first. Ranking-among-candidates is this
 document's subject. The second — no candidates at all, so the zoom-18 geocode
 returns a neighbour — appeared on 2026-09-06 in Watford, twice, and **a ranking
 fix cannot reach it.**
+
+## 2026-11: the habits as the decision
+
+What this proposal's P1 measured as truth-neutral fed soft habits to the
+unchanged ranking, whose near-field rule overrode them. What ships instead
+makes the habits the decision for a daytime stay among typed venues: every
+candidate within 60 m weighed by distance (σ 11 m), his habits for its kind of
+place (share, dwell, hour, each smoothed) and its tagged hours, the habits
+learned by EM over every mined stay outside Home and Work
+(`Verified.Geo.SoftVenue`; the weekly miner stores them as `habits.events` in
+the priors blob, served as of the day as `venueHabits`). A footprint around
+the stay (an enclosing institution, an open space) and overnight stays keep
+their rules; the ranking keeps its own mined priors. The percentage shown for
+such a name is its own posterior.
+
+Measured: on the census of confirmed stays with the true venue a candidate,
+held out by day, 87 of 104 against the ranking's 84; through the corpus gate
+with the miner's habits 9 confirmed names gained (Urban Social Coffee 7 times,
+Starbucks, Bread Ahead) and 4 lost (Olivomare, Black Sheep Coffee, La Viña,
+The Chess Shop — `KNOWN_UNHELD`). On the 38 graded stays it names: shown
+0.98 right 0.92, 0.79 right 0.82, 0.59 right 0.70, below one half 0 of 4. It
+has no "none of these": where the true venue is not mapped it still names a
+neighbour, with a confidence it has not earned (06-18, 99%).

@@ -220,11 +220,12 @@ private def isStationStay (s : Seg) : Bool :=
 
 /-- The stations in range of a stay's centroid, nearest first, or the stay's own
 name when it must keep it. A name yields only when the picker found it by rank
-alone, the weakest source in `NameConfidence.COUNTS`; a name from the stay's own
+alone or by his habits among its neighbours, the weakest sources; a name from the stay's own
 fixes, a station's, the decoder's, a night's or an established focus place's
 stands. -/
 private def stationsAtAlight (e : Env) (s : Seg) : Array String := Id.run do
-  if s.place.isSome && !s.placeSource.any (·.rule == "ranked") then return s.place.toArray
+  if s.place.isSome && !s.placeSource.any (fun ps => ps.rule == "ranked" || ps.rule == "habit") then
+    return s.place.toArray
   if (s.focusPlaceId.bind e.focusPlaceDays).any
       (· ≥ Verified.Geo.TransitPlace.INTERCHANGE_FOCUS_GUARD_MIN_DAYS) then return #[]
   let some (cLat, cLon) := centroidOf e s | return #[]
