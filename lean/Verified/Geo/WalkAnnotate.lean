@@ -668,7 +668,8 @@ can confidently place. Returns a new segment array; the input is not mutated.
 -/
 def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
     (speedByTs : Int → Option Float) (env : Env) (stepPoints : List StepPoint := [])
-    (draw : Draw := .matcher) (flags : Flags := {}) : Array Seg := Id.run do
+    (draw : Draw := .matcher) (flags : Flags := {}) (stepsThrough : Option Int := none) :
+    Array Seg := Id.run do
   if flags.matchDisable then return segments
   let prep := segments.map fun s => prepFor s displayFixes speedByTs
   -- Every leg's ways read fires before any buildings read, which follows only
@@ -704,7 +705,7 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
           -- The reconstruction starts from the fix set the raw renderer draws:
           -- without the teleport collapse, indoor jitter reaches the solver as
           -- consistent evidence.
-          let stepsWalked := stepsInWindow stepPoints seg.startTs seg.endTs
+          let stepsWalked := stepsInWindow stepPoints seg.startTs seg.endTs stepsThrough
           let ev := evidenceFor segments si stepsWalked
           -- Only the band around the track reaches the drawing (and the key).
           let band := trackBand p.inWin

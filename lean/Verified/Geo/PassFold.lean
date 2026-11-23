@@ -65,6 +65,8 @@ structure Env where
   rawFixes : Array CoarseFix
   /-- Per-minute step rows. -/
   steps : Array StepPoint
+  /-- The watch's last sync: step rows are complete only to it. -/
+  stepsThrough : Option Int := none
   /-- Route-relation stop membership, for the stopping-pattern line picker. -/
   railStops : Array Verified.Geo.LineStoppingPattern.RailStopRelation
   /-- `osm.nearbyStations(lat, lon, radiusM)` — the radius is the caller's, so
@@ -452,7 +454,7 @@ def passes (e : Env) : Array Pass := #[
   -- states unchanged.
   ("walkMatch", fun segs =>
     Verified.Geo.WalkAnnotate.annotateWalkMatches segs e.displayFixes e.speedByTs
-      e.walkEnv e.biomSteps e.walkDraw e.walkFlags),
+      e.walkEnv e.biomSteps e.walkDraw e.walkFlags e.stepsThrough),
 
   -- The zone the frontend renders this segment's clock in.
   ("displayTz", fun segs => displayTz e segs),

@@ -942,6 +942,14 @@ pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
         env.insert("walkMatch".into(), wm.clone());
     }
 
+    // The watch's last sync, when known: steps past it are unknown, not zero.
+    if let Some(t) = inputs
+        .pointer("/biometrics/stepsThrough")
+        .filter(|t| t.is_i64())
+    {
+        env.insert("stepsThrough".into(), t.clone());
+    }
+
     let obs = c.get("obs").context("capture has no obs")?;
     for (k, v) in encode_obs_and_tail(obs, c.get("tail")) {
         env.insert(k, v);

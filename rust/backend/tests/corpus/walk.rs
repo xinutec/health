@@ -93,6 +93,26 @@ fn raw_in_window(request: &Value, start: i64, end: i64) -> Value {
     )
 }
 
+/// The accuracy column of the same rows, in the same order.
+fn raw_accuracy_in_window(request: &Value, start: i64, end: i64) -> Value {
+    let rows = request
+        .pointer("/env/rawFixes")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    Value::Array(
+        rows.iter()
+            .filter(|r| {
+                r.get(0)
+                    .and_then(Value::as_i64)
+                    .is_some_and(|ts| ts >= start && ts <= end)
+            })
+            .filter(|r| r.get(1).is_some() && r.get(2).is_some())
+            .map(|r| r.get(3).cloned().unwrap_or(Value::Null))
+            .collect(),
+    )
+}
+
 /// Per-minute pedometer rows as the referee's wire wants them.
 fn steps_rows(inputs: &Value) -> Value {
     let rows = inputs
@@ -231,6 +251,8 @@ fn walking_legs(out: &Value, request: &Value, windows: &[(i64, i64, String)]) ->
                 "endTs": end,
                 "drawn": drawn,
                 "raw": raw_in_window(request, start, end),
+                // Read only by instruments: each raw fix's reported accuracy.
+                "rawAccuracy": raw_accuracy_in_window(request, start, end),
                 "acceptedNames": accepted_names(windows, start, end),
                 // Joined from `segs`: the report is on the segment, and episodes
                 // drop it.
@@ -532,6 +554,12 @@ impl Walk {
             "buildingTable": self.building_table,
             "wantP90": want_p90,
         });
+        // The referee's whole input, for an instrument that measures the lines
+        // another way. One file per shard: each is its own process.
+        if let Ok(dir) = std::env::var("WALK_REQ_OUT") {
+            let path = format!("{dir}/walkreq-{}.json", std::process::id());
+            std::fs::write(&path, req.to_string()).expect("WALK_REQ_OUT is a writable directory");
+        }
         let reply = backend::lean::serve(&req.to_string()).expect("the referee must answer");
         let r: Value = serde_json::from_str(&reply).expect("the referee reply parses");
         assert!(

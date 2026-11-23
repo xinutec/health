@@ -8,7 +8,8 @@ The per-segment biometric reductions (`enrichSegmentWithBiometrics`,
 core of bridging stays across biometric gaps. Two conventions the `#guard`s pin:
 
 * No step data is not zero steps: `stepsTotal`/`stepsInWindow` are `none` with
-  no rows for the day, `0` when rows exist but none fall in the window.
+  no rows for the day, `0` when rows exist but none fall in the window; and
+  `stepsInWindow` is `none` past the watch's last sync.
 * Segment windows are inclusive at both ends; the bridge's gap window is
   strictly inside, so a boundary sample belongs to the stay.
 
@@ -58,6 +59,13 @@ private def round1 (x : Float) : Float := Float.floor (x * 10 + 0.5) / 10
 private def hasDayCoverage (stepPoints : List StepPoint) (startTs : Int) : Bool :=
   stepPoints.any (fun sp => decide ((sp.ts - startTs).natAbs < 86400))
 
+/-- Whether the step rows are complete over a window ending at `endTs`: the
+    watch has synced to `through`, and a later minute is unknown, not zero. -/
+def stepsReach (through : Option Int) (endTs : Int) : Bool :=
+  match through with
+  | some t => decide (endTs ≤ t)
+  | none => true
+
 /-- Per-segment HR stats, sleep overlap and step total. -/
 def enrichSegmentWithBiometrics (seg : Seg) (hrPoints : List HrPoint) (sleepStages : List SleepStage)
     (stepPoints : List StepPoint := []) : BiometricEnrichment := Id.run do
@@ -99,9 +107,11 @@ def enrichSegmentWithBiometrics (seg : Seg) (hrPoints : List HrPoint) (sleepStag
   return ⟨hrMean, hrMin, hrMax, hrStd, inWindow.length, overlapsSleep, sleepFraction, stepsTotal⟩
 
 /-- Total steps whose per-minute rows fall inside `[startTs, endTs]`, or
-    `none` when the series carries no rows for that day at all. -/
-def stepsInWindow (stepPoints : List StepPoint) (startTs endTs : Int) : Option Float :=
-  if stepPoints.isEmpty then none
+    `none` when the series carries no rows for that day at all, or the watch
+    has not synced to the window's end (`through`). -/
+def stepsInWindow (stepPoints : List StepPoint) (startTs endTs : Int)
+    (through : Option Int := none) : Option Float :=
+  if stepPoints.isEmpty || !stepsReach through endTs then none
   else
     let inWin := stepPoints.filter (fun sp => decide (sp.ts ≥ startTs) && decide (sp.ts ≤ endTs))
     if !inWin.isEmpty || hasDayCoverage stepPoints startTs then
@@ -193,6 +203,9 @@ private def s1 : Seg := sg (T0 + 3600) (T0 + 7200)
 -- The day-coverage test is strict: exactly 86400 away is a different day.
 #guard (stepsInWindow [sp (T0 + 86400) 20] T0 (T0 + 3600)).isNone
 #guard stepsInWindow [sp (T0 + 86399) 20] T0 (T0 + 3600) == some 0
+-- A window the watch has not synced through is unknown, not zero steps.
+#guard (stepsInWindow [sp (T0 - 600) 20] T0 (T0 + 3600) (some (T0 + 1800))).isNone
+#guard stepsInWindow [sp (T0 + 60) 20] T0 (T0 + 3600) (some (T0 + 3600)) == some 20
 
 /-! ### Cadence -/
 

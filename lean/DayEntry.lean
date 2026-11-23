@@ -578,6 +578,7 @@ private def parseEnv (j : Json) : Except String Env := do
     points := pts
     rawFixes := ← (← optArr j "rawFixes").mapM parseCoarse
     steps := ← (← optArr j "steps").mapM parseStep
+    stepsThrough := (j.getObjVal? "stepsThrough" |>.toOption).bind (·.getInt?.toOption)
     railStops := ← (← optArr j "railStops").mapM parseRailStops
     nearbyStations := fun lat lon r =>
       askRow "nearbyStations" (k3 lat lon r) (entry3 (fun v => do (← v.getArr?).mapM parseStation))
