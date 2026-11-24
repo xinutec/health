@@ -206,6 +206,8 @@ def RECON_SWAP_MIN_ABS_DROP_M : Float := 150
 reconstruction's step factor: steps × stride × slack. -/
 def STEP_STRIDE_M : Float := 0.75
 def STEP_SLACK_RATIO : Float := 1.4
+/-- A step row counts one minute from its `ts`. -/
+def MINUTE_S : Float := 60
 
 /-! ## Local geometry -/
 
@@ -607,7 +609,7 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
     `annotateWalkMatches` reads. The host adds the code version. -/
 def walkMemoKey (draw : Draw) (flags : Flags) (inWin : Array PedFix) (ways : Array Way)
     (buildings : Array Ring) (stepsWalked : Option Float) (ev : WalkEvidence)
-    (cascadeName : Option String) : String :=
+    (cascadeName : Option String) (stepRows : Array (Int × Float) := #[]) : String :=
   let anchor := fun (k : MemoKey) (a : Verified.Geo.WalkSmooth.WalkAnchor) =>
     ((k.float a.lat).float a.lon).float a.sigmaM
   let k : MemoKey := {}
@@ -620,6 +622,7 @@ def walkMemoKey (draw : Draw) (flags : Flags) (inWin : Array PedFix) (ways : Arr
   let k := k.opt MemoKey.float stepsWalked
   let k := ((k.opt anchor ev.start).opt anchor ev.finish).opt MemoKey.float ev.stepsWalked
   let k := k.opt MemoKey.str cascadeName
+  let k := k.arr (fun k (r : Int × Float) => (k.int r.1).float r.2) stepRows
   k.render
 
 /-- One walk's drawing, from exactly the inputs `walkMemoKey` hashes: a new
@@ -627,7 +630,7 @@ def walkMemoKey (draw : Draw) (flags : Flags) (inWin : Array PedFix) (ways : Arr
     contributes code only, which the host versions by the binary. -/
 def drawWalk (env : Env) (draw : Draw) (flags : Flags) (inWin : Array PedFix) (ways : Array Way)
     (buildings : Array Ring) (stepsWalked : Option Float) (ev : WalkEvidence)
-    (cascadeName : Option String) : WalkPatch := Id.run do
+    (cascadeName : Option String) (stepRows : Array (Int × Float) := #[]) : WalkPatch := Id.run do
   let clean := dropUncertain (despike inWin)
   let held := hold clean
   -- The walk's one badness context (way grid and footprint grid), for the
@@ -668,8 +671,16 @@ def drawWalk (env : Env) (draw : Draw) (flags : Flags) (inWin : Array PedFix) (w
   -- What is still unbacked is drawn dashed. A leg that ships no line is drawn
   -- from its fixes, so its spans are read off those.
   let ships := smoothed0 || useMatch || corrected
+  -- The pedometer's bound between two moments: every minute row the span
+  -- touches, whole, at the stride and slack of the leg's budget. Unknown where
+  -- the leg's own steps are.
+  let walkable : Float → Float → Option Float := fun t0 t1 =>
+    stepsWalked.map fun _ =>
+      (stepRows.foldl (fun acc (ts, n) =>
+        let m := Float.ofInt ts
+        if m + MINUTE_S > t0 && m ≤ t1 then acc + n else acc) 0) * STEP_STRIDE_M * STEP_SLACK_RATIO
   let unbacked := Verified.Geo.WalkBacked.unbackedSpans badCtx.get backing
-    (if ships then drawn else held.map PedFix.pathPt)
+    (if ships then drawn else held.map PedFix.pathPt) walkable
   -- `walkWayUm` is attached on every branch, including those that discard
   -- the matcher's line, so it can show what the matcher wanted where it was
   -- overridden.
@@ -735,11 +746,15 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
           let buildings := ringsInBand band buildings
           -- Remembered, or drawn and offered to the host. A replay remembers
           -- nothing, so every gate draws.
-          let key := walkMemoKey draw flags p.inWin ways buildings stepsWalked ev seg.wayName
+          -- The leg's minute rows, from the minute its start falls in.
+          let stepRows : Array (Int × Float) := (stepPoints.filter fun sp =>
+            decide (sp.ts > seg.startTs - 60) && decide (sp.ts ≤ seg.endTs)).toArray.map
+              fun sp => (sp.ts, sp.steps)
+          let key := walkMemoKey draw flags p.inWin ways buildings stepsWalked ev seg.wayName stepRows
           let patch : WalkPatch := match env.memoGet key with
             | some pt => pt
             | none => env.memoPut key
-                (drawWalk env draw flags p.inWin ways buildings stepsWalked ev seg.wayName)
+                (drawWalk env draw flags p.inWin ways buildings stepsWalked ev seg.wayName stepRows)
           out := out.push (patch.apply seg)
     | _, _, _ => out := out.push seg
   return out

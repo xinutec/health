@@ -5,7 +5,8 @@ import Verified.FloatConst
 # A drawn walk is backed by the map or by the track
 
 A stretch of a drawn walk is *backed* when it runs along a mapped walkable way
-or sharp fixes lie along it. An edge that is neither, between two vertices that
+or sharp fixes lie along it. A mapped way backs nothing over a stretch the
+track does not cover and the steps of its time cannot have walked. An edge that is neither, between two vertices that
 are both on the map, is the drawing's own: a clean-up pass joined two route
 vertices straight across a block, or a gap in the track was bridged by a line.
 `backEdges` replaces such an edge by the shortest walkable route between its
@@ -39,6 +40,9 @@ private def SAME_M : Float := 0.5
 def FIX_REACH_M : Float := 15
 /-- Only a fix this accurate says where he was to within `FIX_REACH_M`. -/
 def SHARP_FIX_M : Float := 25
+/-- The track covers the line this near a fix of any accuracy: the matcher's
+    own corridor (`Trim`'s 30 m). -/
+def TRACK_REACH_M : Float := 30
 /-- The line is sampled this often. -/
 def SAMPLE_M : Float := 2
 /-- A route may be this much longer than its edge: a corner the edge cut. More
@@ -113,12 +117,61 @@ def unbackedEdges (ctx : BadnessCtx) (sharp : Array Pt) (pts : Array Pt) : Array
           runFrom := k - 1
   return marks
 
+/-- Per edge of `drawn`: whether it lies on a stretch the track does not cover
+    (no fix of any accuracy within `TRACK_REACH_M`) that is longer than he can
+    have walked in its time. `walkable t0 t1` is the pedometer's bound on the
+    metres walked between two moments, `none` where the steps are not known.
+    A mapped way under such a stretch backs nothing: he was not on foot there,
+    or not there. -/
+def unwalkedEdges (fixes : Array Pt) (walkable : Float → Float → Option Float)
+    (drawn : Array TPt) : Array Bool := Id.run do
+  let mut marks : Array Bool := Array.replicate (drawn.size - 1) false
+  let mut run := ZERO
+  let mut runFrom := 0
+  let mut runT0 := ZERO
+  let mut runT1 := ZERO
+  let mut runTo := 0
+  for h : k in [1:drawn.size] do
+    have hk : k < drawn.size := h.upper
+    let a := drawn[k - 1]
+    let b := drawn[k]
+    let len := metersBetween a.pt b.pt
+    if len == ZERO then continue
+    let stepsF := max ONE (Float.ceil (len / SAMPLE_M))
+    for j in [0:stepsF.toUInt64.toNat] do
+      let f := (natToFloat j + HALF) / stepsF
+      let mid : Pt := ⟨a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f⟩
+      let t := a.ts + (b.ts - a.ts) * f
+      if fixes.any fun p => metersBetween mid p ≤ TRACK_REACH_M then
+        if run > ZERO then
+          match walkable runT0 runT1 with
+          | some bound => if run > bound then for e in [runFrom:runTo + 1] do marks := marks.set! e true
+          | none => pure ()
+        run := ZERO
+      else
+        if run == ZERO then
+          runFrom := k - 1
+          runT0 := t
+        run := run + len / stepsF
+        runT1 := t
+        runTo := k - 1
+  if run > ZERO then
+    match walkable runT0 runT1 with
+    | some bound => if run > bound then for e in [runFrom:runTo + 1] do marks := marks.set! e true
+    | none => pure ()
+  return marks
+
 /-- The time spans over which `drawn` is unbacked: its marked edges, a run of
-    them as one span. What the map draws dashed. -/
-def unbackedSpans (ctx : BadnessCtx) (fixes : Array Fix) (drawn : Array TPt) :
+    them as one span. What the map draws dashed. With `walkable`, a stretch off
+    the track that the steps cannot have walked is unbacked too, mapped way or
+    not (`unwalkedEdges`). -/
+def unbackedSpans (ctx : BadnessCtx) (fixes : Array Fix) (drawn : Array TPt)
+    (walkable : Float → Float → Option Float := fun _ _ => none) :
     Array (Float × Float) := Id.run do
   if drawn.size < 2 || ctx.walkable.isEmpty then return #[]
-  let marks := unbackedEdges ctx (sharpFixes fixes) (drawn.map (·.pt))
+  let offMap := unbackedEdges ctx (sharpFixes fixes) (drawn.map (·.pt))
+  let unwalked := unwalkedEdges (fixes.map (·.pt)) walkable drawn
+  let marks := offMap.mapIdx fun i m => m || unwalked.getD i false
   let mut out : Array (Float × Float) := #[]
   let mut open_ : Option Float := none
   for h : k in [1:drawn.size] do
@@ -244,6 +297,20 @@ private def dense : Array TPt := (Array.range 21).map fun k =>
   decide (p.1 ≤ 10) && decide (p.2 ≥ 90)) == some true
 -- On the street, nothing is.
 #guard unbackedSpans block #[] #[tp north 0, tp corner 50, tp east 100] == #[]
+-- On the street but off the track, and longer than the steps allow: unbacked.
+-- The same stretch within the steps, or with the steps unknown, stands.
+private def street : Array TPt := #[tp north 0, tp corner 50, tp east 100]
+#guard unbackedSpans block #[] street (fun _ _ => some 100) == #[(0, 100)]
+#guard unbackedSpans block #[] street (fun _ _ => some 200) == #[]
+#guard unbackedSpans block #[] street (fun _ _ => none) == #[]
+-- Where the track covers the line the steps are not asked: a fix at each end
+-- leaves only the middle of the street to them.
+private def ends : Array Fix := #[{ pt := north, accuracy := some 60 }, { pt := east, accuracy := some 60 }]
+#guard unbackedSpans block ends street (fun _ _ => some 110) == #[]
+#guard unbackedSpans block ends street (fun _ _ => some 50) == #[(0, 100)]
+-- The bound is asked for the stretch's own moments.
+#guard unbackedSpans block ends street (fun t0 t1 => if t0 > 5 && t1 < 95 then some 50 else some 1000)
+  == #[(0, 100)]
 -- A route that is a real detour is refused: the same diagonal across a block
 -- whose only way round is far longer.
 private def far : Pt := ⟨LAT0 - 20 * D, LON0⟩

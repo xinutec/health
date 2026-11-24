@@ -231,7 +231,7 @@
     {
       "startTs": 1778605135,
       "budgetM": 388.5,
-      "inferredM": 0.0,
+      "inferredM": 126.736336319225,
       "lenM": 479.46811650686374,
       "offPathM": 0.0,
       "p90M": null,
@@ -323,7 +323,7 @@
     {
       "startTs": 1778833306,
       "budgetM": 1005.75,
-      "inferredM": 0.0,
+      "inferredM": 436.91748369463045,
       "lenM": 1300.8412405635238,
       "offPathM": 0.0,
       "p90M": null,
@@ -637,7 +637,7 @@
     {
       "startTs": 1779129960,
       "budgetM": 475.5,
-      "inferredM": 0.0,
+      "inferredM": 91.47311625086859,
       "lenM": 473.55411679176666,
       "offPathM": 0.0,
       "p90M": null,
@@ -683,7 +683,7 @@
     {
       "startTs": 1779298404,
       "budgetM": 1522.5,
-      "inferredM": 102.28970106894303,
+      "inferredM": 353.35422712141167,
       "lenM": 1660.6843649808775,
       "offPathM": 0.0,
       "p90M": null,
@@ -716,7 +716,7 @@
     {
       "startTs": 1779307020,
       "budgetM": 912.0,
-      "inferredM": 77.80898136803785,
+      "inferredM": 206.62416160731962,
       "lenM": 1127.2296694820545,
       "offPathM": 1.7150183627591427,
       "p90M": null,
@@ -828,7 +828,7 @@
     {
       "startTs": 1779478895,
       "budgetM": 57.75,
-      "inferredM": 0.0,
+      "inferredM": 109.47453545522606,
       "lenM": 109.47453545522606,
       "offPathM": 0.0,
       "p90M": null,
@@ -1058,7 +1058,7 @@
     {
       "startTs": 1781529660,
       "budgetM": 836.25,
-      "inferredM": 0.0,
+      "inferredM": 116.33037878353433,
       "lenM": 728.0217701136605,
       "offPathM": 0.0,
       "p90M": null,
@@ -2118,7 +2118,7 @@
     {
       "startTs": 1783697892,
       "budgetM": 402.75,
-      "inferredM": 0.0,
+      "inferredM": 45.50225638183522,
       "lenM": 447.67598167551,
       "offPathM": 0.0,
       "p90M": null,
@@ -2368,7 +2368,7 @@
     {
       "startTs": 1784187720,
       "budgetM": 198.75,
-      "inferredM": 0.0,
+      "inferredM": 215.8902738049871,
       "lenM": 277.6956689874916,
       "offPathM": 0.0,
       "p90M": null,
@@ -2390,7 +2390,7 @@
     {
       "startTs": 1784189100,
       "budgetM": 337.5,
-      "inferredM": 0.0,
+      "inferredM": 139.68699131853307,
       "lenM": 284.0363289713629,
       "offPathM": 0.0,
       "p90M": null,
@@ -2469,7 +2469,7 @@
     {
       "startTs": 1784279520,
       "budgetM": 493.5,
-      "inferredM": 0.0,
+      "inferredM": 46.14087516454741,
       "lenM": 504.37836940820785,
       "offPathM": 0.0,
       "p90M": null,
@@ -2616,7 +2616,7 @@
     {
       "startTs": 1785403800,
       "budgetM": 396.0,
-      "inferredM": 0.0,
+      "inferredM": 93.95985977266258,
       "lenM": 364.42763626844703,
       "offPathM": 0.0,
       "p90M": null,
@@ -2910,7 +2910,7 @@
     {
       "startTs": 1786092280,
       "budgetM": 243.75,
-      "inferredM": 0.0,
+      "inferredM": 126.59889026418284,
       "lenM": 335.463894194107,
       "offPathM": 0.0,
       "p90M": null,
@@ -2921,7 +2921,7 @@
     {
       "startTs": 1786094460,
       "budgetM": 941.25,
-      "inferredM": 289.9941770641597,
+      "inferredM": 1172.0768694662481,
       "lenM": 1675.4698299957192,
       "offPathM": 33.66704417799865,
       "p90M": null,
@@ -3593,7 +3593,7 @@
     {
       "startTs": 1790509489,
       "budgetM": 140.25,
-      "inferredM": 0.0,
+      "inferredM": 60.46236329284407,
       "lenM": 130.575145659619,
       "offPathM": 5.9024437797354645,
       "p90M": null,
@@ -3604,7 +3604,7 @@
     {
       "startTs": 1790509763,
       "budgetM": 368.25,
-      "inferredM": 0.0,
+      "inferredM": 224.77813309083524,
       "lenM": 517.6355004419245,
       "offPathM": 0.0,
       "p90M": null,
@@ -3751,7 +3751,7 @@
     {
       "startTs": 1790846170,
       "budgetM": 245.25,
-      "inferredM": 0.0,
+      "inferredM": 373.2916036546267,
       "lenM": 379.80651594285484,
       "offPathM": 0.0,
       "p90M": null,
@@ -3806,7 +3806,7 @@
     {
       "startTs": 1790870781,
       "budgetM": 521.25,
-      "inferredM": 0.0,
+      "inferredM": 62.35359315392919,
       "lenM": 555.1618005300106,
       "offPathM": 0.0,
       "p90M": null,
@@ -4602,7 +4602,7 @@
     {
       "startTs": 1793128260,
       "budgetM": 710.25,
-      "inferredM": 0.0,
+      "inferredM": 122.23980232168876,
       "lenM": 591.648542225118,
       "offPathM": 0.0,
       "p90M": null,
@@ -4771,7 +4771,7 @@
     {
       "startTs": 1793734932,
       "budgetM": 24.75,
-      "inferredM": 23.194101764761633,
+      "inferredM": 67.17309616017515,
       "lenM": 229.352752526635,
       "offPathM": 0.0,
       "p90M": null,
@@ -4806,7 +4806,7 @@
     {
       "startTs": 1794132364,
       "budgetM": 691.5,
-      "inferredM": 464.9906275189847,
+      "inferredM": 1690.367116863644,
       "lenM": 2010.731189247265,
       "offPathM": 26.6032709140558,
       "p90M": null,

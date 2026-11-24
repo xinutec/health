@@ -279,6 +279,15 @@ the walk pass, so neither feeds one:
   and the map draws those edges dashed. A leg drawn from its fixes reads its
   spans off the held fixes, since it ships no line.
 
+A mapped way does not back a stretch he cannot have walked: where the track
+does not cover the line (no fix of any accuracy within the matcher's corridor)
+for longer than the steps of that time allow — every minute row the stretch
+touches, whole, at the stride and slack of the leg's budget — the stretch is
+unbacked too (`unwalkedEdges`). That is a ride served inside a walk, or a route
+the matcher drew where the fixes were not; a gap the steps do cover stays
+solid, as a sparse track's route does. Where the leg's steps are unknown (the
+watch has not synced through it) the bound is not asked.
+
 A leg the walk pass never reaches (too few fixes under the walking cap, or no
 ways for its ground) has no spans: nothing was measured, and it draws solid.
 
