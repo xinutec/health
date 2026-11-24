@@ -109,6 +109,10 @@ structure Seg where
   attached only where the reconstruction is substantially shorter. Takes
   precedence over `walkMatchedPath` when present. -/
   walkSmoothedPath : Option (Array PathPt) := none
+  /-- The time spans over which this walking leg's drawn line is backed by
+  neither a mapped way nor a sharp fix (`WalkBacked.unbackedSpans`): drawn
+  dashed. -/
+  walkUnbacked : Array (Float × Float) := #[]
   /-- Whether the walk annotation had building outlines: `some true` when
   `buildingsNear` answered (maybe with none), `some false` when declined, `none`
   when not asked. The wall metric means something only for `some true`. -/

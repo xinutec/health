@@ -10,7 +10,8 @@ are both on the map, is the drawing's own: a clean-up pass joined two route
 vertices straight across a block, or a gap in the track was bridged by a line.
 `backEdges` replaces such an edge by the shortest walkable route between its
 ends when that route is the edge with its corner restored, and leaves it
-otherwise: a longer route is a guess at where he went.
+otherwise: a longer route is a guess at where he went. What stays unbacked,
+`unbackedSpans` reports, and the map draws it dashed.
 
 It runs last, on the line that ships, so no accept or reject decision upstream
 reads its output.
@@ -84,6 +85,54 @@ def pathUnbackedM (ctx : BadnessCtx) (sharp : Array Pt) (pts : Array Pt) : Float
     have hk : k < pts.size := h.upper
     bad := bad + unbackedM ctx sharp pts[k - 1] pts[k]
   return bad
+
+/-- Per edge of `pts` (edge `i` runs `pts[i]→pts[i+1]`): whether it carries
+    part of an unbacked run longer than the way tolerance. A run is judged whole,
+    across edges, so a dense line is held to what a sparse one is. -/
+def unbackedEdges (ctx : BadnessCtx) (sharp : Array Pt) (pts : Array Pt) : Array Bool := Id.run do
+  let mut marks : Array Bool := Array.replicate (pts.size - 1) false
+  let mut run := ZERO
+  let mut runFrom := 0
+  for h : k in [1:pts.size] do
+    have hk : k < pts.size := h.upper
+    let a := pts[k - 1]
+    let b := pts[k]
+    let len := metersBetween a b
+    if len == ZERO then continue
+    let stepsF := max ONE (Float.ceil (len / SAMPLE_M))
+    for j in [0:stepsF.toUInt64.toNat] do
+      let f := (natToFloat j + HALF) / stepsF
+      let mid : Pt := ⟨a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f⟩
+      if backed ctx sharp mid then
+        run := ZERO
+      else
+        if run == ZERO then runFrom := k - 1
+        run := run + len / stepsF
+        if run > ctx.opts.onWayM then
+          for e in [runFrom:k] do marks := marks.set! e true
+          runFrom := k - 1
+  return marks
+
+/-- The time spans over which `drawn` is unbacked: its marked edges, a run of
+    them as one span. What the map draws dashed. -/
+def unbackedSpans (ctx : BadnessCtx) (fixes : Array Fix) (drawn : Array TPt) :
+    Array (Float × Float) := Id.run do
+  if drawn.size < 2 || ctx.walkable.isEmpty then return #[]
+  let marks := unbackedEdges ctx (sharpFixes fixes) (drawn.map (·.pt))
+  let mut out : Array (Float × Float) := #[]
+  let mut open_ : Option Float := none
+  for h : k in [1:drawn.size] do
+    have hk : k < drawn.size := h.upper
+    if marks.getD (k - 1) false then
+      if open_.isNone then open_ := some drawn[k - 1].ts
+    else
+      match open_ with
+      | some t0 => out := out.push (t0, drawn[k - 1].ts); open_ := none
+      | none => pure ()
+  match open_, drawn.back? with
+  | some t0, some last => out := out.push (t0, last.ts)
+  | _, _ => pure ()
+  return out
 
 private def lenM (pts : Array Pt) : Float := Id.run do
   let mut len := ZERO
@@ -182,6 +231,19 @@ private def along : Array Fix := (Array.range 9).map fun k =>
 #guard (backEdges block (along.map fun f => { f with accuracy := some 60 }) diagonal).size == 3
 -- An end off the map is the track's business, not this pass's.
 #guard backEdges block #[] #[tp mid 0, tp east 100] == #[tp mid 0, tp east 100]
+-- The diagonal is one unbacked span, start to end; routed, the line has none.
+#guard unbackedSpans block #[] diagonal == #[(0, 100)]
+#guard unbackedSpans block #[] (backEdges block #[] diagonal) == #[]
+#guard unbackedSpans block along diagonal == #[]
+-- A dense line across the block is unbacked as the single edge is: its short
+-- edges make one run.
+private def dense : Array TPt := (Array.range 21).map fun k =>
+  tp ⟨LAT0 + D * (20 - natToFloat k) / 20, LON0 + D * natToFloat k / 20⟩ (natToFloat k * 5)
+#guard (unbackedSpans block #[] dense).size == 1
+#guard ((unbackedSpans block #[] dense)[0]?.map fun (p : Float × Float) =>
+  decide (p.1 ≤ 10) && decide (p.2 ≥ 90)) == some true
+-- On the street, nothing is.
+#guard unbackedSpans block #[] #[tp north 0, tp corner 50, tp east 100] == #[]
 -- A route that is a real detour is refused: the same diagonal across a block
 -- whose only way round is far longer.
 private def far : Pt := ⟨LAT0 - 20 * D, LON0⟩

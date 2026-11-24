@@ -34,12 +34,13 @@ return as bit patterns: `Lean.toJson` prints six decimals.
                       "steps":     [ [ts, steps], … ],
                       "walks":     [ { "startTs": n, "endTs": n,
                                        "drawn": [[lat,lon], …],
+                                       "inferred": [bool, …],
                                        "raw":   [[lat,lon], …],
                                        "acceptedNames": ["…", …] }, … ] }, … ] }
 
     <entry> = { "startTs": n, "p90M": bits|null, "stallM": bits,
                 "speedKmh": bits, "routeCorr": bits|null, "offPathM": bits|null,
-                "lenM": bits, "budgetM": bits|null }
+                "lenM": bits, "budgetM": bits|null, "inferredM": bits|null }
 
 Output: `{ "current": [ … ], "passes": bool, "regressed": […], "improved": […],
 "unmatched": […], "added": […], "unmeasured": […] }`, `current` in request
@@ -86,6 +87,9 @@ private structure WalkIn where
   Defaults true: false would let a dropped field silently switch the wall lens
   off; the gate prints the tally every run instead. -/
   buildingsMeasured : Bool := true
+  /-- Per drawn vertex, whether the fold marked the edge arriving at it
+  unbacked. `none`: the harness sent no marks, and nothing is measured. -/
+  inferred : Option (Array Bool) := none
 
 private def parseWalkIn (j : Json) : Except String WalkIn := do
   return {
@@ -95,6 +99,9 @@ private def parseWalkIn (j : Json) : Except String WalkIn := do
     raw := ← (← optArr j "raw").mapM parseLL
     acceptedNames := ← (← optArr j "acceptedNames").mapM (·.getStr?)
     buildingsMeasured := (j.getObjVal? "buildingsMeasured").toOption.bind (·.getBool?.toOption) |>.getD true
+    inferred := ← match j.getObjVal? "inferred" with
+      | .error _ => pure none
+      | .ok v => do pure (some (← (← v.getArr?).mapM (·.getBool?)))
     wayUm := ← (← optArr j "wayUm").mapM fun e => do
       let a ← e.getArr?
       return (← (← nth a 0).getStr?, ← (← nth a 1).getNat?) }
@@ -146,7 +153,8 @@ private def parseEntry (j : Json) : Except String WalkEntry := do
     routeCorr := ← jOptFloat j "routeCorr"
     offPathM := ← jOptFloat j "offPathM"
     lenM := ← jFloatField j "lenM"
-    budgetM := ← jOptFloat j "budgetM" }
+    budgetM := ← jOptFloat j "budgetM"
+    inferredM := ← jOptFloat j "inferredM" }
 
 private def parseBaselineDay (j : Json) : Except String (String × Array WalkEntry) := do
   return ((← (← j.getObjVal? "date").getStr?), ← (← optArr j "walks").mapM parseEntry)
@@ -178,6 +186,12 @@ private def measure (d : DayIn) (wantP90 : Bool) (w : WalkIn) : WalkEntry :=
                 else some (offPathBuildingCrossingM w.drawn d.buildings d.ways)
     lenM := sc.drawnLengthM
     budgetM := stepBudgetM d.steps (Float.ofInt w.startTs) (Float.ofInt w.endTs)
+    inferredM := w.inferred.map fun marks => Id.run do
+      let mut m := 0.0
+      for h : k in [1:w.drawn.size] do
+        have hk : k < w.drawn.size := h.upper
+        if marks.getD k false then m := m + metersBetween w.drawn[k - 1] w.drawn[k]
+      return m
     wayUm := w.wayUm
     -- Coverage, recorded, not scored: the maximum, since a quantile cannot see
     -- a line abandoning part of a walk.
@@ -193,7 +207,7 @@ private def entryJson (e : WalkEntry) : Json :=
     ("startTs", Lean.toJson e.startTs), ("p90M", oBits e.p90M),
     ("stallM", fBits e.stallM), ("speedKmh", fBits e.speedKmh),
     ("routeCorr", oBits e.routeCorr), ("offPathM", oBits e.offPathM),
-    ("lenM", fBits e.lenM), ("budgetM", oBits e.budgetM),
+    ("lenM", fBits e.lenM), ("budgetM", oBits e.budgetM), ("inferredM", oBits e.inferredM),
     -- Passed through, never scored. It rides the referee's wire so
     -- `WALK_GATE_DUMP` can print it beside the metrics; no floor holds it and
     -- no delta is computed from it.
@@ -206,7 +220,7 @@ private def entryJson (e : WalkEntry) : Json :=
 
 private def metricName : Metric → String
   | .stall => "stall" | .speed => "speed" | .route => "route"
-  | .offPath => "offPath" | .budget => "budget"
+  | .offPath => "offPath" | .budget => "budget" | .inferred => "inferred"
 
 private def deltaJson (d : Delta) : Json :=
   Json.mkObj [("date", Json.str d.date), ("startTs", Lean.toJson d.startTs),

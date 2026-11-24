@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SOURCE_LABEL, sourceLabel } from "./map.labels";
+import { INFERRED_NOTE, SOURCE_LABEL, sourceLabel } from "./map.labels";
 
 describe("map tap-inspector source labels", () => {
 	it("calls an unmatched moving leg's points raw, because they are", () => {
@@ -25,6 +25,13 @@ describe("map tap-inspector source labels", () => {
 			expect(sourceLabel("tentative", mode)).toBe("gap connector (inferred, no GPS)");
 			expect(sourceLabel("live", mode)).toBe("live position (latest fix)");
 		}
+	});
+
+	it("explains a dashed stretch in one popup line", () => {
+		// The popup is ~44 characters wide at phone width; a longer note wraps
+		// its last word onto a line of its own.
+		expect(INFERRED_NOTE.length).toBeLessThanOrEqual(44);
+		expect(INFERRED_NOTE).toContain("dashed");
 	});
 
 	it("falls back to the slug for a kind this build has never heard of", () => {

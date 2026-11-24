@@ -82,6 +82,13 @@ for the merely unlikely, always an honest raw fallback
   un-collapsed fixes; dense indoor jitter then reached the solver as
   mutually-consistent evidence and legs drew far over their step budget —
   the walk-gate red that motivated tracking the ratchet floors in git.
+- **Backing** (`Verified/Geo/WalkBacked.lean`, 2026-11-24): after every
+  decision, a matched line's edge that neither a mapped way nor a sharp fix
+  backs is routed along the map when the route is at most a corner longer;
+  what stays unbacked on any drawn walk ships as time spans and draws dashed.
+  The definition needs no footprints, so it sees the block the map has no
+  outline for. Design in `../design/episode-geometry.md`; measurements in
+  `tests/golden/fits/README.md`.
 - **Referee**: `score-walk-match.ts` replays golden walks over
   baseline/matched/smoother-primary arms; metrics in `walk-score.ts`,
   `walk-buildings.ts`, `walk-plausibility.ts`, `walk-route-correctness.ts`;
@@ -132,7 +139,8 @@ Known residuals in the current draw (re-measured 2026-07-14 via
   (matcher + corrector are the intended draw, not death-row), so its
   honesty is fixed in place, not deferred to a retirement that isn't coming.
 - **Walks drawn across UNMAPPED housing blocks are invisible to every
-  building-aware pass** — measured 2026-07-14: a user-flagged diagonal cut
+  building-aware pass** (the backing rule above sees them: it reads ways and
+  fixes, not footprints) — measured 2026-07-14: a user-flagged diagonal cut
   across terraced blocks scored offPath 0 m and all visible crossing-runs
   routed, because those blocks have no building polygons in OSM (the #305
   data-gap class; block-cut needs a footprint within 30 m to fire). Check

@@ -26,6 +26,10 @@ export const SOURCE_LABEL: Record<PointKind, string> = {
 	live: "live position (latest fix)",
 };
 
+/** What the popup adds at a vertex of a dashed stretch inside a walk: why the
+ *  line there is dashed (`EpisodeGeometry.points[].inferred`). */
+export const INFERRED_NOTE = "dashed: no mapped path, no sharp GPS fix";
+
 /**
  * `raw` is the one kind whose provenance is not decided by the kind alone.
  *

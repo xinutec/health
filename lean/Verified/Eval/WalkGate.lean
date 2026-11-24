@@ -40,6 +40,10 @@ def ROUTE_EPS : Float := 0.1
 /-- Off-path building-crossing may rise this much (m). -/
 def OFFPATH_EPS_M : Float := 5
 
+/-- The length drawn dashed, as unbacked by map or track, may rise this much
+(m): of the order of one edge between two fixes. -/
+def INFERRED_EPS_M : Float := 15
+
 /-- A drawn walk above this mean speed (km/h) is implausible on foot. -/
 def WALK_SPEED_CEIL_KMH : Float := 12
 
@@ -69,6 +73,10 @@ structure WalkEntry where
   lenM : Float
   /-- Pedometer displacement budget (steps × stride, m); `none` = no step data. -/
   budgetM : Option Float
+  /-- Metres of the drawn line the fold shipped dashed: backed by neither a
+  mapped way nor a sharp fix (`Geo.WalkBacked`). `none`: the floor predates
+  it, or the harness sent no marks. -/
+  inferredM : Option Float := none
   /-- A diagnostic column, not an axis: the matcher's identity report (named
   ways and metres, longest first) for `WALK_GATE_DUMP`. Gating it would bless an
   unadjudicated route shape. Defaulted, as the blessed floor predates it. -/
@@ -91,7 +99,7 @@ structure WalkEntry where
 
 /-- The gated axes. `p90` is absent on purpose — see `WalkEntry.p90M`. -/
 inductive Metric where
-  | stall | speed | route | offPath | budget
+  | stall | speed | route | offPath | budget | inferred
   deriving BEq, Repr, Inhabited
 
 /-- A walk identified within the corpus. -/
@@ -211,7 +219,8 @@ def gateWalks (baseline current : WalkBaseline)
         (.stall, some b.stallM, some c.stallM, STALL_EPS_M, true),
         (.route, b.routeCorr, c.routeCorr, ROUTE_EPS, false),
         (.offPath, b.offPathM, c.offPathM, OFFPATH_EPS_M, true),
-        (.budget, excess b, excess c, BUDGET_EPS_M, true)]
+        (.budget, excess b, excess c, BUDGET_EPS_M, true),
+        (.inferred, b.inferredM, c.inferredM, INFERRED_EPS_M, true)]
       for (metric, bv, nv, eps, up) in axes do
         match bv, nv with
         | none, _ => pure ()
@@ -342,6 +351,20 @@ its budget cannot bank credit against a later regression. -/
 -- A metric measured now but not in the floor cannot regress — there is
 -- nothing to compare against, and treating `none` as 0 would make every newly
 -- measured axis a regression on the run that introduced it.
+-- More of a walk drawn dashed is a regression; a floor without the column
+-- compares nothing.
+#guard
+  let r := gateWalks (day #[{mk 100 with inferredM := some 0}])
+                     (day #[{mk 100 with inferredM := some 40}])
+  r.regressed.size == 1 && r.regressed[0]!.metric == .inferred
+#guard
+  let r := gateWalks (day #[{mk 100 with inferredM := some 40}])
+                     (day #[{mk 100 with inferredM := some 50}])
+  r.regressed.isEmpty && r.improved.isEmpty
+#guard
+  let r := gateWalks (day #[mk 100]) (day #[{mk 100 with inferredM := some 500}])
+  r.regressed.isEmpty && r.unmeasured.isEmpty
+
 #guard
   let r := gateWalks (day #[{mk 100 with offPathM := none}])
                      (day #[{mk 100 with offPathM := some 500}])

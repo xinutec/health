@@ -246,10 +246,17 @@ fn walking_legs(out: &Value, request: &Value, windows: &[(i64, i64, String)]) ->
                 .iter()
                 .filter_map(|p| Some(json!([p.get("lat")?, p.get("lon")?])))
                 .collect();
+            // Per vertex, whether the fold drew the edge arriving at it dashed.
+            let inferred: Vec<Value> = pts
+                .iter()
+                .filter(|p| p.get("lat").is_some() && p.get("lon").is_some())
+                .map(|p| json!(p.get("inferred").and_then(Value::as_bool).unwrap_or(false)))
+                .collect();
             Some(json!({
                 "startTs": start,
                 "endTs": end,
                 "drawn": drawn,
+                "inferred": inferred,
                 "raw": raw_in_window(request, start, end),
                 // Read only by instruments: which line the episode drew.
                 "kind": e.get("kind").cloned().unwrap_or(Value::Null),
@@ -606,6 +613,7 @@ impl Walk {
                 .unwrap_or_default();
             let keys = [
                 "budgetM",
+                "inferredM",
                 "lenM",
                 "offPathM",
                 "p90M",

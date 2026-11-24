@@ -105,7 +105,8 @@ def episodeSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.EpisodeGeometr
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, refinedMode := s.refinedMode
     pointCount := s.pointCount, centroidLat := s.centroidLat, centroidLon := s.centroidLon
     snappedPath := spts s.snappedPath, matchedPath := spts s.matchedPath
-    walkMatchedPath := spts s.walkMatchedPath, walkSmoothedPath := spts s.walkSmoothedPath }
+    walkMatchedPath := spts s.walkMatchedPath, walkSmoothedPath := spts s.walkSmoothedPath
+    walkUnbacked := s.walkUnbacked }
 
 def episodeState (s : DayState) : Verified.Geo.EpisodeGeometry.State :=
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, place := s.place }

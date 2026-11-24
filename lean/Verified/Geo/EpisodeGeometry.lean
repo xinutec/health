@@ -57,6 +57,9 @@ structure LatLon where
   fractional timestamps (see {@link SPt}). Rounding on the way out would change
   the emitted value for about a sixth of the corpus's drawn vertices. -/
   ts : Option Float := none
+  /-- The edge arriving at this vertex is backed by neither the map nor a sharp
+  fix: the map draws it dashed. -/
+  inferred : Bool := false
   deriving Inhabited, BEq, Repr
 
 /-- A vertex of a derived path. `ts` is `Float`: the snapped path is integral,
@@ -91,6 +94,8 @@ structure Seg where
   matchedPath : Array SPt := #[]
   walkMatchedPath : Array SPt := #[]
   walkSmoothedPath : Array SPt := #[]
+  /-- The time spans over which the walking leg's line is unbacked. -/
+  walkUnbacked : Array (Float × Float) := #[]
   deriving Inhabited, BEq
 
 /-- The `DayState` fields this module reads. -/
@@ -269,6 +274,19 @@ def clipPath (path : Array SPt) (st : State) : Array LatLon :=
   (path.filter (fun sp => inWindowF sp.ts st.startTs st.endTs)).map
     (fun sp => { lat := sp.lat, lon := sp.lon, ts := some sp.ts })
 
+/-- A walking line with its unbacked edges marked: an edge whose middle moment
+lies in one of the covering legs' unbacked spans. A vertex with no moment marks
+nothing. -/
+def markUnbacked (covering : Array Seg) (pts : Array LatLon) : Array LatLon :=
+  let spans := covering.flatMap (·.walkUnbacked)
+  if spans.isEmpty then pts else
+  pts.mapIdx fun i q =>
+    match (pts[i - 1]?).bind (·.ts), q.ts with
+    | some t0, some t1 =>
+      let mid := (t0 + t1) / 2
+      if i > 0 && spans.any (fun (a, b) => a ≤ mid && mid ≤ b) then { q with inferred := true } else q
+    | _, _ => q
+
 /-- The per-mode speed ceiling, `none` where the mode has none. -/
 def capForMode (mode : Mode) : Option Float :=
   (Verified.Geo.Segments.MAX_SPEED_FOR_MODE.find? (fun p => p.1 == mode)).map (·.2)
@@ -324,7 +342,7 @@ def resolveEpisode (st : State) (index : Nat) (states : Array State) (segments :
     match covering.find? (fun s => s.walkSmoothedPath.size ≥ 2 && effectiveMode s == "walking") with
     | some sm =>
       let smoothed := clipPath sm.walkSmoothedPath st
-      if smoothed.size ≥ 2 then return base smoothed "smoothed" none
+      if smoothed.size ≥ 2 then return base (markUnbacked covering smoothed) "smoothed" none
     | none => pure ()
 
     -- Pedestrian map-matching: draw on the OSM walkable network instead of the
@@ -332,7 +350,7 @@ def resolveEpisode (st : State) (index : Nat) (states : Array State) (segments :
     match covering.find? (fun s => s.walkMatchedPath.size ≥ 2 && effectiveMode s == "walking") with
     | some wm =>
       let walkMatched := clipPath wm.walkMatchedPath st
-      if walkMatched.size ≥ 2 then return base walkMatched "matched" none
+      if walkMatched.size ≥ 2 then return base (markUnbacked covering walkMatched) "matched" none
     | none => pure ()
 
     -- Unmatched moving leg: the raw GPS, not the Kalman points, which swing up
@@ -344,7 +362,9 @@ def resolveEpisode (st : State) (index : Nat) (states : Array State) (segments :
       let kept := (rejectSpikes (fun a b c => spikeAt (rawToLatLon a) (rawToLatLon b) (rawToLatLon c))
         (fun i => sw.getD i default) sw.size).toArray
       let rawWin := holdImplausibleSpeed kept (capForMode mode)
-      if rawWin.size ≥ 2 then return base (rawWin.map rawToLatLon) "raw" none
+      if rawWin.size ≥ 2 then
+        let line := rawWin.map rawToLatLon
+        return base (if mode == "walking" then markUnbacked covering line else line) "raw" none
     | none => pure ()
 
     -- Speed plausibility drops a faster neighbour's smooth bleed across the
@@ -525,6 +545,33 @@ private def mvPts : Array Fix := #[fx 1020 0 0, fx 1080 0 60, fx 1140 0 120]
 #guard render (buildEpisodes mvSt
     #[{ sg 1000 1200 "walking" with walkMatchedPath := #[spt 1020 1 0, spt 1140 1 120] }] mvPts)
   == #[("walking", "matched", none, #[ll 1 0 (some 1020), ll 1 120 (some 1140)])]
+
+-- An unbacked span marks the edges whose middle moment it holds, on whichever
+-- line the leg draws: the vertex each such edge arrives at.
+private def inferredOf (eps : Array Episode) : Array (Array Bool) :=
+  eps.map fun e => e.points.map (·.inferred)
+#guard inferredOf (buildEpisodes mvSt
+    #[{ sg 1000 1200 "walking" with
+        walkMatchedPath := #[spt 1020 1 0, spt 1060 1 40, spt 1100 1 80, spt 1140 1 120]
+        walkUnbacked := #[(1060, 1100)] }] mvPts)
+  == #[#[false, false, true, false]]
+#guard inferredOf (buildEpisodes mvSt
+    #[{ sg 1000 1200 "walking" with
+        walkSmoothedPath := #[spt 1020 2 0, spt 1080 2 60, spt 1140 2 120]
+        walkUnbacked := #[(1020, 1140)] }] mvPts)
+  == #[#[false, true, true]]
+-- A leg drawn from its fixes reads the same spans.
+#guard inferredOf (buildEpisodes mvSt #[{ sg 1000 1200 "walking" with walkUnbacked := #[(1080, 1140)] }]
+    mvPts (some #[rx 1020 0 0, rx 1080 0 60, rx 1140 0 120]))
+  == #[#[false, false, true]]
+-- No span, nothing marked; and a ride's line is never marked.
+#guard inferredOf (buildEpisodes mvSt
+    #[{ sg 1000 1200 "walking" with walkMatchedPath := #[spt 1020 1 0, spt 1140 1 120] }] mvPts)
+  == #[#[false, false]]
+#guard inferredOf (buildEpisodes #[stt 1000 1200 "cycling"]
+    #[{ sg 1000 1200 "cycling" with walkUnbacked := #[(1000, 1200)] }] mvPts
+    (some #[rx 1020 0 0, rx 1080 0 60, rx 1140 0 120]))
+  == #[#[false, false, false]]
 
 -- The road arm is tested first but applies to driving/bus/cycling only: a
 -- walking leg carrying a `matchedPath` does not take it.

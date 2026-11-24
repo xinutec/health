@@ -505,10 +505,13 @@ def walkPatchJson (p : Verified.Geo.WalkAnnotate.WalkPatch) : Json :=
   let um := fun (w : Array (String × Nat)) =>
     Json.arr (w.map fun (n, x) => Json.arr #[Json.str n, Lean.toJson x])
   let name := fun (n : Option String) => match n with | some s => Json.str s | none => Json.null
+  let spans := fun (u : Array (Float × Float)) =>
+    Json.arr (u.map fun (a, b) => Json.arr #[fBits a, fBits b])
   match p with
-  | .smoothed d w => Json.mkObj [("k", "s"), ("d", line d), ("w", um w)]
-  | .matched d n w => Json.mkObj [("k", "m"), ("d", line d), ("n", name n), ("w", um w)]
-  | .plain n w => Json.mkObj [("k", "p"), ("n", name n), ("w", um w)]
+  | .smoothed d w u => Json.mkObj [("k", "s"), ("d", line d), ("w", um w), ("u", spans u)]
+  | .matched d n w u =>
+    Json.mkObj [("k", "m"), ("d", line d), ("n", name n), ("w", um w), ("u", spans u)]
+  | .plain n w u => Json.mkObj [("k", "p"), ("n", name n), ("w", um w), ("u", spans u)]
 
 def parseWalkPatch (j : Json) : Except String Verified.Geo.WalkAnnotate.WalkPatch := do
   let line := fun (v : Json) => do
@@ -525,10 +528,15 @@ def parseWalkPatch (j : Json) : Except String Verified.Geo.WalkAnnotate.WalkPatc
       let some x := a[1]? | throw "patch way: um"
       return ((← n.getStr?), (← x.getNat?))
   let name ← optStr j "n"
+  let spans ← (← optArr j "u").mapM fun e => do
+    let a ← e.getArr?
+    let some t0 := a[0]? | throw "patch span: start"
+    let some t1 := a[1]? | throw "patch span: end"
+    return ((← jBits t0), (← jBits t1))
   match ← (← j.getObjVal? "k").getStr? with
-  | "s" => return .smoothed (← line (← j.getObjVal? "d")) (← um (← j.getObjVal? "w"))
-  | "m" => return .matched (← line (← j.getObjVal? "d")) name (← um (← j.getObjVal? "w"))
-  | "p" => return .plain name (← um (← j.getObjVal? "w"))
+  | "s" => return .smoothed (← line (← j.getObjVal? "d")) (← um (← j.getObjVal? "w")) spans
+  | "m" => return .matched (← line (← j.getObjVal? "d")) name (← um (← j.getObjVal? "w")) spans
+  | "p" => return .plain name (← um (← j.getObjVal? "w")) spans
   | k => throw s!"patch kind {k}"
 
 -- The codec is the identity on what the pass writes, bits included.
@@ -540,6 +548,8 @@ private def patchRT (p : Verified.Geo.WalkAnnotate.WalkPatch) : Bool :=
   #[("Kalea", 1200000), ("", 7)])
 #guard patchRT (.smoothed #[{ lat := -0.0, lon := 0.1, ts := 0 }] #[])
 #guard patchRT (.plain none #[("A", 1)])
+#guard patchRT (.matched #[{ lat := 1, lon := 2, ts := 3 }] none #[] #[(1791100000.5, 1791100060)])
+#guard patchRT (.plain none #[] #[(0, 1), (2, 3)])
 
 /-- One matcher call's input, quantised as the matcher sees it, in the shape
 `verified_cli matchprof` reads (`parseMatch` in `ServeEntry`). -/
@@ -699,6 +709,7 @@ private def segJson (s : Seg) : Json :=
     ("walkMatchedPath", match s.walkMatchedPath with | none => Json.null | some p => pathJson p),
     ("walkSmoothedPath", match s.walkSmoothedPath with | none => Json.null | some p => pathJson p),
     ("walkBuildingsMeasured", match s.walkBuildingsMeasured with | none => Json.null | some b => Json.bool b),
+    ("walkUnbacked", Json.arr (s.walkUnbacked.map fun (a, b) => Json.arr #[fBits a, fBits b])),
     -- A debug surface: the ways the walk matcher's route ran along, longest
     -- first. Nothing reads it back, so a replay's input is unchanged.
     ("walkWayUm", Json.arr (s.walkWayUm.map fun (n, um) =>
@@ -751,8 +762,10 @@ private def episodeJson (e : Verified.Geo.EpisodeGeometry.Episode) : Json :=
     ("mode", Json.str e.mode), ("kind", Json.str e.kind), ("place", jOptS e.place),
     -- `ts` rides as bits like `lat`/`lon`: a derived vertex's is fractional. No
     -- consumer decodes this yet; one must read `ts` as bits.
+    -- `inferred` only where true: the edge arriving at the point is unbacked.
     ("points", Json.arr (e.points.map fun p =>
-      Json.mkObj [("lat", fBits p.lat), ("lon", fBits p.lon), ("ts", jOptF p.ts)]))]
+      Json.mkObj ([("lat", fBits p.lat), ("lon", fBits p.lon), ("ts", jOptF p.ts)]
+        ++ (if p.inferred then [("inferred", Json.bool true)] else []))))]
 
 def MS_TO_KMH : Float := 3.6
 

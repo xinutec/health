@@ -195,7 +195,9 @@ export interface EpisodeGeometry {
   // frontend_unions.rs fails the gate when this list and the backend's
   // disagree (#337).
   kind: "snapped" | "raw" | "anchor" | "tentative" | "matched" | "smoothed";
-  points: { lat: number; lon: number; ts?: number }[];
+  /** `inferred`: the edge arriving at this point is backed by neither a mapped
+   *  path nor a sharp GPS fix, and draws dashed. */
+  points: { lat: number; lon: number; ts?: number; inferred?: boolean }[];
   /** Stay label for an `anchor` episode — drives the marker popup. */
   place?: string;
 }

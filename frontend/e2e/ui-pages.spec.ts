@@ -13,6 +13,7 @@ import { routesFrom, screens } from "@xinutec/ui-harness/routes";
 
 import type {
 	ActivityDay,
+	EpisodeGeometry,
 	BodyBefore,
 	BodyDay,
 	BreathingDay,
@@ -279,6 +280,61 @@ test("dashboard Day tab — summary cards + charts: lays out cleanly @ phone wid
 	await page.getByRole("button", { name: "Expand all" }).click();
 	await page.getByText("Circle Line", { exact: false }).first().waitFor();
 	await expectCleanLayout(page, testInfo);
+});
+
+// A walk's stretch that no mapped path and no sharp fix backs is inferred, and
+// must look it: the same line, dashed, between solid neighbours.
+test("Map tab — a walk's unbacked stretch draws dashed", async ({ page }, testInfo) => {
+	await mockApi(page);
+	// Metres north and east of a point in London, as the fold would ship them.
+	const at = (north: number, east: number, ts: number, inferred = false) => ({
+		lat: 51.5 + north / 111_320,
+		lon: -0.12 + east / 69_300,
+		ts: DAY0 + 8 * 3600 + ts,
+		...(inferred ? { inferred } : {}),
+	});
+	const episodes = [
+		{
+			startTs: DAY0 + 8 * 3600,
+			endTs: DAY0 + 8 * 3600 + 600,
+			mode: "walking",
+			kind: "matched",
+			points: [at(0, 0, 0), at(0, 150, 120), at(120, 260, 300, true), at(120, 420, 480), at(260, 420, 600)],
+		},
+	] satisfies EpisodeGeometry[];
+	await page.route("**/api/velocity*", (r) => r.fulfill({ json: { ...VELOCITY, episodes } satisfies VelocityData }));
+	// No tiles: the line is what is under test, and the suite must not need the network.
+	await page.route(/tile\.openstreetmap\.org/, (r) => r.abort());
+	await page.goto("/");
+	await page.getByRole("tab", { name: "Map" }).click();
+
+	// Lines only: the position marker is a filled path beside them.
+	const lines = page.locator('.leaflet-overlay-pane path[fill="none"]');
+	await expect(lines).toHaveCount(3);
+	await expect(lines.nth(0)).not.toHaveAttribute("stroke-dasharray");
+	await expect(lines.nth(1)).toHaveAttribute("stroke-dasharray", "6 6");
+	await expect(lines.nth(2)).not.toHaveAttribute("stroke-dasharray");
+	await page.screenshot({ path: testInfo.outputPath("map-dashed-stretch.png") });
+
+	// Tapping the dashed stretch says why it is dashed; a solid one does not.
+	// The tab slides in; measure where it lands, not mid-slide.
+	await expect(page.locator(".leaflet-container")).toBeInViewport({ ratio: 1 });
+	const box = (await lines.nth(1).boundingBox())!;
+	await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+	await expect(page.locator(".leaflet-popup-content")).toContainText("dashed: no mapped path");
+	// The popup fades in and the map pans to hold it; picture it settled.
+	await page.waitForFunction(() => {
+		const popup = document.querySelector(".leaflet-popup");
+		return popup !== null && getComputedStyle(popup).opacity === "1";
+	});
+	await expect(page.locator(".leaflet-popup")).toBeInViewport({ ratio: 1 });
+	await page.screenshot({ path: testInfo.outputPath("map-dashed-popup.png") });
+	await page.locator(".leaflet-popup-close-button").click();
+	await expect(page.locator(".leaflet-popup")).toHaveCount(0);
+	const solid = (await lines.nth(0).boundingBox())!;
+	await page.touchscreen.tap(solid.x + 2, solid.y + solid.height / 2);
+	await expect(page.locator(".leaflet-popup-content")).toContainText("map-matched");
+	await expect(page.locator(".leaflet-popup-content")).not.toContainText("dashed:");
 });
 
 test("dashboard Trends tab — no text overlaps @ phone width", async ({ page }, testInfo) => {

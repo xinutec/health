@@ -75,13 +75,13 @@ EpisodeGeometry = {
   endTs:   number,
   mode:    DayStateMode,   // for the mode colour
   kind:    "snapped" | "raw" | "anchor" | "tentative" | "matched",
-  points:  { lat: number; lon: number }[],   // may be empty
+  points:  { lat: number; lon: number; inferred?: true }[],   // may be empty
 }
 ```
 
-`kind` is the *geometry provenance* and is the only style input the map
-needs — solid for `raw`/`matched`, dashed for `snapped`/`tentative`, a
-dot for `anchor`. There is deliberately **no** `confidence` field: the
+`kind` is the *geometry provenance*: solid for `raw`/`matched`, dashed for
+`snapped`/`tentative`, a dot for `anchor`. Within a walk, a point's `inferred`
+dashes the one edge arriving at it (below, "Backed by the map or the track"). There is deliberately **no** `confidence` field: the
 only confidence upstream is `EnrichedSegment.confidence`, which is
 *mode-classification* confidence (`Verified/Geo/Segments.lean`), not *geometry* trust.
 A `snapped` train can be classified with high confidence while its drawn
@@ -222,7 +222,8 @@ Two consequences of the matched path worth stating explicitly:
   parade passage), the matched line connects the surrounding corridors
   straight through the block — short in-building runs of metres to tens of
   metres (#305 characterised the class; #350 tracks a live station-parade
-  case). The referee's `bldg` column measures it per leg.
+  case). The referee's `bldg` column measures it per leg. Such an edge is
+  unbacked and draws dashed (below).
 Measured (`score-walk-match`, off-walkable p90) across the golden corpus: 37
 walks improved (e.g. 55 m → 3 m), 0 regressed. This is the pedestrian slice of
 map-constrained positioning, shipped as a display layer.
@@ -251,6 +252,40 @@ primary draw and conditional swap — are fed the same collapsed fix set
 fixes let dense indoor jitter reach the solver as consistent evidence and
 drew over-budget legs. History and measurements in
 `../proposals/geometry-roadmap.md`.
+
+### Backed by the map or the track (`walkUnbacked`)
+
+A stretch of a drawn walk is **backed** when it runs within the corrector's way
+tolerance of a mapped walkable way, or a sharp fix lies within reach of it
+(`Verified/Geo/WalkBacked.lean`; the constants are there). A stretch that is
+neither is the drawing's own: no building check sees it where the map holds no
+footprint, and a check of vertices cannot see an edge.
+
+Two things are done about it, both after every accept and reject decision of
+the walk pass, so neither feeds one:
+
+- **`backEdges`**, on a matched line: an unbacked edge between two vertices
+  that are both on the map is replaced by the shortest walkable route between
+  them, when that route is at most a corner longer than the edge and keeps the
+  leg within its step budget. The edge was a clean-up pass joining two route
+  vertices straight across a block (the spur remover drops a spur's return
+  vertex with the spur). A longer route is a choice among paths the track did
+  not see, and is not made. A raw line is not repaired: repaired, it would ship
+  as matched and take the vetoed route's road names (`DayChain.stateSeg`).
+- **`unbackedSpans`**: the time spans over which the line that ships is still
+  unbacked — a run of unbacked samples longer than the way tolerance, judged
+  across edges so a dense line is held to what a sparse one is. They ride the
+  segment (`walkUnbacked`), `buildEpisodes` marks the points (`markUnbacked`),
+  and the map draws those edges dashed. A leg drawn from its fixes reads its
+  spans off the held fixes, since it ships no line.
+
+A leg the walk pass never reaches (too few fixes under the walking cap, or no
+ways for its ground) has no spans: nothing was measured, and it draws solid.
+
+The walk gate floors the dashed length per walk (`inferredM`), so a change that
+leaves more of a walk unbacked is seen. `tests/golden/fits/instruments/walk/
+unbacked.py` measures the same definition independently of the fold and reports
+what is unbacked yet solid.
 
 ### Bounding the `unknown` connector
 
@@ -332,7 +367,8 @@ explicit `tentative` episodes backend-side so provenance stays visible.
 2. **No fabrication.** A geometry of `kind: snapped`/`matched` must be
    backed by real structure (a cached route, a resolved station). When
    the backing is missing the episode resolves to `tentative` or empty,
-   never a confident-looking guess.
+   never a confident-looking guess. Inside a walk the same holds per edge:
+   one backed by neither a mapped way nor a sharp fix is marked `inferred`.
 3. **No mis-attributed trace.** No episode draws geometry that belongs to
    a different mode — the speed filter is the walk-side enforcement (a
    60 km/h fix is never drawn as walking). On the train side, a cached

@@ -128,17 +128,22 @@ end MemoKey
     so it is resolved where the patch lands, not where it was made. -/
 inductive WalkPatch where
   | smoothed (drawn : Array TPt) (wayUm : Array (String × Nat))
+      (unbacked : Array (Float × Float) := #[])
   | matched (drawn : Array TPt) (name : Option String) (wayUm : Array (String × Nat))
+      (unbacked : Array (Float × Float) := #[])
   | plain (name : Option String) (wayUm : Array (String × Nat))
+      (unbacked : Array (Float × Float) := #[])
   deriving Inhabited, BEq, Repr
 
 def WalkPatch.apply (seg : Seg) : WalkPatch → Seg
-  | .smoothed drawn wayUm => { seg with walkSmoothedPath := some drawn, walkWayUm := wayUm }
-  | .matched drawn name wayUm =>
+  | .smoothed drawn wayUm unbacked =>
+    { seg with walkSmoothedPath := some drawn, walkWayUm := wayUm, walkUnbacked := unbacked }
+  | .matched drawn name wayUm unbacked =>
     { seg with walkMatchedPath := some drawn, wayName := name.orElse (fun _ => seg.wayName),
-               walkWayUm := wayUm }
-  | .plain name wayUm =>
-    { seg with wayName := name.orElse (fun _ => seg.wayName), walkWayUm := wayUm }
+               walkWayUm := wayUm, walkUnbacked := unbacked }
+  | .plain name wayUm unbacked =>
+    { seg with wayName := name.orElse (fun _ => seg.wayName), walkWayUm := wayUm,
+               walkUnbacked := unbacked }
 
 /-- The shell: the two OSM reads and the five solver leaves. -/
 structure Env where
@@ -652,25 +657,31 @@ def drawWalk (env : Env) (draw : Draw) (flags : Flags) (inWin : Array PedFix) (w
   -- The matched line's unbacked edges go round by the map: last of all, so no
   -- decision above reads the result. A raw line is left alone: repaired, it
   -- would ship as matched and take the vetoed route's road names.
+  let backing : Array Verified.Geo.WalkBacked.Fix :=
+    clean.map fun f => { pt := ⟨f.lat, f.lon⟩, accuracy := f.accuracy }
   if useMatch && !smoothed0 then
-    let backed := Verified.Geo.WalkBacked.backEdges badCtx.get
-      (clean.map fun f => { pt := ⟨f.lat, f.lon⟩, accuracy := f.accuracy }) drawn
+    let backed := Verified.Geo.WalkBacked.backEdges badCtx.get backing drawn
       (stepsWalked.map (· * STEP_STRIDE_M * STEP_SLACK_RATIO))
     if changed drawn backed then
       drawn := backed
       corrected := true
+  -- What is still unbacked is drawn dashed. A leg that ships no line is drawn
+  -- from its fixes, so its spans are read off those.
+  let ships := smoothed0 || useMatch || corrected
+  let unbacked := Verified.Geo.WalkBacked.unbackedSpans badCtx.get backing
+    (if ships then drawn else held.map PedFix.pathPt)
   -- `walkWayUm` is attached on every branch, including those that discard
   -- the matcher's line, so it can show what the matcher wanted where it was
   -- overridden.
   if smoothed0 then
-    return WalkPatch.smoothed drawn wayUm
+    return WalkPatch.smoothed drawn wayUm unbacked
   else if useMatch || corrected then
     -- When the full match ships, its own route names the leg; the corrector
     -- only escapes buildings locally. A route on no named way keeps the
     -- cascade's name.
-    return WalkPatch.matched drawn matchName wayUm
+    return WalkPatch.matched drawn matchName wayUm unbacked
   else
-    return WalkPatch.plain matchName wayUm
+    return WalkPatch.plain matchName wayUm unbacked
 
 /--
 Attach `walkMatchedPath` / `walkSmoothedPath` to every walking leg the evidence

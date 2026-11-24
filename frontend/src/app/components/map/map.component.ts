@@ -17,7 +17,8 @@ import { MatCheckboxModule } from "@angular/material/checkbox";
 import * as L from "leaflet";
 import { modeStyle } from "../../modes";
 import { displayTzAt, type EpisodeGeometry, type LatestFix, type VelocityData } from "../../services/health.service";
-import { sourceLabel } from "./map.labels";
+import { INFERRED_NOTE, sourceLabel } from "./map.labels";
+import { lineRuns } from "./map.lines";
 
 /** Longest gap (m) between two episodes' drawn ends that still joins the next
  *  episode's own polyline. Sized to cosmetic stitching: a station platform →
@@ -38,8 +39,8 @@ const BRIDGE_JOIN_MAX_M = 120;
  * tail being drawn as a 60 km/h "walk" on the rails, stay centroids — is
  * resolved server-side in `buildEpisodes` (`episode-geometry.ts`,
  * `docs/design/episode-geometry.md`). This component only plumbs Leaflet:
- * one polyline per episode (dashed when the geometry is inferred — snapped
- * rail or a tentative gap), a marker per stay, the live "current position"
+ * a polyline per episode (dashed where the geometry is inferred — snapped
+ * rail, a tentative gap, a walk's unbacked stretch), a marker per stay, the live "current position"
  * marker, and view placement.
  *
  * The `liveFix` input carries the most recent PhoneTrack fix — polled
@@ -131,6 +132,7 @@ export class MapComponent implements OnDestroy {
 		mode: string;
 		kind: EpisodeGeometry["kind"] | "live";
 		place?: string;
+		inferred?: boolean;
 	}[] = [];
 	/** The day key the view was last fitted to. Keyed on the DAY (not the data
 	 *  object), so refetching the same day — toggling walk-snap, pull-to-refresh,
@@ -213,8 +215,17 @@ export class MapComponent implements OnDestroy {
 		let prevLast: L.LatLngTuple | null = null;
 		for (const ep of episodes) {
 			if (ep.points.length === 0) continue;
-			for (const p of ep.points) {
-				this.inspectPoints.push({ lat: p.lat, lon: p.lon, ts: p.ts, mode: ep.mode, kind: ep.kind, place: ep.place });
+			for (const [i, p] of ep.points.entries()) {
+				this.inspectPoints.push({
+					lat: p.lat,
+					lon: p.lon,
+					ts: p.ts,
+					mode: ep.mode,
+					kind: ep.kind,
+					place: ep.place,
+					// A vertex at either end of a dashed edge explains the dashes.
+					inferred: p.inferred === true || ep.points[i + 1]?.inferred === true,
+				});
 			}
 			if (ep.kind === "anchor") {
 				prevLast = [ep.points[0].lat, ep.points[0].lon];
@@ -245,15 +256,26 @@ export class MapComponent implements OnDestroy {
 					}).addTo(layer);
 				}
 			}
-			// Inferred geometry draws dashed; smoothed is denoised real GPS,
-			// so it draws solid like raw/matched.
-			const dashed = ep.kind === "snapped" || ep.kind === "tentative";
-			L.polyline(joinPrev && prevLast ? [prevLast, ...coords] : coords, {
-				color: modeStyle(ep.mode).color,
-				weight: 4,
-				opacity: 0.9,
-				...(dashed ? { dashArray: "6 6" } : {}),
-			}).addTo(layer);
+			// Inferred geometry draws dashed: a whole snapped or tentative
+			// episode, and within a walk the stretches no mapped path and no
+			// sharp fix backs. Smoothed is denoised real GPS, so it draws
+			// solid like raw/matched.
+			const allDashed = ep.kind === "snapped" || ep.kind === "tentative";
+			const runs = lineRuns(ep.points, allDashed);
+			if (joinPrev && prevLast) {
+				// A one-point episode has no run of its own: the join is its line.
+				const from: [number, number] = [prevLast[0], prevLast[1]];
+				if (runs.length > 0) runs[0].coords.unshift(from);
+				else runs.push({ coords: [from, [coords[0][0], coords[0][1]]], dashed: allDashed });
+			}
+			for (const run of runs) {
+				L.polyline(run.coords, {
+					color: modeStyle(ep.mode).color,
+					weight: 4,
+					opacity: 0.9,
+					...(run.dashed ? { dashArray: "6 6" } : {}),
+				}).addTo(layer);
+			}
 			for (const c of coords) allCoords.push(c);
 			prevLast = coords[coords.length - 1];
 		}
@@ -405,10 +427,12 @@ export class MapComponent implements OnDestroy {
 		// here at runtime even though the compiler thinks the lookup is total.
 		const source = sourceLabel(best.kind, best.mode);
 		const placeLine = best.place ? `<br><i>${best.place}</i>` : "";
+		const inferredLine = best.inferred ? `${INFERRED_NOTE}<br>` : "";
 		const html =
 			`<div style="font:13px/1.5 system-ui">` +
 			`<b>${coord}</b>${placeLine}<br>` +
 			`${best.mode} · ${source}<br>` +
+			inferredLine +
 			`${when}<br>` +
 			`<span style="color:#64748b">${bestD < 1 ? "on this point" : `${bestD.toFixed(0)} m from your tap`}</span>` +
 			`</div>`;
