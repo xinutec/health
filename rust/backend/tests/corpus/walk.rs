@@ -113,6 +113,23 @@ fn raw_accuracy_in_window(request: &Value, start: i64, end: i64) -> Value {
     )
 }
 
+/// The moments of the same rows, in the same order.
+fn raw_ts_in_window(request: &Value, start: i64, end: i64) -> Value {
+    let rows = request
+        .pointer("/env/rawFixes")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    Value::Array(
+        rows.iter()
+            .filter(|r| r.get(1).is_some() && r.get(2).is_some())
+            .filter_map(|r| r.get(0).and_then(Value::as_i64))
+            .filter(|ts| *ts >= start && *ts <= end)
+            .map(|ts| json!(ts))
+            .collect(),
+    )
+}
+
 /// Per-minute pedometer rows as the referee's wire wants them.
 fn steps_rows(inputs: &Value) -> Value {
     let rows = inputs
@@ -252,10 +269,18 @@ fn walking_legs(out: &Value, request: &Value, windows: &[(i64, i64, String)]) ->
                 .filter(|p| p.get("lat").is_some() && p.get("lon").is_some())
                 .map(|p| json!(p.get("inferred").and_then(Value::as_bool).unwrap_or(false)))
                 .collect();
+            // Read only by instruments: each drawn vertex's moment.
+            let drawn_ts: Vec<Value> = pts
+                .iter()
+                .filter(|p| p.get("lat").is_some() && p.get("lon").is_some())
+                .map(|p| p.get("ts").cloned().unwrap_or(Value::Null))
+                .collect();
             Some(json!({
                 "startTs": start,
                 "endTs": end,
                 "drawn": drawn,
+                "drawnTs": drawn_ts,
+                "rawTs": raw_ts_in_window(request, start, end),
                 "inferred": inferred,
                 "raw": raw_in_window(request, start, end),
                 // Read only by instruments: which line the episode drew.
