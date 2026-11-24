@@ -251,6 +251,8 @@ fn walking_legs(out: &Value, request: &Value, windows: &[(i64, i64, String)]) ->
                 "endTs": end,
                 "drawn": drawn,
                 "raw": raw_in_window(request, start, end),
+                // Read only by instruments: which line the episode drew.
+                "kind": e.get("kind").cloned().unwrap_or(Value::Null),
                 // Read only by instruments: each raw fix's reported accuracy.
                 "rawAccuracy": raw_accuracy_in_window(request, start, end),
                 "acceptedNames": accepted_names(windows, start, end),

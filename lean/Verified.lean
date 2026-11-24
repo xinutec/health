@@ -88,6 +88,7 @@ import Verified.Geo.DayState
 import Verified.Geo.NameConfidence
 import Verified.Geo.WalkableRoute
 import Verified.Geo.WalkEscape
+import Verified.Geo.WalkBacked
 import Verified.Geo.WalkSmooth
 import Verified.Geo.CorridorStall
 import Verified.Geo.DisplayGate

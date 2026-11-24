@@ -5,6 +5,7 @@ import Verified.Geo.WalkSmooth
 import Verified.Geo.DisplayGate
 import Verified.Geo.EpisodeGeometry
 import Verified.Geo.BiometricWindows
+import Verified.Geo.WalkBacked
 import Verified.JsNum
 import Verified.FloatConst
 /-!
@@ -647,6 +648,16 @@ def drawWalk (env : Env) (draw : Draw) (flags : Flags) (inWin : Array PedFix) (w
     let snapped := env.snapPassages drawn badCtx.get
     if changed drawn snapped then
       drawn := snapped
+      corrected := true
+  -- The matched line's unbacked edges go round by the map: last of all, so no
+  -- decision above reads the result. A raw line is left alone: repaired, it
+  -- would ship as matched and take the vetoed route's road names.
+  if useMatch && !smoothed0 then
+    let backed := Verified.Geo.WalkBacked.backEdges badCtx.get
+      (clean.map fun f => { pt := ⟨f.lat, f.lon⟩, accuracy := f.accuracy }) drawn
+      (stepsWalked.map (· * STEP_STRIDE_M * STEP_SLACK_RATIO))
+    if changed drawn backed then
+      drawn := backed
       corrected := true
   -- `walkWayUm` is attached on every branch, including those that discard
   -- the matcher's line, so it can show what the matcher wanted where it was
