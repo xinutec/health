@@ -74,7 +74,10 @@ for the merely unlikely, always an honest raw fallback
   default** since the G2 flip; ⚠ `WALK_RECON=0` was the off-switch and DID NOT
   SURVIVE THE PORT — see `../design/episode-geometry.md`): draws the
   reconstruction only when it is ≥25 % AND ≥150 m shorter than the
-  matched/raw line — the dissolved-phantom signature. Surfaces as
+  matched/raw line — the dissolved-phantom signature — and (2026-11-24),
+  with the leg's steps known, nearer than that line to the distance they
+  walked: of 23 corpus legs the old rule swapped, 17 were real walks smoothed
+  to half or three quarters of their steps. Surfaces as
   `walkSmoothedPath` / `kind:"smoothed"`. **Input parity is load-bearing**:
   both invocations of `reconstructWalk` (recon-primary arm AND the
   conditional swap) receive the same collapsed fix set

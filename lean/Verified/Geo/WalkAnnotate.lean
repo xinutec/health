@@ -593,14 +593,22 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
     | _, _ => none
   -- The swap: a large fraction shorter and a wide absolute margin shorter. On
   -- an ordinary leg the reconstruction is ~the same length and nothing changes.
+  -- Shorter is the phantom's signature only where the pedometer agrees: with
+  -- the steps known, the reconstruction must also be the nearer of the two to
+  -- the distance they walked, or a real wander is smoothed away.
   if flags.recon then
     match env.reconstruct (held.map PedFix.walkFix) geom buildings ev with
     | some recon =>
       if recon.size ≥ 2 then
         let drawnLen := pathLenM drawn
         let reconLen := pathLenM recon
+        let nearerTheSteps := match ev.stepsWalked with
+          | some steps =>
+            let walked := steps * STEP_STRIDE_M
+            Float.abs (reconLen - walked) < Float.abs (drawnLen - walked)
+          | none => true
         if reconLen ≤ drawnLen * RECON_SWAP_MAX_LEN_FRACTION
-            && drawnLen - reconLen ≥ RECON_SWAP_MIN_ABS_DROP_M then
+            && drawnLen - reconLen ≥ RECON_SWAP_MIN_ABS_DROP_M && nearerTheSteps then
           return (recon, useMatch, true, none, report)
     | none => pure ()
   return (drawn, useMatch, false, matchName, report)
@@ -1414,6 +1422,15 @@ private def STEPS330 : List StepPoint := [⟨1020, 100⟩, ⟨1080, 120⟩, ⟨1
   { envS with reconstruct := fun _ _ _ ev =>
       if ev.stepsWalked == some 330 then some S_RECON else none })
   == #[(some (S_LINE), none)]
+
+-- Steps that walked the matched line's length keep it: with 560 steps (420 m)
+-- the 430 m line is the nearer, and the 167 m reconstruction smooths a real
+-- walk away.
+private def STEPS560 : List StepPoint := [⟨1020, 190⟩, ⟨1080, 190⟩, ⟨1140, 180⟩]
+#guard (outOf (annotateWalkMatches #[walkSeg 1000 1240] STRAGGLER anySpeed
+  { envS with reconstruct := fun _ _ _ _ => some S_RECON } STEPS560)).map (·.2) == #[none]
+#guard (outOf (annotateWalkMatches #[walkSeg 1000 1240] STRAGGLER anySpeed
+  { envS with reconstruct := fun _ _ _ _ => some S_RECON } STEPS330)).map (·.2) == #[some S_RECON]
 
 /-! ### The refinement is fed the despiked fixes
 

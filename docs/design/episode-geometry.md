@@ -239,7 +239,11 @@ field. `WalkAnnotate.lean` swaps it in for a leg **only when the
 reconstruction is ≥25 % and ≥150 m shorter** than the matched/raw line —
 the signature of a dissolved phantom (an isolated out-and-back spur, or a
 coherent reacquire smear collapsed by the independent-evidence factors:
-step budget + endpoint anchors). The segment then carries
+step budget + endpoint anchors) — **and, where the leg's steps are known,
+nearer than that line to the distance they walked** (steps × stride). Shorter
+alone is also what smoothing a real wander looks like: on the corpus the
+matched or raw line agreed with the pedometer to about a tenth on the legs
+where the reconstruction drew half to three quarters of it. The segment then carries
 `walkSmoothedPath` and `episode-geometry` prefers it as `kind:"smoothed"`,
 above `walkMatchedPath`. The swap is **on by default**, and ⚠ **THERE IS NO
 OFF-SWITCH ANY MORE** — `WALK_RECON=0` was a TypeScript env read that did not
